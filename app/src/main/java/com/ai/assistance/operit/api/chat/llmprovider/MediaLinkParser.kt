@@ -38,14 +38,11 @@ object MediaLinkParser {
     // id 之后可能还有别的属性（例如 src），所以用 [^<>]*> 收尾，而不是只允许 \s*>。
     // 收尾段排除 '<'：模型写出缺 '>' 的畸形标签时，不会一路吞掉后面的 <link> 标签。
     private val IMAGE_LINK_PATTERN_PLAIN = Regex(
-        """<link\s+type\s*=\s*\\?["']?image\\?["']?\s+id\s*=\s*\\?["']?([^"'\s>]+)\\?["']?[^<>]*>.*?</link>""",
-        RegexOption.DOT_MATCHES_ALL
+        """<link\b(?=[^<>]*(?<![-\w])type\s*=\s*\\*["']?image\\*["']?(?=[\s/>]))(?=[^<>]*(?<![-\w])id\s*=\s*\\*["']?([^"'\\\s/>]+)\\*["']?)[^<>]*?(?:/>|>.*?</link>)""",
+        setOf(RegexOption.DOT_MATCHES_ALL, RegexOption.IGNORE_CASE)
     )
 
-    private val IMAGE_LINK_PATTERN_ESCAPED = Regex(
-        """<link\s+type\s*=\s*\\?["']?image\\?["']?\s+id\s*=\s*\\?["']?([^"'\s>]+)\\?["']?[^<>]*>.*?</link>""",
-        RegexOption.DOT_MATCHES_ALL
-    )
+    private val IMAGE_LINK_PATTERN_ESCAPED = IMAGE_LINK_PATTERN_PLAIN
 
     // (?<![-\w]) 而不是 \b：data-src 之类的属性不算 src。
     // 取值用惰性匹配，好让转义形态（src=\"…\"）的收尾反斜杠被 \\? 吃掉，不留在路径里。

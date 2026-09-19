@@ -46,6 +46,7 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AITool
+import com.ai.assistance.operit.data.model.ConversationSummaryConfig
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
@@ -770,6 +771,32 @@ class EnhancedAIService private constructor(
      */
     internal fun getFunctionalServiceManager(): MultiServiceManager = multiServiceManager
 
+    suspend fun callFunctionModel(
+        functionType: FunctionType,
+        turns: List<PromptTurn>,
+        enableThinking: Boolean = false,
+        recordTokenUsage: Boolean = true,
+    ): String {
+        require(recordTokenUsage) { "Operit Ry records all model calls; recordTokenUsage=false is unsupported" }
+        val lease = acquireAIServiceLeaseForFunction(functionType)
+        try {
+            val output = StringBuilder()
+            lease.service.sendMessage(
+                context = context,
+                chatHistory = turns,
+                modelParameters = lease.modelParameters,
+                enableThinking = enableThinking,
+                stream = false,
+                availableTools = emptyList(),
+                preserveThinkInHistory = true,
+                statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.OTHER,
+            ).collect { output.append(it) }
+            return output.toString()
+        } finally {
+            lease.close()
+        }
+    }
+
     private suspend fun getModelParametersForFunction(
         functionType: FunctionType,
         chatModelConfigIdOverride: String? = null,
@@ -821,10 +848,10 @@ class EnhancedAIService private constructor(
         val summary = generateSummaryFromPromptTurns(
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(history),
             previousSummary = null,
-            customRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
+            summaryConfig = ConversationSummaryConfig(globalRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
                 "key findings and unresolved messages from the quoted JSON. This is a checkpoint " +
                 "for the same continuing agent. Your own summarization instructions are not part " +
-                "of its task. Never mark unfinished work complete just because you summarized it.",
+                "of its task. Never mark unfinished work complete just because you summarized it."),
         )
         check(summary.isNotBlank()) { "Agent context compaction returned an empty checkpoint" }
         val durable = com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint
@@ -2747,19 +2774,19 @@ class EnhancedAIService private constructor(
     suspend fun generateSummary(
             messages: List<Pair<String, String>>,
             previousSummary: String?,
-            customRules: String? = null
+            summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
-        return generateSummaryFromPromptTurns(messages.toPromptTurns(), previousSummary, customRules)
+        return generateSummaryFromPromptTurns(messages.toPromptTurns(), previousSummary, summaryConfig)
     }
 
     suspend fun generateSummaryFromPromptTurns(
             messages: List<PromptTurn>,
             previousSummary: String?,
-            customRules: String? = null
+            summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         // 调用ConversationService中的方法
         return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
-            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, summaryConfig)
         }
     }
 

@@ -135,6 +135,21 @@ object MemoryLibrary {
         }
     }
 
+    suspend fun saveMemoryWindowNow(
+        context: Context,
+        toolHandler: AIToolHandler,
+        conversationHistory: List<Pair<String, String>>,
+        content: String,
+        aiService: AIService,
+        profileIdOverride: String,
+        analysisHistoryLimit: Int,
+    ) {
+        saveMemory(
+            context, toolHandler, conversationHistory, content, aiService,
+            profileIdOverride, analysisHistoryLimit.coerceAtLeast(1), propagateFailure = true,
+        )
+    }
+
     /**
      * 查询未分类记忆并批量调用 AI 进行分类
      */
@@ -261,7 +276,9 @@ object MemoryLibrary {
             conversationHistory: List<Pair<String, String>>,
             content: String,
             aiService: AIService,
-            profileIdOverride: String? = null
+            profileIdOverride: String? = null,
+            analysisHistoryLimit: Int = 10,
+            propagateFailure: Boolean = false,
     ) {
         mutex.withLock {
             val profileId = profileIdOverride ?: preferencesManager.activeMemorySpaceIdFlow.first()
@@ -306,7 +323,9 @@ object MemoryLibrary {
                 solution = prunedContent,
                 conversationHistory = processedHistory,
                 memoryRepository = memoryRepository,
-                profileId = profileId
+                profileId = profileId,
+                analysisHistoryLimit = analysisHistoryLimit,
+                propagateFailure = propagateFailure,
             )
 
             // If analysis is empty (trivial conversation), abort early.
@@ -332,6 +351,8 @@ object MemoryLibrary {
                     )
                     if (mergedMemory != null) {
                         createdMemories[mergedMemory.title] = mergedMemory
+                    } else if (propagateFailure) {
+                        error("Memory merge failed")
                     }
                 }
             }
@@ -352,6 +373,8 @@ object MemoryLibrary {
                         )
                         if (updatedMemory != null) {
                             createdMemories[updatedMemory.title] = updatedMemory
+                        } else if (propagateFailure) {
+                            error("Memory update failed")
                         }
                     } else {
                         AppLogger.w(TAG, "想要更新的记忆未找到: '${update.titleToUpdate}'")
@@ -462,6 +485,7 @@ object MemoryLibrary {
                 AppLogger.d(TAG, "成功从对话中提取并保存了记忆图谱")
 
             } catch (e: Exception) {
+                if (e is CancellationException || propagateFailure) throw e
                 AppLogger.e(TAG, "保存记忆图谱失败", e)
             }
         }
@@ -477,7 +501,9 @@ object MemoryLibrary {
         solution: String,
         conversationHistory: List<Pair<String, String>>,
         memoryRepository: MemoryRepository,
-        profileId: String
+        profileId: String,
+        analysisHistoryLimit: Int = 10,
+        propagateFailure: Boolean = false,
     ): ParsedAnalysis {
         try {
             val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
@@ -545,7 +571,7 @@ object MemoryLibrary {
                 useEnglish = useEnglish
             )
 
-            val analysisMessage = buildAnalysisMessage(context, query, solution, conversationHistory, useEnglish)
+            val analysisMessage = buildAnalysisMessage(context, query, solution, conversationHistory, useEnglish, analysisHistoryLimit)
             val messages = listOf(Pair("system", systemPrompt), Pair("user", analysisMessage)).toPromptTurns()
             val result = StringBuilder()
 
@@ -559,8 +585,9 @@ object MemoryLibrary {
                 stream.collect { content -> result.append(content) }
             }
 
-            return parseAnalysisResult(context, ChatUtils.removeThinkingContent(result.toString()))
+            return parseAnalysisResult(context, ChatUtils.removeThinkingContent(result.toString()), propagateFailure)
         } catch (e: Exception) {
+            if (e is CancellationException || propagateFailure) throw e
             AppLogger.e(TAG, "生成分析失败", e)
             return ParsedAnalysis(null)
         }
@@ -664,7 +691,8 @@ object MemoryLibrary {
             query: String,
             solution: String,
             conversationHistory: List<Pair<String, String>>,
-            useEnglish: Boolean
+            useEnglish: Boolean,
+            historyLimit: Int = 10,
     ): String {
         val messageBuilder = StringBuilder()
         if (useEnglish) {
@@ -682,7 +710,7 @@ object MemoryLibrary {
             messageBuilder.appendLine(solution.take(3000))
             messageBuilder.appendLine()
         }
-        val recentHistory = conversationHistory.takeLast(10)
+        val recentHistory = conversationHistory.takeLast(historyLimit.coerceAtLeast(1))
         if (recentHistory.isNotEmpty()) {
             messageBuilder.appendLine(if (useEnglish) "History:" else context.getString(R.string.memory_analysis_history))
             recentHistory.forEachIndexed { index, (role, content) ->
@@ -695,10 +723,13 @@ object MemoryLibrary {
     /**
      * Parses the JSON response from the AI into a ParsedAnalysis object.
      */
-    private fun parseAnalysisResult(context: Context, jsonString: String): ParsedAnalysis {
+    private fun parseAnalysisResult(context: Context, jsonString: String, propagateFailure: Boolean = false): ParsedAnalysis {
         return try {
             val cleanJson = ChatUtils.extractJson(jsonString)
-            if (cleanJson.isEmpty() || !cleanJson.startsWith("{")) return ParsedAnalysis(null)
+            if (cleanJson.isEmpty() || !cleanJson.startsWith("{")) {
+                if (propagateFailure) error("Memory analysis did not return a JSON object")
+                return ParsedAnalysis(null)
+            }
 
             // Handle the case where AI decides not to extract any knowledge
             if (cleanJson == "{}") {
@@ -706,6 +737,13 @@ object MemoryLibrary {
             }
 
             val json = JSONObject(cleanJson)
+            if (propagateFailure && json.length() > 0) {
+                val operations = listOf("main", "new", "links", "update", "merge")
+                require(operations.any { json.has(it) }) { "Memory analysis has no recognized operation" }
+                operations.filter { json.has(it) }.forEach { operation ->
+                    require(json.opt(operation) is JSONArray) { "Memory analysis '$operation' must be an array" }
+                }
+            }
             
             // 【新增】输出 AI 返回的完整 JSON 指令
             AppLogger.d(TAG, "AI 返回的完整 JSON 指令:\n${json.toString(2)}")
@@ -796,6 +834,7 @@ object MemoryLibrary {
                 mergedEntities = mergedEntities
             )
         } catch (e: Exception) {
+            if (e is CancellationException || propagateFailure) throw e
             AppLogger.e(TAG, "解析分析结果失败: $jsonString", e)
             ParsedAnalysis(null)
         }

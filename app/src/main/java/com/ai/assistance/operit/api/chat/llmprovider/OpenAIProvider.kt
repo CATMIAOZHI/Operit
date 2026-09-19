@@ -997,12 +997,98 @@ open class OpenAIProvider(
      * @param text 要处理的文本内容
      * @return 纯文本字符串或包含图片和文本的JSONArray
      */
-    fun buildContentField(context: Context, text: String): Any {
-        val hasImages = MediaLinkParser.hasImageLinks(text)
-        val hasMedia = MediaLinkParser.hasMediaLinks(text)
+    private fun inputContentText(text: String): String {
+        return if (useResponsesApi) {
+            text
+        } else {
+            ChatUtils.stripOpenAiResponsesReasoningMeta(text)
+        }
+    }
 
-        val mediaLinks = if (hasMedia) MediaLinkParser.extractMediaLinks(text) else emptyList()
-        val imageLinks = if (hasImages) MediaLinkParser.extractImageLinks(text) else emptyList()
+    private fun canCarryUserRichContent(role: String): Boolean {
+        return role.equals("user", ignoreCase = true) ||
+            role.equals("summary", ignoreCase = true)
+    }
+
+    private fun canCarryResponsesToolImages(role: String): Boolean {
+        return useResponsesApi && role.equals("tool", ignoreCase = true)
+    }
+
+    protected fun appendReadableImageMessageIfNeeded(
+        messagesArray: JSONArray,
+        sourceContent: String,
+        sourceLabel: String
+    ) {
+        appendReadableImageMessageIfNeeded(messagesArray, listOf(sourceContent), sourceLabel)
+    }
+
+    protected fun appendReadableImageMessageIfNeeded(
+        messagesArray: JSONArray,
+        sourceContents: List<String>,
+        sourceLabel: String
+    ) {
+        if (!supportsVision) return
+
+        val imageLinks = mutableListOf<ImageLink>()
+        val seenIds = mutableSetOf<String>()
+        sourceContents.forEach { sourceContent ->
+            val contentText = inputContentText(sourceContent)
+            if (!MediaLinkParser.hasImageLinks(contentText)) return@forEach
+            MediaLinkParser.extractImageLinks(contentText).forEach { link ->
+                if (seenIds.add(link.id)) {
+                    imageLinks.add(link)
+                }
+            }
+        }
+
+        if (imageLinks.isEmpty()) return
+
+        val contentArray = JSONArray().apply {
+            put(
+                JSONObject().apply {
+                    put("type", "text")
+                    put(
+                        "text",
+                        if (imageLinks.size == 1) {
+                            "The previous $sourceLabel included this image."
+                        } else {
+                            "The previous $sourceLabel included these images."
+                        }
+                    )
+                }
+            )
+        }
+        imageLinks.forEach { link ->
+            contentArray.put(
+                JSONObject().apply {
+                    put("type", "image_url")
+                    put(
+                        "image_url",
+                        JSONObject().apply {
+                            put("url", "data:${link.mimeType};base64,${link.base64Data}")
+                        }
+                    )
+                }
+            )
+        }
+
+        messagesArray.put(
+            JSONObject().apply {
+                put("role", "user")
+                put("content", contentArray)
+            }
+        )
+    }
+
+    fun buildContentField(context: Context, text: String, role: String = "user"): Any {
+        val contentText = inputContentText(text)
+        val allowUserRichContent = canCarryUserRichContent(role)
+        val allowResponsesToolImages = canCarryResponsesToolImages(role)
+        val hasImages = MediaLinkParser.hasImageLinks(contentText)
+        val hasMedia = MediaLinkParser.hasMediaLinks(contentText)
+
+        val mediaLinks = if (hasMedia) MediaLinkParser.extractMediaLinks(contentText) else emptyList()
+        val imageLinks = if (hasImages) MediaLinkParser.extractImageLinks(contentText) else emptyList()
 
         val audioLinks = mediaLinks.filter { it.type == "audio" }
         val videoLinks = mediaLinks.filter { it.type == "video" }
@@ -1013,7 +1099,7 @@ open class OpenAIProvider(
                 (supportsVideo && videoLinks.isNotEmpty()) ||
                 (supportsFiles && fileLinks.isNotEmpty())
 
-        var textWithoutLinks = text
+        var textWithoutLinks = contentText
         if (hasMedia) {
             textWithoutLinks = MediaLinkParser.removeMediaLinks(textWithoutLinks)
         }
@@ -1023,16 +1109,20 @@ open class OpenAIProvider(
         textWithoutLinks = textWithoutLinks.trim()
 
         if (audioLinks.isNotEmpty() && !supportsAudio) {
-            AppLogger.w("AIService", "检测到音频链接，但当前Provider不支持音频多模态输入，已移除音频。原始文本长度: ${text.length}, 处理后: ${textWithoutLinks.length}")
+            AppLogger.w("AIService", "检测到音频链接，但当前Provider不支持音频多模态输入，已移除音频。原始文本长度: ${contentText.length}, 处理后: ${textWithoutLinks.length}")
         }
         if (videoLinks.isNotEmpty() && !supportsVideo) {
-            AppLogger.w("AIService", "检测到视频链接，但当前Provider不支持视频多模态输入，已移除视频。原始文本长度: ${text.length}, 处理后: ${textWithoutLinks.length}")
+            AppLogger.w("AIService", "检测到视频链接，但当前Provider不支持视频多模态输入，已移除视频。原始文本长度: ${contentText.length}, 处理后: ${textWithoutLinks.length}")
         }
         if (imageLinks.isNotEmpty() && !supportsVision) {
-            AppLogger.w("AIService", "检测到图片链接，但当前Provider不支持图片处理，已移除图片。原始文本长度: ${text.length}, 处理后: ${textWithoutLinks.length}")
+            AppLogger.w("AIService", "检测到图片链接，但当前Provider不支持图片处理，已移除图片。原始文本长度: ${contentText.length}, 处理后: ${textWithoutLinks.length}")
         }
 
-        val hasAnySupportedRichContent = hasSupportedMedia || (supportsVision && imageLinks.isNotEmpty())
+        val hasAnySupportedRichContent =
+            (allowUserRichContent && hasSupportedMedia) ||
+                ((allowUserRichContent || allowResponsesToolImages) &&
+                    supportsVision &&
+                    imageLinks.isNotEmpty())
         if (!hasAnySupportedRichContent) {
             if (textWithoutLinks.isNotEmpty()) return textWithoutLinks
 
@@ -1046,7 +1136,7 @@ open class OpenAIProvider(
 
         val contentArray = JSONArray()
 
-        if (supportsAudio) {
+        if (allowUserRichContent && supportsAudio) {
             audioLinks.forEach { link ->
                 contentArray.put(JSONObject().apply {
                     put("type", "input_audio")
@@ -1055,7 +1145,7 @@ open class OpenAIProvider(
             }
         }
 
-        if (supportsVideo) {
+        if (allowUserRichContent && supportsVideo) {
             videoLinks.forEach { link ->
                 contentArray.put(JSONObject().apply {
                     put("type", "video_url")
@@ -1069,7 +1159,7 @@ open class OpenAIProvider(
             }
         }
 
-        if (supportsFiles) {
+        if (allowUserRichContent && supportsFiles) {
             fileLinks.forEach { link ->
                 val fileName = requireNotNull(link.fileName?.takeIf { it.isNotBlank() })
                 contentArray.put(JSONObject().apply {
@@ -1080,7 +1170,7 @@ open class OpenAIProvider(
             }
         }
 
-        if (supportsVision) {
+        if ((allowUserRichContent || allowResponsesToolImages) && supportsVision) {
             imageLinks.forEach { link ->
                 contentArray.put(JSONObject().apply {
                     put("type", "image_url")
@@ -1129,9 +1219,10 @@ open class OpenAIProvider(
         val effectiveHistory = providerReadyHistory
 
         var queuedAssistantToolText: String? = null
+        val pendingAssistantImageSources = mutableListOf<String>()
         var queuedToolCalls = JSONArray()
-        val queuedToolCallIds = mutableListOf<String>()
-        val openToolCallIds = mutableListOf<String>()
+        val queuedOpenToolCalls = mutableListOf<StructuredToolCallBridge.OpenToolCall>()
+        val openToolCalls = mutableListOf<StructuredToolCallBridge.OpenToolCall>()
         var nextToolCallOrdinal = 0
 
         fun appendQueuedAssistantToolText(text: String) {
@@ -1152,7 +1243,12 @@ open class OpenAIProvider(
                 val callId = generatedToolCallId(nextToolCallOrdinal++)
                 toolCall.put("id", callId)
                 queuedToolCalls.put(toolCall)
-                queuedToolCallIds.add(callId)
+                queuedOpenToolCalls.add(
+                    StructuredToolCallBridge.OpenToolCall(
+                        callId,
+                        StructuredToolCallBridge.toolCallName(toolCall)
+                    )
+                )
             }
         }
 
@@ -1166,37 +1262,48 @@ open class OpenAIProvider(
                 else -> null
             }
             if (effectiveContent != null) {
-                historyMessage.put("content", buildContentField(context, effectiveContent))
-            } else {
-                historyMessage.put("content", null)
+                historyMessage.put("content", buildContentField(context, effectiveContent, role = "assistant"))
             }
             historyMessage.put("tool_calls", queuedToolCalls)
             messagesArray.put(historyMessage)
 
-            openToolCallIds.addAll(queuedToolCallIds)
+            openToolCalls.addAll(queuedOpenToolCalls)
+            queuedAssistantToolText?.let(pendingAssistantImageSources::add)
             queuedAssistantToolText = null
             queuedToolCalls = JSONArray()
-            queuedToolCallIds.clear()
+            queuedOpenToolCalls.clear()
         }
 
-        fun flushOpenToolCallsAsCancelled(reason: String) {
+        fun flushOpenToolCallsAsUnmatched(reason: String) {
             emitQueuedToolCallsIfNeeded()
-            if (openToolCallIds.isEmpty()) return
+            if (openToolCalls.isEmpty()) {
+                appendReadableImageMessageIfNeeded(messagesArray, pendingAssistantImageSources, "assistant tool-call message")
+                pendingAssistantImageSources.clear()
+                return
+            }
 
             AppLogger.w(
                 "AIService",
-                "发现缺少执行结果的tool_calls，补齐缺失结果: count=${openToolCallIds.size}, reason=$reason"
+                "发现未匹配的tool_calls，按工具结果未匹配处理: count=${openToolCalls.size}, reason=$reason"
             )
-            for (toolCallId in openToolCallIds) {
+            for (openToolCall in openToolCalls) {
                 messagesArray.put(
                     JSONObject().apply {
                         put("role", "tool")
-                        put("tool_call_id", toolCallId)
-                        put("content", "Tool result missing: no matching execution result was available. This does not indicate user cancellation.")
+                        put("tool_call_id", openToolCall.id)
+                        put(
+                            "content",
+                            StructuredToolCallBridge.unmatchedToolResultContent(
+                                reason,
+                                openToolCall.matchingName
+                            )
+                        )
                     }
                 )
             }
-            openToolCallIds.clear()
+            openToolCalls.clear()
+            appendReadableImageMessageIfNeeded(messagesArray, pendingAssistantImageSources, "assistant tool-call message")
+            pendingAssistantImageSources.clear()
         }
 
         // 添加聊天历史
@@ -1207,18 +1314,18 @@ open class OpenAIProvider(
                 if (useToolCall) {
                     when (turn.kind) {
                         PromptTurnKind.SYSTEM -> {
-                            flushOpenToolCallsAsCancelled("system_boundary")
+                            flushOpenToolCallsAsUnmatched("system_boundary")
                             messagesArray.put(
                                 JSONObject().apply {
                                     put("role", "system")
-                                    put("content", buildContentField(context, content))
+                                    put("content", buildContentField(context, content, role = "system"))
                                 }
                             )
                         }
 
                         PromptTurnKind.USER,
                         PromptTurnKind.SUMMARY -> {
-                            flushOpenToolCallsAsCancelled("user_boundary")
+                            flushOpenToolCallsAsUnmatched("user_boundary")
                             messagesArray.put(
                                 JSONObject().apply {
                                     put("role", "user")
@@ -1237,12 +1344,12 @@ open class OpenAIProvider(
                                 }
 
                             if (toolCalls != null && toolCalls.length() > 0) {
-                                if (openToolCallIds.isNotEmpty()) {
-                                    flushOpenToolCallsAsCancelled("assistant_tool_call_before_result")
+                                if (openToolCalls.isNotEmpty()) {
+                                    flushOpenToolCallsAsUnmatched("assistant_tool_call_before_result")
                                 }
                                 queueToolCalls(textContent, toolCalls)
                             } else {
-                                flushOpenToolCallsAsCancelled("assistant_boundary")
+                                flushOpenToolCallsAsUnmatched("assistant_boundary")
                                 val effectiveContent = if (content.isBlank()) {
                                     AppLogger.d("AIService", "发现空的assistant消息，填充为[空消息]")
                                     "[Empty]"
@@ -1252,8 +1359,13 @@ open class OpenAIProvider(
                                 messagesArray.put(
                                     JSONObject().apply {
                                         put("role", "assistant")
-                                        put("content", buildContentField(context, effectiveContent))
+                                        put("content", buildContentField(context, effectiveContent, role = "assistant"))
                                     }
+                                )
+                                appendReadableImageMessageIfNeeded(
+                                    messagesArray,
+                                    effectiveContent,
+                                    "assistant message"
                                 )
                             }
                         }
@@ -1268,18 +1380,23 @@ open class OpenAIProvider(
                                 }
 
                             if (toolCalls != null && toolCalls.length() > 0) {
-                                if (openToolCallIds.isNotEmpty()) {
-                                    flushOpenToolCallsAsCancelled("typed_tool_call_before_result")
+                                if (openToolCalls.isNotEmpty()) {
+                                    flushOpenToolCallsAsUnmatched("typed_tool_call_before_result")
                                 }
                                 queueToolCalls(textContent, toolCalls)
                             } else {
-                                flushOpenToolCallsAsCancelled("typed_tool_call_without_payload")
+                                flushOpenToolCallsAsUnmatched("typed_tool_call_without_payload")
                                 val effectiveContent = if (content.isBlank()) "[Empty]" else content
                                 messagesArray.put(
                                     JSONObject().apply {
                                         put("role", "assistant")
-                                        put("content", buildContentField(context, effectiveContent))
+                                        put("content", buildContentField(context, effectiveContent, role = "assistant"))
                                     }
+                                )
+                                appendReadableImageMessageIfNeeded(
+                                    messagesArray,
+                                    effectiveContent,
+                                    "assistant tool-call message"
                                 )
                             }
                         }
@@ -1289,26 +1406,39 @@ open class OpenAIProvider(
                             val (textContent, toolResults) = parseXmlToolResults(content)
                             val resultsList = toolResults ?: emptyList()
 
-                            if (resultsList.isNotEmpty() && openToolCallIds.isNotEmpty()) {
-                                val validCount = minOf(resultsList.size, openToolCallIds.size)
-                                repeat(validCount) { index ->
-                                    val (_, resultContent) = resultsList[index]
+                            if (resultsList.isNotEmpty() && openToolCalls.isNotEmpty()) {
+                                val readableImageSources = mutableListOf<String>()
+                                val matchedCalls =
+                                    StructuredToolCallBridge.consumeMatchingToolCalls(
+                                        openToolCalls,
+                                        resultsList.map { it.first }
+                                    )
+                                matchedCalls.forEach { matchedCall ->
+                                    val resultContent = resultsList[matchedCall.resultIndex].second
+                                    readableImageSources.add(resultContent)
                                     messagesArray.put(
                                         JSONObject().apply {
                                             put("role", "tool")
-                                            put("tool_call_id", openToolCallIds[index])
-                                            put("content", resultContent)
+                                            put("tool_call_id", matchedCall.call.id)
+                                            put("content", buildContentField(context, resultContent, role = "tool"))
                                         }
                                     )
                                 }
-                                repeat(validCount) {
-                                    openToolCallIds.removeAt(0)
-                                }
 
-                                if (resultsList.size > validCount) {
+                                if (matchedCalls.size < resultsList.size) {
                                     AppLogger.w(
                                         "AIService",
-                                        "发现多余的tool_result: ${resultsList.size} results vs ${validCount} pending tool_calls"
+                                        "发现未匹配的tool_result: ${resultsList.size - matchedCalls.size}"
+                                    )
+                                }
+
+                                flushOpenToolCallsAsUnmatched("tool_result_partial_batch")
+
+                                if (!useResponsesApi) {
+                                    appendReadableImageMessageIfNeeded(
+                                        messagesArray,
+                                        readableImageSources,
+                                        "tool result"
                                     )
                                 }
 
@@ -1321,24 +1451,20 @@ open class OpenAIProvider(
                                     )
                                 }
                             } else {
-                                flushOpenToolCallsAsCancelled("tool_result_without_structured_match")
-                                val fallbackContent =
-                                    when {
-                                        textContent.isNotEmpty() -> textContent
-                                        content.isNotBlank() -> content
-                                        else -> "[Empty]"
-                                    }
-                                messagesArray.put(
-                                    JSONObject().apply {
-                                        put("role", "user")
-                                        put("content", buildContentField(context, fallbackContent))
-                                    }
-                                )
+                                flushOpenToolCallsAsUnmatched("tool_result_without_structured_match")
+                                if (textContent.isNotEmpty()) {
+                                    messagesArray.put(
+                                        JSONObject().apply {
+                                            put("role", "user")
+                                            put("content", buildContentField(context, textContent))
+                                        }
+                                    )
+                                }
                             }
                         }
                     }
                 } else {
-                    flushOpenToolCallsAsCancelled("tool_call_api_disabled")
+                    flushOpenToolCallsAsUnmatched("tool_call_api_disabled")
                     val role = providerRoleForTurn(turn)
                     // 不启用Tool Call API时，保持原样
                     val historyMessage = JSONObject()
@@ -1351,14 +1477,20 @@ open class OpenAIProvider(
                     } else {
                         content
                     }
-
-                    historyMessage.put("content", buildContentField(context, effectiveContent))
+                    historyMessage.put("content", buildContentField(context, effectiveContent, role = role))
                     messagesArray.put(historyMessage)
+                    if (role == "assistant") {
+                        appendReadableImageMessageIfNeeded(
+                            messagesArray,
+                            effectiveContent,
+                            "assistant message"
+                        )
+                    }
                 }
             }
         }
 
-        flushOpenToolCallsAsCancelled("history_end")
+        flushOpenToolCallsAsUnmatched("history_end")
 
         return Pair(messagesArray, tokenCount)
     }
@@ -1848,7 +1980,7 @@ open class OpenAIProvider(
 
     /**
      * 解析XML格式的tool_result，转换为OpenAI Tool消息格式
-     * @return List<Pair<tool_call_id, result_content>>
+     * @return List<Pair<tool_name, result_content>>
      */
     fun parseXmlToolResults(content: String): Pair<String, List<Pair<String, String>>?> {
         // 匹配带属性的tool_result标签，例如: <tool_result name="..." status="...">...</tool_result>
@@ -1860,8 +1992,6 @@ open class OpenAIProvider(
 
         val results = mutableListOf<Pair<String, String>>()
         var textContent = content
-        var resultIndex = 0
-
         matches.forEach { match ->
             // 提取<content>标签内的内容，如果有的话
             val fullContent = match.groupValues[2].trim()
@@ -1872,12 +2002,12 @@ open class OpenAIProvider(
                 fullContent
             }
 
-            // 生成一个tool_call_id（这里需要与之前的call对应，但因为历史记录可能不完整，我们使用索引）
-            results.add(Pair("call_result_${resultIndex}", resultContent))
+            val openingTag = match.value.substringBefore('>')
+            val name = ChatMarkupRegex.nameAttr.find(openingTag)?.groupValues?.getOrNull(1).orEmpty()
+            results.add(name to resultContent)
 
             // 从文本内容中移除tool_result标签（包括前后的空白符）
             textContent = textContent.replace(match.value, "").trim()
-            resultIndex++
         }
 
         // trim 确保移除所有空白字符

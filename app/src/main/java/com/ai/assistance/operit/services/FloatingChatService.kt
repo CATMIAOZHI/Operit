@@ -90,8 +90,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         private set
     private var coreObservation: kotlinx.coroutines.Job? = null
 
-    private var lastCrashTime = 0L
-    private var crashCount = 0
+    private var isServiceReady = false
     private val defaultExceptionHandler = Thread.getDefaultUncaughtExceptionHandler()
     private val customExceptionHandler =
             Thread.UncaughtExceptionHandler { thread, throwable ->
@@ -183,7 +182,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         }
     }
 
-    override fun onBind(intent: Intent): IBinder = binder
+    override fun onBind(intent: Intent): IBinder? = if (isServiceReady) binder else null
 
     private fun handleServiceCrash(thread: Thread, throwable: Throwable) {
         if (isRecoverableRelocationFailure(throwable)) {
@@ -199,15 +198,20 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         try {
             AppLogger.e(TAG, "Service crashed: ${throwable.message}", throwable)
             val currentTime = System.currentTimeMillis()
-            if (currentTime - lastCrashTime > 60000) {
-                crashCount = 0
+            val lastCrashTime = prefs.getLong("last_crash_time", 0L)
+            val previousCount = if (currentTime - lastCrashTime in 0..60000) prefs.getInt("crash_count", 0) else 0
+            val crashCount = previousCount + 1
+            // The default handler will terminate this process; persist the fuse synchronously.
+            if (!prefs.edit()
+                    .putInt("crash_count", crashCount)
+                    .putLong("last_crash_time", currentTime)
+                    .putBoolean("service_disabled_due_to_crashes", crashCount > 3)
+                    .commit()) {
+                AppLogger.e(TAG, "Failed to persist floating service crash state")
             }
-            lastCrashTime = currentTime
-            crashCount++
 
             if (crashCount > 3) {
                 AppLogger.e(TAG, "Too many crashes in short time, stopping service")
-                prefs.edit().putBoolean("service_disabled_due_to_crashes", true).apply()
                 stopSelf()
                 return
             }
@@ -274,14 +278,13 @@ class FloatingChatService : Service(), FloatingWindowCallback {
         } catch (_: Exception) {
         }
 
-        Thread.setDefaultUncaughtExceptionHandler(customExceptionHandler)
-
         prefs = getSharedPreferences("floating_chat_prefs", Context.MODE_PRIVATE)
         if (prefs.getBoolean("service_disabled_due_to_crashes", false)) {
             AppLogger.w(TAG, "Service was disabled due to frequent crashes")
             stopSelf()
             return
         }
+        Thread.setDefaultUncaughtExceptionHandler(customExceptionHandler)
 
         try {
 
@@ -317,6 +320,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
                 notification = notification,
                 types = ForegroundServiceCompat.buildTypes(dataSync = true)
             )
+            isServiceReady = true
 
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error in onCreate", e)
@@ -379,6 +383,11 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (!isServiceReady) {
+            sendLifecycleBroadcast(ACTION_FLOATING_CHAT_WINDOW_SHOW_FAILED)
+            stopSelf()
+            return START_NOT_STICKY
+        }
         if (intent?.action == ACTION_CLOSE) {
             onClose()
             return START_NOT_STICKY
@@ -623,6 +632,7 @@ class FloatingChatService : Service(), FloatingWindowCallback {
     }
 
     override fun onDestroy() {
+        isServiceReady = false
         com.ai.assistance.operit.core.application.CompanionNotification.release(this)
         try {
             AIForegroundService.setWakeListeningSuspendedForFloatingFullscreen(
@@ -656,17 +666,28 @@ class FloatingChatService : Service(), FloatingWindowCallback {
             }
             
             serviceScope.cancel()
-            saveState()
-            super.onDestroy()
+            if (::windowState.isInitialized) {
+                try {
+                    saveState()
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "Error saving floating window state on destroy", e)
+                }
+            }
             AppLogger.d(TAG, "onDestroy")
-            lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_PAUSE)
-            lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_STOP)
-            lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
-            windowManager.destroy()
-            Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
-            prefs.edit().putInt("view_creation_retry", 0).apply()
+            if (::lifecycleOwner.isInitialized) {
+                lifecycleOwner.handleLifecycleEvent(Lifecycle.Event.ON_DESTROY)
+            }
+            if (::windowManager.isInitialized) {
+                windowManager.destroy()
+            }
+            if (::prefs.isInitialized) prefs.edit().putInt("view_creation_retry", 0).apply()
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error in onDestroy", e)
+        } finally {
+            if (Thread.getDefaultUncaughtExceptionHandler() === customExceptionHandler) {
+                Thread.setDefaultUncaughtExceptionHandler(defaultExceptionHandler)
+            }
+            super.onDestroy()
         }
 
         try {

@@ -12,6 +12,9 @@ class FloatingWindowState(context: Context) {
         context.getSharedPreferences("floating_chat_prefs", Context.MODE_PRIVATE)
     private val screenWidthDp: Dp
     private val screenHeightDp: Dp
+    private val maxWidth: Float
+    private val minWidth: Float
+    private val maxHeight: Float
 
     // Window position
     var x: Int = 200
@@ -51,6 +54,9 @@ class FloatingWindowState(context: Context) {
         val displayMetrics = context.resources.displayMetrics
         screenWidthDp = (displayMetrics.widthPixels / displayMetrics.density).dp
         screenHeightDp = (displayMetrics.heightPixels / displayMetrics.density).dp
+        maxWidth = (screenWidthDp.value - 16f).takeIf { it.isFinite() }?.coerceAtLeast(1f) ?: 300f
+        minWidth = minOf(300f, maxWidth)
+        maxHeight = (screenHeightDp.value * 0.8f).takeIf { it.isFinite() }?.coerceAtLeast(250f) ?: 400f
         restoreState()
     }
 
@@ -60,16 +66,16 @@ class FloatingWindowState(context: Context) {
             putInt("window_y", y)
             putFloat(
                 "window_width",
-                windowWidth.value.value.coerceIn(minOf(300f, screenWidthDp.value - 16f), screenWidthDp.value - 16f)
+                (windowWidth.value.value.takeIf { it.isFinite() } ?: maxWidth).coerceIn(minWidth, maxWidth)
             )
             putFloat(
                 "window_height",
-                windowHeight.value.value.coerceIn(250f, screenHeightDp.value * 0.8f)
+                (windowHeight.value.value.takeIf { it.isFinite() } ?: 400f).coerceIn(250f, maxHeight)
             )
             putString("current_mode", currentMode.value.name)
             putString("previous_mode", previousMode.name)
-            putFloat("window_scale", windowScale.value.coerceIn(0.3f, 1.0f))
-            putFloat("last_window_scale", lastWindowScale.coerceIn(0.3f, 1.0f))
+            putFloat("window_scale", (windowScale.value.takeIf { it.isFinite() } ?: 1f).coerceIn(0.3f, 1.0f))
+            putFloat("last_window_scale", (lastWindowScale.takeIf { it.isFinite() } ?: 1f).coerceIn(0.3f, 1.0f))
             apply()
         }
     }
@@ -80,12 +86,13 @@ class FloatingWindowState(context: Context) {
         x = prefs.getInt("window_x", defaultX)
         y = prefs.getInt("window_y", defaultY)
 
-        val defaultWidth = (screenWidthDp.value - 16f).coerceAtLeast(200f)
-        val defaultHeight = (screenHeightDp.value * 0.5f).coerceAtLeast(250f)
+        val defaultWidth = maxWidth
+        val defaultHeight = (screenHeightDp.value * 0.5f).takeIf { it.isFinite() }?.coerceIn(250f, maxHeight)
+            ?: 400f.coerceIn(250f, maxHeight)
         val storedWidth = prefs.getFloat("window_width", defaultWidth)
         val storedHeight = prefs.getFloat("window_height", defaultHeight)
-        windowWidth.value = storedWidth.coerceIn(minOf(300f, screenWidthDp.value - 16f), screenWidthDp.value - 16f).dp
-        windowHeight.value = storedHeight.coerceIn(250f, screenHeightDp.value * 0.8f).dp
+        windowWidth.value = (storedWidth.takeIf { it.isFinite() } ?: defaultWidth).coerceIn(minWidth, maxWidth).dp
+        windowHeight.value = (storedHeight.takeIf { it.isFinite() } ?: defaultHeight).coerceIn(250f, maxHeight).dp
 
         val modeName = prefs.getString("current_mode", FloatingMode.WINDOW.name)
         currentMode.value = try {

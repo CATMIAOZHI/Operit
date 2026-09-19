@@ -734,6 +734,7 @@ class MessageProcessingDelegate(
             attachments: List<AttachmentInfo> = emptyList(),
             chatId: String,
             messageTextOverride: String? = null,
+            prebuiltUserMessage: ChatMessage? = null,
             proxySenderNameOverride: String? = null,
             workspacePath: String? = null,
             workspaceEnv: String? = null,
@@ -855,7 +856,7 @@ class MessageProcessingDelegate(
 
             // 1. 使用 AIMessageManager 构建最终消息
             val buildUserMessageStartTime = messageTimingNow()
-            val finalMessageContent = AIMessageManager.buildUserMessageContent(
+            val finalMessageContent = prebuiltUserMessage?.content ?: AIMessageManager.buildUserMessageContent(
                 context = context,
                 messageText = messageText,
                 proxySenderName = proxySenderNameOverride,
@@ -1114,8 +1115,11 @@ class MessageProcessingDelegate(
                     chatId = activeChatId,
                     messageContent = requestMessageContent,
                     // 仅在群组编排中去掉当前用户消息，避免重复拼接。
-                    chatHistory = if (isGroupOrchestrationTurn && userMessageAdded && chatHistory.isNotEmpty()) {
-                        chatHistory.subList(0, chatHistory.size - 1)
+                    chatHistory = if (isGroupOrchestrationTurn && (userMessageAdded || prebuiltUserMessage != null)) {
+                        // The orchestrator already persisted this turn. Remove only that message;
+                        // concurrent history updates may have appended other messages after it.
+                        val sentTimestamp = prebuiltUserMessage?.timestamp ?: userMessage.timestamp
+                        chatHistory.filterNot { it.sender == "user" && it.timestamp == sentTimestamp }
                     } else {
                         turnOptions.collaborationHistoryCutoff?.let { cutoff ->
                             chatHistory.filter { it.timestamp > cutoff }

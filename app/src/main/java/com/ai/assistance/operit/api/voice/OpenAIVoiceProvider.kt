@@ -135,8 +135,8 @@ class OpenAIVoiceProvider(
                     stop()
                 }
 
-                val prefs = SpeechServicesPreferences(context.applicationContext)
-                val effectiveRate = rate ?: prefs.ttsSpeechRateFlow.first()
+                val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+                val effectiveRate = rate ?: profile.speechRate
 
                 val requestModel = extraParams["model"]?.takeIf { it.isNotBlank() } ?: model
                 val requestVoice = extraParams["voice"]?.takeIf { it.isNotBlank() } ?: voiceId

@@ -1618,7 +1618,7 @@ class CharacterCardManager private constructor(private val context: Context) {
                 if (!legacyValue.isNullOrBlank() && preferences[chatKey].isNullOrBlank()) {
                     preferences[chatKey] = legacyValue
                 }
-                if (preferences[voiceKey].isNullOrBlank() && cardId == DEFAULT_CHARACTER_CARD_ID) {
+                if (!preferences.contains(voiceKey) && cardId == DEFAULT_CHARACTER_CARD_ID) {
                     preferences[voiceKey] = CharacterCardBilingualData.getDefaultOtherContentVoice(context)
                 }
                 preferences.remove(legacyKey)

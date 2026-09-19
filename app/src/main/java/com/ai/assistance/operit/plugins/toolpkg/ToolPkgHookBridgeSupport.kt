@@ -2,9 +2,11 @@ package com.ai.assistance.operit.plugins.toolpkg
 
 import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.LocalizedText
 import com.ai.assistance.operit.core.tools.javascript.JsJavaBridgeDelegates
 import com.ai.assistance.operit.core.tools.javascript.extractJsExecutionErrorMessage
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
+import com.ai.assistance.operit.core.tools.packTool.ToolPkgContainerRuntime
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
@@ -53,6 +55,30 @@ internal data class ToolPkgChatViewHookRegistration(
     val functionSource: String? = null
 )
 
+internal data class ToolPkgChatMessageMenuDialogRegistration(
+    val screenPath: String,
+    val title: LocalizedText
+)
+
+internal data class ToolPkgChatMessageMenuItemRegistration(
+    val containerPackageName: String,
+    val itemId: String,
+    val title: LocalizedText,
+    val icon: String? = null,
+    val order: Int = 0,
+    val senders: List<String> = emptyList(),
+    val functionName: String,
+    val functionSource: String? = null,
+    val dialog: ToolPkgChatMessageMenuDialogRegistration? = null
+)
+
+internal data class ToolPkgChatRuntimeHookRegistration(
+    val containerPackageName: String,
+    val hookId: String,
+    val functionName: String,
+    val functionSource: String? = null
+)
+
 internal data class ToolPkgToolLifecycleHookRegistration(
     val containerPackageName: String,
     val hookId: String,
@@ -80,7 +106,22 @@ internal data class ToolPkgAiProviderRegistration(
     val testConnectionFunctionSource: String? = null,
     val calculateInputTokensFunctionName: String,
     val calculateInputTokensFunctionSource: String? = null
-)
+) {
+    /** Historical counters use the full provider ID while new requests use the display name. */
+    val releasedTokenProviderAliases: Map<String, String>
+        get() {
+            val id = providerId.trim()
+            require(id.isNotEmpty()) { "ToolPkg AI provider id must not be blank" }
+            val display = displayName.trim()
+            require(display.isNotEmpty()) { "ToolPkg AI provider display name must not be blank" }
+            return mapOf(
+                id to display,
+                "TOOLPKG_$id" to display,
+                "TOOLPKG_${id.lowercase()}" to display,
+                display to display,
+            )
+        }
+}
 
 internal fun toolPkgPackageManager(): PackageManager {
     val application = OperitApplication.instance.applicationContext
@@ -117,4 +158,20 @@ internal fun jsonArrayToList(jsonArray: JSONArray): List<Any?> {
 
 internal fun jsonValueToKotlin(value: Any?): Any? {
     return JsJavaBridgeDelegates.decodePlainJsonValue(value)
+}
+
+internal fun <T> Iterable<T>.sortedByToolPkgLoadOrder(
+    activeContainers: List<ToolPkgContainerRuntime>,
+    containerPackageName: (T) -> String,
+    registrationId: (T) -> String
+): List<T> {
+    val loadOrder = activeContainers.mapIndexed { index, container ->
+        container.packageName.lowercase() to index
+    }.toMap()
+    return sortedWith(
+        compareBy<T> { item ->
+            loadOrder[containerPackageName(item).lowercase()] ?: Int.MAX_VALUE
+        }.thenBy { item -> containerPackageName(item).lowercase() }
+            .thenBy(registrationId)
+    )
 }

@@ -1818,9 +1818,9 @@ fun ChatBackupSettingsScreen() {
                             roomDbRestoreOperationState = RoomDatabaseRestoreOperation.RESTORING
                             roomDbRestoreOperationMessage = ""
                             try {
-                                withContext(Dispatchers.IO) {
+                                withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                                     if (file != null) {
-                                        RoomDatabaseRestoreManager.restoreFromBackupFile(context, file)
+                                        RoomDatabaseRestoreManager.stageRestoreFromFile(context, file)
                                     } else if (uri != null) {
                                         try {
                                             context.contentResolver.takePersistableUriPermission(
@@ -1829,16 +1829,14 @@ fun ChatBackupSettingsScreen() {
                                             )
                                         } catch (_: Exception) {
                                         }
-                                        RoomDatabaseRestoreManager.restoreFromBackupUri(context, uri)
+                                        RoomDatabaseRestoreManager.stageRestoreFromUri(context, uri)
                                     } else {
                                         throw IllegalStateException("No restore target")
                                     }
+                                    exitProcess(0)
                                 }
-
-                                roomDbRestoreOperationState = RoomDatabaseRestoreOperation.SUCCESS
-                                roomDbRestoreOperationMessage = targetName
-                                showRoomDbRestoreRestartDialog = true
                             } catch (e: Exception) {
+                                if (RawSnapshotBackupManager.isProcessRestartRequired()) exitProcess(0)
                                 roomDbRestoreOperationState = RoomDatabaseRestoreOperation.FAILED
                                 roomDbRestoreOperationMessage = e.localizedMessage ?: e.toString()
                             }

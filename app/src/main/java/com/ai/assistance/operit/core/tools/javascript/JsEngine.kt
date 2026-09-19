@@ -16,6 +16,8 @@ import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
+import com.ai.assistance.operit.core.tools.packTool.ToolPkgApiCompatibility
+import com.ai.assistance.operit.core.tools.packTool.ToolPkgApiVersion
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
@@ -121,6 +123,7 @@ class JsEngine(private val context: Context) {
         val packageChatId: String?,
         val packageName: String?,
         val toolRuntimeContext: ToolExecutionManager.ToolRuntimeContext?,
+        val toolPkgApiVersion: ToolPkgApiVersion?,
         val toolPkgLogSnapshot: JsToolPkgExecutionContext.LogSnapshot,
         val executionListener: JsExecutionListener?
     )
@@ -349,6 +352,7 @@ class JsEngine(private val context: Context) {
         envOverrides: Map<String, String>,
         onIntermediateResult: ((Any?) -> Unit)?,
         dispatchIntermediateOnMain: Boolean,
+        toolPkgApiVersion: ToolPkgApiVersion?,
         executionListener: JsExecutionListener?
     ): ExecutionSession {
         return ExecutionSession(
@@ -368,6 +372,7 @@ class JsEngine(private val context: Context) {
                     ?.trim()
                     ?.ifBlank { null },
             toolRuntimeContext = ToolExecutionManager.currentToolRuntimeContext(),
+            toolPkgApiVersion = toolPkgApiVersion,
             toolPkgLogSnapshot = toolPkgExecutionContext.capture(script, functionName, params),
             executionListener = executionListener
         )
@@ -376,6 +381,21 @@ class JsEngine(private val context: Context) {
     private fun resolveExecutionSession(callId: String): ExecutionSession? {
         return activeExecutionSessions[callId.trim()]
     }
+
+    private fun resolveToolPkgApiVersionForExecution(
+        params: Map<String, Any?>,
+        explicitApiVersion: String?,
+    ): ToolPkgApiVersion? {
+        val declared = explicitApiVersion?.takeIf { it.isNotBlank() } ?: run {
+            val packageName = (params["__operit_ui_package_name"] ?: params["__operit_package_name"])
+                ?.toString()?.takeIf { it.isNotBlank() } ?: return null
+            packageManager.getToolPkgApiVersion(packageName) ?: return null
+        }
+        return ToolPkgApiCompatibility.requireSupported(declared)
+    }
+
+    private fun buildToolPkgApiContextJson(apiVersion: ToolPkgApiVersion?): Any =
+        apiVersion?.let { JSONObject().put("apiVersion", it.toString()) } ?: JSONObject.NULL
 
     private fun removeExecutionSession(callId: String): ExecutionSession? {
         val normalizedCallId = callId.trim()
@@ -770,6 +790,7 @@ class JsEngine(private val context: Context) {
             onIntermediateResult: ((Any?) -> Unit)? = null,
             dispatchIntermediateOnMain: Boolean = true,
             timeoutSec: Long? = JsTimeoutConfig.MAIN_TIMEOUT_SECONDS.toLong(),
+            toolPkgApiVersion: String? = null,
             executionListener: JsExecutionListener? = null
     ): Any? {
         val effectiveParams = params.toMutableMap()
@@ -822,6 +843,7 @@ class JsEngine(private val context: Context) {
             }
         }
 
+        val executionToolPkgApiVersion = resolveToolPkgApiVersionForExecution(effectiveParams, toolPkgApiVersion)
         val callId = nextExecutionCallId()
         val session =
             createExecutionSession(
@@ -832,6 +854,7 @@ class JsEngine(private val context: Context) {
                 envOverrides = envOverrides,
                 onIntermediateResult = onIntermediateResult,
                 dispatchIntermediateOnMain = dispatchIntermediateOnMain,
+                toolPkgApiVersion = executionToolPkgApiVersion,
                 executionListener = executionListener
             )
         activeExecutionSessions[callId] = session
@@ -855,6 +878,7 @@ class JsEngine(private val context: Context) {
                 .put(functionName)
                 .put(safeTimeoutSec ?: JSONObject.NULL)
                 .put(preTimeoutMs ?: JSONObject.NULL)
+                .put(buildToolPkgApiContextJson(session.toolPkgApiVersion))
                 .toString()
         if (shouldLogTiming) {
             logMessageTiming(
@@ -1021,6 +1045,7 @@ class JsEngine(private val context: Context) {
     fun executeToolPkgMainRegistrationFunction(
         script: String,
         functionName: String,
+        apiVersion: String = ToolPkgApiCompatibility.LEGACY_API_VERSION,
         params: Map<String, Any?> = emptyMap()
     ): ToolPkgMainRegistrationCapture {
         synchronized(toolPkgRegistrationSession) {
@@ -1031,6 +1056,7 @@ class JsEngine(private val context: Context) {
                         script = script,
                         functionName = functionName,
                         params = params,
+                        toolPkgApiVersion = apiVersion,
                         timeoutSec = 12L
                     )
                 return toolPkgRegistrationSession.finish(executionResult)
@@ -2139,6 +2165,16 @@ class JsEngine(private val context: Context) {
         }
 
         @JavascriptInterface
+        fun registerToolPkgChatMessageMenuItem(specJson: String) {
+            toolPkgRegistrationSession.appendChatMessageMenuItem(specJson)
+        }
+
+        @JavascriptInterface
+        fun registerToolPkgChatRuntimeHook(specJson: String) {
+            toolPkgRegistrationSession.appendChatRuntimeHook(specJson)
+        }
+
+        @JavascriptInterface
         fun registerToolPkgToolLifecycleHook(specJson: String) {
             toolPkgRegistrationSession.appendToolLifecycleHook(specJson)
         }
@@ -2849,6 +2885,13 @@ class JsEngine(private val context: Context) {
         @JavascriptInterface
         fun logInfo(message: String) {
             AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(message))
+        }
+
+        @JavascriptInterface
+        fun logWarnForCall(callId: String, message: String) {
+            val session = resolveExecutionSession(callId)
+            session?.executionListener?.onCallLog(callId, "warn", message)
+            AppLogger.w(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
 
         @JavascriptInterface

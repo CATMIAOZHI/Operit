@@ -108,6 +108,7 @@ object MigrationStateStore {
          * 应落回的目标状态（恢复前为 COMPLETED 则保持 COMPLETED，否则 IDLE）。
          */
         val finalState: State? = null,
+        val operation: String? = null,
     ) {
         companion object {
             val IDLE = Snapshot(State.IDLE, null, null)
@@ -158,7 +159,11 @@ object MigrationStateStore {
         } else {
             null
         }
-        return Snapshot(state, uri, safetyBackupPath, finalState)
+        val operation = lines.getOrNull(4)?.trim()?.takeIf { it.isNotEmpty() }
+        if (operation != null && operation != "ROOM_RESTORE") {
+            return Snapshot(State.NEEDS_RECOVERY, null, null)
+        }
+        return Snapshot(state, uri, safetyBackupPath, finalState, operation)
     }
 
     fun isMainDataAccessAllowed(context: Context): Boolean =
@@ -182,7 +187,8 @@ object MigrationStateStore {
         state: State,
         uri: Uri? = null,
         safetyBackupPath: String? = null,
-        finalState: State? = null
+        finalState: State? = null,
+        operation: String? = null,
     ): Boolean {
         check(state != State.NEEDS_RECOVERY) {
             "NEEDS_RECOVERY is a virtual state and must not be written to disk"
@@ -201,6 +207,8 @@ object MigrationStateStore {
             if (safetyBackupPath != null) append(safetyBackupPath)
             append('\n')
             if (finalState != null) append(finalState.name)
+            append('\n')
+            if (operation != null) append(operation)
             append('\n')
         }
         return try {
@@ -227,9 +235,10 @@ object MigrationStateStore {
         state: State,
         uri: Uri? = null,
         safetyBackupPath: String? = null,
-        finalState: State? = null
+        finalState: State? = null,
+        operation: String? = null,
     ) {
-        check(write(context, state, uri, safetyBackupPath, finalState)) {
+        check(write(context, state, uri, safetyBackupPath, finalState, operation)) {
             "Failed to persist migration state $state"
         }
     }
@@ -276,8 +285,10 @@ private class AtomicFileStateIo(private val file: File) : MigrationStateFileIo {
         try {
             output = atomicFile.startWrite()
             output.write(payload.toByteArray(Charsets.UTF_8))
+            output.fd.sync()
             atomicFile.finishWrite(output)
             output = null
+            syncRestoreDirectory(checkNotNull(file.parentFile))
         } catch (e: Exception) {
             try {
                 output?.let { atomicFile.failWrite(it) }
