@@ -128,14 +128,12 @@ export function buildChatThemeStyle(theme: WebThemeSnapshot | null): ThemeStyle 
   const isLight = theme.theme_mode === 'light';
   const palette = theme.palette;
   const hasBackgroundAsset = Boolean(theme.background.asset_url);
-  const primary =
-    (theme.use_custom_colors ? theme.primary_color : null) ||
-    palette.primary_color ||
-    (isLight ? '#FF6B8E' : '#FFB3C6');
-  const secondary =
-    (theme.use_custom_colors ? theme.secondary_color : null) ||
-    palette.secondary_color ||
-    '#FF85A2';
+  // The palette already carries the accent Android resolved, including the guard that deepens a
+  // custom colour which would not be readable on the light surfaces. The raw pick must not win
+  // here: with the same pale custom colour it is 1.39:1 on the light panel, which is what left the
+  // web chat's accent text unreadable on the phone.
+  const primary = palette.primary_color || (isLight ? '#FF6B8E' : '#FFB3C6');
+  const secondary = palette.secondary_color || '#FF85A2';
   const backgroundColor = palette.background_color || (isLight ? '#FFF0F5' : '#1F1419');
   const surfaceColor = palette.surface_color || (isLight ? '#FFFFFF' : '#2A1F25');
   const surfaceVariantColor =

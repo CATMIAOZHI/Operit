@@ -501,16 +501,20 @@ internal fun generateDarkColorScheme(
 ): ColorScheme {
     val adjustedPrimaryColor = lightenColor(primaryColor, 0.2f)
     val adjustedSecondaryColor = lightenColor(secondaryColor, 0.2f)
+    // The fixed 0.2 is not enough for a very dark pick, so a dark custom color still needs the
+    // contrast guard on the dark surfaces.
+    val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
+    val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
 
     val onPrimary = when (onColorMode) {
         ON_COLOR_MODE_LIGHT -> Color.White
         ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(adjustedPrimaryColor)
+        else -> getContrastingTextColor(accent)
     }
     val onSecondary = when (onColorMode) {
         ON_COLOR_MODE_LIGHT -> Color.White
         ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(adjustedSecondaryColor)
+        else -> getContrastingTextColor(accentSecondary)
     }
 
     val primaryContainer = darkenColor(primaryColor, 0.3f)
@@ -520,11 +524,11 @@ internal fun generateDarkColorScheme(
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = true).copy(
-            primary = adjustedPrimaryColor,
+            primary = accent,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,
             onPrimaryContainer = onPrimaryContainer,
-            secondary = adjustedSecondaryColor,
+            secondary = accentSecondary,
             onSecondary = onSecondary,
             secondaryContainer = secondaryContainer,
             onSecondaryContainer = onSecondaryContainer,

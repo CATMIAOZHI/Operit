@@ -851,7 +851,7 @@
     <string name="theme_preview">Color Preview</string>
     <string name="theme_primary_button">Main Button</string>
     <string name="theme_secondary_button">Secondary Button</string>
-    <string name="theme_contrast_tip">Tip: High contrast color combinations work best</string>
+    <string name="theme_contrast_tip">Tip: High contrast color combinations work best. A color that is too pale is deepened automatically so its text stays readable.</string>
     <string name="theme_save_colors">Save Color Settings</string>
     <string name="theme_title_background">Background Customization</string>
     <string name="theme_bg_media">Background Media Settings</string>
