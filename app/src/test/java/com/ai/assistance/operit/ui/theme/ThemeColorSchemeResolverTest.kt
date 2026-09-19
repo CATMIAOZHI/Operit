@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import org.junit.Assert.assertEquals
@@ -222,6 +223,82 @@ class ThemeColorSchemeResolverTest {
         }
     }
 
+    @Test
+    fun `a requested label tone is kept while it is visible and rescued when it is not`() {
+        // The shipped light palette draws its own app bar at 2.7:1, so a soft requested tone is a
+        // legitimate choice and has to survive; only an invisible one is replaced.
+        val soft = Color(0xFFFF6B8E.toInt())
+        assertEquals(Color.White, resolveContrastingTextColor(soft, UserPreferencesManager.ON_COLOR_MODE_LIGHT))
+        assertEquals(Color.Black, resolveContrastingTextColor(soft, UserPreferencesManager.ON_COLOR_MODE_DARK))
+        assertTrue(contrastRatio(Color.White, soft) >= 1.5)
+
+        // A black label on a black accent (and the mirror case) is not a tone: it measures 1:1.
+        val black = Color(0xFF000000.toInt())
+        val white = Color(0xFFFFFFFF.toInt())
+        assertEquals(1.0, contrastRatio(Color.Black, black), 1e-9)
+        assertEquals(Color.White, resolveContrastingTextColor(black, UserPreferencesManager.ON_COLOR_MODE_DARK))
+        assertEquals(Color.Black, resolveContrastingTextColor(white, UserPreferencesManager.ON_COLOR_MODE_LIGHT))
+        // The measured side is still what an automatic setting gets.
+        assertEquals(Color.Black, resolveContrastingTextColor(soft, UserPreferencesManager.ON_COLOR_MODE_AUTO))
+    }
+
+    @Test
+    fun `the rescued label reaches the accent target through both generators`() {
+        val light =
+            generateLightColorScheme(
+                Color(0xFF000000.toInt()),
+                Color(0xFF000000.toInt()),
+                UserPreferencesManager.ON_COLOR_MODE_DARK,
+            )
+        assertTrue(contrastRatio(light.onPrimary, light.primary) >= 4.5)
+        assertTrue(contrastRatio(light.onSecondary, light.secondary) >= 4.5)
+
+        val dark =
+            generateDarkColorScheme(
+                Color(0xFFFFFFFF.toInt()),
+                Color(0xFFFFFFFF.toInt()),
+                UserPreferencesManager.ON_COLOR_MODE_LIGHT,
+            )
+        assertTrue(contrastRatio(dark.onPrimary, dark.primary) >= 4.5)
+        assertTrue(contrastRatio(dark.onSecondary, dark.secondary) >= 4.5)
+
+        // The resolver behind the web chat answers the same way.
+        val resolved =
+            resolveThemeColorScheme(
+                snapshot(
+                    useCustomColors = true,
+                    primary = 0xFF000000.toInt(),
+                    secondary = 0xFF000000.toInt(),
+                    onColorMode = UserPreferencesManager.ON_COLOR_MODE_DARK,
+                ),
+                darkTheme = false,
+            )
+        assertTrue(contrastRatio(resolved.onPrimary, resolved.primary) >= 4.5)
+    }
+
+    @Test
+    fun `a custom drawer accent is readable on the container it is painted on`() {
+        // The drawer switch is independent of the main custom colors, so this is the same defect in
+        // a second place: a pale pick is drawn as the title and the status line there.
+        val pale = Color(0xFFFFCDE8.toInt())
+        val onPanel = ensureAccentReadableOn(pale, RainyLightPanel)
+        assertTrue(contrastRatio(onPanel, RainyLightPanel) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(pale, RainyLightPanel) < CONTRAST_TARGET)
+        // Deepened, not replaced: the pick keeps its hue.
+        assertEquals(hueOf(pale), hueOf(onPanel), HUE_TOLERANCE)
+
+        // A dark pick on a dark drawer lightens instead.
+        val dark = Color(0xFF102030.toInt())
+        val onDarkPanel = ensureAccentReadableOn(dark, RainyDarkPanel)
+        assertTrue(contrastRatio(onDarkPanel, RainyDarkPanel) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(dark, RainyDarkPanel) < CONTRAST_TARGET)
+        assertTrue(onDarkPanel.luminance() > dark.luminance())
+
+        // A pick that already reads on the container comes back untouched.
+        val readable = Color(0xFF336699.toInt())
+        assertEquals(readable, ensureAccentReadableOn(readable, RainyLightPanel))
+    }
+
     /** Independent WCAG contrast check, so the assertion does not reuse the production maths. */
     private fun contrastRatio(first: Color, second: Color): Double {
         fun channel(value: Float): Double =
@@ -276,6 +353,7 @@ class ThemeColorSchemeResolverTest {
         useCustomColors: Boolean = false,
         primary: Int? = null,
         secondary: Int? = null,
+        onColorMode: String = UserPreferencesManager.ON_COLOR_MODE_AUTO,
     ) = ThemePreferenceSnapshot(
         source = "test",
         themeMode = UserPreferencesManager.THEME_MODE_LIGHT,
@@ -283,7 +361,7 @@ class ThemeColorSchemeResolverTest {
         useCustomColors = useCustomColors,
         customPrimaryColor = primary,
         customSecondaryColor = secondary,
-        onColorMode = UserPreferencesManager.ON_COLOR_MODE_AUTO,
+        onColorMode = onColorMode,
         useBackgroundImage = false,
         backgroundMediaType = UserPreferencesManager.MEDIA_TYPE_IMAGE,
         backgroundImageOpacity = 0.3f,

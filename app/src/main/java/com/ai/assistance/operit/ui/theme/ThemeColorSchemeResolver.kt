@@ -153,18 +153,8 @@ private fun generateResolvedLightColorScheme(
     // pick has to be strengthened before it is readable on the light surfaces.
     val accent = ensureResolvedLightAccentContrast(primaryColor)
     val accentSecondary = ensureResolvedLightAccentContrast(secondaryColor)
-    val onPrimary =
-        when (onColorMode) {
-            ON_COLOR_MODE_LIGHT -> Color.White
-            ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(accent)
-        }
-    val onSecondary =
-        when (onColorMode) {
-            ON_COLOR_MODE_LIGHT -> Color.White
-            ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(accentSecondary)
-        }
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
     // Tints keep the value the user picked; only the accent itself is strengthened.
     val primaryContainer = lightenResolvedColor(primaryColor, 0.7f)
@@ -199,18 +189,8 @@ private fun generateResolvedDarkColorScheme(
     val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
     val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
 
-    val onPrimary =
-        when (onColorMode) {
-            ON_COLOR_MODE_LIGHT -> Color.White
-            ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(accent)
-        }
-    val onSecondary =
-        when (onColorMode) {
-            ON_COLOR_MODE_LIGHT -> Color.White
-            ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(accentSecondary)
-        }
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
     val primaryContainer = darkenResolvedColor(primaryColor, 0.3f)
     // Measured like every other label: a light pick leaves this container light enough that a
@@ -236,10 +216,10 @@ private fun generateResolvedDarkColorScheme(
 
 /**
  * The label colour for a filled surface: whichever of black and white actually contrasts better,
- * so the pair never lands below ~4.58:1 on an opaque fill. Only [ON_COLOR_MODE_LIGHT] and
- * [ON_COLOR_MODE_DARK] skip the measurement, because they are the user asking for that side.
+ * so the pair never lands below ~4.58:1 on an opaque fill. Shared with the composed scheme so both
+ * palettes answer this the same way.
  */
-private fun getResolvedContrastingTextColor(backgroundColor: Color): Color {
+internal fun getResolvedContrastingTextColor(backgroundColor: Color): Color {
     return if (resolvedContrastRatio(Color.Black, backgroundColor) >=
         resolvedContrastRatio(Color.White, backgroundColor)
     ) {
@@ -248,6 +228,45 @@ private fun getResolvedContrastingTextColor(backgroundColor: Color): Color {
         Color.White
     }
 }
+
+/**
+ * The label colour for a filled accent: the measured side, unless the user's theme-text-colour
+ * setting asks for a specific one and that side still reads on the fill. The setting is a
+ * preference about tone, and a soft tone is legitimate - the shipped light palette draws its own
+ * app bar at 2.7:1 - so the setting is honoured down to [LABEL_VISIBILITY_FLOOR]. Below that the
+ * requested colour is not a tone but a smudge: a black label on a black accent, or a white one on
+ * a white accent, measures 1:1, which is the defect this guards.
+ */
+internal fun resolveContrastingTextColor(fill: Color, onColorMode: String): Color {
+    val requested =
+        when (onColorMode) {
+            ON_COLOR_MODE_LIGHT -> Color.White
+            ON_COLOR_MODE_DARK -> Color.Black
+            else -> return getResolvedContrastingTextColor(fill)
+        }
+    return if (resolvedContrastRatio(requested, fill) >= LABEL_VISIBILITY_FLOOR) {
+        requested
+    } else {
+        getResolvedContrastingTextColor(fill)
+    }
+}
+
+/**
+ * The accent guard against a surface that is not the palette's own ([ensureResolvedLightAccentContrast]
+ * and [ensureResolvedDarkAccentContrast] answer for the two shipped card colours). The navigation
+ * drawer paints a custom accent as *text* - its title and its status line - and its container can
+ * be the user's own background colour, so the surface to answer for is that container. The
+ * direction follows the container: a light one deepens the accent, a dark one lightens it. Colors
+ * that already read there come back untouched.
+ */
+internal fun ensureAccentReadableOn(accent: Color, surface: Color): Color =
+    ensureResolvedAccentContrast(
+        accent,
+        surface,
+        lighten =
+            resolvedContrastRatio(Color.White, surface) >
+                resolvedContrastRatio(Color.Black, surface),
+    )
 
 private fun lightenResolvedColor(color: Color, factor: Float): Color {
     val r = color.red + (1f - color.red) * factor
@@ -321,6 +340,12 @@ private fun ensureResolvedAccentContrast(
  * lightness floor to drop) before the target could be raised to AA's 4.5.
  */
 private const val ACCENT_TEXT_CONTRAST_TARGET = 3.0
+
+/**
+ * The floor for a label the user asked for by name. It is deliberately far below the accent
+ * target: this only has to catch a label that cannot be seen at all, not a soft one.
+ */
+private const val LABEL_VISIBILITY_FLOOR = 1.5
 
 private const val ACCENT_SATURATION_CEILING = 0.75f
 private const val ACCENT_LIGHTNESS_STEP = 0.04f

@@ -11,6 +11,7 @@ import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.theme.ensureAccentReadableOn
 import com.ai.assistance.operit.ui.theme.getTextColorForBackground
 import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
 import com.ai.assistance.operit.ui.theme.isWaterGlassSupported
@@ -51,32 +52,23 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
     val defaultTitleColor = MaterialTheme.colorScheme.primary
     val defaultStatusColor = MaterialTheme.colorScheme.primary
     val defaultDividerColor = defaultTitleColor.copy(alpha = 0.42f)
+    // The drawer accent is painted as *text* (the title and the status line), and this switch is
+    // independent of the main custom colors, so a pale pick would otherwise disappear into the
+    // container exactly like the accent does on the statistics cards.
+    val customAccentColor =
+        customNavigationDrawerAccentColor
+            ?.takeIf { useCustomNavigationDrawerAccentColor }
+            ?.let { ensureAccentReadableOn(Color(it), MaterialTheme.colorScheme.surface) }
     val defaultAppearance =
         NavigationDrawerAppearance(
             containerColor = MaterialTheme.colorScheme.surface,
-            titleColor =
-                if (useCustomNavigationDrawerAccentColor) {
-                    customNavigationDrawerAccentColor?.let(::Color) ?: defaultTitleColor
-                } else {
-                    defaultTitleColor
-                },
-            statusAvailableColor =
-                if (useCustomNavigationDrawerAccentColor) {
-                    customNavigationDrawerAccentColor?.let(::Color) ?: defaultStatusColor
-                } else {
-                    defaultStatusColor
-                },
+            titleColor = customAccentColor ?: defaultTitleColor,
+            statusAvailableColor = customAccentColor ?: defaultStatusColor,
             itemColor = MaterialTheme.colorScheme.onSurfaceVariant,
             buttonContainerColor = MaterialTheme.colorScheme.surfaceVariant,
             selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
             selectedContentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-            dividerColor =
-                if (useCustomNavigationDrawerAccentColor) {
-                    customNavigationDrawerAccentColor?.let { Color(it).copy(alpha = 0.42f) }
-                        ?: defaultDividerColor
-                } else {
-                    defaultDividerColor
-                },
+            dividerColor = customAccentColor?.copy(alpha = 0.42f) ?: defaultDividerColor,
             waterGlassEnabled = waterGlassEnabled,
             buttonLiquidGlassEnabled = buttonLiquidGlassEnabled,
         )
@@ -87,6 +79,10 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
     }
 
     val containerColor = Color(customColorValue)
+    val containerAccentColor =
+        customNavigationDrawerAccentColor
+            ?.takeIf { useCustomNavigationDrawerAccentColor }
+            ?.let { ensureAccentReadableOn(Color(it), containerColor) }
     val onContainerColor = getTextColorForBackground(containerColor)
     val accentColor = lerp(onContainerColor, MaterialTheme.colorScheme.primary, 0.28f)
     val buttonContainerColor = lerp(containerColor, onContainerColor, 0.08f)
@@ -97,29 +93,13 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
 
     return NavigationDrawerAppearance(
         containerColor = containerColor,
-        titleColor =
-            if (useCustomNavigationDrawerAccentColor) {
-                customNavigationDrawerAccentColor?.let(::Color) ?: accentColor
-            } else {
-                accentColor
-            },
-        statusAvailableColor =
-            if (useCustomNavigationDrawerAccentColor) {
-                customNavigationDrawerAccentColor?.let(::Color) ?: accentColor
-            } else {
-                accentColor
-            },
+        titleColor = containerAccentColor ?: accentColor,
+        statusAvailableColor = containerAccentColor ?: accentColor,
         itemColor = onContainerColor.copy(alpha = 0.76f),
         buttonContainerColor = buttonContainerColor,
         selectedContainerColor = selectedContainerColor,
         selectedContentColor = getTextColorForBackground(selectedContainerColor),
-        dividerColor =
-            if (useCustomNavigationDrawerAccentColor) {
-                customNavigationDrawerAccentColor?.let { Color(it).copy(alpha = 0.42f) }
-                    ?: accentColor.copy(alpha = 0.42f)
-            } else {
-                accentColor.copy(alpha = 0.42f)
-            },
+        dividerColor = containerAccentColor?.copy(alpha = 0.42f) ?: accentColor.copy(alpha = 0.42f),
         waterGlassEnabled = waterGlassEnabled,
         buttonLiquidGlassEnabled = buttonLiquidGlassEnabled,
     )
