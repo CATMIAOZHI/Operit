@@ -55,6 +55,16 @@ internal fun PermissionReviewEvent.effectiveExactOverrideState(
         exactOverrideState
     }
 
+/**
+ * The text the reviewer's own message for [reviewId] carries.
+ *
+ * A reviewer runs its reviews in a chat of its own, one exchange per review, and the message that asks
+ * for a review states the review it answers under `review_id=`. That makes this string the way back
+ * from a review record to the exchange that judged it, for a reader who wants to see that one review
+ * inside a conversation several reviews share: no other message of that transcript carries it.
+ */
+internal fun permissionReviewJumpMarker(reviewId: String): String = "review_id=$reviewId"
+
 @Serializable
 data class PermissionReviewAction(
     val targetId: String,
@@ -227,6 +237,15 @@ data class PermissionReviewEvent(
     val exactOverrideExpiresAt: Long? = null,
     val exactOverrideApplied: Boolean = false,
     val resolutionSource: String? = null,
+    /**
+     * The authorization the reviewer decided under: the policy version it read, the hash of the
+     * retained instructions it was given, and the workspace block its prompt carried. A decision is
+     * only shown to the classifier while all three still match, which is this codebase's equivalent
+     * of the reference implementation filtering prior reviews by authorization version.
+     */
+    val policyVersion: String? = null,
+    val retainedInstructionsHash: String? = null,
+    val workspaceKey: String? = null,
 )
 
 object PermissionReviewEventRepository {
@@ -312,11 +331,13 @@ object PermissionReviewEventRepository {
                                         exactOverrideApplied = false,
                                     )
                                 } else {
+                                    // The override lifecycle is pending state and goes; whether the
+                                    // one-shot override was actually applied is a record of what
+                                    // happened, and the classifier has to keep reading it as one.
                                     event.copy(
                                         exactOverrideRecorded = false,
                                         exactOverrideState = null,
                                         exactOverrideExpiresAt = null,
-                                        exactOverrideApplied = false,
                                     )
                                 }
                             // Older builds wrote a single neutral value for both outcomes.
@@ -373,6 +394,20 @@ object PermissionReviewEventRepository {
     fun findById(id: String): PermissionReviewEvent? {
         ensureStoredEventsLoaded()
         return _events.value.firstOrNull { event -> event.id == id }
+    }
+
+    /**
+     * The recorded reviews of these chats, oldest first. A caller passes the chat it is judging and
+     * the conversation that chat belongs to, because a sub-agent's reviews are recorded under the
+     * sub-agent's own chat while the classifier reasons about the root conversation.
+     *
+     * The stored history is loaded first for the same reason the other readers do it: a caller that
+     * arrives before the background load would otherwise read a list that is still being decoded and
+     * see the chat's own earlier decisions as absent.
+     */
+    fun decisionsFor(parentChatIds: Set<String>): List<PermissionReviewEvent> {
+        ensureStoredEventsLoaded()
+        return _events.value.filter { event -> event.parentChatId in parentChatIds }
     }
 
     fun findForInvocation(

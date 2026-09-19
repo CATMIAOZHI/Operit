@@ -82,11 +82,15 @@ import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.ui.features.chat.components.part.formatToolExecutionDuration
 import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagentDisplayedTool
+import com.ai.assistance.operit.ui.features.chat.components.part.permissionReviewNoteForDisplay
+import com.ai.assistance.operit.ui.features.tokenstats.formatCount
 import com.ai.assistance.operit.ui.theme.stoppedAttention
+import com.ai.assistance.operit.ui.permissions.PRIOR_REVIEW_FINGERPRINT_CHARS
 import com.ai.assistance.operit.ui.permissions.PermissionReviewOutcome
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEvent
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
 import com.ai.assistance.operit.ui.permissions.PermissionReviewFailureKind
+import com.ai.assistance.operit.ui.permissions.permissionReviewJumpMarker
 import com.ai.assistance.operit.ui.permissions.PermissionReviewAuthorization
 import com.ai.assistance.operit.ui.permissions.PermissionReviewRiskLevel
 import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
@@ -98,9 +102,10 @@ import com.ai.assistance.operit.ui.permissions.PermissionRiskScoringSkip
 import com.ai.assistance.operit.ui.permissions.PermissionRiskVerdict
 import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
+import com.ai.assistance.operit.ui.permissions.cacheReadPercent
 import com.ai.assistance.operit.ui.permissions.display
+import com.ai.assistance.operit.ui.permissions.inputTokens
 import com.ai.assistance.operit.ui.permissions.permissionRiskScoreSummary
-import com.ai.assistance.operit.ui.features.chat.components.part.permissionReviewNoteForDisplay
 import kotlinx.coroutines.delay
 
 internal enum class SubagentListFilter {
@@ -281,6 +286,19 @@ internal fun findPermissionReviewEventForRun(
                 )
     }
 
+/**
+ * Files the landing spot for a jump into [run]'s reviewer conversation.
+ *
+ * Several reviews of one conversation share a reviewer chat, so opening it tells the reader which
+ * conversation the review ran in but not which review they asked for. The request names the review, so
+ * the transcript lands on the exchange that judged it instead of wherever the chat last was; a run with
+ * no review event, or an ordinary sub-agent run, leaves nothing to land on.
+ */
+private fun requestReviewJump(run: SubagentRunEntity, event: PermissionReviewEvent?) {
+    if (event == null) return
+    TranscriptJumpHost.request(run.childChatId, permissionReviewJumpMarker(event.id))
+}
+
 internal fun findSubagentRunForPermissionReviewEvent(
     runs: List<SubagentRunEntity>,
     event: PermissionReviewEvent,
@@ -403,12 +421,16 @@ internal fun SubagentSwitcherSheet(
                     items = sortedRuns,
                     key = { it.id },
                 ) { run ->
+                    val reviewEvent = findPermissionReviewEventForRun(reviewEvents, run)
                     SubagentRunRow(
                         run = run,
-                        reviewEvent = findPermissionReviewEventForRun(reviewEvents, run),
+                        reviewEvent = reviewEvent,
                         selected = run.childChatId == currentChildChatId,
                         showActions = false,
-                        onClick = { onSelect(run) },
+                        onClick = {
+                            requestReviewJump(run, reviewEvent)
+                            onSelect(run)
+                        },
                     )
                 }
             }
@@ -749,13 +771,17 @@ internal fun SubagentManagementDialog(
                             items = visibleRuns,
                             key = { it.id },
                         ) { run ->
+                            val reviewEvent =
+                                findPermissionReviewEventForRun(reviewEvents, run)
                             SubagentRunRow(
                                 run = run,
-                                reviewEvent =
-                                    findPermissionReviewEventForRun(reviewEvents, run),
+                                reviewEvent = reviewEvent,
                                 selected = run.childChatId == currentChildChatId,
                                 showActions = true,
-                                onClick = { onSelect(run) },
+                                onClick = {
+                                    requestReviewJump(run, reviewEvent)
+                                    onSelect(run)
+                                },
                                 onStop = { onStop(run) },
                                 onArchive = { onArchive(run) },
                                 onRestore = { onRestore(run) },
@@ -1217,6 +1243,68 @@ private fun PermissionRiskScoresPage(records: List<PermissionRiskScoreRecord>, t
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
+                        // What this batch's own classification call cost. Nothing is said for a batch
+                        // that was never asked, or for one that is still being asked: neither has a
+                        // call to report, and an unknown token count is not a zero.
+                        if (record.skip == null &&
+                            display != PermissionRiskScoreDisplay.RUNNING
+                        ) {
+                            val usage = record.usage
+                            val input = usage?.inputTokens()
+                            val output = usage?.outputTokens
+                            val cached = usage?.cachedInputTokens
+                            val share = usage?.cacheReadPercent()
+                            val usageText =
+                                when {
+                                    input == null || output == null ->
+                                        stringResource(
+                                            R.string.permission_risk_score_usage_unreported
+                                        )
+                                    cached != null && share != null ->
+                                        stringResource(
+                                            R.string.permission_risk_score_usage_cached,
+                                            formatCount(input),
+                                            formatCount(cached),
+                                            share,
+                                            formatCount(output),
+                                        )
+                                    else ->
+                                        // A provider that reported no cache field is not the same as
+                                        // one that reported a cache read of nothing, so the cache read
+                                        // is named as unreported rather than left out.
+                                        stringResource(
+                                            R.string.permission_risk_score_usage_cache_unreported,
+                                            formatCount(input),
+                                            formatCount(output),
+                                        )
+                                }
+                            Text(
+                                text = usageText,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        // Only a batch that reached the classifier can say what it was shown; a batch
+                        // that was skipped was never asked.
+                        if (record.skip == null) {
+                            Text(
+                                text =
+                                    if (record.priorReviewCount > 0) {
+                                        stringResource(
+                                            R.string.permission_risk_score_prior_reviews,
+                                            record.priorReviewCount,
+                                            record.priorReviewChars,
+                                            record.priorReviewHash.take(PRIOR_REVIEW_FINGERPRINT_CHARS),
+                                        )
+                                    } else {
+                                        stringResource(
+                                            R.string.permission_risk_score_prior_reviews_none
+                                        )
+                                    },
+                                style = MaterialTheme.typography.labelMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                         if (display == PermissionRiskScoreDisplay.FAILED) {
                             Text(
                                 text = stringResource(R.string.permission_risk_score_failed_detail),
@@ -1337,7 +1425,10 @@ private fun RecentPermissionDenialsPage(
                     modifier =
                         Modifier.fillMaxWidth()
                             .clickable(enabled = run != null) {
-                                run?.let(onSelectRun)
+                                run?.let { selectedRun ->
+                                    requestReviewJump(selectedRun, event)
+                                    onSelectRun(selectedRun)
+                                }
                             },
                 ) {
                     Column(

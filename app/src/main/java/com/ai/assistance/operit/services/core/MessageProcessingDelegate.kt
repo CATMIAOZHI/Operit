@@ -1132,6 +1132,7 @@ class MessageProcessingDelegate(
                     workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
                     functionType = turnOptions.functionType,
+                    providerSessionId = turnOptions.providerSessionId,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
                     maxTokens = effectiveMaxTokens,

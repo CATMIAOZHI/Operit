@@ -552,6 +552,9 @@ class MessageCoordinationDelegate(
         }
         val isBackgroundSend =
             !chatIdOverride.isNullOrBlank() && chatIdOverride != chatHistoryDelegate.currentChatId.value
+        // A turn that disables the summary keeps its chat intact: a later turn may continue that
+        // conversation and rely on the earlier prompt still being there verbatim.
+        val summaryDisabled = forceDisableSummary || turnOptions.disableSummary
         // 自动续聊由总结消息中的续接指令驱动，不能消费用户尚未提交的编辑器状态。
         val shouldReadComposerState = !isBackgroundSend && !isAutoContinuation
         val effectiveMessageTextOverride = if (isAutoContinuation) "" else messageTextOverride
@@ -603,7 +606,7 @@ class MessageCoordinationDelegate(
                         chatModelConfigIdOverride = chatModelConfigIdOverride,
                         chatModelIndexOverride = chatModelIndexOverride,
                         suppressUserMessageInHistory = suppressUserMessageInHistory,
-                        forceDisableSummary = forceDisableSummary,
+                        forceDisableSummary = summaryDisabled,
                         enableGroupOrchestration = false,
                         turnOptions = turnOptions
                     )
@@ -717,7 +720,7 @@ class MessageCoordinationDelegate(
                 tokenUsageThreshold = tokenUsageThresholdForSend,
                 replyToMessage = pendingReply,
                 isAutoContinuation = isAutoContinuation,
-                enableSummary = !turnOptions.isCollaborationAgent && !forceDisableSummary && !isBackgroundSend && chatContextSettings.enableSummary,
+                enableSummary = !turnOptions.isCollaborationAgent && !summaryDisabled && !isBackgroundSend && chatContextSettings.enableSummary,
                 chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                 chatModelIndexOverride = resolvedChatModelIndexOverride,
                 memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
@@ -749,7 +752,7 @@ class MessageCoordinationDelegate(
         if (pendingText.isBlank() && currentAttachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn) return false
 
         // 如果不是续写，检查是否需要总结
-        if (!turnOptions.isCollaborationAgent && !forceDisableSummary && turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
+        if (!turnOptions.isCollaborationAgent && !summaryDisabled && turnOptions.persistTurn && !isBackgroundSend && !isContinuation && !skipSummaryCheck) {
             val currentMessages = runBlocking { chatHistoryDelegate.getCurrentRuntimeChatHistorySnapshot() }
             val currentTokens = tokenStatsDelegate.currentWindowSizeFlow.value
 

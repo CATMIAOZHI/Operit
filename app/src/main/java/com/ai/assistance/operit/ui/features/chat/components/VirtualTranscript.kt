@@ -324,6 +324,72 @@ internal fun VirtualTranscript(
             process.groups[messageIndex]?.let { process.expand(it.key) }
         }
     }
+    // A reader can ask for one item of a conversation that was judged in another chat. The request is
+    // filed before the switch and read here, because this is where the messages and the scroll state
+    // are; the jump that lands on a message already exists for the locator, so the request only names
+    // the exchange. It names the review's own message, and the landing spot is the answer to it: the
+    // request is what the reader already knows, the verdict is what they came for.
+    val jumpRequest = TranscriptJumpHost.pendingFor(chatId)
+    var jumpSearched by remember(chatId) { mutableStateOf<Long?>(null) }
+    var jumpLocatedAt by remember(chatId) { mutableStateOf<Long?>(null) }
+    LaunchedEffect(jumpRequest?.token, rows.map { it.key }) {
+        val request = jumpRequest ?: return@LaunchedEffect
+        val requestIndex =
+            messages.indexOfFirst { message -> message.content.contains(request.marker) }
+        if (requestIndex >= 0) {
+            TranscriptJumpHost.consume(request.token)
+            // The reader asked for one exchange of this chat, so where they last left it is not where
+            // they belong: the bookmark restore would take the scroll back, so it stops here.
+            restoring = false
+            onFollowingChange?.invoke(false)
+            // A review still being written has only the request so far, and then that is where the
+            // reader belongs.
+            val target = messages.getOrNull(requestIndex + 1) ?: messages[requestIndex]
+            pendingJump = target.timestamp
+            return@LaunchedEffect
+        }
+        // A reviewer conversation holds one exchange per review, so the review the reader asked for can
+        // sit in an earlier page than the one this chat opened on. The locator searches the whole
+        // conversation rather than the loaded window, and revealing a message loads the page that holds
+        // it, which is how the exchange is reached. The search runs once for this chat's composition.
+        val searched = jumpSearched == request.token
+        val located =
+            if (searched) {
+                jumpLocatedAt
+            } else {
+                loadLocator?.invoke(chatId, request.marker)?.firstOrNull()?.timestamp
+            }
+        // Recorded only once the search returned, and with what it found: an effect cancelled while it
+        // was reading would otherwise never look again and the click would do nothing at all, while an
+        // effect cancelled after it looked can go straight on to what it found.
+        if (!searched) {
+            jumpSearched = request.token
+            jumpLocatedAt = located
+        }
+        if (located == null) {
+            // Nothing carries the marker: the review is gone, or this is not the chat it ran in.
+            // Dropping the request is what keeps it from pulling the list about later.
+            TranscriptJumpHost.consume(request.token)
+            return@LaunchedEffect
+        }
+        if (messages.any { it.timestamp == located }) {
+            TranscriptJumpHost.consume(request.token)
+            restoring = false
+            onFollowingChange?.invoke(false)
+            pendingJump = located
+            return@LaunchedEffect
+        }
+        // The page this loads carries the answer as well, and the effect runs again once the page is
+        // loaded: that is when the marker is found and the landing spot becomes the answer. Until that
+        // page is confirmed to exist, the reader's own place in this chat is left where it was.
+        if (reveal?.invoke(located) != true) {
+            TranscriptJumpHost.consume(request.token)
+            return@LaunchedEffect
+        }
+        restoring = false
+        onFollowingChange?.invoke(false)
+        pendingJump = located
+    }
     var showLocator by remember(chatId) { mutableStateOf(false) }
     var locatorAnchor by remember(chatId) { mutableStateOf(0L) }
     var locatorEntries by remember(chatId) { mutableStateOf<List<ChatMessageLocatorPreview>>(emptyList()) }
