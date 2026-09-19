@@ -25,4 +25,4 @@ fun isHighContrast(backgroundColor: Color): Boolean {
                     0.587 * backgroundColor.green +
                     0.114 * backgroundColor.blue
     return luminance < 0.3 || luminance > 0.7
-} 
+}
