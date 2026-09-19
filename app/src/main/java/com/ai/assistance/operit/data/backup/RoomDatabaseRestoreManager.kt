@@ -192,9 +192,22 @@ object RoomDatabaseRestoreManager {
         ZipInputStream(BufferedInputStream(FileInputStream(archive))).use { input ->
             while (true) {
                 val entry = input.nextEntry ?: break
-                if (entry.name in expected) {
+                // The entry name read from the archive is only ever compared, and each accepted
+                // name resolves to a target built from constants, so an archive cannot steer the
+                // extraction outside the workspace (Zip Slip). The canonical check below keeps
+                // that true even if the accepted set is widened later.
+                val target = when (entry.name) {
+                    DB_NAME -> File(workspace, DB_NAME)
+                    "$DB_NAME-wal" -> File(workspace, "$DB_NAME-wal")
+                    "$DB_NAME-shm" -> File(workspace, "$DB_NAME-shm")
+                    else -> null
+                }
+                if (target != null) {
                     check(!entry.isDirectory && seen.add(entry.name)) { "Duplicate database archive entry" }
-                    FileOutputStream(File(workspace, entry.name)).use { output ->
+                    check(target.canonicalFile.parentFile == workspace.canonicalFile) {
+                        "Invalid database archive entry"
+                    }
+                    FileOutputStream(target).use { output ->
                         input.copyTo(output)
                         output.fd.sync()
                     }
