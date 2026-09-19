@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.theme
 
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
@@ -240,6 +241,39 @@ class ThemeColorSchemeResolverTest {
         assertEquals(Color.Black, resolveContrastingTextColor(white, UserPreferencesManager.ON_COLOR_MODE_LIGHT))
         // The measured side is still what an automatic setting gets.
         assertEquals(Color.Black, resolveContrastingTextColor(soft, UserPreferencesManager.ON_COLOR_MODE_AUTO))
+    }
+
+    @Test
+    fun `the secondary ink the picker labels with reads on the surface behind it`() {
+        // The colour picker drew its contrast rating in its own green/red, which measured 3.19:1 on
+        // the dark surface and 4.12:1 on the light one. It now uses onSurfaceVariant, so this pins
+        // that the theme keeps that pair above AA - for the base palettes and both custom paths.
+        for (dark in listOf(false, true)) {
+            val base = rainyBaseColorScheme(dark)
+            assertTrue(
+                "base scheme, dark=$dark",
+                contrastRatio(base.onSurfaceVariant.compositeOver(base.surface), base.surface) >= 4.5,
+            )
+        }
+
+        for (dark in listOf(false, true)) {
+            val custom =
+                resolveThemeColorScheme(
+                    snapshot(
+                        useCustomColors = true,
+                        primary = 0xFFFFCDE8.toInt(),
+                        secondary = 0xFFFFCDE8.toInt(),
+                    ),
+                    darkTheme = dark,
+                )
+            assertTrue(
+                "custom colours, dark=$dark",
+                contrastRatio(
+                    custom.onSurfaceVariant.compositeOver(custom.surface),
+                    custom.surface,
+                ) >= 4.5,
+            )
+        }
     }
 
     @Test

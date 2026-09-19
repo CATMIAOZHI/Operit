@@ -313,14 +313,14 @@ fun ColorPickerDialog(
                             // Add contrast rating
                             val contrastRating =
                                 if (isHighContrast(pickedColor)) stringResource(R.string.colorpicker_high_contrast) else stringResource(R.string.colorpicker_low_contrast)
-                            val contrastColor =
-                                if (isHighContrast(pickedColor)) Color(0xFF388E3C)
-                                else Color(0xFFD32F2F)
 
+                            // The rating used to be drawn in its own green/red, which measured
+                            // 3.19-4.98:1 on the surface behind it. The wording carries the
+                            // verdict, so the ink is the theme's own secondary text.
                             Text(
                                 text = contrastRating,
                                 style = MaterialTheme.typography.bodySmall,
-                                color = contrastColor,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.padding(top = 4.dp)
                             )
                         }
