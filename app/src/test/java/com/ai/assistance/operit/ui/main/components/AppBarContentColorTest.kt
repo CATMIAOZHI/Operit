@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.main.components
 import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -84,6 +85,16 @@ class AppBarContentColorTest {
                 themeOnPrimary,
             ),
         )
+    }
+
+    @Test
+    fun `only a custom colour that the bar really draws becomes the fill`() {
+        val custom = 0xFF336699.toInt()
+        assertEquals(Color(custom), resolveAppBarFill(true, false, custom))
+        // A transparent toolbar draws the page, not the custom colour, so the label stays themed.
+        assertNull(resolveAppBarFill(true, true, custom))
+        assertNull(resolveAppBarFill(false, false, custom))
+        assertNull(resolveAppBarFill(true, false, null))
     }
 
     private fun appBarColor(fill: Color?, force: Boolean, mode: String, themeOnPrimary: Color) =
