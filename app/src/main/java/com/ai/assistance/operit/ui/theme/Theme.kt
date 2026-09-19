@@ -549,16 +549,15 @@ private fun getContrastingTextColor(
     if (forceDark) return Color.Black
     if (forceLight) return Color.White
 
-    // Calculate color contrast and return appropriate color
-    // Using luminance formula from Web Content Accessibility Guidelines (WCAG)
-    val luminance =
-            0.299 * backgroundColor.red +
-                    0.587 * backgroundColor.green +
-                    0.114 * backgroundColor.blue
-
-    // Use a threshold of 0.5 for deciding between white and black text
-    // Higher threshold (e.g., 0.6) would use white text more often
-    return if (luminance > 0.5) Color.Black else Color.White
+    // Whichever of the two actually contrasts better, so a label on a filled accent never lands
+    // below ~4.58:1 (the luma heuristic this replaces could pick the worse one near its threshold).
+    return if (resolvedContrastRatio(Color.Black, backgroundColor) >=
+        resolvedContrastRatio(Color.White, backgroundColor)
+    ) {
+        Color.Black
+    } else {
+        Color.White
+    }
 }
 
 /** 使颜色变亮 */

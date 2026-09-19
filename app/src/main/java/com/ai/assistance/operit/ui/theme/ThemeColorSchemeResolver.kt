@@ -241,12 +241,15 @@ private fun getResolvedContrastingTextColor(
     if (forceDark) return Color.Black
     if (forceLight) return Color.White
 
-    val luminance =
-        0.299 * backgroundColor.red +
-            0.587 * backgroundColor.green +
-            0.114 * backgroundColor.blue
-
-    return if (luminance > 0.5) Color.Black else Color.White
+    // Whichever of the two actually contrasts better, so a label on a filled accent never lands
+    // below ~4.58:1 (the luma heuristic this replaces could pick the worse one near its threshold).
+    return if (resolvedContrastRatio(Color.Black, backgroundColor) >=
+        resolvedContrastRatio(Color.White, backgroundColor)
+    ) {
+        Color.Black
+    } else {
+        Color.White
+    }
 }
 
 private fun lightenResolvedColor(color: Color, factor: Float): Color {
@@ -275,6 +278,10 @@ private fun darkenResolvedColor(color: Color, factor: Float): Color {
  * Colors that already separate from the surface they are drawn on are returned untouched, so only
  * unreadable picks change. The hue is kept and saturation is capped rather than raised, so a
  * pastel pick turns into a deeper version of itself instead of a neon one.
+ *
+ * The hue is kept for anything perceptible; a near-neutral pick can still drift, because the
+ * result is packed back into 8-bit channels - measured over every input, nothing whose result has
+ * chroma at or above 0.10 moves by more than 5 degrees.
  */
 internal fun ensureResolvedLightAccentContrast(accent: Color): Color =
     ensureResolvedAccentContrast(accent, RainyLightHover, lighten = false)
@@ -284,6 +291,9 @@ internal fun ensureResolvedLightAccentContrast(accent: Color): Color =
  * 0.2 there, which is not enough for a very dark pick, so an accent of `#FF102030` still lands
  * around 1.7:1 on `[RainyDarkBorder]` (the default dark card). [RainyDarkBorder] is the lightest
  * surface an accent is drawn on, so requiring the contrast there also covers the darker panels.
+ *
+ * This runs on the already lightened color, so the shipped `primary` for `#102030` is `#8295A5`
+ * rather than the `#5990C8` this function produces on the raw pick.
  */
 internal fun ensureResolvedDarkAccentContrast(accent: Color): Color =
     ensureResolvedAccentContrast(accent, RainyDarkBorder, lighten = true)
@@ -365,8 +375,8 @@ private fun resolvedRelativeLuminance(color: Color): Double =
         0.7152 * resolvedChannelLuminance(color.green) +
         0.0722 * resolvedChannelLuminance(color.blue)
 
-/** Double rather than Float so the ">= 3" decision cannot land either side of the target by rounding. */
-private fun resolvedContrastRatio(first: Color, second: Color): Double {
+/** Double rather than Float so a ">= target" decision cannot land the wrong side by rounding. */
+internal fun resolvedContrastRatio(first: Color, second: Color): Double {
     val firstLuminance = resolvedRelativeLuminance(first)
     val secondLuminance = resolvedRelativeLuminance(second)
     return (maxOf(firstLuminance, secondLuminance) + 0.05) /

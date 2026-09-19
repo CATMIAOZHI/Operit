@@ -123,6 +123,68 @@ class ThemeColorSchemeResolverTest {
         assertTrue(contrastRatio(scheme.secondary, RainyDarkBorder) >= CONTRAST_TARGET)
     }
 
+    @Test
+    fun `the composed dark scheme pins the shipped accent, not the helper's own output`() {
+        // The guard runs on the already lightened color, so the shipped accent is not what
+        // ensureResolvedDarkAccentContrast returns for the raw pick (#5990C8 for #102030).
+        val composed =
+            generateDarkColorScheme(
+                Color(0xFF102030.toInt()),
+                Color(0xFF1A1A5E.toInt()),
+                UserPreferencesManager.ON_COLOR_MODE_AUTO,
+            )
+
+        assertEquals(Color(0xFF8295A5.toInt()), composed.primary)
+        assertEquals(Color(0xFF8686BA.toInt()), composed.secondary)
+    }
+
+    @Test
+    fun `custom colors resolve the guarded dark scheme too`() {
+        // This is the path the web chat's dark palette comes from, and it had no coverage.
+        val scheme =
+            resolveThemeColorScheme(
+                snapshot(
+                    useCustomColors = true,
+                    primary = 0xFF102030.toInt(),
+                    secondary = 0xFF102030.toInt(),
+                ),
+                darkTheme = true,
+            )
+
+        assertEquals(Color(0xFF8295A5.toInt()), scheme.primary)
+        assertTrue(contrastRatio(scheme.primary, RainyDarkBorder) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(scheme.secondary, RainyDarkBorder) >= CONTRAST_TARGET)
+    }
+
+    @Test
+    fun `a label on a filled accent picks the side that actually reads`() {
+        // Either black or white always clears ~4.58:1 on an opaque fill, so the pair must too.
+        val picks = listOf(0xFFFFCDE8, 0xFF102030, 0xFF808080, 0xFF336699, 0xFFF5E6EA)
+        for (argb in picks) {
+            val light =
+                generateLightColorScheme(
+                    Color(argb.toInt()),
+                    Color(argb.toInt()),
+                    UserPreferencesManager.ON_COLOR_MODE_AUTO,
+                )
+            assertTrue(
+                "light onPrimary for $argb",
+                contrastRatio(light.onPrimary, light.primary) >= 4.5,
+            )
+
+            val dark =
+                generateDarkColorScheme(
+                    Color(argb.toInt()),
+                    Color(argb.toInt()),
+                    UserPreferencesManager.ON_COLOR_MODE_AUTO,
+                )
+            assertTrue(
+                "dark onPrimary for $argb",
+                contrastRatio(dark.onPrimary, dark.primary) >= 4.5,
+            )
+        }
+    }
+
     /** Independent WCAG contrast check, so the assertion does not reuse the production maths. */
     private fun contrastRatio(first: Color, second: Color): Double {
         fun channel(value: Float): Double =
