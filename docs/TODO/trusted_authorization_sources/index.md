@@ -13,22 +13,28 @@ The blocking permission reviewer decides `user_authorization` from an evidence b
 prompt declares trusted: the retained user messages of the reviewed chat, the workspace rule file,
 and the `user.md` profile document.
 
-Two sources the device owner never vouched for can enter that block.
+Two sources can enter that block without the owner vouching for their content.
 
 1. A message another application delivered. `ExternalChatReceiver` is exported with no permission and
    no caller check, and it hands the intent's `message` to `ExternalChatRequestExecutor`, which sends
-   it through `StandardChatManagerTool.sendMessageToAI`. The text is stored as an ordinary user turn
-   and read back as trusted user intent.
+   it through `StandardChatManagerTool.sendMessageToAI`. Closed on the read side: that dispatch, every
+   other tool delivery, and every subagent task prompt are stored as a delivered turn and dropped from
+   the block. The exported receiver itself is unchanged.
 2. The root rule file of the active workspace, which is read again on every review. A workspace the
    owner has just obtained therefore contributes its `AGENTS.md` as trusted user intent, and a file
    the agent itself wrote during the turn is picked up the same way.
 
+An imported conversation is deliberately not counted here. Importing exists so the owner can carry
+their own history over, so the user turns a file carries are the owner's own words and stay
+authorization. A file the owner never wrote is the owner's decision to import, not a delivery the
+app made.
+
 Before this round the reviewer had no retained block at all: the same text reached it only through
 the transcript, which the prompt labels untrusted evidence. The automatic review stop therefore
-lost a reason to doubt both sources. No permission level changed for the `ALLOW` stop, which never
+lost a reason to doubt these sources. No permission level changed for the `ALLOW` stop, which never
 reaches a reviewer.
 
-A third source needs no retained block to be trusted: the fast stop answers a call from a verdict
+One more source needs no retained block to be trusted: the fast stop answers a call from a verdict
 taken for an earlier batch, and that verdict names neither the tool nor the arguments it scored.
 
 ## Intent
@@ -42,8 +48,9 @@ stays authoritative and is not capped, narrowed, or overridden.
 - The reviewer's trusted block carries only the messages the device owner actually wrote.
 - The workspace rule file counts as authorization only for a workspace the owner vouched for, and
   only while that file still matches what the owner vouched for.
-- A message delivered by another application, and the rule file of a workspace with no decision,
-  reach the reviewer as untrusted content instead.
+- A message delivered by another application, a tool, or the host reaches the reviewer as untrusted
+  content instead. Done for every delivery that goes through the chat tool or a subagent turn.
+- The rule file of a workspace with no decision reaches the reviewer as untrusted content instead.
 - Under `ALLOW` nothing changes.
 - A reused verdict answers only the action it was taken for, or the stop waits for the batch's own
   verdict, depending on how strict the owner wants the fast stop to be.
