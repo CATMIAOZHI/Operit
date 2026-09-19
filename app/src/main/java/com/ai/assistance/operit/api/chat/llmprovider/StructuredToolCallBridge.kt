@@ -337,7 +337,7 @@ internal object StructuredToolCallBridge {
                 } else {
                     turn.content
                 }
-            val content = ChatUtils.stripOpenAiResponsesReasoningMeta(rawContent)
+            val content = ChatUtils.stripOpenAiResponsesProtocolMarkup(rawContent)
 
             when (turn.kind) {
                 PromptTurnKind.SYSTEM -> {
