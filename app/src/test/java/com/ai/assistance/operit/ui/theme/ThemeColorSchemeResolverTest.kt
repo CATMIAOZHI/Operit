@@ -4,6 +4,7 @@ import androidx.compose.ui.graphics.Color
 import com.ai.assistance.operit.data.preferences.ThemePreferenceSnapshot
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ThemeColorSchemeResolverTest {
@@ -41,8 +42,9 @@ class ThemeColorSchemeResolverTest {
 
     @Test
     fun `custom colors on resolves selected colors`() {
+        // Both are readable on the light surfaces, so they have to come through untouched.
         val primary = 0xFF336699.toInt()
-        val secondary = 0xFF669933.toInt()
+        val secondary = 0xFF7B1FA2.toInt()
 
         val scheme = resolveThemeColorScheme(
             snapshot(useCustomColors = true, primary = primary, secondary = secondary),
@@ -51,6 +53,54 @@ class ThemeColorSchemeResolverTest {
 
         assertEquals(Color(primary), scheme.primary)
         assertEquals(Color(secondary), scheme.secondary)
+    }
+
+    @Test
+    fun `pale custom accent is strengthened until it separates from the light surfaces`() {
+        // 0xFFFFCDE8 is what left the statistics page blank: 1.0:1 against the card behind it.
+        val pale = 0xFFFFCDE8.toInt()
+
+        val scheme = resolveThemeColorScheme(
+            snapshot(useCustomColors = true, primary = pale, secondary = pale),
+            darkTheme = false,
+        )
+
+        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= 3f)
+        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= 3f)
+        // The pick is deepened, not discarded: the accent keeps its hue.
+        assertTrue(scheme.primary.red > scheme.primary.green)
+        assertTrue(scheme.primary.blue > scheme.primary.green)
+        // The container tint is still a light tint, so the accent and the tint stay distinguishable.
+        assertTrue(scheme.primaryContainer.red > scheme.primary.red)
+        assertTrue(scheme.primaryContainer.green > scheme.primary.green)
+        assertTrue(scheme.primaryContainer.blue > scheme.primary.blue)
+    }
+
+    @Test
+    fun `pale custom accent is strengthened in the composed app scheme as well`() {
+        val pale = Color(0xFFFFCDE8.toInt())
+
+        val scheme =
+            generateLightColorScheme(pale, pale, UserPreferencesManager.ON_COLOR_MODE_AUTO)
+
+        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= 3f)
+        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= 3f)
+    }
+
+    /** Independent WCAG contrast check, so the assertion does not reuse the production maths. */
+    private fun contrastRatio(first: Color, second: Color): Float {
+        fun channel(value: Float): Double =
+            if (value <= 0.03928f) value.toDouble() / 12.92
+            else Math.pow(((value + 0.055f) / 1.055f).toDouble(), 2.4)
+
+        fun luminance(color: Color): Double =
+            0.2126 * channel(color.red) + 0.7152 * channel(color.green) + 0.0722 * channel(color.blue)
+
+        val firstLuminance = luminance(first)
+        val secondLuminance = luminance(second)
+        return ((maxOf(firstLuminance, secondLuminance) + 0.05) /
+            (minOf(firstLuminance, secondLuminance) + 0.05))
+            .toFloat()
     }
 
     @Test
