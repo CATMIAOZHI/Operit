@@ -39,6 +39,9 @@ internal fun permissionReviewHistoryHash(
         digest.updateField(message.sender)
         digest.updateField(message.roleName)
         digest.updateField(message.content)
+        // The label a row renders under depends on its display mode, so the prefix is only the same
+        // text when the mode is the same too.
+        digest.updateField(message.displayMode.name)
     }
     return digest.digest().joinToString("") { byte -> "%02x".format(byte) }
 }

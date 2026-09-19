@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.permissions
 
+import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -18,11 +19,13 @@ class PermissionReviewTranscriptTest {
         sender: String,
         content: String = "content-$timestamp",
         roleName: String = sender,
+        displayMode: ChatMessageDisplayMode = ChatMessageDisplayMode.NORMAL,
     ) = PermissionReviewTranscriptMessage(
         timestamp = timestamp,
         sender = sender,
         roleName = roleName,
         content = content,
+        displayMode = displayMode,
     )
 
     private fun entry(rendered: String, isUser: Boolean = false) =
@@ -37,6 +40,41 @@ class PermissionReviewTranscriptTest {
         maxMessages = maxMessages,
         maxChars = maxChars,
     )
+
+    /**
+     * A turn the app delivered is stored as a user turn, so the row's own role name is the owner's.
+     * The window is where the delivery has to show, because the reviewer is told to read a delivered
+     * turn as evidence and cannot do that while the label says the owner wrote it.
+     */
+    @Test
+    fun namesADeliveredTurnAsADelivery() {
+        val entries =
+            permissionReviewTranscriptEntries(
+                candidates =
+                    listOf(
+                        message(
+                            timestamp = 1,
+                            sender = "user",
+                            roleName = "用户",
+                            displayMode = ChatMessageDisplayMode.TOOL_DELIVERED,
+                        ),
+                        message(
+                            timestamp = 2,
+                            sender = "user",
+                            content = "do not push yet",
+                            roleName = "用户",
+                        ),
+                    ),
+                maxMessageChars = MAX_TRANSCRIPT_MESSAGE_CHARS,
+            )
+
+        assertEquals("[$DELIVERED_TURN_LABEL]\ncontent-1\n", entries.first().rendered)
+        assertTrue(
+            "the delivered row is still the turn an action answers, so the anchor can use it",
+            entries.first().isUser,
+        )
+        assertEquals("[用户]\ndo not push yet\n", entries.last().rendered)
+    }
 
     /**
      * Pins the reviewer's ceiling. Forty entries is well past the twelve an earlier count cap cut at,
