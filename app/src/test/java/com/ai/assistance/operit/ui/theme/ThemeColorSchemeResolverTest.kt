@@ -159,7 +159,17 @@ class ThemeColorSchemeResolverTest {
     @Test
     fun `a label on a filled accent picks the side that actually reads`() {
         // Either black or white always clears ~4.58:1 on an opaque fill, so the pair must too.
-        val picks = listOf(0xFFFFCDE8, 0xFF102030, 0xFF808080, 0xFF336699, 0xFFF5E6EA)
+        // 0xFFFFFFFF is the pick that used to get a forced white container label at 2.1:1.
+        val picks =
+            listOf(
+                0xFFFFCDE8,
+                0xFF102030,
+                0xFF808080,
+                0xFF336699,
+                0xFFF5E6EA,
+                0xFFFFFFFF,
+                0xFF000000,
+            )
         for (argb in picks) {
             val light =
                 generateLightColorScheme(
@@ -167,10 +177,7 @@ class ThemeColorSchemeResolverTest {
                     Color(argb.toInt()),
                     UserPreferencesManager.ON_COLOR_MODE_AUTO,
                 )
-            assertTrue(
-                "light onPrimary for $argb",
-                contrastRatio(light.onPrimary, light.primary) >= 4.5,
-            )
+            assertLabelPairsRead("light $argb", light)
 
             val dark =
                 generateDarkColorScheme(
@@ -178,9 +185,39 @@ class ThemeColorSchemeResolverTest {
                     Color(argb.toInt()),
                     UserPreferencesManager.ON_COLOR_MODE_AUTO,
                 )
+            assertLabelPairsRead("dark $argb", dark)
+
+            // The same two generators behind the resolver, which is the web chat's source.
+            val resolvedLight =
+                resolveThemeColorScheme(
+                    snapshot(useCustomColors = true, primary = argb.toInt(), secondary = argb.toInt()),
+                    darkTheme = false,
+                )
+            assertLabelPairsRead("resolved light $argb", resolvedLight)
+
+            val resolvedDark =
+                resolveThemeColorScheme(
+                    snapshot(useCustomColors = true, primary = argb.toInt(), secondary = argb.toInt()),
+                    darkTheme = true,
+                )
+            assertLabelPairsRead("resolved dark $argb", resolvedDark)
+        }
+    }
+
+    /** Every label the user can read on a filled surface in [scheme], at WCAG AA for body text. */
+    private fun assertLabelPairsRead(label: String, scheme: androidx.compose.material3.ColorScheme) {
+        val pairs =
+            listOf(
+                "onPrimary" to (scheme.onPrimary to scheme.primary),
+                "onSecondary" to (scheme.onSecondary to scheme.secondary),
+                "onPrimaryContainer" to (scheme.onPrimaryContainer to scheme.primaryContainer),
+                "onSecondaryContainer" to (scheme.onSecondaryContainer to scheme.secondaryContainer),
+            )
+        for ((name, pair) in pairs) {
+            val (ink, fill) = pair
             assertTrue(
-                "dark onPrimary for $argb",
-                contrastRatio(dark.onPrimary, dark.primary) >= 4.5,
+                "$label $name $ink on $fill",
+                contrastRatio(ink, fill) >= 4.5,
             )
         }
     }
