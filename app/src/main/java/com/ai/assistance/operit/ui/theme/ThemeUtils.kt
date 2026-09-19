@@ -15,14 +15,20 @@ fun getTextColorForBackground(backgroundColor: Color): Color =
         getResolvedContrastingTextColor(backgroundColor)
 
 /**
- * Determines if a color has high contrast with both black and white
- * Colors in the middle range (not too light, not too dark) tend to have low contrast with both
- * A good high contrast color is either fairly dark or fairly light
+ * Whether the better of black and white reaches WCAG AAA for body text (7:1) on
+ * [backgroundColor]. The color picker rates a pick with this next to the sample text it draws with
+ * [getTextColorForBackground].
+ *
+ * This used to threshold a 0.299/0.587/0.114 luma at 0.3/0.7, which called 65.5% of the color space
+ * "low contrast" - including picks whose sample text now measures 5.3:1 or 10.9:1. Since the label
+ * is chosen by measurement, so is the rating; one side always clears 4.58:1, so this is about
+ * headroom rather than about being readable at all.
  */
-fun isHighContrast(backgroundColor: Color): Boolean {
-    val luminance =
-            0.299 * backgroundColor.red +
-                    0.587 * backgroundColor.green +
-                    0.114 * backgroundColor.blue
-    return luminance < 0.3 || luminance > 0.7
-}
+fun isHighContrast(backgroundColor: Color): Boolean =
+        maxOf(
+                resolvedContrastRatio(Color.Black, backgroundColor),
+                resolvedContrastRatio(Color.White, backgroundColor),
+        ) >= HIGH_CONTRAST_RATIO
+
+/** WCAG AAA for body text. */
+private const val HIGH_CONTRAST_RATIO = 7.0

@@ -144,7 +144,7 @@
     <string name="colorpicker_select_color">Select color</string>
     <string name="colorpicker_sample_text">Sample text</string>
     <string name="colorpicker_high_contrast">High contrast</string>
-    <string name="colorpicker_low_contrast">Low contrast</string>
+    <string name="colorpicker_low_contrast">Moderate contrast</string>
     <string name="colorpicker_manual_input">Manually input color</string>
     <string name="colorpicker_paste">Paste</string>
     <string name="colorpicker_apply">Apply</string>
