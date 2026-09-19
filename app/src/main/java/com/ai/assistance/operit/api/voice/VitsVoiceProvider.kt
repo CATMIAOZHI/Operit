@@ -334,8 +334,8 @@ class VitsVoiceProvider(
             ?: throw TtsException(context.getString(R.string.vits_tts_error_init_failed))
 
         try {
-            val prefs = SpeechServicesPreferences(context.applicationContext)
-            val effectiveRate = request.rate ?: prefs.ttsSpeechRateFlow.first()
+            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+            val effectiveRate = request.rate ?: profile.speechRate
             val ids = tokenize(request.text, activeConfig, request.extraParams)
             if (ids.isEmpty()) {
                 throw TtsException(context.getString(R.string.vits_tts_error_tokenize_failed, "empty token ids"))

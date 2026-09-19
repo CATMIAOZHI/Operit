@@ -437,6 +437,7 @@ open class GeminiProvider(
     private data class GeminiPendingFunctionCall(
         val name: String,
         val id: String?,
+        val matchingName: String = name,
     )
 
     private fun decodeGeminiThoughtSignature(signatureBase64: String): String? {
@@ -931,6 +932,7 @@ open class GeminiProvider(
                     GeminiPendingFunctionCall(
                         name = functionCall.optProviderToolName().orEmpty(),
                         id = functionCall.optString("id", "").trim().takeIf { it.isNotEmpty() },
+                        matchingName = StructuredToolCallBridge.toolCallName(functionCall),
                     )
                 )
             }
@@ -954,6 +956,7 @@ open class GeminiProvider(
                         openFunctionCalls.add(
                             GeminiPendingFunctionCall(
                                 name = functionCall.optProviderToolName().orEmpty(),
+                                matchingName = StructuredToolCallBridge.toolCallName(functionCall),
                                 id =
                                     functionCall
                                         .optString("id", "")
@@ -979,7 +982,7 @@ open class GeminiProvider(
             emitQueuedFunctionCallsIfNeeded()
             if (openFunctionCalls.isEmpty()) return false
 
-            logDebug("发现未完成的Gemini functionCall，按取消处理: count=${openFunctionCalls.size}, reason=$reason")
+            logDebug("发现缺失结果的Gemini functionCall: count=${openFunctionCalls.size}, reason=$reason")
             openFunctionCalls.forEach { pendingCall ->
                 target.put(
                     JSONObject().apply {
@@ -991,7 +994,7 @@ open class GeminiProvider(
                                 put(
                                     "response",
                                     JSONObject().apply {
-                                        put("result", "User cancelled")
+                                        put("result", StructuredToolCallBridge.unmatchedToolResultContent(reason, pendingCall.matchingName))
                                     }
                                 )
                             }
@@ -1106,11 +1109,17 @@ open class GeminiProvider(
 
                         if (responsesList.isNotEmpty() && openFunctionCalls.isNotEmpty()) {
                             val partsArray = JSONArray()
-                            val validCount = minOf(responsesList.size, openFunctionCalls.size)
-
-                            repeat(validCount) { index ->
-                                val response = JSONObject(responsesList[index].toString())
-                                val pendingCall = openFunctionCalls[index]
+                            for (sourceResponse in responsesList) {
+                                val response = JSONObject(sourceResponse.toString())
+                                val resultName = response.optString("name", "").trim()
+                                val callIndex = openFunctionCalls.indexOfFirst {
+                                    resultName.isNotBlank() && it.matchingName == resultName
+                                }
+                                if (callIndex < 0) {
+                                    logDebug("忽略未匹配的Gemini functionResponse")
+                                    continue
+                                }
+                                val pendingCall = openFunctionCalls.removeAt(callIndex)
                                 if (pendingCall.name.isNotBlank()) {
                                     response.put("name", pendingCall.name)
                                 }
@@ -1121,14 +1130,6 @@ open class GeminiProvider(
                                     }
                                 )
                                 logDebug("历史XML→GeminiFunctionResponse: ${response.optString("name")}")
-                            }
-
-                            repeat(validCount) {
-                                openFunctionCalls.removeAt(0)
-                            }
-
-                            if (responsesList.size > validCount) {
-                                logDebug("发现多余的Gemini functionResponse: ${responsesList.size} results vs ${validCount} pending functionCalls")
                             }
 
                             appendCancelledOpenFunctionResponses(
@@ -1149,14 +1150,8 @@ open class GeminiProvider(
                         } else {
                             val partsArray = JSONArray()
                             appendCancelledOpenFunctionResponses(partsArray, "tool_result_without_structured_match")
-                            val fallbackContent =
-                                when {
-                                    textContent.isNotEmpty() -> textContent
-                                    contentWithoutGeminiMeta.isNotBlank() -> contentWithoutGeminiMeta
-                                    else -> "[Empty]"
-                                }
-                            appendParts(partsArray, buildPartsArray(fallbackContent))
-                            contentsArray.put(
+                            if (textContent.isNotEmpty()) appendParts(partsArray, buildPartsArray(textContent))
+                            if (partsArray.length() > 0) contentsArray.put(
                                 JSONObject().apply {
                                     put("role", "user")
                                     put("parts", partsArray)

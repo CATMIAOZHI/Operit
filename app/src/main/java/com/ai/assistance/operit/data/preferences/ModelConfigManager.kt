@@ -20,6 +20,7 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.StandardModelParameters
+import com.ai.assistance.operit.data.model.SummarySectionOverride
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ApiKeyInfo
 import com.ai.assistance.operit.data.model.getModelList
@@ -767,19 +768,22 @@ class ModelConfigManager(
 
     suspend fun updateSummarySettings(
             configId: String,
-            enableSummary: Boolean,
-            summaryTokenThreshold: Float,
-            enableSummaryByMessageCount: Boolean,
-            summaryMessageCountThreshold: Int,
-            summaryCustomRules: String = ""
+            enableSummary: Boolean? = null,
+            summaryTokenThreshold: Float? = null,
+            enableSummaryByMessageCount: Boolean? = null,
+            summaryMessageCountThreshold: Int? = null,
+            summaryCustomRules: String? = null,
+            summarySectionOverrides: List<SummarySectionOverride>? = null
     ): ModelConfigData {
         return updateConfigInternal(configId) {
             it.copy(
-                    enableSummary = enableSummary,
-                    summaryTokenThreshold = summaryTokenThreshold,
-                    enableSummaryByMessageCount = enableSummaryByMessageCount,
-                    summaryMessageCountThreshold = summaryMessageCountThreshold,
-                    summaryCustomRules = summaryCustomRules
+                    enableSummary = enableSummary ?: it.enableSummary,
+                    summaryTokenThreshold = summaryTokenThreshold ?: it.summaryTokenThreshold,
+                    enableSummaryByMessageCount = enableSummaryByMessageCount ?: it.enableSummaryByMessageCount,
+                    summaryMessageCountThreshold = summaryMessageCountThreshold ?: it.summaryMessageCountThreshold,
+                    summaryCustomRules = summaryCustomRules ?: it.summaryCustomRules,
+                    summarySectionOverrides =
+                        summarySectionOverrides ?: it.summarySectionOverrides
             )
         }
     }
@@ -789,6 +793,14 @@ class ModelConfigManager(
      * @param configId 配置ID
      * @return 模型参数列表
      */
+    suspend fun updateSummaryDialogueReviewSettings(
+        configId: String,
+        enabled: Boolean,
+        title: String,
+    ): ModelConfigData = updateConfigInternal(configId) {
+        it.copy(enableSummaryDialogueReview = enabled, summaryDialogueReviewTitle = title)
+    }
+
     suspend fun getModelParametersForConfig(configId: String): List<ModelParameter<*>> {
         val config = getModelConfigFlow(configId).first()
         return getModelParametersForConfigSnapshot(config)

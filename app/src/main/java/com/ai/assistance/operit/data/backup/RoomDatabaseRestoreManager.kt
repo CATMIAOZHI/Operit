@@ -3,9 +3,7 @@ package com.ai.assistance.operit.data.backup
 import android.content.Context
 import android.net.Uri
 import com.ai.assistance.operit.data.db.AppDatabase
-import com.ai.assistance.operit.util.AppLogger
 import java.io.BufferedInputStream
-import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
@@ -61,135 +59,165 @@ object RoomDatabaseRestoreManager {
             name.endsWith(".zip")
     }
 
-    suspend fun restoreFromBackupUri(context: Context, uri: Uri) {
-        withContext(Dispatchers.IO) {
-            RoomDatabaseBackupRestoreLock.mutex.withLock {
-                val cacheFile = File.createTempFile("room_db_restore_", ".zip", context.cacheDir)
-                try {
-                    context.contentResolver.openInputStream(uri)?.use { input ->
-                        FileOutputStream(cacheFile).use { output ->
-                            input.copyTo(output)
-                        }
-                    } ?: throw IllegalStateException("Failed to open uri")
-
-                    restoreFromBackupFileInternal(context, cacheFile)
-                } finally {
-                    cacheFile.delete()
-                }
-            }
+    /** Stage a private copy; the UI must exit immediately after this returns. */
+    suspend fun stageRestoreFromUri(context: Context, uri: Uri) = withContext(Dispatchers.IO) {
+        stage(context) {
+            context.contentResolver.openInputStream(uri)
+                ?: error("Failed to open restore archive")
         }
     }
 
-    suspend fun restoreFromBackupFile(context: Context, zipFile: File) {
-        withContext(Dispatchers.IO) {
-            RoomDatabaseBackupRestoreLock.mutex.withLock {
-                restoreFromBackupFileInternal(context, zipFile)
-            }
-        }
+    suspend fun stageRestoreFromFile(context: Context, file: File) = withContext(Dispatchers.IO) {
+        stage(context) { file.inputStream() }
     }
 
-    private fun restoreFromBackupFileInternal(context: Context, zipFile: File) {
-        if (!zipFile.exists() || !zipFile.isFile) {
-            throw IllegalArgumentException("Backup file not found: ${zipFile.absolutePath}")
-        }
-
-        try {
-            AppDatabase.closeDatabase()
-        } catch (e: Exception) {
-            AppLogger.w(TAG, "closeDatabase failed", e)
-        }
-
-        val targetDb = context.getDatabasePath(DB_NAME)
-        val targetWal = File(targetDb.absolutePath + "-wal")
-        val targetShm = File(targetDb.absolutePath + "-shm")
-
-        val dir = targetDb.parentFile ?: throw IllegalStateException("Database dir not found")
-
-        val tmpDb = File(dir, "${DB_NAME}.restore.tmp")
-        val tmpWal = File(dir, "${DB_NAME}-wal.restore.tmp")
-        val tmpShm = File(dir, "${DB_NAME}-shm.restore.tmp")
-
-        tmpDb.delete()
-        tmpWal.delete()
-        tmpShm.delete()
-
-        var extractedDb = false
-        var extractedWal = false
-        var extractedShm = false
-
-        try {
-            ZipInputStream(BufferedInputStream(FileInputStream(zipFile))).use { zis ->
-                while (true) {
-                    val entry = zis.nextEntry ?: break
-                    val name = entry.name
-
-                    when (name) {
-                        DB_NAME -> {
-                            writeStreamToFile(zis, tmpDb)
-                            extractedDb = true
-                        }
-                        "${DB_NAME}-wal" -> {
-                            writeStreamToFile(zis, tmpWal)
-                            extractedWal = true
-                        }
-                        "${DB_NAME}-shm" -> {
-                            writeStreamToFile(zis, tmpShm)
-                            extractedShm = true
-                        }
+    private suspend fun stage(context: Context, open: () -> java.io.InputStream) {
+        RoomDatabaseBackupRestoreLock.mutex.withLock {
+            val workspace = File(context.noBackupFilesDir, "room-restore-${java.util.UUID.randomUUID()}")
+            check(workspace.mkdirs()) { "Cannot prepare database restore" }
+            val archive = File(workspace, "source.zip")
+            var staged = false
+            try {
+                open().use { input ->
+                    FileOutputStream(archive).use { output ->
+                        input.copyTo(output)
+                        output.fd.sync()
                     }
+                }
+                extractArchive(archive, workspace)
+                syncRestoreDirectory(workspace)
+                syncRestoreDirectory(context.noBackupFilesDir)
+                MigrationStateStore.withProcessStateLock {
+                    val previous = MigrationStateStore.read(context)
+                    check(MigrationStateStore.isMainDataAccessAllowed(context)) {
+                        "Another restore operation is pending"
+                    }
+                    staged = true
+                    try {
+                        MigrationStateStore.writeOrThrow(
+                            context, MigrationStateStore.State.PENDING,
+                            uri = Uri.fromFile(archive), finalState = previous.state,
+                            operation = "ROOM_RESTORE",
+                        )
+                    } catch (error: Exception) {
+                        try {
+                            MigrationStateStore.writeOrThrow(context, previous.state)
+                            staged = false
+                        } catch (rollbackError: Exception) {
+                            error.addSuppressed(rollbackError)
+                            RawSnapshotBackupManager.requireProcessRestart()
+                        }
+                        throw error
+                    }
+                }
+            } finally {
+                if (!staged) workspace.deleteRecursively()
+            }
+        }
+    }
 
-                    zis.closeEntry()
+    internal fun hasInterruptedReplacement(context: Context): Boolean {
+        val pending = MigrationStateStore.read(context)
+        if (pending.operation != "ROOM_RESTORE") return false
+        return RoomRestoreFileSet(context.getDatabasePath(DB_NAME), workspace(context, pending)).hasRollback
+    }
+
+    /** Only the existing pre-initialization dispatcher may enter here. */
+    internal suspend fun runPending(context: Context) {
+        val pending = MigrationStateStore.read(context)
+        check(pending.state == MigrationStateStore.State.PENDING && pending.operation == "ROOM_RESTORE")
+        val finalState = checkNotNull(pending.finalState)
+        val workspace = workspace(context, pending)
+        val files = RoomRestoreFileSet(
+            context.getDatabasePath(DB_NAME), workspace,
+            spoolDirectory = File(context.filesDir, "token_stats_spool"),
+        )
+        var finalStateDurable = false
+        try {
+            if (files.hasRollback) {
+                files.rollback()
+                MigrationStateStore.writeOrThrow(context, finalState)
+                finalStateDurable = true
+                error("Interrupted database restore was rolled back; select the backup again")
+            }
+            extractArchive(File(workspace, "source.zip"), workspace)
+            RawSnapshotBackupManager.withTokenStatsRestoreIsolation(
+                context,
+                prepareBeforeCommit = { AppDatabase.closeDatabase() },
+                commitReplacement = {},
+                block = { files.replace() },
+            )
+            // Room-only restore must not register a raw-snapshot legacy-import generation.
+            MigrationStateStore.writeOrThrow(context, finalState)
+            finalStateDurable = true
+        } catch (error: Exception) {
+            if (!finalStateDurable) {
+                try {
+                    // A failed final-state sync may already be visible. Re-close the durable gate
+                    // before rollback can itself produce a partially restored file set.
+                    MigrationStateStore.writeOrThrow(
+                        context, MigrationStateStore.State.PENDING,
+                        uri = pending.uri, finalState = finalState, operation = "ROOM_RESTORE",
+                    )
+                    if (files.hasRollback) files.rollback()
+                    MigrationStateStore.writeOrThrow(context, finalState)
+                    finalStateDurable = true
+                } catch (rollbackError: Exception) {
+                    error.addSuppressed(rollbackError)
+                    // Keep PENDING and its journal: a cold start retries rollback before any DAO opens.
                 }
             }
-
-            if (!extractedDb) {
-                throw IllegalArgumentException("Invalid backup zip: missing $DB_NAME")
+            throw error
+        } finally {
+            if (finalStateDurable) {
+                workspace.deleteRecursively()
             }
-
-            targetWal.delete()
-            targetShm.delete()
-            targetDb.delete()
-
-            replaceFile(tmpDb, targetDb)
-            if (extractedWal) {
-                replaceFile(tmpWal, targetWal)
-            } else {
-                tmpWal.delete()
-                targetWal.delete()
-            }
-
-            if (extractedShm) {
-                replaceFile(tmpShm, targetShm)
-            } else {
-                tmpShm.delete()
-                targetShm.delete()
-            }
-        } catch (e: Exception) {
-            tmpDb.delete()
-            tmpWal.delete()
-            tmpShm.delete()
-            throw e
         }
     }
 
-    private fun writeStreamToFile(input: ZipInputStream, target: File) {
-        val buffer = ByteArray(64 * 1024)
-        BufferedOutputStream(FileOutputStream(target)).use { output ->
+    private fun workspace(context: Context, pending: MigrationStateStore.Snapshot): File {
+        val archive = File(checkNotNull(pending.uri?.path))
+        val workspace = checkNotNull(archive.parentFile).canonicalFile
+        check(workspace.parentFile == context.noBackupFilesDir.canonicalFile &&
+            workspace.name.startsWith("room-restore-") && archive.name == "source.zip") {
+            "Invalid staged database archive"
+        }
+        return workspace
+    }
+
+    private fun extractArchive(archive: File, workspace: File) {
+        val expected = setOf(DB_NAME, "$DB_NAME-wal", "$DB_NAME-shm")
+        expected.forEach { java.nio.file.Files.deleteIfExists(File(workspace, it).toPath()) }
+        val seen = mutableSetOf<String>()
+        ZipInputStream(BufferedInputStream(FileInputStream(archive))).use { input ->
             while (true) {
-                val read = input.read(buffer)
-                if (read <= 0) break
-                output.write(buffer, 0, read)
+                val entry = input.nextEntry ?: break
+                // The entry name read from the archive is only ever compared, and each accepted
+                // name resolves to a target built from constants, so an archive cannot steer the
+                // extraction outside the workspace (Zip Slip). The canonical check below keeps
+                // that true even if the accepted set is widened later.
+                val target = when (entry.name) {
+                    DB_NAME -> File(workspace, DB_NAME)
+                    "$DB_NAME-wal" -> File(workspace, "$DB_NAME-wal")
+                    "$DB_NAME-shm" -> File(workspace, "$DB_NAME-shm")
+                    else -> null
+                }
+                if (target != null) {
+                    check(!entry.isDirectory && seen.add(entry.name)) { "Duplicate database archive entry" }
+                    check(target.canonicalFile.parentFile == workspace.canonicalFile) {
+                        "Invalid database archive entry"
+                    }
+                    FileOutputStream(target).use { output ->
+                        input.copyTo(output)
+                        output.fd.sync()
+                    }
+                }
+                input.closeEntry()
             }
         }
-    }
-
-    private fun replaceFile(from: File, to: File) {
-        if (to.exists()) {
-            to.delete()
-        }
-        if (!from.renameTo(to)) {
-            from.copyTo(to, overwrite = true)
-            from.delete()
-        }
+        check(DB_NAME in seen) { "Invalid backup zip: missing $DB_NAME" }
+        val header = ByteArray(16)
+        java.io.DataInputStream(File(workspace, DB_NAME).inputStream()).use { it.readFully(header) }
+        check(header.contentEquals("SQLite format 3\u0000".toByteArray())) { "Invalid SQLite backup" }
     }
 }

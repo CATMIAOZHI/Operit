@@ -355,14 +355,23 @@ object RawSnapshotBackupManager {
 
     fun cancelSafeOfficialOperitMigration(context: Context): Boolean {
         return MigrationStateStore.withProcessStateLock {
-            val state = MigrationStateStore.read(context).state
+            check(!RoomDatabaseRestoreManager.hasInterruptedReplacement(context)) {
+                "Database rollback must finish before cancelling restore"
+            }
+            val snapshot = MigrationStateStore.read(context)
+            val state = snapshot.state
             check(MigrationStatePolicy.isSafelyCancellable(state)) {
                 "Official Operit migration is not safely cancellable (state=$state)"
             }
             check(!officialMigrationRunning.get()) {
                 "Cannot cancel an active official Operit migration"
             }
-            MigrationStateStore.write(context, MigrationStateStore.State.IDLE)
+            MigrationStateStore.write(
+                context,
+                if (snapshot.operation == "ROOM_RESTORE") {
+                    snapshot.finalState ?: MigrationStateStore.State.IDLE
+                } else MigrationStateStore.State.IDLE,
+            )
         }
     }
 
@@ -378,6 +387,10 @@ object RawSnapshotBackupManager {
         MigrationStateStore.read(context)
 
     fun isProcessRestartRequired(): Boolean = processRestartRequired
+
+    internal fun requireProcessRestart() {
+        processRestartRequired = true
+    }
 
     fun isOfficialOperitMigrationRunningInProcess(): Boolean = officialMigrationRunning.get()
 
@@ -519,7 +532,24 @@ object RawSnapshotBackupManager {
         check(pending.state == MigrationStateStore.State.PENDING) {
             "Restore operation is not pending (state=${pending.state})"
         }
-        return if (pending.finalState != null) {
+        return if (pending.operation == "ROOM_RESTORE") {
+            check(officialMigrationRunning.compareAndSet(false, true)) {
+                "A pending restore operation is already running"
+            }
+            officialMigrationFailureMessage = null
+            try {
+                mutex.withLock { RoomDatabaseRestoreManager.runPending(context) }
+                processRestartRequired = true
+            } catch (error: Exception) {
+                // Restore fencing can outlive a successful rollback. Never initialize this process.
+                processRestartRequired = true
+                officialMigrationFailureMessage = error.message ?: error.javaClass.name
+                throw error
+            } finally {
+                officialMigrationRunning.set(false)
+            }
+            null
+        } else if (pending.finalState != null) {
             runPendingRawSnapshotRestore(context, onProgress)
             null
         } else {

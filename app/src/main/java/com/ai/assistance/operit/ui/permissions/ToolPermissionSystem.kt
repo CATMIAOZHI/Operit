@@ -196,7 +196,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
     
     // Registry of operation descriptions by tool name
-    private val operationDescriptionRegistry = mutableMapOf<String, (AITool) -> String>()
+    private val operationDescriptionRegistry =
+        java.util.concurrent.ConcurrentHashMap<String, (AITool) -> String>()
     
     /**
      * Register a description generator for a tool

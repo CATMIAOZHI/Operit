@@ -22,7 +22,10 @@ private val Context.speechServicesDataStore: DataStore<Preferences> by
     preferencesDataStore(name = "speech_services_preferences")
 
 /**
- * Manages preferences for speech-to-text (STT) and text-to-speech (TTS) services.
+ * Legacy single-config store for speech services.
+ *
+ * New code manages profiles through [SpeechServiceProfilesPreferences]. This store remains the
+ * active-profile projection consumed by existing providers and published-version integrations.
  */
 class SpeechServicesPreferences(private val context: Context) {
 
@@ -189,6 +192,9 @@ class SpeechServicesPreferences(private val context: Context) {
         dataStore.edit { prefs ->
             prefs[TTS_SERVICE_TYPE] = serviceType.name
 
+            // 系统 TTS 也从这份旧字段读取语言和音色，迁移投影必须保留它们。
+            httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
+
             cleanerRegexs?.let {
                 prefs[TTS_CLEANER_REGEXS] = it.filter { regex -> regex.isNotBlank() }.toSet()
             }
@@ -196,35 +202,8 @@ class SpeechServicesPreferences(private val context: Context) {
             speechRate?.let { prefs[TTS_SPEECH_RATE] = it }
             pitch?.let { prefs[TTS_PITCH] = it }
 
-            // 根据服务类型保存相应的配置
-            when (serviceType) {
-                VoiceServiceFactory.VoiceServiceType.HTTP_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.OPENAI_WS_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS -> {
-                    // 系统 TTS 不需要额外配置
-                }
-                VoiceServiceFactory.VoiceServiceType.SILICONFLOW_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.MINIMAX_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.MIMO_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.DOUBAO_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.OPENAI_TTS -> {
-                    httpConfig?.let { prefs[TTS_HTTP_CONFIG] = serializerJson.encodeToString(it) }
-                }
-                VoiceServiceFactory.VoiceServiceType.VITS_TTS -> {
-                    vitsConfig?.let { prefs[TTS_VITS_PACKAGE_CONFIG] = serializerJson.encodeToString(it) }
-                }
+            if (serviceType == VoiceServiceFactory.VoiceServiceType.VITS_TTS) {
+                vitsConfig?.let { prefs[TTS_VITS_PACKAGE_CONFIG] = serializerJson.encodeToString(it) }
             }
         }
     }

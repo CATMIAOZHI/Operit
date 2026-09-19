@@ -3,6 +3,7 @@ package com.ai.assistance.operit.core.tools.packTool
 import android.content.Context
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
+import com.ai.assistance.operit.core.tools.javascript.JsTimeoutConfig
 import com.ai.assistance.operit.data.model.Workflow
 import com.ai.assistance.operit.data.repository.WorkflowRepository
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.WorkspaceConfigReader
@@ -310,6 +311,10 @@ internal class PackageManagerToolPkgFacade(
             description = container.description.resolve(localizationContext),
             version = container.version,
             author = container.author,
+            logoResourceKey = container.logoResource?.key,
+            logoMimeType = container.logoResource?.mime,
+            apiVersion = container.apiVersion,
+            requires = container.requires,
             resourceCount = container.resources.size,
             wasmModuleCount = wasmModules.size,
             workflowTemplateCount = workflowTemplates.size,
@@ -895,7 +900,8 @@ internal class PackageManagerToolPkgFacade(
         onIntermediateResult: ((Any?) -> Unit)? = null,
         executionContextKey: String? = null,
         runtimeKind: String? = null,
-        dispatchIntermediateOnMain: Boolean = true
+        dispatchIntermediateOnMain: Boolean = true,
+        timeoutMillis: Long? = null
     ): Result<Any?> {
         val normalizedPluginId = pluginId?.trim().orEmpty().ifBlank { null }
         val resolvedEventName = eventName?.trim().orEmpty().ifBlank { event }
@@ -991,7 +997,17 @@ internal class PackageManagerToolPkgFacade(
                 functionName = functionName,
                 params = params,
                 onIntermediateResult = onIntermediateResult,
-                dispatchIntermediateOnMain = dispatchIntermediateOnMain
+                dispatchIntermediateOnMain = dispatchIntermediateOnMain,
+                // Without a hook budget the engine default cap stays in place. Handing the engine
+                // a null here would mean "wait forever" instead of the finite limit this call
+                // site had before hook budgets existed.
+                timeoutSec =
+                    timeoutMillis?.let { millis ->
+                        // The JS engine budgets in whole seconds; round up so a sub-second
+                        // remainder never degrades into "wait forever".
+                        ((millis + 999L) / 1000L).coerceAtLeast(1L)
+                    } ?: JsTimeoutConfig.MAIN_TIMEOUT_SECONDS,
+                toolPkgApiVersion = runtime.apiVersion
             )
             if (shouldLogTiming) {
                 logMessageTiming(
