@@ -518,9 +518,11 @@ internal fun generateDarkColorScheme(
     }
 
     val primaryContainer = darkenColor(primaryColor, 0.3f)
-    val onPrimaryContainer = getContrastingTextColor(primaryContainer, forceLight = true)
+    // Measured like every other label: a light pick leaves this container light enough that a
+    // forced white label would sit at 2.1:1 on it.
+    val onPrimaryContainer = getContrastingTextColor(primaryContainer)
     val secondaryContainer = darkenColor(secondaryColor, 0.3f)
-    val onSecondaryContainer = getContrastingTextColor(secondaryContainer, forceLight = true)
+    val onSecondaryContainer = getContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = true).copy(
@@ -539,18 +541,12 @@ internal fun generateDarkColorScheme(
     )
 }
 
-/** Add a new helper function to determine appropriate text color based on background color */
-private fun getContrastingTextColor(
-        backgroundColor: Color,
-        forceDark: Boolean = false,
-        forceLight: Boolean = false
-): Color {
-    // If forced, return the specified color
-    if (forceDark) return Color.Black
-    if (forceLight) return Color.White
-
-    // Whichever of the two actually contrasts better, so a label on a filled accent never lands
-    // below ~4.58:1 (the luma heuristic this replaces could pick the worse one near its threshold).
+/**
+ * The label colour for a filled surface: whichever of black and white actually contrasts better,
+ * so the pair never lands below ~4.58:1 on an opaque fill. Only [ON_COLOR_MODE_LIGHT] and
+ * [ON_COLOR_MODE_DARK] skip the measurement, because they are the user asking for that side.
+ */
+private fun getContrastingTextColor(backgroundColor: Color): Color {
     return if (resolvedContrastRatio(Color.Black, backgroundColor) >=
         resolvedContrastRatio(Color.White, backgroundColor)
     ) {
