@@ -137,7 +137,15 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
                 // 根据状态栏背景色动态设置状态栏图标颜色
                 // isAppearanceLightStatusBars = true 表示图标为深色（适用于浅色背景）
                 // isAppearanceLightStatusBars = false 表示图标为浅色（适用于深色背景）
-                insetsController?.isAppearanceLightStatusBars = !isColorLight(Color(statusBarColor))
+                // The theme's own bar keeps the tone it has always drawn; a custom bar colour is
+                // the user's own, so the tone is answered for that colour (see the helper).
+                val customStatusBarFill =
+                        !statusBarTransparent &&
+                                !(useBackgroundImage && backgroundImageUri != null) &&
+                                useCustomStatusBarColor &&
+                                customStatusBarColorValue != null
+                insetsController?.isAppearanceLightStatusBars =
+                        resolveStatusBarDarkIcons(Color(statusBarColor), customStatusBarFill)
             }
             
             // 设置导航栏颜色（底部小白条所在的区域）
@@ -552,6 +560,17 @@ private fun isColorLight(color: Color): Boolean {
     val luminance = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
     return luminance > 0.5
 }
+
+/**
+ * Whether the system should draw the status bar icons in their dark appearance. The theme has always
+ * flipped the lightness of its own bar, which is the look it ships (a light bar gets light icons);
+ * that stays. A custom bar colour is the user's own, and the flip lands on the unreadable side
+ * there - a near-black bar drew dark icons at 1.27:1, a white one light icons at 1:1 - so that case
+ * is answered for the colour instead.
+ */
+internal fun resolveStatusBarDarkIcons(barColor: Color, customBarColor: Boolean): Boolean =
+        if (customBarColor) getResolvedContrastingTextColor(barColor) == Color.Black
+        else !isColorLight(barColor)
 
 /** 判断颜色是否较深 */
 private fun isColorDark(color: Color): Boolean {
