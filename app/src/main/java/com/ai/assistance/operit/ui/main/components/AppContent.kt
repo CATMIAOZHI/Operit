@@ -202,8 +202,7 @@ fun AppContent(
     // shipped label is #FFF0F5, which measures 1.10:1 on a white app bar. While no custom colour is
     // in play nothing changes, so the theme keeps drawing its own soft tone there.
     val customAppBarFill =
-            if (useCustomAppBarColor && !toolbarTransparent) customAppBarColor?.let(::Color)
-            else null
+            resolveAppBarFill(useCustomAppBarColor, toolbarTransparent, customAppBarColor)
     val appBarContentColor =
             resolveAppBarContentColor(
                     customAppBarFill = customAppBarFill,
@@ -785,3 +784,15 @@ internal fun resolveAppBarContentColor(
         if (forceContentColor) contentColorMode else UserPreferencesManager.ON_COLOR_MODE_AUTO,
     )
 }
+
+/**
+ * The fill the app bar actually draws, or `null` when it draws the theme's own primary. This is the
+ * same precedence the bar's `containerColor` uses, so the label is answered for the color that is
+ * really behind it.
+ */
+internal fun resolveAppBarFill(
+    useCustomAppBarColor: Boolean,
+    toolbarTransparent: Boolean,
+    customAppBarColor: Int?,
+): Color? =
+    if (useCustomAppBarColor && !toolbarTransparent) customAppBarColor?.let(::Color) else null
