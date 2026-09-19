@@ -57,7 +57,8 @@ class ThemeColorSchemeResolverTest {
 
     @Test
     fun `pale custom accent is strengthened until it separates from the light surfaces`() {
-        // 0xFFFFCDE8 is what left the statistics page blank: 1.0:1 against the card behind it.
+        // 0xFFFFCDE8 is what left the statistics page blank: 1.24:1 on the statistics card and
+        // 1.02:1 on the card behind it.
         val pale = 0xFFFFCDE8.toInt()
 
         val scheme = resolveThemeColorScheme(
@@ -65,11 +66,10 @@ class ThemeColorSchemeResolverTest {
             darkTheme = false,
         )
 
-        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= 3f)
-        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= 3f)
+        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= CONTRAST_TARGET)
         // The pick is deepened, not discarded: the accent keeps its hue.
-        assertTrue(scheme.primary.red > scheme.primary.green)
-        assertTrue(scheme.primary.blue > scheme.primary.green)
+        assertEquals(hueOf(Color(pale)), hueOf(scheme.primary), HUE_TOLERANCE)
         // The container tint is still a light tint, so the accent and the tint stay distinguishable.
         assertTrue(scheme.primaryContainer.red > scheme.primary.red)
         assertTrue(scheme.primaryContainer.green > scheme.primary.green)
@@ -83,12 +83,48 @@ class ThemeColorSchemeResolverTest {
         val scheme =
             generateLightColorScheme(pale, pale, UserPreferencesManager.ON_COLOR_MODE_AUTO)
 
-        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= 3f)
-        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= 3f)
+        assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= CONTRAST_TARGET)
+    }
+
+    @Test
+    fun `every unreadable pick reaches the target, including achromatic and worst case ones`() {
+        // 0xFF20C634 is the worst input found by sweeping all 24-bit colours; the greys and white
+        // have no hue at all, and the rest are pastels in the range the guard has to rescue.
+        val lightInputs = listOf(0xFFFFCDE8, 0xFFFFFFFF, 0xFF808080, 0xFF20C634, 0xFFF5E6EA, 0xFFA5D6A7)
+        for (argb in lightInputs) {
+            val accent = ensureResolvedLightAccentContrast(Color(argb.toInt()))
+            assertTrue(
+                "light $argb resolved to an unreadable accent",
+                contrastRatio(accent, RainyLightHover) >= CONTRAST_TARGET,
+            )
+        }
+    }
+
+    @Test
+    fun `a very dark custom accent is strengthened on the dark surfaces too`() {
+        // The fixed 0.2 lightening in the dark generator is not enough for these.
+        val darkInputs = listOf(0xFF102030, 0xFF000000, 0xFF1A1A5E, 0xFF0A2A0A)
+        for (argb in darkInputs) {
+            val accent = ensureResolvedDarkAccentContrast(Color(argb.toInt()))
+            assertTrue(
+                "dark $argb resolved to an unreadable accent",
+                contrastRatio(accent, RainyDarkBorder) >= CONTRAST_TARGET,
+            )
+        }
+
+        val scheme =
+            generateDarkColorScheme(
+                Color(0xFF102030.toInt()),
+                Color(0xFF102030.toInt()),
+                UserPreferencesManager.ON_COLOR_MODE_AUTO,
+            )
+        assertTrue(contrastRatio(scheme.primary, RainyDarkBorder) >= CONTRAST_TARGET)
+        assertTrue(contrastRatio(scheme.secondary, RainyDarkBorder) >= CONTRAST_TARGET)
     }
 
     /** Independent WCAG contrast check, so the assertion does not reuse the production maths. */
-    private fun contrastRatio(first: Color, second: Color): Float {
+    private fun contrastRatio(first: Color, second: Color): Double {
         fun channel(value: Float): Double =
             if (value <= 0.03928f) value.toDouble() / 12.92
             else Math.pow(((value + 0.055f) / 1.055f).toDouble(), 2.4)
@@ -98,9 +134,32 @@ class ThemeColorSchemeResolverTest {
 
         val firstLuminance = luminance(first)
         val secondLuminance = luminance(second)
-        return ((maxOf(firstLuminance, secondLuminance) + 0.05) /
-            (minOf(firstLuminance, secondLuminance) + 0.05))
-            .toFloat()
+        return (maxOf(firstLuminance, secondLuminance) + 0.05) /
+            (minOf(firstLuminance, secondLuminance) + 0.05)
+    }
+
+    /** Independent hue read-out, so "the pick keeps its hue" is checked without the production HSL. */
+    private fun hueOf(color: Color): Double {
+        val red = color.red.toDouble()
+        val green = color.green.toDouble()
+        val blue = color.blue.toDouble()
+        val max = maxOf(red, green, blue)
+        val min = minOf(red, green, blue)
+        val delta = max - min
+        if (delta == 0.0) return 0.0
+        val hue =
+            when (max) {
+                red -> (green - blue) / delta + if (green < blue) 6.0 else 0.0
+                green -> (blue - red) / delta + 2.0
+                else -> (red - green) / delta + 4.0
+            } * 60.0
+        return hue
+    }
+
+    private companion object {
+        /** WCAG AA for large text; the guard is a floor, not a goal. */
+        const val CONTRAST_TARGET = 3.0
+        const val HUE_TOLERANCE = 1.0
     }
 
     @Test

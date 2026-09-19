@@ -194,18 +194,22 @@ private fun generateResolvedDarkColorScheme(
 ): ColorScheme {
     val adjustedPrimaryColor = lightenResolvedColor(primaryColor, 0.2f)
     val adjustedSecondaryColor = lightenResolvedColor(secondaryColor, 0.2f)
+    // The fixed 0.2 is not enough for a very dark pick, so a dark custom color still needs the
+    // contrast guard on the dark surfaces.
+    val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
+    val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
 
     val onPrimary =
         when (onColorMode) {
             ON_COLOR_MODE_LIGHT -> Color.White
             ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(adjustedPrimaryColor)
+            else -> getResolvedContrastingTextColor(accent)
         }
     val onSecondary =
         when (onColorMode) {
             ON_COLOR_MODE_LIGHT -> Color.White
             ON_COLOR_MODE_DARK -> Color.Black
-            else -> getResolvedContrastingTextColor(adjustedSecondaryColor)
+            else -> getResolvedContrastingTextColor(accentSecondary)
         }
 
     val primaryContainer = darkenResolvedColor(primaryColor, 0.3f)
@@ -215,11 +219,11 @@ private fun generateResolvedDarkColorScheme(
         getResolvedContrastingTextColor(secondaryContainer, forceLight = true)
 
     return RainyDarkColorScheme.copy(
-        primary = adjustedPrimaryColor,
+        primary = accent,
         onPrimary = onPrimary,
         primaryContainer = primaryContainer,
         onPrimaryContainer = onPrimaryContainer,
-        secondary = adjustedSecondaryColor,
+        secondary = accentSecondary,
         onSecondary = onSecondary,
         secondaryContainer = secondaryContainer,
         onSecondaryContainer = onSecondaryContainer,
@@ -263,36 +267,53 @@ private fun darkenResolvedColor(color: Color, factor: Float): Color {
  * `primary` is not only a fill: this UI also paints it as *text* in many places (statistics
  * numbers, outcome labels, link-like accents). Material's own schemes keep that accent at a
  * legible tone, but a custom color is applied as the user picked it, and this palette paints the
- * light surfaces with the same pale pink family. A pale custom color therefore disappears into
- * them: an accent of `#FFCDE8` on the default card (`RainyLightHover`) measures 1.0:1, which is
- * what left the statistics page looking blank.
+ * surfaces behind that text with the same pale pink family. A pale custom color therefore
+ * disappears into them: measured from a device screenshot, an accent of `#FFCDE8` is 1.24:1 on
+ * the statistics card (`surfaceContainerHigh`) and 1.02:1 on the default card
+ * ([RainyLightHover]), which is what left that page looking blank.
  *
- * Colors that already separate from that surface are returned untouched, so only unreadable picks
- * change. [RainyLightHover] is the darkest surface an accent is drawn on, so requiring the
- * contrast there also covers the lighter panels. The hue is kept and saturation is capped rather
- * than raised, so a pastel pick turns into a deeper version of itself instead of a neon one.
- *
- * The dark palette is deliberately untouched: it already lightens a custom color, and a dark
- * custom color on the dark surfaces is a separate case nobody has hit yet.
+ * Colors that already separate from the surface they are drawn on are returned untouched, so only
+ * unreadable picks change. The hue is kept and saturation is capped rather than raised, so a
+ * pastel pick turns into a deeper version of itself instead of a neon one.
  */
-internal fun ensureResolvedLightAccentContrast(accent: Color): Color {
-    if (resolvedContrastRatio(accent, RainyLightHover) >= ACCENT_TEXT_CONTRAST_TARGET) return accent
+internal fun ensureResolvedLightAccentContrast(accent: Color): Color =
+    ensureResolvedAccentContrast(accent, RainyLightHover, lighten = false)
+
+/**
+ * The dark palette has the same gap from the other side: a custom color is lightened by a fixed
+ * 0.2 there, which is not enough for a very dark pick, so an accent of `#FF102030` still lands
+ * around 1.7:1 on `[RainyDarkBorder]` (the default dark card). [RainyDarkBorder] is the lightest
+ * surface an accent is drawn on, so requiring the contrast there also covers the darker panels.
+ */
+internal fun ensureResolvedDarkAccentContrast(accent: Color): Color =
+    ensureResolvedAccentContrast(accent, RainyDarkBorder, lighten = true)
+
+private fun ensureResolvedAccentContrast(
+    accent: Color,
+    surface: Color,
+    lighten: Boolean,
+): Color {
+    if (resolvedContrastRatio(accent, surface) >= ACCENT_TEXT_CONTRAST_TARGET) return accent
 
     val hsl = accent.toResolvedHsl()
     val saturation = hsl.saturation.coerceAtMost(ACCENT_SATURATION_CEILING)
     var lightness = hsl.lightness
     repeat(ACCENT_LIGHTNESS_STEPS) {
         val candidate = ResolvedHsl(hsl.hue, saturation, lightness.coerceIn(0f, 1f)).toResolvedColor()
-        if (resolvedContrastRatio(candidate, RainyLightHover) >= ACCENT_TEXT_CONTRAST_TARGET) {
+        if (resolvedContrastRatio(candidate, surface) >= ACCENT_TEXT_CONTRAST_TARGET) {
             return candidate
         }
-        lightness -= ACCENT_LIGHTNESS_STEP
+        lightness += if (lighten) ACCENT_LIGHTNESS_STEP else -ACCENT_LIGHTNESS_STEP
     }
     return ResolvedHsl(hsl.hue, saturation, lightness.coerceIn(0f, 1f)).toResolvedColor()
 }
 
-/** WCAG AA for large text; the accent is also used at smaller sizes, so this is a floor, not a goal. */
-private const val ACCENT_TEXT_CONTRAST_TARGET = 3f
+/**
+ * WCAG AA for large text; the accent is also used at smaller sizes, so this is a floor, not a
+ * goal. [ACCENT_LIGHTNESS_STEPS] sizes the search for this target and would need to grow (or the
+ * lightness floor to drop) before the target could be raised to AA's 4.5.
+ */
+private const val ACCENT_TEXT_CONTRAST_TARGET = 3.0
 
 private const val ACCENT_SATURATION_CEILING = 0.75f
 private const val ACCENT_LIGHTNESS_STEP = 0.04f
@@ -334,17 +355,20 @@ private fun ResolvedHsl.toResolvedColor(): Color {
     return Color(r + match, g + match, b + match, 1f)
 }
 
-private fun resolvedChannelLuminance(channel: Float): Float =
-    if (channel <= 0.03928f) channel / 12.92f else ((channel + 0.055f) / 1.055f).pow(2.4f)
+private fun resolvedChannelLuminance(channel: Float): Double {
+    val value = channel.toDouble()
+    return if (value <= 0.03928) value / 12.92 else ((value + 0.055) / 1.055).pow(2.4)
+}
 
-private fun resolvedRelativeLuminance(color: Color): Float =
-    0.2126f * resolvedChannelLuminance(color.red) +
-        0.7152f * resolvedChannelLuminance(color.green) +
-        0.0722f * resolvedChannelLuminance(color.blue)
+private fun resolvedRelativeLuminance(color: Color): Double =
+    0.2126 * resolvedChannelLuminance(color.red) +
+        0.7152 * resolvedChannelLuminance(color.green) +
+        0.0722 * resolvedChannelLuminance(color.blue)
 
-private fun resolvedContrastRatio(first: Color, second: Color): Float {
+/** Double rather than Float so the ">= 3" decision cannot land either side of the target by rounding. */
+private fun resolvedContrastRatio(first: Color, second: Color): Double {
     val firstLuminance = resolvedRelativeLuminance(first)
     val secondLuminance = resolvedRelativeLuminance(second)
-    return (maxOf(firstLuminance, secondLuminance) + 0.05f) /
-        (minOf(firstLuminance, secondLuminance) + 0.05f)
+    return (maxOf(firstLuminance, secondLuminance) + 0.05) /
+        (minOf(firstLuminance, secondLuminance) + 0.05)
 }
