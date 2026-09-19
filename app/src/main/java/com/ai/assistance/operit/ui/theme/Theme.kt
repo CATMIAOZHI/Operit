@@ -455,17 +455,22 @@ internal fun generateLightColorScheme(
     secondaryColor: Color,
     onColorMode: String
 ): ColorScheme {
+    // A custom color is used verbatim and then drawn as accent *text* all over the UI, so a pale
+    // pick has to be strengthened before it is readable on the light surfaces.
+    val accent = ensureResolvedLightAccentContrast(primaryColor)
+    val accentSecondary = ensureResolvedLightAccentContrast(secondaryColor)
     val onPrimary = when (onColorMode) {
         ON_COLOR_MODE_LIGHT -> Color.White
         ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(primaryColor)
+        else -> getContrastingTextColor(accent)
     }
     val onSecondary = when (onColorMode) {
         ON_COLOR_MODE_LIGHT -> Color.White
         ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(secondaryColor)
+        else -> getContrastingTextColor(accentSecondary)
     }
 
+    // Tints keep the value the user picked; only the accent itself is strengthened.
     val primaryContainer = lightenColor(primaryColor, 0.7f)
     val onPrimaryContainer = getContrastingTextColor(primaryContainer)
     val secondaryContainer = lightenColor(secondaryColor, 0.7f)
@@ -473,11 +478,11 @@ internal fun generateLightColorScheme(
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = false).copy(
-            primary = primaryColor,
+            primary = accent,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,
             onPrimaryContainer = onPrimaryContainer,
-            secondary = secondaryColor,
+            secondary = accentSecondary,
             onSecondary = onSecondary,
             secondaryContainer = secondaryContainer,
             onSecondaryContainer = onSecondaryContainer,
