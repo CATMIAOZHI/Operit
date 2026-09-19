@@ -1001,7 +1001,7 @@ open class OpenAIProvider(
         return if (useResponsesApi) {
             text
         } else {
-            ChatUtils.stripOpenAiResponsesReasoningMeta(text)
+            ChatUtils.stripOpenAiResponsesProtocolMarkup(text)
         }
     }
 
