@@ -105,6 +105,9 @@ class SubagentSliceCoordinator(context: Context) {
                                     persistTurn = true,
                                     notifyReply = false,
                                     isSubTask = true,
+                                    // The prompt is the task this host handed the slice, not the
+                                    // owner typing in its chat.
+                                    deliveredByTool = true,
                                     systemPromptOverride =
                                         SubagentPromptBuilder.buildSystemPrompt(profile),
                                 ),

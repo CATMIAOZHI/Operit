@@ -114,6 +114,8 @@ internal fun SubagentTaskRequest.toChatTurnOptions(
         notifyReply = false,
         isSubTask = true,
         isCollaborationAgent = collaborationSystemPrompt != null,
+        // The prompt is the task this host handed the subagent, not the owner typing in its chat.
+        deliveredByTool = true,
         collaborationHistory = collaborationHistory,
         collaborationHistoryCutoff = collaborationHistoryCutoff,
         functionType = functionType,

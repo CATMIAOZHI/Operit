@@ -1476,6 +1476,9 @@ class StandardChatManagerTool(private val context: Context) {
                     persistTurn = persistTurn ?: true,
                     notifyReply = notifyReply,
                     hideUserMessage = hideUserMessage ?: false,
+                    // The wording of this turn is tool input, so the permission reviewer must read
+                    // it as evidence rather than as the owner asking for something.
+                    deliveredByTool = true,
                     disableWarning = disableWarning ?: false
                 )
 

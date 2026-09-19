@@ -16,8 +16,8 @@ import com.ai.assistance.operit.data.model.CharacterCard
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.model.ChatMessage
-import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.data.model.ChatTurnOptions
+import com.ai.assistance.operit.data.model.userTurnDisplayMode
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode
@@ -902,12 +902,7 @@ class MessageCoordinationDelegate(
             sender = "user",
             content = finalUserMessageContent,
             roleName = context.getString(R.string.message_role_user),
-            displayMode =
-                if (turnOptions.hideUserMessage) {
-                    ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
-                } else {
-                    ChatMessageDisplayMode.NORMAL
-                }
+            displayMode = turnOptions.userTurnDisplayMode(hidden = turnOptions.hideUserMessage)
         )
         chatHistoryDelegate.addMessageToChat(userMessage, chatId)
         titleFallback?.let { fallbackTitle ->

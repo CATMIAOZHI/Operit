@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.permissions
 
+import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.services.ChatServiceCore
 import com.ai.assistance.operit.util.ChatUtils
 
@@ -22,16 +23,32 @@ internal const val OMITTED_ENTRIES_NOTICE =
     "Host notice: older transcript entries are omitted, so this view is partial. Missing context is not a grant."
 internal const val USER_ANCHOR_PREFIX = "[user anchor; older messages omitted]"
 
+/**
+ * What a delivered turn is called in the window. The reviewer has to read a turn the app delivered
+ * as a delivery, and the row's own role name is the owner's, so the label is where that shows.
+ */
+internal const val DELIVERED_TURN_LABEL = "user turn delivered by the app"
+
 /** One parent message offered to the transcript window. */
 internal data class PermissionReviewTranscriptMessage(
     val timestamp: Long,
     val sender: String,
     val roleName: String,
     val content: String,
+    val displayMode: ChatMessageDisplayMode = ChatMessageDisplayMode.NORMAL,
 ) {
     val isUser: Boolean
         get() =
             sender.equals("user", ignoreCase = true) || roleName.equals("user", ignoreCase = true)
+
+    /**
+     * Who the entry reads as: the owner, the agent path a collaboration row came from, or the
+     * delivery a tool or the host made into this chat.
+     */
+    val label: String
+        get() =
+            if (displayMode.isDeliveredTurn) DELIVERED_TURN_LABEL
+            else roleName.ifBlank { sender }
 }
 
 /** One rendered transcript entry, with the sender class the anchor fallback needs. */
@@ -58,7 +75,7 @@ internal fun permissionReviewTranscriptEntries(
             )
         if (content.isBlank()) return@mapNotNull null
         PermissionReviewTranscriptEntry(
-            rendered = "[${message.roleName.ifBlank { message.sender }}]\n$content\n",
+            rendered = "[${message.label}]\n$content\n",
             isUser = message.isUser,
         )
     }
@@ -128,6 +145,7 @@ internal suspend fun loadPermissionReviewTranscriptMessages(
                 sender = message.sender,
                 roleName = message.roleName,
                 content = message.content,
+                displayMode = message.displayMode,
             )
         }
 

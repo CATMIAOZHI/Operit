@@ -896,14 +896,7 @@ class MessageProcessingDelegate(
                         override = turnOptions.userRoleNameOverride,
                         fallback = context.getString(R.string.message_role_user),
                     ),
-                displayMode =
-                    if (effectiveHideUserMessage) {
-                        ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
-                    } else if (turnOptions.isCollaborationAgent) {
-                        ChatMessageDisplayMode.COLLABORATION_TASK
-                    } else {
-                        ChatMessageDisplayMode.NORMAL
-                    }
+                displayMode = turnOptions.userTurnDisplayMode(hidden = effectiveHideUserMessage)
             )
 
             if (shouldAddUserMessageToChat && chatId != null) {
