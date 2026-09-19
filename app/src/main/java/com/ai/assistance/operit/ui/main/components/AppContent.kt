@@ -56,6 +56,7 @@ import com.ai.assistance.operit.ui.main.navigation.LocalRouteInstanceId
 import com.ai.assistance.operit.ui.main.navigation.ScreenRouteViewModelStoreOwnerManager
 import com.ai.assistance.operit.ui.main.navigation.retainedRouteKeysOnContentAttach
 import com.ai.assistance.operit.ui.main.screens.Screen
+import com.ai.assistance.operit.ui.theme.resolveContrastingTextColor
 import com.ai.assistance.operit.ui.common.composedsl.ToolPkgComposeDslToolScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -197,16 +198,19 @@ fun AppContent(
                     )
                     .value
 
+    // A custom app bar colour is a fill that the theme's onPrimary was never measured against: the
+    // shipped label is #FFF0F5, which measures 1.10:1 on a white app bar. While no custom colour is
+    // in play nothing changes, so the theme keeps drawing its own soft tone there.
+    val customAppBarFill =
+            if (useCustomAppBarColor && !toolbarTransparent) customAppBarColor?.let(::Color)
+            else null
     val appBarContentColor =
-            if (forceAppBarContentColor) {
-                when (appBarContentColorMode) {
-                    UserPreferencesManager.APP_BAR_CONTENT_COLOR_MODE_LIGHT -> Color.White
-                    UserPreferencesManager.APP_BAR_CONTENT_COLOR_MODE_DARK -> Color.Black
-                    else -> MaterialTheme.colorScheme.onPrimary
-                }
-            } else {
-                MaterialTheme.colorScheme.onPrimary
-            }
+            resolveAppBarContentColor(
+                    customAppBarFill = customAppBarFill,
+                    forceContentColor = forceAppBarContentColor,
+                    contentColorMode = appBarContentColorMode,
+                    themeOnPrimary = MaterialTheme.colorScheme.onPrimary,
+                )
 
     // 获取聊天历史管理器
     val chatHistoryManager = ChatHistoryManager.getInstance(context)
@@ -751,4 +755,33 @@ fun AppContent(
             }
         }
     }
+}
+
+/**
+ * The app bar's label colour. A custom app bar colour is a fill that the theme never measured its
+ * own label against, so the label is answered for that fill, with the user's forced tone honoured
+ * while it is visible. With no custom colour the theme's own tone is kept exactly as it is, which is
+ * what the shipped (soft) app bar relies on.
+ */
+internal fun resolveAppBarContentColor(
+    customAppBarFill: Color?,
+    forceContentColor: Boolean,
+    contentColorMode: String,
+    themeOnPrimary: Color,
+): Color {
+    if (customAppBarFill == null) {
+        return if (forceContentColor) {
+            when (contentColorMode) {
+                UserPreferencesManager.APP_BAR_CONTENT_COLOR_MODE_LIGHT -> Color.White
+                UserPreferencesManager.APP_BAR_CONTENT_COLOR_MODE_DARK -> Color.Black
+                else -> themeOnPrimary
+            }
+        } else {
+            themeOnPrimary
+        }
+    }
+    return resolveContrastingTextColor(
+        customAppBarFill,
+        if (forceContentColor) contentColorMode else UserPreferencesManager.ON_COLOR_MODE_AUTO,
+    )
 }

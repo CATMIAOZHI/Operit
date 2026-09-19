@@ -233,9 +233,10 @@ internal fun getResolvedContrastingTextColor(backgroundColor: Color): Color {
  * The label colour for a filled accent: the measured side, unless the user's theme-text-colour
  * setting asks for a specific one and that side still reads on the fill. The setting is a
  * preference about tone, and a soft tone is legitimate - the shipped light palette draws its own
- * app bar at 2.7:1 - so the setting is honoured down to [LABEL_VISIBILITY_FLOOR]. Below that the
- * requested colour is not a tone but a smudge: a black label on a black accent, or a white one on
- * a white accent, measures 1:1, which is the defect this guards.
+ * app bar (#FFF0F5 on #FF6B8E) at 2.44:1 - so the setting is honoured down to
+ * [LABEL_VISIBILITY_FLOOR]. Below that the requested colour is not a tone but a smudge: a black
+ * label on a black accent, or a white one on a white accent, measures 1:1, which is the defect this
+ * guards.
  */
 internal fun resolveContrastingTextColor(fill: Color, onColorMode: String): Color {
     val requested =

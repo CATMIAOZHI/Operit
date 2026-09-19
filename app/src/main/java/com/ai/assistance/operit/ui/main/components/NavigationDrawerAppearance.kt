@@ -56,9 +56,11 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
     // independent of the main custom colors, so a pale pick would otherwise disappear into the
     // container exactly like the accent does on the statistics cards.
     val customAccentColor =
-        customNavigationDrawerAccentColor
-            ?.takeIf { useCustomNavigationDrawerAccentColor }
-            ?.let { ensureAccentReadableOn(Color(it), MaterialTheme.colorScheme.surface) }
+        resolveDrawerAccentColor(
+            customNavigationDrawerAccentColor,
+            useCustomNavigationDrawerAccentColor,
+            MaterialTheme.colorScheme.surface,
+        )
     val defaultAppearance =
         NavigationDrawerAppearance(
             containerColor = MaterialTheme.colorScheme.surface,
@@ -80,9 +82,11 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
 
     val containerColor = Color(customColorValue)
     val containerAccentColor =
-        customNavigationDrawerAccentColor
-            ?.takeIf { useCustomNavigationDrawerAccentColor }
-            ?.let { ensureAccentReadableOn(Color(it), containerColor) }
+        resolveDrawerAccentColor(
+            customNavigationDrawerAccentColor,
+            useCustomNavigationDrawerAccentColor,
+            containerColor,
+        )
     val onContainerColor = getTextColorForBackground(containerColor)
     val accentColor = lerp(onContainerColor, MaterialTheme.colorScheme.primary, 0.28f)
     val buttonContainerColor = lerp(containerColor, onContainerColor, 0.08f)
@@ -104,3 +108,17 @@ fun rememberNavigationDrawerAppearance(): NavigationDrawerAppearance {
         buttonLiquidGlassEnabled = buttonLiquidGlassEnabled,
     )
 }
+
+/**
+ * The drawer's custom accent once it is readable on the container it is painted on, or `null` when
+ * there is no custom accent to use (the switch is off, or no colour was picked). Callers fall back
+ * to their own default for `null`.
+ */
+internal fun resolveDrawerAccentColor(
+    customAccent: Int?,
+    useCustomAccent: Boolean,
+    containerColor: Color,
+): Color? =
+    customAccent
+        ?.takeIf { useCustomAccent }
+        ?.let { ensureAccentReadableOn(Color(it), containerColor) }
