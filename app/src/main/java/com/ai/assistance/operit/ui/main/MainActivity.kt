@@ -479,10 +479,13 @@ class MainActivity : ComponentActivity() {
             val state = RawSnapshotBackupManager
                 .officialOperitMigrationState(applicationContext)
                 .state
-            if (RawSnapshotBackupManager.isProcessRestartRequired()) {
-                exitProcess(0)
-            }
             val pendingFailure = RawSnapshotBackupManager.pendingRestoreOperationFailureMessage()
+            if (pendingFailure != null &&
+                RawSnapshotBackupManager.officialOperitMigrationState(applicationContext).operation == "ROOM_RESTORE"
+            ) {
+                showMigrationStartupErrorSurface(message = pendingFailure, pendingResetRequired = false)
+                return@launch
+            }
             if (pendingFailure != null &&
                 (state == MigrationStateStore.State.IDLE || state == MigrationStateStore.State.COMPLETED)
             ) {
@@ -491,6 +494,9 @@ class MainActivity : ComponentActivity() {
                     pendingResetRequired = false,
                 )
                 return@launch
+            }
+            if (RawSnapshotBackupManager.isProcessRestartRequired()) {
+                exitProcess(0)
             }
             when (state) {
                 MigrationStateStore.State.IDLE ->

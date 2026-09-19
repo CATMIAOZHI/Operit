@@ -43,7 +43,6 @@ import com.ai.assistance.operit.core.application.ActivityLifecycleManager
 import com.ai.assistance.operit.core.application.ForegroundServiceCompat
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiConfig
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
-import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
 import com.ai.assistance.operit.integrations.http.ExternalChatHttpServer
 import com.ai.assistance.operit.integrations.http.ExternalChatHttpState
 import com.ai.assistance.operit.services.FloatingChatService

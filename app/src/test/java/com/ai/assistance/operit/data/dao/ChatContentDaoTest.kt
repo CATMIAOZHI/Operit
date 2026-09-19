@@ -38,6 +38,25 @@ class ChatContentDaoTest {
     }
 
     @Test
+    fun `variant lookup handles large sparse duplicate timestamp sets in query order`() = runBlocking {
+        val chatId = "many-variants"
+        database.chatDao().insertChat(ChatEntity(id = chatId, title = "Variants"))
+        val timestamps = (1L..1100L).map { it * 10 }
+        for (timestamp in timestamps + 15L) {
+            database.messageVariantDao().insertVariant(MessageVariantEntity(
+                chatId = chatId, messageTimestamp = timestamp, variantIndex = 1,
+                content = "variant-$timestamp",
+            ))
+        }
+        val result = database.chatContentDao().getVariantsForMessages(
+            chatId, timestamps.reversed() + timestamps.take(5),
+        )
+        assertEquals(timestamps, result.map { it.messageTimestamp })
+        assertEquals(emptyList<MessageVariantEntity>(),
+            database.chatContentDao().getVariantsForMessages(chatId, emptyList()))
+    }
+
+    @Test
     fun `process metadata follows the selected variant without loading its body`() = runBlocking {
         val chatId = "process-variant"
         database.chatDao().insertChat(ChatEntity(id = chatId, title = "Process"))

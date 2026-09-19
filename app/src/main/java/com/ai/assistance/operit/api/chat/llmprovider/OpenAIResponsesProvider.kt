@@ -491,7 +491,7 @@ object OpenAIResponsesPayloadAdapter {
             if (role == "tool") {
                 val callId = message.optString("tool_call_id", "")
                 if (callId.isNotEmpty()) {
-                    val outputText = extractToolOutputText(message.opt("content"))
+                    val outputText = extractToolOutputContent(message.opt("content"))
                     input.put(
                         JSONObject().apply {
                             put("type", "function_call_output")
@@ -623,6 +623,17 @@ object OpenAIResponsesPayloadAdapter {
                             }
                         }
 
+                        "video_url", "input_video" -> {
+                            val videoUrl = part.optJSONObject("video_url")?.optString("url", "")
+                                ?: part.optString("video_url", "")
+                            if (videoUrl.isNotEmpty()) {
+                                convertedParts.put(JSONObject().apply {
+                                    put("type", "input_video")
+                                    put("video_url", videoUrl)
+                                })
+                            }
+                        }
+
                         else -> {
                             val fallbackText = part.optString("text", "")
                             if (fallbackText.isNotEmpty()) {
@@ -642,6 +653,14 @@ object OpenAIResponsesPayloadAdapter {
 
             else -> content.toString()
         }
+    }
+
+    private fun extractToolOutputContent(content: Any?): Any {
+        if (content is JSONArray) {
+            val converted = convertMessageContentForResponses(content)
+            if (converted is JSONArray && converted.length() > 0) return converted
+        }
+        return extractToolOutputText(content)
     }
 
     private fun extractToolOutputText(content: Any?): String {

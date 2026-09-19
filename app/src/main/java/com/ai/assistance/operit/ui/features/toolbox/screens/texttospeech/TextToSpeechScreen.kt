@@ -26,7 +26,8 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.voice.SimpleVoiceProvider
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory
 import com.ai.assistance.operit.api.voice.VoiceService
-import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
+import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.launch
 import java.io.IOException
 import java.net.HttpURLConnection
@@ -43,9 +44,17 @@ fun TextToSpeechScreen(navController: NavController) {
         val context = LocalContext.current
         val coroutineScope = rememberCoroutineScope()
         val scrollState = rememberScrollState()
-        val prefs = remember { SpeechServicesPreferences(context) }
-        val ttsServiceType by prefs.ttsServiceTypeFlow.collectAsState(initial = VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS)
-        val httpConfig by prefs.ttsHttpConfigFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_HTTP_TTS_PRESET)
+        val profilePrefs = remember { SpeechServiceProfilesPreferences(context) }
+        val currentTtsProfile by profilePrefs.currentTtsProfileOrNullFlow.collectAsState(initial = null)
+        if (currentTtsProfile == null) {
+                Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                        CircularProgressIndicator()
+                }
+                return
+        }
+        val activeTtsProfile = checkNotNull(currentTtsProfile)
+        val ttsServiceType = activeTtsProfile.serviceType
+        val httpConfig = activeTtsProfile.httpConfig
         var voiceServiceVersion by remember { mutableStateOf(0) }
         var voiceService by remember(voiceServiceVersion) {
                 mutableStateOf(VoiceServiceFactory.getInstance(context))
@@ -131,13 +140,18 @@ fun TextToSpeechScreen(navController: NavController) {
 
         fun saveSimpleTtsSelection(localeTag: String, voiceId: String) {
                 coroutineScope.launch {
-                        prefs.saveTtsSettings(
-                                serviceType = ttsServiceType,
-                                httpConfig = httpConfig.copy(localeTag = localeTag, voiceId = voiceId)
-                        )
-                        VoiceServiceFactory.resetInstance()
-                        voiceService = VoiceServiceFactory.getInstance(context)
-                        voiceServiceVersion++
+                        try {
+                                profilePrefs.updateTtsProfile(
+                                        activeTtsProfile.copy(
+                                                httpConfig = httpConfig.copy(localeTag = localeTag, voiceId = voiceId)
+                                        )
+                                )
+                                VoiceServiceFactory.resetInstance()
+                                voiceService = VoiceServiceFactory.getInstance(context)
+                                voiceServiceVersion++
+                        } catch (error: Exception) {
+                                AppLogger.e("TextToSpeechScreen", "Failed to save TTS profile voice", error)
+                        }
                 }
         }
 

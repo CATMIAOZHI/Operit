@@ -15,6 +15,8 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.*
@@ -39,8 +41,13 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.chat.library.ChatMemoryRebuildManager
+import com.ai.assistance.operit.api.chat.library.ChatMemoryRebuildTimeScope
+import com.ai.assistance.operit.api.chat.library.ChatMemoryWindowPlanner
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatFolderEntity
 import com.ai.assistance.operit.data.model.CharacterCard
@@ -57,6 +64,11 @@ import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.repository.MemoryRepository
 import com.ai.assistance.operit.ui.features.settings.components.CharacterCardAssignDialog
 import com.ai.assistance.operit.ui.features.settings.components.CharacterGroupAssignDialog
+import java.time.LocalDate
+import java.time.ZoneId
+import java.time.ZoneOffset
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 import java.util.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.collectLatest
@@ -92,6 +104,8 @@ private fun buildChatFolderLabels(folders: List<ChatFolderEntity>): Map<String, 
 fun ChatHistorySettingsScreen() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val memoryRebuildManager = remember { ChatMemoryRebuildManager.getInstance(context) }
+    val memoryRebuildProgress by memoryRebuildManager.progress.collectAsState()
 
     val chatHistoryManager = remember { ChatHistoryManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
@@ -321,6 +335,8 @@ fun ChatHistorySettingsScreen() {
                     chatFolders = chatFolders,
                     characterCards = availableCharacterCards,
                     characterGroups = availableCharacterGroups,
+                    memoryRebuildManager = memoryRebuildManager,
+                    memoryRebuildProgress = memoryRebuildProgress,
                     onApply = { selectedIds, targetCharacterName, targetCharacterGroupId, targetFolderId, shouldUpdateFolder, shouldUnbindCharacterCard, shouldUnbindCharacterGroup ->
                         if (selectedIds.isEmpty()) {
                             Toast.makeText(context, context.getString(R.string.please_select_chats_first), Toast.LENGTH_SHORT).show()
@@ -1206,6 +1222,8 @@ private fun ChatHistoryBatchSelectorCard(
     chatFolders: List<ChatFolderEntity>,
     characterCards: List<CharacterCard>,
     characterGroups: List<CharacterGroupCard>,
+    memoryRebuildManager: ChatMemoryRebuildManager,
+    memoryRebuildProgress: ChatMemoryRebuildManager.Progress,
     onApply: suspend (
         selectedChatIds: List<String>,
         targetCharacterCardName: String?,
@@ -1232,6 +1250,20 @@ private fun ChatHistoryBatchSelectorCard(
     var submitting by remember { mutableStateOf(false) }
     var deleteInProgress by remember { mutableStateOf(false) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+    var showSelectedChatActionsDialog by remember { mutableStateOf(false) }
+    var showBatchManagementSheet by remember { mutableStateOf(false) }
+    var memoryWindowSizeMenuExpanded by remember { mutableStateOf(false) }
+    var selectedMemoryWindowSize by remember {
+        mutableIntStateOf(ChatMemoryWindowPlanner.DEFAULT_WINDOW_MESSAGE_COUNT)
+    }
+    var showMemoryRebuildConfirmDialog by remember { mutableStateOf(false) }
+    var memoryTimeScopeMode by remember { mutableStateOf(MemoryRebuildTimeScopeMode.ENTIRE) }
+    var memoryRangeStartDate by remember { mutableStateOf<LocalDate?>(null) }
+    var memoryRangeEndDate by remember { mutableStateOf<LocalDate?>(null) }
+    var showMemoryDateRangePicker by remember { mutableStateOf(false) }
+    val memoryDateFormatter = remember {
+        DateTimeFormatter.ofLocalizedDate(FormatStyle.MEDIUM)
+    }
 
     val normalizedQuery = searchQuery.trim()
     val characterGroupNameById = remember(characterGroups) {
@@ -1308,13 +1340,17 @@ private fun ChatHistoryBatchSelectorCard(
     }
 
     val hasSelection = selectedChatIds.isNotEmpty()
+    val isMemoryRebuildRunning =
+        memoryRebuildProgress.status == ChatMemoryRebuildManager.Status.PREPARING ||
+            memoryRebuildProgress.status == ChatMemoryRebuildManager.Status.RUNNING
     val hasTargetSelection = targetIsUnbind || !selectedTargetName.isNullOrBlank()
     val hasTargetGroupSelection = targetGroupIsUnbind || !selectedTargetGroupId.isNullOrBlank()
     val canSubmit =
         hasSelection &&
             (hasTargetSelection || hasTargetGroupSelection || hasTargetFolderSelection) &&
             !submitting &&
-            !deleteInProgress
+            !deleteInProgress &&
+            !isMemoryRebuildRunning
 
     ElevatedCard(modifier = Modifier.fillMaxWidth()) {
         Column(
@@ -1322,8 +1358,8 @@ private fun ChatHistoryBatchSelectorCard(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SectionHeader(
-                title = stringResource(R.string.batch_assign_title),
-                subtitle = stringResource(R.string.batch_assign_subtitle),
+                title = stringResource(R.string.chat_history_batch_operations_title),
+                subtitle = stringResource(R.string.chat_history_batch_operations_subtitle),
                 icon = Icons.AutoMirrored.Filled.PlaylistAddCheck
             )
 
@@ -1343,10 +1379,7 @@ private fun ChatHistoryBatchSelectorCard(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
-                return@ElevatedCard
-            }
-
-            if (filteredHistories.isEmpty()) {
+            } else if (filteredHistories.isEmpty()) {
                 Text(
                     text = context.getString(R.string.no_matching_chats_adjust_filter),
                     style = MaterialTheme.typography.bodyMedium,
@@ -1376,13 +1409,21 @@ private fun ChatHistoryBatchSelectorCard(
                                 val ids = filteredHistories.map { it.id }
                                 selectedChatIds = selectedChatIds.toMutableSet().apply { addAll(ids) }
                             },
-                            enabled = filteredHistories.isNotEmpty() && !submitting && !deleteInProgress
+                            enabled =
+                                filteredHistories.isNotEmpty() &&
+                                    !submitting &&
+                                    !deleteInProgress &&
+                                    !isMemoryRebuildRunning
                         ) {
                             Text(context.getString(R.string.select_all_current_list))
                         }
                         TextButton(
                             onClick = { selectedChatIds = emptySet() },
-                            enabled = selectedChatIds.isNotEmpty() && !submitting && !deleteInProgress
+                            enabled =
+                                selectedChatIds.isNotEmpty() &&
+                                    !submitting &&
+                                    !deleteInProgress &&
+                                    !isMemoryRebuildRunning
                         ) {
                             Text(context.getString(R.string.clear_selection))
                         }
@@ -1402,8 +1443,9 @@ private fun ChatHistoryBatchSelectorCard(
                             history = history,
                             characterGroupName = groupName,
                             selected = selectedChatIds.contains(history.id),
+                            enabled = !submitting && !deleteInProgress && !isMemoryRebuildRunning,
                             onSelectionChange = { selected ->
-                                if (submitting || deleteInProgress) {
+                                if (submitting || deleteInProgress || isMemoryRebuildRunning) {
                                     return@ChatHistorySelectableRow
                                 }
                                 selectedChatIds = if (selected) {
@@ -1420,29 +1462,156 @@ private fun ChatHistoryBatchSelectorCard(
                 }
             }
 
-            Button(
-                onClick = { showDeleteConfirmDialog = true },
-                enabled = hasSelection && !submitting && !deleteInProgress,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = MaterialTheme.colorScheme.error,
-                    contentColor = MaterialTheme.colorScheme.onError
-                )
-            ) {
-                if (deleteInProgress) {
-                    CircularProgressIndicator(
-                        modifier = Modifier.size(18.dp),
-                        strokeWidth = 2.dp,
-                        color = MaterialTheme.colorScheme.onError
-                    )
-                } else {
-                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+            if (memoryRebuildProgress.status != ChatMemoryRebuildManager.Status.IDLE) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    when (memoryRebuildProgress.status) {
+                        ChatMemoryRebuildManager.Status.PREPARING -> {
+                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                            Text(
+                                text = stringResource(R.string.chat_memory_rebuild_preparing),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        ChatMemoryRebuildManager.Status.RUNNING -> {
+                            LinearProgressIndicator(
+                                progress = { memoryRebuildProgress.fraction.coerceIn(0f, 1f) },
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                            Text(
+                                text = context.getString(
+                                    R.string.chat_memory_rebuild_progress,
+                                    memoryRebuildProgress.currentChatTitle,
+                                    memoryRebuildProgress.completedWindows + 1,
+                                    memoryRebuildProgress.totalWindows,
+                                    memoryRebuildProgress.processedSourceMessages,
+                                    memoryRebuildProgress.totalSourceMessages,
+                                    memoryRebuildProgress.failedWindows
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        ChatMemoryRebuildManager.Status.COMPLETED -> {
+                            Text(
+                                text = context.getString(
+                                    R.string.chat_memory_rebuild_completed,
+                                    memoryRebuildProgress.completedChats,
+                                    memoryRebuildProgress.completedWindows,
+                                    memoryRebuildProgress.failedWindows
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+
+                        ChatMemoryRebuildManager.Status.CANCELLED -> {
+                            Text(
+                                text = context.getString(
+                                    R.string.chat_memory_rebuild_cancelled,
+                                    memoryRebuildProgress.completedWindows,
+                                    memoryRebuildProgress.totalWindows
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        ChatMemoryRebuildManager.Status.FAILED -> {
+                            Text(
+                                text = context.getString(
+                                    R.string.chat_memory_rebuild_failed,
+                                    memoryRebuildProgress.errorMessage
+                                ),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error
+                            )
+                        }
+
+                        ChatMemoryRebuildManager.Status.IDLE -> Unit
+                    }
+                    if (isMemoryRebuildRunning) {
+                        OutlinedButton(
+                            onClick = memoryRebuildManager::cancel,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(stringResource(R.string.chat_memory_rebuild_cancel))
+                        }
+                    }
                 }
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(context.getString(R.string.delete_selected_chats, selectedChatIds.size))
             }
 
-            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            if (!isMemoryRebuildRunning && hasSelection) {
+                Button(
+                    onClick = { showSelectedChatActionsDialog = true },
+                    enabled = !submitting && !deleteInProgress,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(Icons.AutoMirrored.Filled.PlaylistAddCheck, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.chat_history_selected_actions, selectedChatIds.size))
+                }
+            }
+        }
+    }
+
+    if (showBatchManagementSheet) {
+        val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+        ModalBottomSheet(
+            onDismissRequest = {
+                if (!submitting) {
+                    showBatchManagementSheet = false
+                }
+            },
+            sheetState = sheetState
+        ) {
+            Column(
+                modifier =
+                    Modifier
+                        .fillMaxWidth()
+                        .widthIn(max = 720.dp)
+                        .heightIn(max = 640.dp)
+                        .verticalScroll(rememberScrollState())
+                        .padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.PlaylistAddCheck,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary
+                    )
+                    Text(
+                        text = stringResource(R.string.chat_history_batch_management),
+                        style = MaterialTheme.typography.titleLarge,
+                        modifier = Modifier.padding(start = 10.dp).weight(1f)
+                    )
+                    IconButton(
+                        onClick = { showBatchManagementSheet = false },
+                        enabled = !submitting
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.cancel)
+                        )
+                    }
+                }
+                Text(
+                    text = context.getString(
+                        R.string.selected_chats_count,
+                        selectedChatIds.size,
+                        filteredHistories.size
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
                 ExposedDropdownMenuBox(
                     expanded = dropdownExpanded,
                     onExpandedChange = { dropdownExpanded = it }
@@ -1652,6 +1821,7 @@ private fun ChatHistoryBatchSelectorCard(
                                     targetGroupIsUnbind = false
                                     selectedTargetFolderId = null
                                     hasTargetFolderSelection = false
+                                    showBatchManagementSheet = false
                                 }
                                 submitting = false
                             }
@@ -1677,16 +1847,84 @@ private fun ChatHistoryBatchSelectorCard(
                         }
                         Text(buttonText)
                     }
-                    TextButton(
-                        onClick = {
-                            selectedChatIds = emptySet()
-                        },
-                        enabled = selectedChatIds.isNotEmpty() && !deleteInProgress,
-                        modifier = Modifier.align(Alignment.CenterVertically)
-                    ) {
-                        Text(context.getString(R.string.cancel_selection))
-                    }
                 }
+                HorizontalDivider()
+                TextButton(
+                    onClick = {
+                        showBatchManagementSheet = false
+                        showDeleteConfirmDialog = true
+                    },
+                    enabled = selectedChatIds.isNotEmpty() && !submitting && !deleteInProgress,
+                    colors = ButtonDefaults.textButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error
+                    ),
+                    modifier = Modifier.align(Alignment.End)
+                ) {
+                    Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(context.getString(R.string.delete_selected_chats, selectedChatIds.size))
+                }
+            }
+        }
+    }
+
+    if (showSelectedChatActionsDialog) {
+        ModalBottomSheet(onDismissRequest = { showSelectedChatActionsDialog = false }) {
+            Column(
+                modifier = Modifier.fillMaxWidth().padding(start = 20.dp, end = 20.dp, bottom = 28.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.chat_history_selected_actions_title),
+                    style = MaterialTheme.typography.titleLarge
+                )
+                Text(
+                    text = context.getString(
+                        R.string.selected_chats_count,
+                        selectedChatIds.size,
+                        filteredHistories.size
+                    ),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.chat_history_batch_management)) },
+                    supportingContent = { Text(stringResource(R.string.batch_assign_subtitle)) },
+                    leadingContent = {
+                        Icon(Icons.AutoMirrored.Filled.PlaylistAddCheck, contentDescription = null)
+                    },
+                    trailingContent = {
+                        Icon(Icons.Default.ChevronRight, contentDescription = null)
+                    },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                selectedTargetName = null
+                                targetIsUnbind = false
+                                selectedTargetGroupId = null
+                                targetGroupIsUnbind = false
+                                selectedTargetFolderId = null
+                                hasTargetFolderSelection = false
+                                showSelectedChatActionsDialog = false
+                                showBatchManagementSheet = true
+                            }
+                )
+                ListItem(
+                    headlineContent = { Text(stringResource(R.string.chat_memory_rebuild_title)) },
+                    supportingContent = { Text(stringResource(R.string.chat_memory_rebuild_subtitle)) },
+                    leadingContent = { Icon(Icons.Default.Memory, contentDescription = null) },
+                    trailingContent = {
+                        Icon(Icons.Default.ChevronRight, contentDescription = null)
+                    },
+                    modifier =
+                        Modifier
+                            .fillMaxWidth()
+                            .clickable {
+                                showSelectedChatActionsDialog = false
+                                showMemoryRebuildConfirmDialog = true
+                            }
+                )
             }
         }
     }
@@ -1771,6 +2009,314 @@ private fun ChatHistoryBatchSelectorCard(
             }
         )
     }
+
+    if (showMemoryRebuildConfirmDialog && !showMemoryDateRangePicker) {
+        val rangeStart = memoryRangeStartDate
+        val rangeEnd = memoryRangeEndDate
+        val hasCompleteRange = rangeStart != null && rangeEnd != null
+        val canConfirmMemoryRebuild =
+            when (memoryTimeScopeMode) {
+                MemoryRebuildTimeScopeMode.ENTIRE -> true
+                MemoryRebuildTimeScopeMode.RANGE -> hasCompleteRange
+            }
+        AlertDialog(
+            onDismissRequest = { showMemoryRebuildConfirmDialog = false },
+            title = { Text(stringResource(R.string.chat_memory_rebuild_confirm_title)) },
+            text = {
+                Column(
+                    modifier = Modifier.verticalScroll(rememberScrollState()),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    ExposedDropdownMenuBox(
+                        expanded = memoryWindowSizeMenuExpanded,
+                        onExpandedChange = { memoryWindowSizeMenuExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = context.getString(
+                                R.string.chat_memory_rebuild_window_size_value,
+                                selectedMemoryWindowSize
+                            ),
+                            onValueChange = {},
+                            readOnly = true,
+                            label = { Text(stringResource(R.string.chat_memory_rebuild_window_size)) },
+                            trailingIcon = {
+                                ExposedDropdownMenuDefaults.TrailingIcon(
+                                    expanded = memoryWindowSizeMenuExpanded
+                                )
+                            },
+                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            colors = ExposedDropdownMenuDefaults.textFieldColors()
+                        )
+                        ExposedDropdownMenu(
+                            expanded = memoryWindowSizeMenuExpanded,
+                            onDismissRequest = { memoryWindowSizeMenuExpanded = false }
+                        ) {
+                            memoryWindowMessageCounts.forEach { size ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text(
+                                            context.getString(
+                                                R.string.chat_memory_rebuild_window_size_value,
+                                                size
+                                            )
+                                        )
+                                    },
+                                    onClick = {
+                                        selectedMemoryWindowSize = size
+                                        memoryWindowSizeMenuExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Text(
+                        text = stringResource(R.string.chat_memory_rebuild_time_scope),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = memoryTimeScopeMode == MemoryRebuildTimeScopeMode.ENTIRE,
+                            onClick = { memoryTimeScopeMode = MemoryRebuildTimeScopeMode.ENTIRE },
+                            label = { Text(stringResource(R.string.chat_memory_rebuild_time_scope_all)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                        FilterChip(
+                            selected = memoryTimeScopeMode == MemoryRebuildTimeScopeMode.RANGE,
+                            onClick = {
+                                memoryTimeScopeMode = MemoryRebuildTimeScopeMode.RANGE
+                                showMemoryDateRangePicker = true
+                            },
+                            label = { Text(stringResource(R.string.chat_memory_rebuild_time_scope_range)) },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                    if (memoryTimeScopeMode == MemoryRebuildTimeScopeMode.RANGE) {
+                    if (memoryTimeScopeMode == MemoryRebuildTimeScopeMode.RANGE) {
+                        val rangeLabel =
+                            if (rangeStart != null && rangeEnd != null) {
+                                context.getString(
+                                    R.string.chat_memory_rebuild_time_scope_value,
+                                    rangeStart.format(memoryDateFormatter),
+                                    rangeEnd.format(memoryDateFormatter)
+                                )
+                            } else {
+                                context.getString(R.string.chat_memory_rebuild_time_scope_pick)
+                            }
+                        OutlinedButton(
+                            onClick = { showMemoryDateRangePicker = true },
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Icon(
+                                Icons.Default.DateRange,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text(rangeLabel)
+                        }
+                    }
+                    }
+                    when {
+                        memoryTimeScopeMode == MemoryRebuildTimeScopeMode.RANGE &&
+                            rangeStart != null &&
+                            rangeEnd != null -> {
+                            Text(
+                                context.getString(
+                                    R.string.chat_memory_rebuild_confirm_message_range,
+                                    selectedChatIds.size,
+                                    rangeStart.format(memoryDateFormatter),
+                                    rangeEnd.format(memoryDateFormatter),
+                                    selectedMemoryWindowSize
+                                )
+                            )
+                        }
+                        memoryTimeScopeMode == MemoryRebuildTimeScopeMode.ENTIRE -> {
+                            Text(
+                                context.getString(
+                                    R.string.chat_memory_rebuild_confirm_message,
+                                    selectedChatIds.size,
+                                    selectedMemoryWindowSize
+                                )
+                            )
+                        }
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(
+                    enabled = canConfirmMemoryRebuild,
+                    onClick = {
+                        val timeScope =
+                            when (memoryTimeScopeMode) {
+                                MemoryRebuildTimeScopeMode.ENTIRE ->
+                                    ChatMemoryRebuildTimeScope.EntireChat
+                                MemoryRebuildTimeScopeMode.RANGE -> {
+                                    val start = memoryRangeStartDate
+                                    val end = memoryRangeEndDate
+                                    if (start == null || end == null) {
+                                        return@TextButton
+                                    }
+                                    ChatMemoryRebuildTimeScope.inclusiveDates(
+                                        start,
+                                        end,
+                                        ZoneId.systemDefault()
+                                    )
+                                }
+                            }
+                        memoryRebuildManager.start(
+                            chatIds = selectedChatIds.toList(),
+                            windowMessageCount = selectedMemoryWindowSize,
+                            timeScope = timeScope
+                        )
+                        showMemoryRebuildConfirmDialog = false
+                    }
+                ) {
+                    Text(stringResource(R.string.chat_memory_rebuild_confirm_action))
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showMemoryRebuildConfirmDialog = false }) {
+                    Text(stringResource(R.string.cancel))
+                }
+            }
+        )
+    }
+
+    if (showMemoryDateRangePicker) {
+        ChatMemoryRebuildDateRangeDialog(
+            initialStart = memoryRangeStartDate,
+            initialEnd = memoryRangeEndDate,
+            onConfirm = { start, end ->
+                memoryRangeStartDate = start
+                memoryRangeEndDate = end
+                memoryTimeScopeMode = MemoryRebuildTimeScopeMode.RANGE
+                showMemoryDateRangePicker = false
+            },
+            onDismiss = { showMemoryDateRangePicker = false }
+        )
+    }
+}
+
+private enum class MemoryRebuildTimeScopeMode {
+    ENTIRE,
+    RANGE
+}
+
+private val memoryWindowMessageCounts = listOf(16, 24, 32, 48)
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ChatMemoryRebuildDateRangeDialog(
+    initialStart: LocalDate?,
+    initialEnd: LocalDate?,
+    onConfirm: (LocalDate, LocalDate) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val pickerState = rememberDateRangePickerState(
+        initialSelectedStartDateMillis = initialStart
+            ?.atStartOfDay(ZoneOffset.UTC)
+            ?.toInstant()
+            ?.toEpochMilli(),
+        initialSelectedEndDateMillis = initialEnd
+            ?.atStartOfDay(ZoneOffset.UTC)
+            ?.toInstant()
+            ?.toEpochMilli()
+    )
+    val headlineFormatter = remember { DateTimeFormatter.ofPattern("yyyy/MM/dd") }
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Surface(
+            shape = MaterialTheme.shapes.extraLarge,
+            tonalElevation = 6.dp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .fillMaxHeight(0.85f)
+        ) {
+            Column(modifier = Modifier.fillMaxSize()) {
+                DateRangePicker(
+                    state = pickerState,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .weight(1f),
+                    title = {
+                        Text(
+                            text = stringResource(R.string.chat_memory_rebuild_date_range_title),
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.padding(start = 24.dp, top = 16.dp, end = 24.dp)
+                        )
+                    },
+                    headline = {
+                        Text(
+                            text = formatMemoryDateRangeHeadline(
+                                pickerState.selectedStartDateMillis,
+                                pickerState.selectedEndDateMillis,
+                                headlineFormatter
+                            ),
+                            style = MaterialTheme.typography.headlineSmall,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(start = 24.dp, end = 24.dp, bottom = 12.dp)
+                        )
+                    },
+                    showModeToggle = false
+                )
+                HorizontalDivider()
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.cancel))
+                    }
+                    TextButton(
+                        enabled =
+                            pickerState.selectedStartDateMillis != null &&
+                                pickerState.selectedEndDateMillis != null,
+                        onClick = {
+                            val startMs = pickerState.selectedStartDateMillis ?: return@TextButton
+                            val endMs = pickerState.selectedEndDateMillis ?: return@TextButton
+                            val start =
+                                ChatMemoryRebuildTimeScope.utcMidnightMillisToLocalDate(startMs)
+                            val end =
+                                ChatMemoryRebuildTimeScope.utcMidnightMillisToLocalDate(endMs)
+                            if (end.isBefore(start)) {
+                                return@TextButton
+                            }
+                            onConfirm(start, end)
+                        }
+                    ) {
+                        Text(stringResource(R.string.chat_memory_rebuild_date_range_confirm))
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun formatMemoryDateRangeHeadline(
+    startMillis: Long?,
+    endMillis: Long?,
+    formatter: DateTimeFormatter
+): String {
+    if (startMillis == null) {
+        return ""
+    }
+    val start =
+        ChatMemoryRebuildTimeScope.utcMidnightMillisToLocalDate(startMillis).format(formatter)
+    if (endMillis == null) {
+        return start
+    }
+    val end = ChatMemoryRebuildTimeScope.utcMidnightMillisToLocalDate(endMillis).format(formatter)
+    return "$start – $end"
 }
 
 @Composable
@@ -1778,19 +2324,21 @@ private fun ChatHistorySelectableRow(
     history: ChatHistory,
     characterGroupName: String?,
     selected: Boolean,
+    enabled: Boolean,
     onSelectionChange: (Boolean) -> Unit
 ) {
     val context = LocalContext.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable { onSelectionChange(!selected) }
+            .clickable(enabled = enabled) { onSelectionChange(!selected) }
             .padding(horizontal = 12.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Checkbox(
             checked = selected,
-            onCheckedChange = { onSelectionChange(it) }
+            onCheckedChange = { onSelectionChange(it) },
+            enabled = enabled
         )
         Spacer(modifier = Modifier.width(12.dp))
         Column(modifier = Modifier.weight(1f)) {
@@ -1873,7 +2421,14 @@ private fun UnboundWorkspaceCard(
     unboundWorkspaces: List<UnboundWorkspaceInfo>,
     onDelete: suspend (Set<String>) -> Unit
 ) {
-    val context = LocalContext.current
+    val unboundWorkspacesTitleText = stringResource(R.string.unbound_workspaces_title)
+    val unboundWorkspacesSubtitleText = stringResource(R.string.unbound_workspaces_subtitle)
+    val noUnboundWorkspacesText = stringResource(R.string.no_unbound_workspaces)
+    val selectAllCurrentListText = stringResource(R.string.select_all_current_list)
+    val clearAllText = stringResource(R.string.clear_all)
+    val confirmDeleteText = stringResource(R.string.confirm_delete)
+    val deleteText = stringResource(R.string.delete)
+    val cancelText = stringResource(R.string.cancel)
     val scope = rememberCoroutineScope()
     var selectedWorkspaces by remember { mutableStateOf<Set<String>>(emptySet()) }
     var showDeleteConfirmDialog by remember { mutableStateOf(false) }
@@ -1885,14 +2440,14 @@ private fun UnboundWorkspaceCard(
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
             SectionHeader(
-                title = context.getString(R.string.unbound_workspaces_title),
-                subtitle = context.getString(R.string.unbound_workspaces_subtitle),
+                title = unboundWorkspacesTitleText,
+                subtitle = unboundWorkspacesSubtitleText,
                 icon = Icons.Default.FolderOff
             )
             
             if (unboundWorkspaces.isEmpty()) {
                 Text(
-                    text = context.getString(R.string.no_unbound_workspaces),
+                    text = noUnboundWorkspacesText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -1904,7 +2459,7 @@ private fun UnboundWorkspaceCard(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = context.getString(R.string.selected_workspaces_count, selectedWorkspaces.size, unboundWorkspaces.size),
+                        text = stringResource(R.string.selected_workspaces_count, selectedWorkspaces.size, unboundWorkspaces.size),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.SemiBold
                     )
@@ -1913,13 +2468,13 @@ private fun UnboundWorkspaceCard(
                             onClick = { selectedWorkspaces = unboundWorkspaces.map { it.fullPath }.toSet() },
                             enabled = unboundWorkspaces.isNotEmpty() && !deleteInProgress
                         ) {
-                            Text(context.getString(R.string.select_all_current_list))
+                            Text(selectAllCurrentListText)
                         }
                         TextButton(
                             onClick = { selectedWorkspaces = emptySet() },
                             enabled = selectedWorkspaces.isNotEmpty() && !deleteInProgress
                         ) {
-                            Text(context.getString(R.string.clear_all))
+                            Text(clearAllText)
                         }
                     }
                 }
@@ -1972,7 +2527,7 @@ private fun UnboundWorkspaceCard(
                         Icon(Icons.Default.Delete, contentDescription = null, modifier = Modifier.size(18.dp))
                     }
                     Spacer(modifier = Modifier.width(8.dp))
-                    Text(context.getString(R.string.delete_selected_workspaces, selectedWorkspaces.size))
+                    Text(stringResource(R.string.delete_selected_workspaces, selectedWorkspaces.size))
                 }
             }
         }
@@ -1986,9 +2541,9 @@ private fun UnboundWorkspaceCard(
                     showDeleteConfirmDialog = false
                 }
             },
-            title = { Text(context.getString(R.string.confirm_delete)) },
+            title = { Text(confirmDeleteText) },
             text = { 
-                Text(context.getString(R.string.delete_workspaces_confirmation, selectedWorkspaces.size)) 
+                Text(stringResource(R.string.delete_workspaces_confirmation, selectedWorkspaces.size)) 
             },
             confirmButton = {
                 TextButton(
@@ -2017,7 +2572,7 @@ private fun UnboundWorkspaceCard(
                             color = MaterialTheme.colorScheme.error
                         )
                     } else {
-                        Text(context.getString(R.string.delete))
+                        Text(deleteText)
                     }
                 }
             },
@@ -2026,7 +2581,7 @@ private fun UnboundWorkspaceCard(
                     onClick = { showDeleteConfirmDialog = false },
                     enabled = !deleteInProgress
                 ) {
-                    Text(context.getString(R.string.cancel))
+                    Text(cancelText)
                 }
             }
         )

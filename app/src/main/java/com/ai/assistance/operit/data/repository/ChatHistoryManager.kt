@@ -1,5 +1,9 @@
 package com.ai.assistance.operit.data.repository
 
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.CancellationException
+
 import com.ai.assistance.operit.data.model.toChatHistory
 import com.ai.assistance.operit.data.model.fromChatHistory
 import com.ai.assistance.operit.data.model.toChatMessage
@@ -3638,6 +3642,11 @@ class ChatHistoryManager private constructor(private val context: Context) {
     }
 
     // 直接加载聊天消息
+    suspend fun loadChatMessagesOrThrow(chatId: String): List<ChatMessage> =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            hydrateMessages(chatId, chatContentDao.getMessagesForChat(chatId))
+        }
+
     suspend fun loadChatMessages(chatId: String): List<ChatMessage> {
         return kotlinx.coroutines.withContext(Dispatchers.IO) {
             try {
@@ -3891,29 +3900,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         file
                     }
 
-                    ExportFormat.HTML -> {
-                        val completeHistories = loadDisplayHistories(chatHistoriesBasic)
-                        val file = File(exportDir, "chat_backup_$timestamp.html")
-                        file.writeText(
-                            HtmlExporter.exportMultiple(
-                                context,
-                                completeHistories,
-                                folderPathsByChatId,
-                            )
-                        )
-                        file
-                    }
-
-                    ExportFormat.TXT -> {
-                        val completeHistories = loadDisplayHistories(chatHistoriesBasic)
-                        val file = File(exportDir, "chat_backup_$timestamp.txt")
-                        file.writeText(
-                            TextExporter.exportMultiple(
-                                context,
-                                completeHistories,
-                                folderPathsByChatId,
-                            )
-                        )
+                    ExportFormat.HTML, ExportFormat.TXT -> {
+                        val extension = if (format == ExportFormat.HTML) "html" else "txt"
+                        val file = File(exportDir, "chat_backup_$timestamp.$extension")
+                        try {
+                            writePagedTextExport(file, format, chatHistoriesBasic, folderPathsByChatId)
+                        } catch (error: Exception) {
+                            file.delete()
+                            throw error
+                        }
                         file
                     }
 
@@ -3926,10 +3921,64 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                 exportFile.absolutePath
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 AppLogger.e(TAG, "导出聊天记录失败", e)
                 null
             }
         }
+
+    private suspend fun writePagedTextExport(
+        file: File,
+        format: ExportFormat,
+        histories: List<ChatHistory>,
+        folderPaths: Map<String, String>,
+    ) {
+        val html = format == ExportFormat.HTML
+        // Keep counts, pages and selected variants in one read view while retaining only a page.
+        database.withTransaction {
+            val counts = histories.associate { history ->
+                history.id to messageDao.countMessagesForChatUpToTimestamp(history.id, null)
+            }
+            file.bufferedWriter().use { writer ->
+                if (html) {
+                    HtmlExporter.writeMultipleHeader(context, histories, counts.values.sum(), writer)
+                } else {
+                    TextExporter.writeMultipleHeader(context, histories, counts.values.sum(), writer)
+                }
+                for ((index, history) in histories.withIndex()) {
+                    currentCoroutineContext().ensureActive()
+                    val count = counts.getValue(history.id)
+                    if (html) {
+                        HtmlExporter.writeConversationSeparator(writer, index)
+                        HtmlExporter.writeConversationHeader(context, writer, history, count, folderPaths[history.id])
+                    } else {
+                        TextExporter.writeConversationSeparator(writer, index)
+                        TextExporter.writeConversationHeader(context, history, writer, count, folderPaths[history.id])
+                    }
+                    var offset = 0
+                    while (offset < count) {
+                        currentCoroutineContext().ensureActive()
+                        val rows = chatContentDao.getMessagesForChatAscRange(history.id, offset, 32)
+                        check(rows.isNotEmpty()) { "Export page missing for ${history.id}" }
+                        for ((pageIndex, message) in hydrateMessages(history.id, rows).withIndex()) {
+                            val jobContext = currentCoroutineContext()
+                            if (html) {
+                                HtmlExporter.appendMessageHtml(context, writer, message) { jobContext.ensureActive() }
+                            } else {
+                                if (offset + pageIndex > 0) writer.appendLine()
+                                TextExporter.writeMessage(context, writer, message) { jobContext.ensureActive() }
+                            }
+                        }
+                        offset += rows.size
+                    }
+                    if (html) HtmlExporter.writeConversationFooter(writer)
+                    else TextExporter.writeConversationFooter(writer)
+                }
+                if (html) HtmlExporter.writeMultipleFooter(context, writer)
+                else TextExporter.writeMultipleFooter(context, writer)
+            }
+        }
+    }
 
     /**
      * 从指定URI导入聊天记录（指定格式）

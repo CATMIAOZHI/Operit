@@ -196,8 +196,8 @@ class SiliconFlowVoiceProvider(
                 return null
             }
 
-            val prefs = SpeechServicesPreferences(context.applicationContext)
-            val effectiveRate = request.rate ?: prefs.ttsSpeechRateFlow.first()
+            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+            val effectiveRate = request.rate ?: profile.speechRate
 
             val strippedInput = request.text.replace(Regex("<[^>]+>"), "").trim()
             if (strippedInput.isBlank()) {

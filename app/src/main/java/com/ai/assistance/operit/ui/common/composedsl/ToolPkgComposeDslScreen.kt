@@ -1,10 +1,13 @@
 package com.ai.assistance.operit.ui.common.composedsl
 
+import android.annotation.SuppressLint
 import android.graphics.Color as AndroidColor
 import android.content.Intent
 import android.database.Cursor
 import android.net.Uri
+import android.os.ext.SdkExtensions
 import android.provider.OpenableColumns
+import android.provider.MediaStore
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
@@ -27,11 +30,14 @@ import android.net.http.SslError
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import androidx.compose.runtime.rememberUpdatedState
 import androidx.activity.compose.LocalActivityResultRegistryOwner
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.ActivityResultLauncher
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.contract.ActivityResultContracts.PickMultipleVisualMedia
+import androidx.activity.result.contract.ActivityResultContracts.PickVisualMedia
+import androidx.core.content.FileProvider
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.ExperimentalFoundationApi
@@ -43,6 +49,7 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -101,8 +108,11 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
@@ -124,8 +134,11 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.rememberNestedScrollInteropConnection
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.clipToBounds
@@ -154,6 +167,7 @@ import androidx.navigation.NavController
 import androidx.webkit.ScriptHandler
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.javascript.JsEngine
 import com.ai.assistance.operit.core.tools.javascript.JsJavaBridgeDelegates
@@ -162,10 +176,12 @@ import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.tools.packTool.ToolPkgComposeDslNode
 import com.ai.assistance.operit.core.tools.packTool.ToolPkgComposeDslParser
 import com.ai.assistance.operit.core.tools.packTool.ToolPkgComposeDslRenderResult
+import com.ai.assistance.operit.plugins.chatmessage.ChatMessageMenuDialogRequest
 import com.ai.assistance.operit.ui.common.displays.MarkdownTextComposable
 import com.ai.assistance.operit.ui.common.markdown.DefaultXmlRenderer
 import com.ai.assistance.operit.ui.common.markdown.StreamMarkdownRenderer
 import com.ai.assistance.operit.ui.components.CustomScaffold
+import com.ai.assistance.operit.ui.features.chat.screens.AIChatScreen
 import com.ai.assistance.operit.ui.main.LocalTopBarTitleContent
 import com.ai.assistance.operit.ui.main.TopBarTitleContent
 import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
@@ -201,24 +217,165 @@ import java.util.concurrent.RejectedExecutionException
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.TimeoutException
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 
 private const val TAG = "ToolPkgComposeDslScreen"
 private val composeDslFilePickerMainHandler by lazy { Handler(Looper.getMainLooper()) }
+
+internal enum class ComposeDslFilePickerMode(val wireName: String) {
+    DOCUMENT("document"),
+    IMAGE("image"),
+    VIDEO("video"),
+    MEDIA("media"),
+    DIRECTORY("directory"),
+    CAMERA("camera");
+
+    val supportsMultiple: Boolean
+        get() = this == DOCUMENT || this == IMAGE || this == VIDEO || this == MEDIA
+
+    val supportsPersistablePermission: Boolean
+        get() = this == DOCUMENT || this == DIRECTORY
+
+    fun visualMediaType(): PickVisualMedia.VisualMediaType =
+        when (this) {
+            IMAGE -> PickVisualMedia.ImageOnly
+            VIDEO -> PickVisualMedia.VideoOnly
+            MEDIA -> PickVisualMedia.ImageAndVideo
+            DOCUMENT,
+            DIRECTORY,
+            CAMERA -> error("$wireName is not a visual media picker")
+        }
+
+    companion object {
+        fun fromWireName(value: String): ComposeDslFilePickerMode? =
+            values().firstOrNull { mode -> mode.wireName == value }
+    }
+}
 
 internal data class ComposeDslFilePickerRequest(
     val routeInstanceId: String,
     val executionContextKey: String,
     val mimeTypes: List<String>,
     val allowMultiple: Boolean,
-    val persistPermission: Boolean
+    val persistPermission: Boolean,
+    val pickerMode: ComposeDslFilePickerMode
 )
 
 private data class ComposeDslPendingFilePickerLaunch(
     val request: ComposeDslFilePickerRequest,
     val onComplete: (Result<String>) -> Unit
 )
+
+private data class ComposeDslPickedFile(
+    val uri: Uri,
+    val stagedFile: File?
+)
+
+private data class ComposeDslCameraCapture(
+    val uri: Uri,
+    val file: File
+)
+
+private val composeDslMimeTypePattern = Regex("^[^\\s/]+/[^\\s/]+$")
+
+private fun JSONObject.requireOptionalBoolean(name: String, defaultValue: Boolean): Boolean {
+    if (!has(name)) {
+        return defaultValue
+    }
+    return when (val value = opt(name)) {
+        is Boolean -> value
+        else -> throw IllegalArgumentException("$name must be a boolean")
+    }
+}
+
+internal fun parseComposeDslFilePickerRequest(payload: JSONObject): ComposeDslFilePickerRequest {
+    val executionContextKey = payload.optString("executionContextKey").trim()
+    require(executionContextKey.isNotBlank()) {
+        "compose file picker executionContextKey is required"
+    }
+    val options =
+        if (payload.has("options")) {
+            payload.opt("options") as? JSONObject
+                ?: throw IllegalArgumentException("file picker options must be an object")
+        } else {
+            null
+        }
+    val pickerToken =
+        if (options?.has("picker") == true) {
+            val rawPicker = options.opt("picker")
+            require(rawPicker is String && rawPicker.isNotBlank()) {
+                "picker must be a non-empty string"
+            }
+            rawPicker.trim().lowercase(Locale.ROOT)
+        } else {
+            ComposeDslFilePickerMode.DOCUMENT.wireName
+        }
+    val pickerMode =
+        ComposeDslFilePickerMode.fromWireName(pickerToken)
+            ?: throw IllegalArgumentException("unsupported file picker mode: $pickerToken")
+    val mimeTypesJson =
+        if (options?.has("mimeTypes") == true) {
+            options.opt("mimeTypes") as? JSONArray
+                ?: throw IllegalArgumentException("mimeTypes must be an array")
+        } else {
+            null
+        }
+    require(pickerMode == ComposeDslFilePickerMode.DOCUMENT || mimeTypesJson == null) {
+        "picker: \"$pickerToken\" does not support mimeTypes"
+    }
+    val requestedMimeTypes =
+        buildList {
+            if (mimeTypesJson != null) {
+                for (index in 0 until mimeTypesJson.length()) {
+                    val value = mimeTypesJson.opt(index)
+                    require(value is String && value.isNotBlank()) {
+                        "mimeTypes[$index] must be a non-empty string"
+                    }
+                    val mimeType = value.trim()
+                    require(composeDslMimeTypePattern.matches(mimeType)) {
+                        "mimeTypes[$index] must be a MIME type"
+                    }
+                    add(mimeType)
+                }
+            }
+        }
+    val allowMultiple =
+        if (options == null) {
+            false
+        } else {
+            options.requireOptionalBoolean("allowMultiple", false)
+        }
+    require(pickerMode.supportsMultiple || !allowMultiple) {
+        "picker: \"$pickerToken\" does not support allowMultiple"
+    }
+    val hasPersistPermission = options?.has("persistPermission") == true
+    require(pickerMode.supportsPersistablePermission || !hasPersistPermission) {
+        "picker: \"$pickerToken\" does not support persistPermission"
+    }
+
+    return ComposeDslFilePickerRequest(
+        routeInstanceId = payload.optString("routeInstanceId").trim(),
+        executionContextKey = executionContextKey,
+        mimeTypes =
+            if (pickerMode == ComposeDslFilePickerMode.DOCUMENT) {
+                requestedMimeTypes.ifEmpty { listOf("*/*") }
+            } else {
+                emptyList()
+            },
+        allowMultiple = allowMultiple,
+        persistPermission =
+            if (pickerMode.supportsPersistablePermission) {
+                if (options == null) {
+                    true
+                } else {
+                    options.requireOptionalBoolean("persistPermission", true)
+                }
+            } else {
+                false
+            },
+        pickerMode = pickerMode
+    )
+}
 
 internal object ComposeDslFilePickerHostRegistry {
     private val launchers =
@@ -252,37 +409,17 @@ internal object ComposeDslFilePickerHostRegistry {
                     onError(error.message?.trim().orEmpty().ifBlank { "Invalid file picker payload" })
                     return
                 }
-        val executionContextKey = payload.optString("executionContextKey").trim()
-        if (executionContextKey.isBlank()) {
-            onError("compose file picker executionContextKey is required")
-            return
-        }
-        val launcher = launchers[executionContextKey]
+        val request =
+            runCatching { parseComposeDslFilePickerRequest(payload) }
+                .getOrElse { error ->
+                    onError(error.message?.trim().orEmpty().ifBlank { "Invalid file picker options" })
+                    return
+                }
+        val launcher = launchers[request.executionContextKey]
         if (launcher == null) {
             onError("compose file picker host is unavailable")
             return
         }
-        val options = payload.optJSONObject("options")
-        val mimeTypesJson = options?.optJSONArray("mimeTypes")
-        val mimeTypes =
-            buildList {
-                if (mimeTypesJson != null) {
-                    for (index in 0 until mimeTypesJson.length()) {
-                        val value = mimeTypesJson.optString(index).trim()
-                        if (value.isNotEmpty()) {
-                            add(value)
-                        }
-                    }
-                }
-            }.ifEmpty { listOf("*/*") }
-        val request =
-            ComposeDslFilePickerRequest(
-                routeInstanceId = payload.optString("routeInstanceId").trim(),
-                executionContextKey = executionContextKey,
-                mimeTypes = mimeTypes,
-                allowMultiple = options?.optBoolean("allowMultiple", false) == true,
-                persistPermission = options?.optBoolean("persistPermission", true) != false
-            )
         composeDslFilePickerMainHandler.post {
             launcher(request) { result ->
                 result.fold(
@@ -304,7 +441,7 @@ private fun Cursor.getColumnIndexOrNull(name: String): Int? {
 private fun queryComposeDslPickedFileMeta(
     context: android.content.Context,
     uri: Uri,
-    copiedFile: File
+    stagedFile: File?
 ): JSONObject {
     val resolver = context.contentResolver
     var name: String? = null
@@ -325,22 +462,31 @@ private fun queryComposeDslPickedFileMeta(
             }
         }
     }
+    val mimeType = resolver.getType(uri)
     return JSONObject()
         .put("uri", uri.toString())
-        .put("path", copiedFile.absolutePath)
-        .put("name", name ?: JSONObject.NULL)
-        .put("mimeType", resolver.getType(uri) ?: JSONObject.NULL)
-        .put("size", size ?: copiedFile.length())
+        .apply {
+            stagedFile?.let { file -> put("path", file.absolutePath) }
+            (name ?: stagedFile?.name)?.let { displayName -> put("name", displayName) }
+            mimeType?.let { type -> put("mimeType", type) }
+            put("size", size ?: stagedFile?.length() ?: JSONObject.NULL)
+        }
 }
 
 private fun buildComposeDslFilePickerResultJson(
     context: android.content.Context,
-    copiedFiles: List<Pair<Uri, File>>,
+    pickedFiles: List<ComposeDslPickedFile>,
     cancelled: Boolean
 ): String {
     val files = JSONArray()
-    copiedFiles.forEach { (uri, copiedFile) ->
-        files.put(queryComposeDslPickedFileMeta(context, uri, copiedFile))
+    pickedFiles.forEach { pickedFile ->
+        files.put(
+            queryComposeDslPickedFileMeta(
+                context = context,
+                uri = pickedFile.uri,
+                stagedFile = pickedFile.stagedFile
+            )
+        )
     }
     return JSONObject()
         .put("cancelled", cancelled)
@@ -397,6 +543,81 @@ private fun stageComposeDslPickedFile(
         }
     } ?: throw IllegalStateException("无法打开所选文件")
     return targetFile
+}
+
+private fun createComposeDslCameraCapture(context: android.content.Context): ComposeDslCameraCapture {
+    val captureDir = File(context.cacheDir, "compose_file_picker").apply { mkdirs() }
+    val file = File.createTempFile("camera_", ".jpg", captureDir)
+    val authority = "${context.applicationContext.packageName}.fileprovider"
+    return ComposeDslCameraCapture(
+        uri = FileProvider.getUriForFile(context, authority, file),
+        file = file
+    )
+}
+
+@SuppressLint("NewApi", "ClassVerificationFailure")
+private fun composeDslVisualMediaPickerMaxItems(): Int =
+    if (
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU ||
+            (
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.R &&
+                    SdkExtensions.getExtensionVersion(Build.VERSION_CODES.R) >= 2
+                )
+    ) {
+        MediaStore.getPickImagesMaxLimit()
+    } else {
+        Int.MAX_VALUE
+    }
+
+private fun completeComposeDslSelectedUris(
+    context: android.content.Context,
+    pending: ComposeDslPendingFilePickerLaunch,
+    uris: List<Uri>
+) {
+    val selectedUris =
+        if (pending.request.allowMultiple) {
+            uris
+        } else {
+            uris.take(1)
+        }
+    if (selectedUris.isEmpty()) {
+        pending.onComplete(Result.success(buildComposeDslFilePickerResultJson(context, emptyList(), true)))
+        return
+    }
+    runCatching {
+        val pickedFiles =
+            selectedUris.map { uri ->
+                ComposeDslPickedFile(
+                    uri = uri,
+                    stagedFile =
+                        when (pending.request.pickerMode) {
+                            ComposeDslFilePickerMode.DIRECTORY -> null
+                            ComposeDslFilePickerMode.DOCUMENT,
+                            ComposeDslFilePickerMode.IMAGE,
+                            ComposeDslFilePickerMode.VIDEO,
+                            ComposeDslFilePickerMode.MEDIA,
+                            ComposeDslFilePickerMode.CAMERA -> stageComposeDslPickedFile(context, uri, null)
+                        }
+                )
+            }
+        buildComposeDslFilePickerResultJson(
+            context = context,
+            pickedFiles = pickedFiles,
+            cancelled = false
+        )
+    }.fold(
+        onSuccess = { resultJson -> pending.onComplete(Result.success(resultJson)) },
+        onFailure = { error ->
+            AppLogger.e(TAG, "compose_dsl file picker result processing failed", error)
+            pending.onComplete(
+                Result.failure(
+                    IllegalStateException(
+                        error.message?.trim().orEmpty().ifBlank { "处理所选内容失败" }
+                    )
+                )
+            )
+        }
+    )
 }
 
 private fun ToolPkgComposeDslNode.containsNodeType(typeToken: String): Boolean {
@@ -498,18 +719,8 @@ fun ToolPkgComposeDslToolScreen(
     val setUseScreenImePadding = LocalSetUseScreenImePadding.current
     val scope = rememberCoroutineScope()
     val renderMutex = remember { Mutex() }
-    val currentLanguage =
-        (
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                context.resources.configuration.locales.get(0)
-            } else {
-                @Suppress("DEPRECATION")
-                context.resources.configuration.locale
-            }
-        )?.toLanguageTag()
-            ?.trim()
-            ?.ifBlank { null }
-            ?: "en"
+    val currentLocale = LocalConfiguration.current.locales[0]
+    val currentLanguage = currentLocale.toLanguageTag().trim().takeIf { it.isNotBlank() } ?: "en"
 
     val packageManager = remember {
         PackageManager.getInstance(context, AIToolHandler.getInstance(context))
@@ -524,7 +735,11 @@ fun ToolPkgComposeDslToolScreen(
     var pendingFilePickerLaunch by remember(executionContextKey) {
         mutableStateOf<ComposeDslPendingFilePickerLaunch?>(null)
     }
+    var pendingCameraCapture by remember(executionContextKey) {
+        mutableStateOf<ComposeDslCameraCapture?>(null)
+    }
     val activityResultRegistryOwner = LocalActivityResultRegistryOwner.current
+    val visualMediaPickerMaxItems = remember(context) { composeDslVisualMediaPickerMaxItems() }
     val filePickerLauncher: ActivityResultLauncher<Intent>? =
         if (activityResultRegistryOwner != null) {
             rememberLauncherForActivityResult(ActivityResultContracts.StartActivityForResult()) { result ->
@@ -548,43 +763,96 @@ fun ToolPkgComposeDslToolScreen(
                             }
                         }
                     }.distinctBy { uri -> uri.toString() }
-                if (selectedUris.isEmpty()) {
-                    pending.onComplete(Result.success(buildComposeDslFilePickerResultJson(context, emptyList(), true)))
-                    return@rememberLauncherForActivityResult
-                }
                 if (pending.request.persistPermission) {
                     val flags =
                         (data?.flags ?: 0) and
                             (Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION)
-                    if (flags != 0) {
-                        selectedUris.forEach { uri ->
-                            runCatching {
-                                context.contentResolver.takePersistableUriPermission(uri, flags)
-                            }
-                        }
+                    if (selectedUris.isNotEmpty() && flags == 0) {
+                        pending.onComplete(
+                            Result.failure(
+                                IllegalStateException("所选内容未授予可保留的访问权限")
+                            )
+                        )
+                        return@rememberLauncherForActivityResult
                     }
-                }
-                runCatching {
-                    val copiedFiles =
-                        selectedUris.map { uri ->
-                            val copiedFile = stageComposeDslPickedFile(context, uri, null)
-                            uri to copiedFile
+                    try {
+                        selectedUris.forEach { uri ->
+                            context.contentResolver.takePersistableUriPermission(uri, flags)
                         }
-                    buildComposeDslFilePickerResultJson(
-                        context = context,
-                        copiedFiles = copiedFiles,
-                        cancelled = false
-                    )
-                }.fold(
-                    onSuccess = { resultJson ->
-                        pending.onComplete(Result.success(resultJson))
-                    },
-                    onFailure = { error ->
-                        AppLogger.e(TAG, "compose_dsl file picker staging failed", error)
+                    } catch (error: SecurityException) {
+                        AppLogger.e(TAG, "compose_dsl file picker could not persist URI permission", error)
                         pending.onComplete(
                             Result.failure(
                                 IllegalStateException(
-                                    error.message?.trim().orEmpty().ifBlank { "复制所选文件到临时目录失败" }
+                                    error.message?.trim().orEmpty().ifBlank {
+                                        "无法保留所选内容的访问权限"
+                                    }
+                                )
+                            )
+                        )
+                        return@rememberLauncherForActivityResult
+                    }
+                }
+                completeComposeDslSelectedUris(context, pending, selectedUris)
+            }
+        } else {
+            null
+        }
+    val visualMediaPickerSingleLauncher: ActivityResultLauncher<PickVisualMediaRequest>? =
+        if (activityResultRegistryOwner != null) {
+            rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+                val pending = pendingFilePickerLaunch
+                pendingFilePickerLaunch = null
+                if (pending == null) {
+                    return@rememberLauncherForActivityResult
+                }
+                completeComposeDslSelectedUris(context, pending, listOfNotNull(uri))
+            }
+        } else {
+            null
+        }
+    val visualMediaPickerMultiLauncher: ActivityResultLauncher<PickVisualMediaRequest>? =
+        if (activityResultRegistryOwner != null) {
+            rememberLauncherForActivityResult(PickMultipleVisualMedia(visualMediaPickerMaxItems)) { uris ->
+                val pending = pendingFilePickerLaunch
+                pendingFilePickerLaunch = null
+                if (pending == null) {
+                    return@rememberLauncherForActivityResult
+                }
+                completeComposeDslSelectedUris(context, pending, uris)
+            }
+        } else {
+            null
+        }
+    val cameraPickerLauncher: ActivityResultLauncher<Uri>? =
+        if (activityResultRegistryOwner != null) {
+            rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+                val pending = pendingFilePickerLaunch
+                val capture = pendingCameraCapture
+                pendingFilePickerLaunch = null
+                pendingCameraCapture = null
+                if (pending == null || capture == null) {
+                    return@rememberLauncherForActivityResult
+                }
+                if (!success) {
+                    capture.file.delete()
+                    pending.onComplete(Result.success(buildComposeDslFilePickerResultJson(context, emptyList(), true)))
+                    return@rememberLauncherForActivityResult
+                }
+                runCatching {
+                    buildComposeDslFilePickerResultJson(
+                        context = context,
+                        pickedFiles = listOf(ComposeDslPickedFile(capture.uri, capture.file)),
+                        cancelled = false
+                    )
+                }.fold(
+                    onSuccess = { resultJson -> pending.onComplete(Result.success(resultJson)) },
+                    onFailure = { error ->
+                        AppLogger.e(TAG, "compose_dsl camera capture result processing failed", error)
+                        pending.onComplete(
+                            Result.failure(
+                                IllegalStateException(
+                                    error.message?.trim().orEmpty().ifBlank { "处理相机拍摄结果失败" }
                                 )
                             )
                         )
@@ -611,17 +879,11 @@ fun ToolPkgComposeDslToolScreen(
     var isDispatching by remember(containerPackageName, uiModuleId) { mutableStateOf(false) }
     var dispatchingCount by remember(containerPackageName, uiModuleId) { mutableStateOf(0) }
     var hasDispatchedInitialOnLoad by
-        remember(routeInstanceId, containerPackageName, uiModuleId) {
+        rememberSaveable(routeInstanceId, containerPackageName, uiModuleId) {
             mutableStateOf(false)
         }
     var nextDispatchTicket by remember(containerPackageName, uiModuleId) { mutableStateOf(1L) }
     var pendingTreeRerenderJob by remember(containerPackageName, uiModuleId) { mutableStateOf<Job?>(null) }
-    val nextTextInputSyncTicket =
-        remember(containerPackageName, uiModuleId) { AtomicLong(1L) }
-    val pendingTextInputSyncs =
-        remember(containerPackageName, uiModuleId) {
-            linkedMapOf<Long, CompletableDeferred<Unit>>()
-        }
     val settledDispatchTickets = remember(containerPackageName, uiModuleId) { mutableSetOf<Long>() }
     val requiresWebViewImeResize =
         remember(renderResult?.tree) {
@@ -694,7 +956,16 @@ fun ToolPkgComposeDslToolScreen(
         phase: String,
         rawResult: Any?
     ) {
-        val parsed = ToolPkgComposeDslParser.parseRenderResult(rawResult) ?: return
+        val parsed = ToolPkgComposeDslParser.parseRenderResult(rawResult)
+        if (parsed == null) {
+            AppLogger.e(
+                TAG,
+                "compose_dsl apply render result parse failed: phase=$phase, " +
+                    "routeInstanceId=$routeInstanceId, package=$containerPackageName, " +
+                    "uiModuleId=$uiModuleId, rawType=${rawResult?.javaClass?.name ?: "null"}"
+            )
+            return
+        }
         composeDslWebViewMainHandler.post {
             renderResult = parsed
             errorMessage = null
@@ -765,14 +1036,18 @@ fun ToolPkgComposeDslToolScreen(
             }
     }
 
-    fun hasPendingTextInputSyncs(): Boolean = pendingTextInputSyncs.isNotEmpty()
-
-    suspend fun awaitPendingTextInputSyncs() {
-        val pendingCompletions = pendingTextInputSyncs.values.toList()
-        pendingCompletions.forEach { completion ->
-            runCatching { completion.await() }
+    // Text edits must reach the JS runtime in keystroke order; dispatching each keystroke on its
+    // own thread lets later edits apply first and regresses the runtime state behind the field.
+    val textInputDispatchQueue =
+        remember(containerPackageName, uiModuleId) {
+            ComposeDslTextInputDispatchQueue(
+                onAllSettled = { requestComposeDslTreeRerender(false) }
+            )
         }
-    }
+
+    fun hasPendingTextInputSyncs(): Boolean = textInputDispatchQueue.hasPending()
+
+    suspend fun awaitPendingTextInputSyncs() = textInputDispatchQueue.awaitAll()
 
     fun flushTextInputSyncsAndRerender() {
         scope.launch {
@@ -907,28 +1182,19 @@ fun ToolPkgComposeDslToolScreen(
         if (normalizedActionId.isBlank()) {
             return
         }
-        val syncTicket = nextTextInputSyncTicket.getAndIncrement()
-        val completion = CompletableDeferred<Unit>()
-        pendingTextInputSyncs[syncTicket] = completion
-        dispatchActionInternal(
-            actionId = normalizedActionId,
-            payload =
-                mapOf(
-                    "__composeTextFieldPayload" to true,
-                    "__no_render" to true,
-                    "value" to text
-                ),
-            onSettled = {
-                pendingTextInputSyncs.remove(syncTicket)
-                if (!completion.isCompleted) {
-                    completion.complete(Unit)
-                }
-                if (!hasPendingTextInputSyncs()) {
-                    requestComposeDslTreeRerender(false)
-                }
-            },
-            flushPendingTextInputs = false
-        )
+        textInputDispatchQueue.enqueue(normalizedActionId, text) { entry, onSettled ->
+            dispatchActionInternal(
+                actionId = entry.actionId,
+                payload =
+                    mapOf(
+                        "__composeTextFieldPayload" to true,
+                        "__no_render" to true,
+                        "value" to entry.text
+                    ),
+                onSettled = onSettled,
+                flushPendingTextInputs = false
+            )
+        }
     }
 
     suspend fun dispatchActionAwait(actionId: String, payload: Any? = null) {
@@ -992,12 +1258,7 @@ fun ToolPkgComposeDslToolScreen(
             try {
                 pendingTreeRerenderJob?.cancel()
                 pendingTreeRerenderJob = null
-                pendingTextInputSyncs.values.forEach { completion ->
-                    if (!completion.isCompleted) {
-                        completion.complete(Unit)
-                    }
-                }
-                pendingTextInputSyncs.clear()
+                textInputDispatchQueue.completeAll()
                 isLoading = true
                 dispatchingCount = 0
                 isDispatching = false
@@ -1044,22 +1305,12 @@ fun ToolPkgComposeDslToolScreen(
                         jsEngine.executeComposeDslScript(
                             script = scriptText,
                             runtimeOptions =
-                                mapOf(
-                                    "packageName" to containerPackageName,
-                                    "toolPkgId" to containerPackageName,
-                                    "uiModuleId" to uiModuleId,
-                                    "__operit_ui_module_id" to uiModuleId,
-                                    "__operit_toolpkg_runtime_kind" to "ui",
-                                    "routeInstanceId" to routeInstanceId,
-                                    "__operit_route_instance_id" to routeInstanceId,
-                                    "executionContextKey" to executionContextKey,
-                                    "__operit_compose_execution_context_key" to executionContextKey,
-                                    "__operit_package_lang" to currentLanguage,
-                                    "__operit_script_screen" to (scriptScreenPath ?: ""),
-                                    "moduleSpec" to buildModuleSpec(scriptScreenPath),
-                                    "state" to (renderResult?.state ?: emptyMap<String, Any?>()),
-                                    "memo" to (renderResult?.memo ?: emptyMap<String, Any?>())
-                                )
+                                buildActionRuntimeOptions() +
+                                    mapOf(
+                                        "moduleSpec" to buildModuleSpec(scriptScreenPath),
+                                        "state" to (renderResult?.state ?: emptyMap<String, Any?>()),
+                                        "memo" to (renderResult?.memo ?: emptyMap<String, Any?>())
+                                    )
                         )
                     }
                 snapshotRawResult = rawResult
@@ -1115,37 +1366,109 @@ fun ToolPkgComposeDslToolScreen(
 
     DisposableEffect(executionContextKey) {
         ComposeDslFilePickerHostRegistry.bind(executionContextKey) { request, onComplete ->
-            val launcher = filePickerLauncher
-            if (launcher == null) {
-                onComplete(Result.failure(IllegalStateException("compose file picker requires an activity result registry owner")))
+            if (pendingFilePickerLaunch != null) {
+                onComplete(Result.failure(IllegalStateException("a compose file picker request is already active")))
                 return@bind
             }
-            pendingFilePickerLaunch = ComposeDslPendingFilePickerLaunch(request = request, onComplete = onComplete)
-            val intent =
-                Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                    addCategory(Intent.CATEGORY_OPENABLE)
-                    type = if (request.mimeTypes.size == 1) request.mimeTypes.first() else "*/*"
-                    putExtra(Intent.EXTRA_ALLOW_MULTIPLE, request.allowMultiple)
-                    if (request.mimeTypes.size > 1) {
-                        putExtra(Intent.EXTRA_MIME_TYPES, request.mimeTypes.toTypedArray())
+            when (request.pickerMode) {
+                ComposeDslFilePickerMode.DOCUMENT -> {
+                    val launcher = filePickerLauncher
+                    if (launcher == null) {
+                        onComplete(Result.failure(IllegalStateException("compose file picker requires an activity result registry owner")))
+                        return@bind
+                    }
+                    pendingFilePickerLaunch = ComposeDslPendingFilePickerLaunch(request = request, onComplete = onComplete)
+                    launcher.launch(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
+                            addCategory(Intent.CATEGORY_OPENABLE)
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            if (request.persistPermission) {
+                                addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                            }
+                            type = request.mimeTypes.singleOrNull() ?: "*/*"
+                            if (request.allowMultiple) {
+                                putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+                            }
+                            if (request.mimeTypes.size > 1) {
+                                putExtra(Intent.EXTRA_MIME_TYPES, request.mimeTypes.toTypedArray())
+                            }
+                        }
+                    )
+                }
+                ComposeDslFilePickerMode.DIRECTORY -> {
+                    val launcher = filePickerLauncher
+                    if (launcher == null) {
+                        onComplete(Result.failure(IllegalStateException("compose file picker requires an activity result registry owner")))
+                        return@bind
+                    }
+                    pendingFilePickerLaunch = ComposeDslPendingFilePickerLaunch(
+                        request = request,
+                        onComplete = onComplete
+                    )
+                    launcher.launch(
+                        Intent(Intent.ACTION_OPEN_DOCUMENT_TREE).apply {
+                            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            if (request.persistPermission) {
+                                addFlags(Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION)
+                            }
+                        }
+                    )
+                }
+                ComposeDslFilePickerMode.IMAGE,
+                ComposeDslFilePickerMode.VIDEO,
+                ComposeDslFilePickerMode.MEDIA -> {
+                    val singleLauncher = visualMediaPickerSingleLauncher
+                    val multipleLauncher = visualMediaPickerMultiLauncher
+                    if (singleLauncher == null || multipleLauncher == null) {
+                        onComplete(Result.failure(IllegalStateException("compose file picker requires an activity result registry owner")))
+                        return@bind
+                    }
+                    pendingFilePickerLaunch = ComposeDslPendingFilePickerLaunch(request = request, onComplete = onComplete)
+                    val visualMediaRequest =
+                        PickVisualMediaRequest.Builder()
+                            .setMediaType(request.pickerMode.visualMediaType())
+                            .build()
+                    if (request.allowMultiple) {
+                        multipleLauncher.launch(visualMediaRequest)
+                    } else {
+                        singleLauncher.launch(visualMediaRequest)
                     }
                 }
-            launcher.launch(intent)
+                ComposeDslFilePickerMode.CAMERA -> {
+                    val launcher = cameraPickerLauncher
+                    if (launcher == null) {
+                        onComplete(Result.failure(IllegalStateException("compose file picker requires an activity result registry owner")))
+                        return@bind
+                    }
+                    val capture =
+                        runCatching { createComposeDslCameraCapture(context) }
+                            .getOrElse { error ->
+                                AppLogger.e(TAG, "compose_dsl could not create camera capture file", error)
+                                onComplete(
+                                    Result.failure(
+                                        IllegalStateException(
+                                            error.message?.trim().orEmpty().ifBlank { "无法创建相机拍摄文件" }
+                                        )
+                                    )
+                                )
+                                return@bind
+                            }
+                    pendingFilePickerLaunch = ComposeDslPendingFilePickerLaunch(request = request, onComplete = onComplete)
+                    pendingCameraCapture = capture
+                    launcher.launch(capture.uri)
+                }
+            }
         }
         onDispose {
             pendingFilePickerLaunch?.onComplete?.invoke(
                 Result.failure(IllegalStateException("compose file picker disposed"))
             )
             pendingFilePickerLaunch = null
+            pendingCameraCapture = null
             ComposeDslFilePickerHostRegistry.unbind(executionContextKey)
             pendingTreeRerenderJob?.cancel()
             pendingTreeRerenderJob = null
-            pendingTextInputSyncs.values.forEach { completion ->
-                if (!completion.isCompleted) {
-                    completion.complete(Unit)
-                }
-            }
-            pendingTextInputSyncs.clear()
+            textInputDispatchQueue.completeAll()
             setTopBarTitleContent(null)
             ToolPkgComposeDslDebugSnapshotStore.clear(routeInstanceId)
             ComposeDslWebViewHostRegistry.clearExecutionContext(executionContextKey)
@@ -1179,12 +1502,18 @@ fun ToolPkgComposeDslToolScreen(
             lifecycleOwner.lifecycle.addObserver(observer)
             onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
         }
+        // Root-level onResume/onPause only fire once the screen is visible and resumed, so an
+        // on-screen companion can activate on entry and pause when it leaves the foreground.
         LaunchedEffect(isCurrentScreen, resumed) {
             val active = isCurrentScreen && resumed
             if (active && hasDispatchedInitialOnLoad) {
-                resumeAction?.takeIf(String::isNotBlank)?.let { dispatchAction(actionId = it, payload = null) }
+                resumeAction?.takeIf(String::isNotBlank)?.let {
+                    dispatchAction(actionId = it, payload = null)
+                }
             } else if (!active && previouslyActive) {
-                pauseAction?.takeIf(String::isNotBlank)?.let { dispatchAction(actionId = it, payload = null) }
+                pauseAction?.takeIf(String::isNotBlank)?.let {
+                    dispatchAction(actionId = it, payload = null)
+                }
             }
             previouslyActive = active
         }
@@ -1193,8 +1522,20 @@ fun ToolPkgComposeDslToolScreen(
                 .padding(paddingValues)
                 .fillMaxSize()
 
-        LaunchedEffect(rootNode, rootOnLoadActionId, hasDispatchedInitialOnLoad, isCurrentScreen, resumed) {
-            if (!isCurrentScreen || !resumed || rootNode == null || rootOnLoadActionId.isNullOrBlank() || hasDispatchedInitialOnLoad) {
+        LaunchedEffect(
+            rootNode,
+            rootOnLoadActionId,
+            hasDispatchedInitialOnLoad,
+            isCurrentScreen,
+            resumed
+        ) {
+            if (
+                !isCurrentScreen ||
+                    !resumed ||
+                    rootNode == null ||
+                    rootOnLoadActionId.isNullOrBlank() ||
+                    hasDispatchedInitialOnLoad
+            ) {
                 return@LaunchedEffect
             }
             withFrameNanos { }
@@ -1262,6 +1603,450 @@ fun ToolPkgComposeDslToolScreen(
 }
 
 @Composable
+fun ToolPkgComposeDslDialogHost(
+    request: ChatMessageMenuDialogRequest,
+    onDismiss: () -> Unit
+) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val renderMutex = remember { Mutex() }
+    val currentLocale = LocalConfiguration.current.locales[0]
+    val currentLanguage = currentLocale.toLanguageTag().trim().takeIf { it.isNotBlank() } ?: "en"
+    val packageManager = remember {
+        PackageManager.getInstance(context, AIToolHandler.getInstance(context))
+    }
+    val uiModuleId =
+        remember(request) {
+            request.moduleSpec["id"]?.toString()?.trim()?.ifBlank { null }
+                ?: request.moduleSpec["menuItemId"]?.toString()?.trim()?.ifBlank { null }
+                ?: "chat_message_menu_dialog"
+        }
+    val routeInstanceId = remember(request) { UUID.randomUUID().toString() }
+    val executionContextKey = remember(routeInstanceId, request.containerPackageName, uiModuleId) {
+        buildComposeDslExecutionContextKey(
+            containerPackageName = request.containerPackageName,
+            uiModuleId = uiModuleId,
+            routeInstanceId = routeInstanceId
+        )
+    }
+    val jsEngine = remember(packageManager, executionContextKey) {
+        packageManager.getToolPkgExecutionEngine(
+            contextKey = executionContextKey,
+            containerPackageName = request.containerPackageName
+        )
+    }
+    var script by remember(request) { mutableStateOf<String?>(null) }
+    var renderResult by remember(request) {
+        mutableStateOf<ToolPkgComposeDslRenderResult?>(null)
+    }
+    var errorMessage by remember(request) { mutableStateOf<String?>(null) }
+    var isLoading by remember(request) { mutableStateOf(true) }
+    var dispatchingCount by remember(request) { mutableStateOf(0) }
+    var hasDispatchedInitialOnLoad by remember(request) { mutableStateOf(false) }
+    var nextDispatchTicket by remember(request) { mutableStateOf(1L) }
+    var pendingTreeRerenderJob by remember(request) { mutableStateOf<Job?>(null) }
+    val settledDispatchTickets = remember(request) { mutableSetOf<Long>() }
+
+    fun buildModuleSpec(): Map<String, Any?> =
+        linkedMapOf<String, Any?>(
+            "id" to uiModuleId,
+            "runtime" to "compose_dsl",
+            "screen" to request.screenPath,
+            "title" to request.title,
+            "toolPkgId" to request.containerPackageName
+        ).apply {
+            putAll(request.moduleSpec)
+        }
+
+    fun buildInitialState(): Map<String, Any?> =
+        linkedMapOf<String, Any?>().apply {
+            putAll(request.state)
+        }
+
+    fun buildActionRuntimeOptions(): Map<String, Any?> =
+        mapOf(
+            "packageName" to request.containerPackageName,
+            "containerPackageName" to request.containerPackageName,
+            "toolPkgId" to request.containerPackageName,
+            "__operit_ui_package_name" to request.containerPackageName,
+            "__operit_ui_toolpkg_id" to request.containerPackageName,
+            "uiModuleId" to uiModuleId,
+            "__operit_ui_module_id" to uiModuleId,
+            "__operit_toolpkg_runtime_kind" to "ui",
+            "routeInstanceId" to routeInstanceId,
+            "__operit_route_instance_id" to routeInstanceId,
+            "executionContextKey" to executionContextKey,
+            "__operit_compose_execution_context_key" to executionContextKey,
+            "__operit_package_lang" to currentLanguage,
+            "__operit_script_screen" to request.screenPath,
+            "moduleSpec" to buildModuleSpec(),
+            "state" to (renderResult?.state ?: buildInitialState()),
+            "memo" to (renderResult?.memo ?: emptyMap<String, Any?>())
+        )
+
+    fun applyBlockingRenderResult(
+        phase: String,
+        rawResult: Any?
+    ) {
+        val parsed = ToolPkgComposeDslParser.parseRenderResult(rawResult)
+        if (parsed == null) {
+            AppLogger.e(TAG, "compose_dsl dialog webview render result ignored: phase=$phase")
+            return
+        }
+        composeDslWebViewMainHandler.post {
+            renderResult = parsed
+            errorMessage = null
+        }
+    }
+
+    val webViewHostContext =
+        remember(routeInstanceId, executionContextKey, jsEngine) {
+            ComposeDslWebViewHostContext(
+                routeInstanceId = routeInstanceId,
+                executionContextKey = executionContextKey,
+                jsEngine = jsEngine,
+                runtimeOptionsProvider = ::buildActionRuntimeOptions,
+                applyRenderResult = ::applyBlockingRenderResult
+            )
+        }
+
+    suspend fun rerenderComposeDslTreeInternal(source: String) {
+        val rawResult =
+            withContext(Dispatchers.IO) {
+                jsEngine.rerenderComposeDslTree(
+                    runtimeOptions = buildActionRuntimeOptions()
+                )
+            }
+        val parsed = ToolPkgComposeDslParser.parseRenderResult(rawResult)
+        if (parsed == null) {
+            val rawText = rawResult?.toString()?.trim().orEmpty()
+            AppLogger.e(
+                TAG,
+                "compose_dsl dialog tree rerender failed: source=$source, raw=${rawText.ifBlank { "<empty>" }}"
+            )
+            return
+        }
+        renderResult = parsed
+        errorMessage = null
+    }
+
+    fun requestComposeDslTreeRerender(immediate: Boolean = false) {
+        pendingTreeRerenderJob?.cancel()
+        pendingTreeRerenderJob =
+            scope.launch {
+                if (!immediate) {
+                    withFrameNanos { }
+                }
+                renderMutex.withLock {
+                    rerenderComposeDslTreeInternal(
+                        source = if (immediate) "immediate" else "next_frame"
+                    )
+                }
+            }
+    }
+
+    // Text edits must reach the JS runtime in keystroke order; dispatching each keystroke on its
+    // own thread lets later edits apply first and regresses the runtime state behind the field.
+    val textInputDispatchQueue =
+        remember(request) {
+            ComposeDslTextInputDispatchQueue(
+                onAllSettled = { requestComposeDslTreeRerender(false) }
+            )
+        }
+
+    fun hasPendingTextInputSyncs(): Boolean = textInputDispatchQueue.hasPending()
+
+    suspend fun awaitPendingTextInputSyncs() = textInputDispatchQueue.awaitAll()
+
+    fun flushTextInputSyncsAndRerender() {
+        scope.launch {
+            awaitPendingTextInputSyncs()
+            requestComposeDslTreeRerender(true)
+        }
+    }
+
+    fun dispatchActionInternal(
+        actionId: String,
+        payload: Any? = null,
+        onSettled: (() -> Unit)? = null,
+        flushPendingTextInputs: Boolean = true
+    ): Boolean {
+        val normalizedActionId = actionId.trim()
+        if (normalizedActionId.isBlank()) {
+            onSettled?.invoke()
+            return false
+        }
+        if (flushPendingTextInputs && hasPendingTextInputSyncs()) {
+            scope.launch {
+                awaitPendingTextInputSyncs()
+                dispatchActionInternal(
+                    actionId = normalizedActionId,
+                    payload = payload,
+                    onSettled = onSettled,
+                    flushPendingTextInputs = false
+                )
+            }
+            return true
+        }
+        pendingTreeRerenderJob?.cancel()
+        pendingTreeRerenderJob = null
+        val dispatchTicket = nextDispatchTicket
+        nextDispatchTicket += 1
+
+        dispatchingCount += 1
+
+        val dispatched =
+            jsEngine.dispatchComposeDslActionAsync(
+                actionId = normalizedActionId,
+                payload = payload,
+                runtimeOptions = buildActionRuntimeOptions(),
+                onIntermediateResult = { intermediateResult ->
+                    if (settledDispatchTickets.contains(dispatchTicket)) {
+                        return@dispatchComposeDslActionAsync
+                    }
+                    val parsedIntermediate =
+                        ToolPkgComposeDslParser.parseRenderResult(intermediateResult)
+                    if (parsedIntermediate != null) {
+                        renderResult = parsedIntermediate
+                        errorMessage = null
+                    }
+                },
+                onFinalResult = { finalResult ->
+                    if (settledDispatchTickets.contains(dispatchTicket)) {
+                        return@dispatchComposeDslActionAsync
+                    }
+                    val parsedFinal =
+                        ToolPkgComposeDslParser.parseRenderResult(finalResult)
+                    if (parsedFinal != null) {
+                        renderResult = parsedFinal
+                        errorMessage = null
+                    }
+                },
+                onComplete = {
+                    dispatchingCount = (dispatchingCount - 1).coerceAtLeast(0)
+                    settledDispatchTickets.add(dispatchTicket)
+                    if (settledDispatchTickets.size > 64) {
+                        val latestTickets = settledDispatchTickets.toList().sortedDescending().take(32).toSet()
+                        settledDispatchTickets.retainAll(latestTickets)
+                    }
+                    onSettled?.invoke()
+                },
+                onError = { error ->
+                    errorMessage = "compose_dsl dialog runtime error: $error"
+                    AppLogger.e(
+                        TAG,
+                        "compose_dsl dialog action failed: actionId=$normalizedActionId, error=$error"
+                    )
+                }
+            )
+
+        if (!dispatched) {
+            dispatchingCount = (dispatchingCount - 1).coerceAtLeast(0)
+            settledDispatchTickets.add(dispatchTicket)
+            onSettled?.invoke()
+        }
+        return dispatched
+    }
+
+    fun dispatchAction(actionId: String, payload: Any? = null) {
+        dispatchActionInternal(actionId = actionId, payload = payload)
+    }
+
+    fun dispatchTextInputAction(actionId: String, text: String) {
+        val normalizedActionId = actionId.trim()
+        if (normalizedActionId.isBlank()) {
+            return
+        }
+        textInputDispatchQueue.enqueue(normalizedActionId, text) { entry, onSettled ->
+            dispatchActionInternal(
+                actionId = entry.actionId,
+                payload =
+                    mapOf(
+                        "__composeTextFieldPayload" to true,
+                        "__no_render" to true,
+                        "value" to entry.text
+                    ),
+                onSettled = onSettled,
+                flushPendingTextInputs = false
+            )
+        }
+    }
+
+    suspend fun dispatchActionAwait(actionId: String, payload: Any? = null) {
+        val completion = CompletableDeferred<Unit>()
+        dispatchActionInternal(
+            actionId = actionId,
+            payload = payload,
+            onSettled = {
+                if (!completion.isCompleted) {
+                    completion.complete(Unit)
+                }
+            }
+        )
+        completion.await()
+    }
+
+    suspend fun render() {
+        renderMutex.withLock {
+            try {
+                pendingTreeRerenderJob?.cancel()
+                pendingTreeRerenderJob = null
+                textInputDispatchQueue.completeAll()
+                isLoading = true
+                dispatchingCount = 0
+                errorMessage = null
+
+                val scriptText =
+                    script ?: withContext(Dispatchers.IO) {
+                        packageManager.readToolPkgTextResource(
+                            packageNameOrSubpackageId = request.containerPackageName,
+                            resourcePath = request.screenPath
+                        )
+                    }
+                if (scriptText.isNullOrBlank()) {
+                    renderResult = null
+                    errorMessage =
+                        "compose_dsl dialog script not found: package=${request.containerPackageName}, screen=${request.screenPath}"
+                    return
+                }
+                if (script == null) {
+                    script = scriptText
+                }
+
+                val rawResult =
+                    withContext(Dispatchers.IO) {
+                        jsEngine.executeComposeDslScript(
+                            script = scriptText,
+                            runtimeOptions = buildActionRuntimeOptions()
+                        )
+                    }
+                val rawText = rawResult?.toString()?.trim().orEmpty()
+                val parsed = ToolPkgComposeDslParser.parseRenderResult(rawResult)
+                if (parsed == null) {
+                    val normalizedError =
+                        extractJsExecutionErrorMessage(rawResult)
+                            ?: if (rawText.isNotBlank()) {
+                                "Invalid compose_dsl dialog result: $rawText"
+                            } else {
+                                "Invalid compose_dsl dialog result"
+                            }
+                    renderResult = null
+                    errorMessage = normalizedError
+                    AppLogger.e(TAG, normalizedError)
+                    return
+                }
+
+                renderResult = parsed
+                errorMessage = null
+            } catch (error: Exception) {
+                renderResult = null
+                errorMessage = "compose_dsl dialog runtime error: ${error.message}"
+                AppLogger.e(TAG, "compose_dsl dialog render failed", error)
+            } finally {
+                isLoading = false
+            }
+        }
+    }
+
+    LaunchedEffect(request) {
+        render()
+    }
+
+    DisposableEffect(executionContextKey) {
+        onDispose {
+            pendingTreeRerenderJob?.cancel()
+            pendingTreeRerenderJob = null
+            textInputDispatchQueue.completeAll()
+            ComposeDslWebViewHostRegistry.clearExecutionContext(executionContextKey)
+            packageManager.releaseToolPkgExecutionEngine(executionContextKey, jsEngine)
+        }
+    }
+
+    val rootNode = renderResult?.tree
+    val rootOnLoadActionId =
+        remember(rootNode) {
+            rootNode?.let { node ->
+                ToolPkgComposeDslParser.extractActionId(node.props["onLoad"])
+            }
+        }
+
+    LaunchedEffect(rootNode, rootOnLoadActionId, hasDispatchedInitialOnLoad) {
+        if (rootNode == null || rootOnLoadActionId.isNullOrBlank() || hasDispatchedInitialOnLoad) {
+            return@LaunchedEffect
+        }
+        withFrameNanos { }
+        if (hasDispatchedInitialOnLoad) {
+            return@LaunchedEffect
+        }
+        hasDispatchedInitialOnLoad = true
+        dispatchAction(actionId = rootOnLoadActionId, payload = null)
+    }
+
+    when {
+        isLoading -> {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Text(text = request.title)
+                },
+                text = {
+                    Box(
+                        contentAlignment = Alignment.Center,
+                        modifier =
+                            Modifier
+                                .fillMaxWidth()
+                                .height(96.dp)
+                    ) {
+                        CircularProgressIndicator()
+                    }
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.floating_close))
+                    }
+                }
+            )
+        }
+        errorMessage != null -> {
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = onDismiss,
+                title = {
+                    Text(text = request.title)
+                },
+                text = {
+                    Text(
+                        text = errorMessage.orEmpty(),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                confirmButton = {
+                    androidx.compose.material3.TextButton(onClick = onDismiss) {
+                        Text(stringResource(R.string.floating_close))
+                    }
+                }
+            )
+        }
+        rootNode != null -> {
+            CompositionLocalProvider(
+                LocalComposeDslActionHandler provides ::dispatchAction,
+                LocalComposeDslTextInputActionHandler provides ::dispatchTextInputAction,
+                LocalComposeDslFlushTextInputHandler provides ::flushTextInputSyncsAndRerender,
+                LocalComposeDslSuspendingActionHandler provides ::dispatchActionAwait,
+                LocalComposeDslDialogDismissHandler provides onDismiss,
+                LocalComposeDslRouteInstanceId provides routeInstanceId,
+                LocalComposeDslWebViewHost provides webViewHostContext
+            ) {
+                renderComposeDslNode(
+                    node = rootNode,
+                    onAction = ::dispatchAction,
+                    nodePath = "0"
+                )
+            }
+        }
+    }
+}
+
+@Composable
 fun RenderToolPkgComposeDslNode(
     node: ToolPkgComposeDslNode,
     modifier: Modifier = Modifier,
@@ -1304,6 +2089,9 @@ internal val LocalComposeDslSuspendingActionHandler =
     staticCompositionLocalOf<suspend (String, Any?) -> Unit> {
         { _, _ -> }
     }
+internal val LocalComposeDslDialogDismissHandler = staticCompositionLocalOf<(() -> Unit)?> {
+    null
+}
 internal val LocalComposeDslRouteInstanceId = staticCompositionLocalOf { "" }
 private data class ComposeDslDebugNodeInfo(
     val routeInstanceId: String,
@@ -1340,6 +2128,14 @@ internal fun renderComposeDslNode(
             )
     ) {
         val normalizedType = normalizeToken(node.type)
+        if (normalizedType == "aichat") {
+            renderAiChatNode(node, modifierResolver)
+            return@CompositionLocalProvider
+        }
+        if (normalizedType == "adaptivesidepanel") {
+            renderAdaptiveSidePanelNode(node, onAction, nodePath, modifierResolver)
+            return@CompositionLocalProvider
+        }
         if (normalizedType == "canvas") {
             renderCanvasNode(node, onAction, modifierResolver)
             return@CompositionLocalProvider
@@ -1350,6 +2146,14 @@ internal fun renderComposeDslNode(
         }
         if (normalizedType == "markdown") {
             renderMarkdownNode(node, onAction, nodePath, modifierResolver)
+            return@CompositionLocalProvider
+        }
+        if (normalizedType == "alertdialog") {
+            renderComposeDslAlertDialogNode(node, onAction, nodePath, modifierResolver)
+            return@CompositionLocalProvider
+        }
+        if (normalizedType == "dialog") {
+            renderComposeDslDialogNode(node, onAction, nodePath, modifierResolver)
             return@CompositionLocalProvider
         }
         val renderer = composeDslGeneratedNodeRendererRegistry[normalizedType]
@@ -1372,6 +2176,7 @@ internal fun renderMarkdownNode(
     modifierResolver: ComposeDslModifierResolver
 ) {
     val props = node.props
+    val explicitNodeKey = props["key"]?.toString()?.trim()?.ifBlank { null }
     val modifier = applyScopedCommonModifier(Modifier, props, modifierResolver)
     val textColor = props.colorOrNull("color") ?: MaterialTheme.colorScheme.onSurface
     val fontSize = props.floatOrNull("fontSize")?.sp ?: Unspecified
@@ -1387,25 +2192,250 @@ internal fun renderMarkdownNode(
         }
 
     if (markdownStream != null) {
-        StreamMarkdownRenderer(
-            markdownStream = markdownStream,
-            modifier = modifier,
-            textColor = textColor,
-            fontSize = fontSize,
-            xmlRenderer = remember { DefaultXmlRenderer() },
-            enableDialogs = props.bool("enableDialogs", true),
-            fillMaxWidth = props.bool("fillMaxWidth", true)
-        )
+        val streamRenderKey = explicitNodeKey ?: "$nodePath:stream:$streamTagName"
+        key(streamRenderKey) {
+            StreamMarkdownRenderer(
+                markdownStream = markdownStream,
+                modifier = modifier,
+                textColor = textColor,
+                fontSize = fontSize,
+                xmlRenderer = remember { DefaultXmlRenderer() },
+                enableDialogs = props.bool("enableDialogs", true),
+                fillMaxWidth = props.bool("fillMaxWidth", true)
+            )
+        }
         return
     }
 
-    MarkdownTextComposable(
-        text = props.string("text"),
-        textColor = textColor,
-        modifier = modifier,
-        fontSize = fontSize,
-        enableDialogs = props.bool("enableDialogs", true)
+    val markdownText = props.string("text")
+    val markdownTextHash = markdownText.hashCode()
+    val staticRenderKey =
+        explicitNodeKey ?: "$nodePath:static:${markdownText.length}:$markdownTextHash"
+    key(staticRenderKey) {
+        MarkdownTextComposable(
+            text = markdownText,
+            textColor = textColor,
+            modifier = modifier,
+            fontSize = fontSize,
+            enableDialogs = props.bool("enableDialogs", true)
+        )
+    }
+}
+
+@Composable
+internal fun renderComposeDslAlertDialogNode(
+    node: ToolPkgComposeDslNode,
+    onAction: (String, Any?) -> Unit,
+    nodePath: String,
+    modifierResolver: ComposeDslModifierResolver
+) {
+    val props = node.props
+    val dismissHost = LocalComposeDslDialogDismissHandler.current
+    val onDismissRequestActionId =
+        ToolPkgComposeDslParser.extractActionId(props["onDismissRequest"])
+    val titleNodes = node.slots["title"].orEmpty()
+    val textNodes = node.slots["text"].orEmpty()
+    val iconNodes = node.slots["icon"].orEmpty()
+    val confirmButtonNodes = node.slots["confirmButton"].orEmpty()
+    val dismissButtonNodes = node.slots["dismissButton"].orEmpty()
+    val contentNodes = node.slots["content"].orEmpty()
+    val titleText = props.stringOrNull("title")
+    val textValue = props.stringOrNull("text")
+    val markdownValue = props.stringOrNull("markdown")
+
+    val titleContent: (@Composable () -> Unit)? =
+        when {
+            titleNodes.isNotEmpty() -> {
+                {
+                    renderComposeDslNodes(
+                        nodes = titleNodes,
+                        onAction = onAction,
+                        nodePath = "$nodePath:title"
+                    )
+                }
+            }
+            !titleText.isNullOrBlank() -> {
+                { Text(text = titleText) }
+            }
+            else -> null
+        }
+    val textContent: (@Composable () -> Unit)? =
+        when {
+            textNodes.isNotEmpty() -> {
+                {
+                    renderComposeDslNodes(
+                        nodes = textNodes,
+                        onAction = onAction,
+                        nodePath = "$nodePath:text",
+                        modifierResolver = { base, slotProps ->
+                            defaultComposeDslModifierResolver(base, slotProps)
+                        }
+                    )
+                }
+            }
+            contentNodes.isNotEmpty() -> {
+                {
+                    renderComposeDslNodes(
+                        nodes = contentNodes,
+                        onAction = onAction,
+                        nodePath = "$nodePath:content",
+                        modifierResolver = { base, slotProps ->
+                            defaultComposeDslModifierResolver(base, slotProps)
+                        }
+                    )
+                }
+            }
+            !markdownValue.isNullOrBlank() -> {
+                {
+                    MarkdownTextComposable(
+                        text = markdownValue,
+                        textColor = MaterialTheme.colorScheme.onSurface,
+                        enableDialogs = true
+                    )
+                }
+            }
+            !textValue.isNullOrBlank() -> {
+                { Text(text = textValue) }
+            }
+            else -> null
+        }
+    val iconContent: (@Composable () -> Unit)? =
+        if (iconNodes.isNotEmpty()) {
+            {
+                renderComposeDslNodes(
+                    nodes = iconNodes,
+                    onAction = onAction,
+                    nodePath = "$nodePath:icon"
+                )
+            }
+        } else {
+            null
+        }
+
+    androidx.compose.material3.AlertDialog(
+        onDismissRequest = {
+            if (!onDismissRequestActionId.isNullOrBlank()) {
+                onAction(onDismissRequestActionId, null)
+            }
+            if (props.bool("closeOnDismissRequest", true)) {
+                dismissHost?.invoke()
+            }
+        },
+        confirmButton = {
+            if (confirmButtonNodes.isNotEmpty()) {
+                renderComposeDslNodes(
+                    nodes = confirmButtonNodes,
+                    onAction = onAction,
+                    nodePath = "$nodePath:confirmButton"
+                )
+            } else {
+                ComposeDslDialogTextButton(
+                    text = props.stringOrNull("confirmText"),
+                    actionId = ToolPkgComposeDslParser.extractActionId(props["onConfirm"]),
+                    closeOnClick = props.bool("closeOnConfirm", true),
+                    onAction = onAction,
+                    onClose = dismissHost
+                )
+            }
+        },
+        modifier = applyScopedCommonModifier(Modifier, props, modifierResolver),
+        dismissButton = {
+            if (dismissButtonNodes.isNotEmpty()) {
+                renderComposeDslNodes(
+                    nodes = dismissButtonNodes,
+                    onAction = onAction,
+                    nodePath = "$nodePath:dismissButton"
+                )
+            } else {
+                ComposeDslDialogTextButton(
+                    text = props.stringOrNull("dismissText"),
+                    actionId = ToolPkgComposeDslParser.extractActionId(props["onDismiss"]),
+                    closeOnClick = props.bool("closeOnDismiss", true),
+                    onAction = onAction,
+                    onClose = dismissHost
+                )
+            }
+        },
+        icon = iconContent,
+        title = titleContent,
+        text = textContent,
+        shape = props.shapeOrNull() ?: RoundedCornerShape(28.dp),
+        containerColor = props.colorOrNull("containerColor") ?: MaterialTheme.colorScheme.surface,
+        iconContentColor = props.colorOrNull("iconContentColor") ?: MaterialTheme.colorScheme.secondary,
+        titleContentColor = props.colorOrNull("titleContentColor") ?: MaterialTheme.colorScheme.onSurface,
+        textContentColor = props.colorOrNull("textContentColor") ?: MaterialTheme.colorScheme.onSurfaceVariant,
+        tonalElevation = props.dp("tonalElevation", 6.dp),
+        properties = dialogPropertiesFromValue(props["properties"])
     )
+}
+
+@Composable
+private fun ComposeDslDialogTextButton(
+    text: String?,
+    actionId: String?,
+    closeOnClick: Boolean,
+    onAction: (String, Any?) -> Unit,
+    onClose: (() -> Unit)?
+) {
+    if (text.isNullOrBlank()) {
+        return
+    }
+    androidx.compose.material3.TextButton(
+        onClick = {
+            if (!actionId.isNullOrBlank()) {
+                onAction(actionId, null)
+            }
+            if (closeOnClick) {
+                onClose?.invoke()
+            }
+        }
+    ) {
+        Text(text = text)
+    }
+}
+
+@Composable
+internal fun renderComposeDslDialogNode(
+    node: ToolPkgComposeDslNode,
+    onAction: (String, Any?) -> Unit,
+    nodePath: String,
+    modifierResolver: ComposeDslModifierResolver
+) {
+    val props = node.props
+    val dismissHost = LocalComposeDslDialogDismissHandler.current
+    val onDismissRequestActionId =
+        ToolPkgComposeDslParser.extractActionId(props["onDismissRequest"])
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = {
+            if (!onDismissRequestActionId.isNullOrBlank()) {
+                onAction(onDismissRequestActionId, null)
+            }
+            if (props.bool("closeOnDismissRequest", true)) {
+                dismissHost?.invoke()
+            }
+        },
+        properties = dialogPropertiesFromValue(props["properties"])
+    ) {
+        androidx.compose.material3.Surface(
+            modifier = applyScopedCommonModifier(Modifier, props, modifierResolver),
+            shape = props.shapeOrNull() ?: RoundedCornerShape(28.dp),
+            color = props.colorOrNull("containerColor") ?: MaterialTheme.colorScheme.surface,
+            tonalElevation = props.dp("tonalElevation", 6.dp)
+        ) {
+            val contentNodes =
+                node.slots["content"]
+                    ?.takeIf { it.isNotEmpty() }
+                    ?: node.children
+            renderComposeDslNodes(
+                nodes = contentNodes,
+                onAction = onAction,
+                nodePath = "$nodePath:content",
+                modifierResolver = { base, slotProps ->
+                    defaultComposeDslModifierResolver(base, slotProps)
+                }
+            )
+        }
+    }
 }
 
 private fun createXmlTagBodyCharStream(
@@ -1478,6 +2508,180 @@ internal fun applyComposeDslNodeDebugLayoutModifier(modifier: Modifier): Modifie
 
 internal typealias ComposeDslNodeRenderer =
     @Composable (ToolPkgComposeDslNode, (String, Any?) -> Unit, String, ComposeDslModifierResolver) -> Unit
+
+@Composable
+private fun renderAiChatNode(
+    node: ToolPkgComposeDslNode,
+    modifierResolver: ComposeDslModifierResolver
+) {
+    Box(modifier = applyScopedCommonModifier(Modifier, node.props, modifierResolver)) {
+        AIChatScreen(embedded = true)
+    }
+}
+
+@Composable
+private fun renderAdaptiveSidePanelNode(
+    node: ToolPkgComposeDslNode,
+    onAction: (String, Any?) -> Unit,
+    nodePath: String,
+    modifierResolver: ComposeDslModifierResolver
+) {
+    val props = node.props
+    val onOpenChangedActionId =
+        requireNotNull(ToolPkgComposeDslParser.extractActionId(props["onOpenChanged"])) {
+            "AdaptiveSidePanel.onOpenChanged is required"
+        }.also { actionId ->
+            require(actionId.isNotBlank()) {
+                "AdaptiveSidePanel.onOpenChanged is required"
+            }
+        }
+
+    val open = props["open"] == true
+    val defaultWidth = (props["defaultWidth"] as? Number)?.toFloat()?.takeIf { it > 0f } ?: 360f
+    val minWidth = (props["minWidth"] as? Number)?.toFloat()?.takeIf { it > 0f } ?: 280f
+    val minContentWidth =
+        (props["minContentWidth"] as? Number)?.toFloat()?.takeIf { it > 0f } ?: 320f
+    val breakpoint = (props["breakpoint"] as? Number)?.toFloat()?.takeIf { it > 0f } ?: 600f
+    val density = LocalDensity.current
+    var resizedPanelWidth by remember(nodePath) { mutableStateOf<Dp?>(null) }
+
+    BoxWithConstraints(
+        modifier = applyScopedCommonModifier(Modifier, props, modifierResolver)
+    ) {
+        val isWideLayout = maxWidth >= breakpoint.dp
+        val maximumPanelWidth =
+            if (isWideLayout) {
+                (maxWidth - minContentWidth.dp).coerceAtLeast(0.dp)
+            } else {
+                maxWidth
+            }
+        val minimumPanelWidth =
+            if (isWideLayout) minOf(minWidth.dp, maximumPanelWidth) else maximumPanelWidth
+        val panelWidth =
+            (resizedPanelWidth ?: defaultWidth.dp).coerceIn(minimumPanelWidth, maximumPanelWidth)
+
+        if (isWideLayout) {
+            Row(modifier = Modifier.fillMaxSize()) {
+                Box(modifier = Modifier.weight(1f).fillMaxHeight()) {
+                    renderAdaptiveSidePanelSlot(
+                        node = node,
+                        slotName = "content",
+                        onAction = onAction,
+                        nodePath = nodePath,
+                        modifierResolver = modifierResolver,
+                        useChildrenAsContent = true
+                    )
+                }
+                if (open) {
+                    Box(modifier = Modifier.width(panelWidth).fillMaxHeight()) {
+                        renderAdaptiveSidePanelSlot(
+                            node = node,
+                            slotName = "side",
+                            onAction = onAction,
+                            nodePath = nodePath,
+                            modifierResolver = modifierResolver
+                        )
+                        Box(
+                            modifier =
+                                Modifier
+                                    .align(Alignment.CenterStart)
+                                    .offset(x = (-12).dp)
+                                    .width(24.dp)
+                                    .fillMaxHeight()
+                                    .pointerInput(minimumPanelWidth, maximumPanelWidth, panelWidth) {
+                                        detectDragGestures { change, dragAmount ->
+                                            change.consume()
+                                            val widthDelta = with(density) { dragAmount.x.toDp() }
+                                            resizedPanelWidth =
+                                                (panelWidth - widthDelta).coerceIn(
+                                                    minimumPanelWidth,
+                                                    maximumPanelWidth
+                                                )
+                                        }
+                                    },
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Box(
+                                modifier =
+                                    Modifier
+                                        .width(3.dp)
+                                        .height(56.dp)
+                                        .background(
+                                            MaterialTheme.colorScheme.outlineVariant,
+                                            RoundedCornerShape(2.dp)
+                                        )
+                            )
+                        }
+                    }
+                }
+            }
+        } else {
+            Box(modifier = Modifier.fillMaxSize()) {
+                renderAdaptiveSidePanelSlot(
+                    node = node,
+                    slotName = "content",
+                    onAction = onAction,
+                    nodePath = nodePath,
+                    modifierResolver = modifierResolver,
+                    useChildrenAsContent = true
+                )
+                if (open) {
+                    Box(
+                        modifier =
+                            Modifier
+                                .fillMaxSize()
+                                .background(Color.Black.copy(alpha = 0.18f))
+                                .clickable { onAction(onOpenChangedActionId, false) }
+                    )
+                    Box(
+                        modifier =
+                            Modifier
+                                .align(Alignment.CenterEnd)
+                                .width(panelWidth)
+                                .fillMaxHeight()
+                    ) {
+                        renderAdaptiveSidePanelSlot(
+                            node = node,
+                            slotName = "side",
+                            onAction = onAction,
+                            nodePath = nodePath,
+                            modifierResolver = modifierResolver
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun renderAdaptiveSidePanelSlot(
+    node: ToolPkgComposeDslNode,
+    slotName: String,
+    onAction: (String, Any?) -> Unit,
+    nodePath: String,
+    modifierResolver: ComposeDslModifierResolver,
+    useChildrenAsContent: Boolean = false
+) {
+    val explicitSlotNodes = node.slots[slotName].orEmpty()
+    val slotNodes =
+        if (explicitSlotNodes.isNotEmpty()) {
+            explicitSlotNodes
+        } else if (useChildrenAsContent) {
+            node.children
+        } else {
+            emptyList()
+        }
+    require(slotNodes.size == 1) {
+        "AdaptiveSidePanel.$slotName requires exactly one child"
+    }
+    renderComposeDslNode(
+        node = slotNodes.single(),
+        onAction = onAction,
+        nodePath = "$nodePath:$slotName/0",
+        modifierResolver = modifierResolver
+    )
+}
 
 private data class CanvasCommand(
     val type: String,
@@ -3259,6 +4463,16 @@ internal fun popupPropertiesFromValue(value: Any?): PopupProperties {
         dismissOnClickOutside = (map["dismissOnClickOutside"] as? Boolean) ?: true,
         clippingEnabled = (map["clippingEnabled"] as? Boolean) ?: true,
         usePlatformDefaultWidth = (map["usePlatformDefaultWidth"] as? Boolean) ?: false
+    )
+}
+
+internal fun dialogPropertiesFromValue(value: Any?): androidx.compose.ui.window.DialogProperties {
+    val map = value as? Map<*, *> ?: return androidx.compose.ui.window.DialogProperties()
+    return androidx.compose.ui.window.DialogProperties(
+        dismissOnBackPress = (map["dismissOnBackPress"] as? Boolean) ?: true,
+        dismissOnClickOutside = (map["dismissOnClickOutside"] as? Boolean) ?: true,
+        usePlatformDefaultWidth = (map["usePlatformDefaultWidth"] as? Boolean) ?: true,
+        decorFitsSystemWindows = (map["decorFitsSystemWindows"] as? Boolean) ?: true
     )
 }
 

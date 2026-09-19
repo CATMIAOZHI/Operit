@@ -905,6 +905,8 @@ object ToolPkgCommonBridgePlugin : OperitPlugin {
         ToolPkgToolLifecycleBridge.register()
         ToolPkgChatInputHookBridge.register()
         ToolPkgChatViewHookBridge.register()
+        ToolPkgChatMessageMenuItemBridge.register()
+        ToolPkgChatRuntimeHookBridge.register()
         ToolPkgAiProviderRegistry.register()
 
         val manager = toolPkgPackageManager()
@@ -924,11 +926,10 @@ object ToolPkgCommonBridgePlugin : OperitPlugin {
                         functionSource = hook.functionSource
                     )
                 }
-            }.sortedWith(
-                compareBy(
-                    ToolPkgMessageProcessingHookRegistration::containerPackageName,
-                    ToolPkgMessageProcessingHookRegistration::pluginId
-                )
+            }.sortedByToolPkgLoadOrder(
+                activeContainers = activeContainers,
+                containerPackageName = ToolPkgMessageProcessingHookRegistration::containerPackageName,
+                registrationId = ToolPkgMessageProcessingHookRegistration::pluginId
             )
 
         val xmlHooksByTag =
@@ -950,11 +951,10 @@ object ToolPkgCommonBridgePlugin : OperitPlugin {
             }
                 .groupBy(ToolPkgXmlRenderHookRegistration::tag)
                 .mapValues { (_, hooks) ->
-                    hooks.sortedWith(
-                        compareBy(
-                            ToolPkgXmlRenderHookRegistration::containerPackageName,
-                            ToolPkgXmlRenderHookRegistration::pluginId
-                        )
+                    hooks.sortedByToolPkgLoadOrder(
+                        activeContainers = activeContainers,
+                        containerPackageName = ToolPkgXmlRenderHookRegistration::containerPackageName,
+                        registrationId = ToolPkgXmlRenderHookRegistration::pluginId
                     )
                 }
 
@@ -968,11 +968,10 @@ object ToolPkgCommonBridgePlugin : OperitPlugin {
                         functionSource = hook.functionSource
                     )
                 }
-            }.sortedWith(
-                compareBy(
-                    ToolPkgInputMenuToggleHookRegistration::containerPackageName,
-                    ToolPkgInputMenuToggleHookRegistration::pluginId
-                )
+            }.sortedByToolPkgLoadOrder(
+                activeContainers = activeContainers,
+                containerPackageName = ToolPkgInputMenuToggleHookRegistration::containerPackageName,
+                registrationId = ToolPkgInputMenuToggleHookRegistration::pluginId
             )
 
         ToolPkgMessageProcessingBridgePlugin.replaceHooks(messageHooks)

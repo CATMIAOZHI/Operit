@@ -218,9 +218,9 @@ open class HttpVoiceProvider(
             return null
         }
 
-        val prefs = SpeechServicesPreferences(context.applicationContext)
-        val effectiveRate = request.rate ?: prefs.ttsSpeechRateFlow.first()
-        val effectivePitch = request.pitch ?: prefs.ttsPitchFlow.first()
+        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+        val effectiveRate = request.rate ?: profile.speechRate
+        val effectivePitch = request.pitch ?: profile.pitch
 
         try {
             // 生成缓存键

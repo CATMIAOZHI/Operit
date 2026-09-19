@@ -995,12 +995,18 @@ def build_component_renderer_function(spec: ComponentSpec, params: Sequence[Para
                     verticalArrangement = props.verticalArrangement("verticalArrangement", spacing),
                     contentPadding = PaddingValues(0.dp)
                 ) {
-                    itemsIndexed(contentNodes) { index, child ->
-                        renderComposeDslNode(
-                            node = child,
-                            onAction = onAction,
-                            nodePath = "$nodePath/$index"
-                        )
+                    itemsIndexed(
+                        items = contentNodes,
+                        key = { index, child -> child.lazyItemRenderKey(nodePath, index) }
+                    ) { index, child ->
+                        val childPath = "$nodePath/$index"
+                        key(child.lazyItemRenderKey(nodePath, index)) {
+                            renderComposeDslNode(
+                                node = child,
+                                onAction = onAction,
+                                nodePath = childPath
+                            )
+                        }
                     }
                 }
             }
@@ -1025,12 +1031,18 @@ def build_component_renderer_function(spec: ComponentSpec, params: Sequence[Para
                     horizontalArrangement = props.horizontalArrangement("horizontalArrangement", spacing),
                     verticalAlignment = props.verticalAlignment("verticalAlignment")
                 ) {
-                    itemsIndexed(contentNodes) { index, child ->
-                        renderComposeDslNode(
-                            node = child,
-                            onAction = onAction,
-                            nodePath = "$nodePath/$index"
-                        )
+                    itemsIndexed(
+                        items = contentNodes,
+                        key = { index, child -> child.lazyItemRenderKey(nodePath, index) }
+                    ) { index, child ->
+                        val childPath = "$nodePath/$index"
+                        key(child.lazyItemRenderKey(nodePath, index)) {
+                            renderComposeDslNode(
+                                node = child,
+                                onAction = onAction,
+                                nodePath = childPath
+                            )
+                        }
                     }
                 }
             }
@@ -1099,16 +1111,14 @@ def build_component_renderer_function(spec: ComponentSpec, params: Sequence[Para
                         )
                     )
                 }
-                var lastAppliedExternalValue by remember(textFieldIdentity) { mutableStateOf(externalValue) }
+                val externalSyncGuard = remember(textFieldIdentity) { ComposeDslTextFieldEchoGuard(externalValue) }
                 var isFocused by remember(textFieldIdentity) { mutableStateOf(false) }
 
                 LaunchedEffect(textFieldIdentity, externalValue, isFocused) {
-                    if (externalValue == textFieldValue.text) {
-                        lastAppliedExternalValue = externalValue
-                        return@LaunchedEffect
-                    }
-                    val externalValueChanged = externalValue != lastAppliedExternalValue
-                    if (isFocused && !externalValueChanged) {
+                    if (
+                        externalSyncGuard.reconcile(externalValue, textFieldValue.text, isFocused) !=
+                            ComposeDslTextFieldEchoGuard.ExternalUpdate.EXTERNAL_CHANGE
+                    ) {
                         return@LaunchedEffect
                     }
                     val start = textFieldValue.selection.start.coerceIn(0, externalValue.length)
@@ -1118,7 +1128,6 @@ def build_component_renderer_function(spec: ComponentSpec, params: Sequence[Para
                             text = externalValue,
                             selection = TextRange(start, end)
                         )
-                    lastAppliedExternalValue = externalValue
                 }
                 val textStyle =
                     composeDslTextFieldStyleFromValue(styleMap)
@@ -1139,6 +1148,7 @@ def build_component_renderer_function(spec: ComponentSpec, params: Sequence[Para
                             val previousText = textFieldValue.text
                             textFieldValue = nextValue
                             if (nextValue.text != previousText) {
+                                externalSyncGuard.onLocalEditDispatched(nextValue.text)
                                 onTextInputAction(actionId, nextValue.text)
                             }
                         }

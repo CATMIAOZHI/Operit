@@ -4,6 +4,8 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
+import java.io.StringWriter
+import java.io.Writer
 import java.time.format.DateTimeFormatter
 
 /**
@@ -11,69 +13,118 @@ import java.time.format.DateTimeFormatter
  */
 object HtmlExporter {
 
+    private const val HTML_CONTENT_WRITE_CHUNK_CHARACTER_COUNT = 64 * 1024
+    private const val CONTENT_PROGRESS_CHARACTER_COUNT = 256 * 1024
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
 
     /**
      * 导出单个对话为 HTML
      */
     fun exportSingle(context: Context, chatHistory: ChatHistory, folderPath: String? = null): String {
-        val sb = StringBuilder()
-
-        appendHtmlHeader(sb, chatHistory.title)
-        appendChatContent(context, sb, chatHistory, folderPath)
-        appendHtmlFooter(context, sb)
-
-        return sb.toString()
+        val writer = StringWriter()
+        writeSingleToWriter(context, chatHistory, writer, folderPath = folderPath)
+        return writer.toString()
     }
 
     /**
      * 导出多个对话为 HTML
      */
-    fun exportMultiple(
+    fun exportMultiple(context: Context, chatHistories: List<ChatHistory>, folderPathsByChatId: Map<String, String> = emptyMap()): String {
+        val writer = StringWriter()
+        writeMultipleHeader(
+            context = context,
+            chatHistories = chatHistories,
+            totalMessageCount = chatHistories.sumOf { it.messages.size },
+            writer = writer,
+        )
+        chatHistories.forEachIndexed { index, chatHistory ->
+            writeConversationSeparator(writer, index)
+            writeConversationToWriter(context, writer, chatHistory, folderPath = folderPathsByChatId[chatHistory.id])
+        }
+        writeMultipleFooter(context, writer)
+        return writer.toString()
+    }
+
+    /**
+     * 写入多个对话的 HTML 头部。
+     */
+    fun writeMultipleHeader(
         context: Context,
         chatHistories: List<ChatHistory>,
-        folderPathsByChatId: Map<String, String> = emptyMap(),
-    ): String {
-        val sb = StringBuilder()
+        totalMessageCount: Int,
+        writer: Writer,
+    ) {
+        appendHtmlHeader(writer, context.getString(R.string.html_export_title))
 
-        appendHtmlHeader(sb, context.getString(R.string.html_export_title))
+        writer.appendLine("<div class=\"export-info\">")
+        writer.appendLine("  <h1>${context.getString(R.string.html_export_title)}</h1>")
+        writer.appendLine("  <p><strong>${context.getString(R.string.html_export_time)}:</strong> ${java.time.LocalDateTime.now().format(dateFormatter)}</p>")
+        writer.appendLine("  <p><strong>${context.getString(R.string.html_export_conversation_count)}:</strong> ${chatHistories.size}</p>")
+        writer.appendLine("  <p><strong>${context.getString(R.string.html_export_total_messages)}:</strong> $totalMessageCount</p>")
+        writer.appendLine("</div>")
+        writer.appendLine("<hr>")
+    }
 
-        sb.appendLine("<div class=\"export-info\">")
-        sb.appendLine("  <h1>${context.getString(R.string.html_export_title)}</h1>")
-        sb.appendLine("  <p><strong>${context.getString(R.string.html_export_time)}:</strong> ${java.time.LocalDateTime.now().format(dateFormatter)}</p>")
-        sb.appendLine("  <p><strong>${context.getString(R.string.html_export_conversation_count)}:</strong> ${chatHistories.size}</p>")
-        sb.appendLine("  <p><strong>${context.getString(R.string.html_export_total_messages)}:</strong> ${chatHistories.sumOf { it.messages.size }}</p>")
-        sb.appendLine("</div>")
-        sb.appendLine("<hr>")
-
-        for ((index, chatHistory) in chatHistories.withIndex()) {
-            if (index > 0) {
-                sb.appendLine("<hr class=\"conversation-divider\">")
-            }
-            appendChatContent(context, sb, chatHistory, folderPathsByChatId[chatHistory.id])
+    /**
+     * 写入对话之间的 HTML 分隔线。
+     */
+    fun writeConversationSeparator(writer: Writer, index: Int) {
+        if (index > 0) {
+            writer.appendLine("<hr class=\"conversation-divider\">")
         }
+    }
 
-        appendHtmlFooter(context, sb)
+    /**
+     * 写入单个对话。
+     */
+    fun writeSingleToWriter(
+        context: Context,
+        chatHistory: ChatHistory,
+        writer: Writer,
+        onContentCharactersWritten: (Long) -> Unit = {},
+        folderPath: String? = null,
+    ) {
+        appendHtmlHeader(writer, chatHistory.title)
+        writeConversationToWriter(context, writer, chatHistory, onContentCharactersWritten, folderPath)
+        appendHtmlFooter(context, writer)
+    }
 
-        return sb.toString()
+    /**
+     * 写入单个对话内容，不包含 HTML 文档头尾。
+     */
+    fun writeConversationToWriter(
+        context: Context,
+        writer: Writer,
+        chatHistory: ChatHistory,
+        onContentCharactersWritten: (Long) -> Unit = {},
+        folderPath: String? = null,
+    ) {
+        appendChatContent(context, writer, chatHistory, onContentCharactersWritten, folderPath)
+    }
+
+    /**
+     * 写入多个对话的 HTML 尾部。
+     */
+    fun writeMultipleFooter(context: Context, writer: Writer) {
+        appendHtmlFooter(context, writer)
     }
     
     /**
      * 添加 HTML 头部
      */
-    private fun appendHtmlHeader(sb: StringBuilder, title: String) {
-        sb.appendLine("<!DOCTYPE html>")
-        sb.appendLine("<html lang=\"zh-CN\">")
-        sb.appendLine("<head>")
-        sb.appendLine("  <meta charset=\"UTF-8\">")
-        sb.appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">")
-        sb.appendLine("  <title>$title</title>")
-        sb.appendLine("  <style>")
-        sb.appendLine(getCss())
-        sb.appendLine("  </style>")
-        sb.appendLine("</head>")
-        sb.appendLine("<body>")
-        sb.appendLine("<div class=\"container\">")
+    private fun appendHtmlHeader(writer: Writer, title: String) {
+        writer.appendLine("<!DOCTYPE html>")
+        writer.appendLine("<html lang=\"zh-CN\">")
+        writer.appendLine("<head>")
+        writer.appendLine("  <meta charset=\"UTF-8\">")
+        writer.appendLine("  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">")
+        writer.appendLine("  <title>$title</title>")
+        writer.appendLine("  <style>")
+        writer.appendLine(getCss())
+        writer.appendLine("  </style>")
+        writer.appendLine("</head>")
+        writer.appendLine("<body>")
+        writer.appendLine("<div class=\"container\">")
     }
     
     /**
@@ -81,63 +132,88 @@ object HtmlExporter {
      */
     private fun appendChatContent(
         context: Context,
-        sb: StringBuilder,
+        writer: Writer,
         chatHistory: ChatHistory,
+        onContentCharactersWritten: (Long) -> Unit,
         folderPath: String?,
     ) {
-        sb.appendLine("<div class=\"conversation\">")
-        sb.appendLine("  <div class=\"conversation-header\">")
-        sb.appendLine("    <h2>${escapeHtml(chatHistory.title)}</h2>")
-        sb.appendLine("    <div class=\"metadata\">")
-        sb.appendLine("      <span><strong>${context.getString(R.string.html_export_created)}:</strong> ${chatHistory.createdAt.format(dateFormatter)}</span>")
-        sb.appendLine("      <span><strong>${context.getString(R.string.html_export_updated)}:</strong> ${chatHistory.updatedAt.format(dateFormatter)}</span>")
-        if (folderPath != null) {
-            sb.appendLine("      <span><strong>${context.getString(R.string.html_export_group)}:</strong> ${escapeHtml(folderPath)}</span>")
-        }
-        sb.appendLine("      <span><strong>${context.getString(R.string.html_export_message_count)}:</strong> ${chatHistory.messages.size}</span>")
-        sb.appendLine("    </div>")
-        sb.appendLine("  </div>")
-        sb.appendLine("  <div class=\"messages\">")
-
+        writeConversationHeader(context, writer, chatHistory, chatHistory.messages.size, folderPath)
         for (message in chatHistory.messages) {
-            appendMessageHtml(sb, message)
+            appendMessageHtml(context, writer, message, onContentCharactersWritten)
         }
+        writeConversationFooter(writer)
+    }
 
-        sb.appendLine("  </div>")
-        sb.appendLine("</div>")
+    fun writeConversationHeader(
+        context: Context,
+        writer: Writer,
+        chatHistory: ChatHistory,
+        messageCount: Int,
+        folderPath: String?,
+    ) {
+        writer.appendLine("<div class=\"conversation\">")
+        writer.appendLine("  <div class=\"conversation-header\">")
+        writer.appendLine("    <h2>${escapeHtml(chatHistory.title)}</h2>")
+        writer.appendLine("    <div class=\"metadata\">")
+        writer.appendLine("      <span><strong>${context.getString(R.string.html_export_created)}:</strong> ${chatHistory.createdAt.format(dateFormatter)}</span>")
+        writer.appendLine("      <span><strong>${context.getString(R.string.html_export_updated)}:</strong> ${chatHistory.updatedAt.format(dateFormatter)}</span>")
+        if (folderPath != null) {
+            writer.appendLine("      <span><strong>${context.getString(R.string.html_export_group)}:</strong> ${escapeHtml(folderPath)}</span>")
+        }
+        writer.appendLine("      <span><strong>${context.getString(R.string.html_export_message_count)}:</strong> $messageCount</span>")
+        writer.appendLine("    </div>")
+        writer.appendLine("  </div>")
+        writer.appendLine("  <div class=\"messages\">")
+
+    }
+
+    fun writeConversationFooter(writer: Writer) {
+        writer.appendLine("  </div>")
+        writer.appendLine("</div>")
     }
     
     /**
      * 添加单条消息
      */
-    private fun appendMessageHtml(sb: StringBuilder, message: ChatMessage) {
+    fun appendMessageHtml(
+        context: Context,
+        writer: Writer,
+        message: ChatMessage,
+        onContentCharactersWritten: (Long) -> Unit = {},
+    ) {
         val messageClass = if (message.sender == "user") "user" else "assistant"
         val icon = if (message.sender == "user") "👤" else "🤖"
-        val role = if (message.sender == "user") "User" else "Assistant"
-        
-        sb.appendLine("    <div class=\"message $messageClass\">")
-        sb.appendLine("      <div class=\"message-header\">")
-        sb.appendLine("        <span class=\"role\">$icon $role</span>")
-        if (message.modelName.isNotEmpty() && message.modelName != "markdown" && message.modelName != "unknown") {
-            sb.appendLine("        <span class=\"model\">${escapeHtml(message.modelName)}</span>")
+        val role = if (message.sender == "user") {
+            context.getString(R.string.export_user)
+        } else {
+            context.getString(R.string.export_assistant)
         }
-        sb.appendLine("      </div>")
-        sb.appendLine("      <div class=\"message-content\">")
-        sb.appendLine("        ${formatContent(message.content)}")
-        sb.appendLine("      </div>")
-        sb.appendLine("    </div>")
+
+        writer.appendLine("    <div class=\"message $messageClass\">")
+        writer.appendLine("      <div class=\"message-header\">")
+        writer.appendLine("        <span class=\"role\">$icon $role</span>")
+        if (message.modelName.isNotEmpty() && message.modelName != "markdown" && message.modelName != "unknown") {
+            writer.appendLine("        <span class=\"model\">${escapeHtml(message.modelName)}</span>")
+        }
+        writer.appendLine("      </div>")
+        writer.appendLine("      <div class=\"message-content\">")
+        writer.append("        ")
+        writeFormattedContent(writer, message.content, onContentCharactersWritten)
+        writer.appendLine()
+        writer.appendLine("      </div>")
+        writer.appendLine("    </div>")
     }
     
     /**
      * 添加 HTML 尾部
      */
-    private fun appendHtmlFooter(context: Context, sb: StringBuilder) {
-        sb.appendLine("</div>")
-        sb.appendLine("<footer>")
-        sb.appendLine("  <p>${context.getString(R.string.html_export_footer)}</p>")
-        sb.appendLine("</footer>")
-        sb.appendLine("</body>")
-        sb.appendLine("</html>")
+    private fun appendHtmlFooter(context: Context, writer: Writer) {
+        writer.appendLine("</div>")
+        writer.appendLine("<footer>")
+        writer.appendLine("  <p>${context.getString(R.string.html_export_footer)}</p>")
+        writer.appendLine("</footer>")
+        writer.appendLine("</body>")
+        writer.appendLine("</html>")
     }
     
     /**
@@ -281,38 +357,156 @@ object HtmlExporter {
     }
     
     /**
-     * 格式化内容（保留换行，转义HTML）
+     * 逐段格式化内容（保留换行，转义HTML）。
      */
-    private fun formatContent(content: String): String {
-        // 简单的代码块检测和格式化
-        val lines = content.lines()
-        val sb = StringBuilder()
+    private fun writeFormattedContent(
+        writer: Writer,
+        content: String,
+        onContentCharactersWritten: (Long) -> Unit,
+    ) {
         var inCodeBlock = false
-        
-        for (line in lines) {
-            when {
-                line.trim().startsWith("```") -> {
-                    if (inCodeBlock) {
-                        sb.append("</code></pre>")
-                        inCodeBlock = false
-                    } else {
-                        sb.append("<pre><code>")
-                        inCodeBlock = true
-                    }
+        var lineStart = 0
+
+        while (lineStart <= content.length) {
+            val lineBreakStart = findLineBreakStart(content, lineStart)
+            val lineEnd = lineBreakStart ?: content.length
+            if (startsWithCodeFence(content, lineStart, lineEnd)) {
+                reportCharacters(lineEnd - lineStart, onContentCharactersWritten)
+                if (inCodeBlock) {
+                    writer.append("</code></pre>")
+                    inCodeBlock = false
+                } else {
+                    writer.append("<pre><code>")
+                    inCodeBlock = true
                 }
-                inCodeBlock -> {
-                    sb.append(escapeHtml(line)).append("\n")
-                }
-                else -> {
-                    sb.append(escapeHtml(line)).append("<br>")
-                }
+            } else if (inCodeBlock) {
+                writeEscapedRange(writer, content, lineStart, lineEnd, onContentCharactersWritten)
+                writer.appendLine()
+            } else {
+                writeEscapedRange(writer, content, lineStart, lineEnd, onContentCharactersWritten)
+                writer.append("<br>")
+            }
+
+            if (lineBreakStart == null) {
+                break
+            }
+            val lineBreakLength = if (
+                content[lineBreakStart] == '\r' &&
+                    lineBreakStart + 1 < content.length &&
+                    content[lineBreakStart + 1] == '\n'
+            ) {
+                2
+            } else {
+                1
+            }
+            reportCharacters(lineBreakLength, onContentCharactersWritten)
+            lineStart = lineBreakStart + lineBreakLength
+        }
+
+        if (inCodeBlock) {
+            writer.append("</code></pre>")
+        }
+    }
+
+    private fun writeEscapedRange(
+        writer: Writer,
+        content: String,
+        start: Int,
+        end: Int,
+        onContentCharactersWritten: (Long) -> Unit,
+    ) {
+        if (start == end) {
+            return
+        }
+
+        // 调试意图：逐字符拼接转义结果会让超长 HTML 消息在格式化阶段持续扩容和复制缓冲区，造成长时间无可见进度；普通文本区间直接写入 Writer，只为特殊字符生成实体字符串。
+        var offset = start
+        var processedSinceProgress = 0
+        while (offset < end) {
+            val escapedCharacter = when (content[offset]) {
+                '&' -> "&amp;"
+                '<' -> "&lt;"
+                '>' -> "&gt;"
+                '"' -> "&quot;"
+                '\'' -> "&#39;"
+                else -> null
+            }
+
+            if (escapedCharacter != null) {
+                writer.write(escapedCharacter)
+                offset++
+                processedSinceProgress++
+            } else {
+                val plainTextEnd = findNextHtmlEscapeCharacter(
+                    content = content,
+                    start = offset,
+                    end = minOf(end, offset + HTML_CONTENT_WRITE_CHUNK_CHARACTER_COUNT),
+                )
+                val plainTextLength = plainTextEnd - offset
+                writer.write(content, offset, plainTextLength)
+                offset = plainTextEnd
+                processedSinceProgress += plainTextLength
+            }
+
+            if (processedSinceProgress >= CONTENT_PROGRESS_CHARACTER_COUNT) {
+                onContentCharactersWritten(processedSinceProgress.toLong())
+                processedSinceProgress = 0
             }
         }
-        
-        if (inCodeBlock) {
-            sb.append("</code></pre>")
+
+        if (processedSinceProgress > 0) {
+            onContentCharactersWritten(processedSinceProgress.toLong())
         }
-        
-        return sb.toString()
+    }
+
+    private fun findNextHtmlEscapeCharacter(
+        content: String,
+        start: Int,
+        end: Int,
+    ): Int {
+        var offset = start
+        while (offset < end && !isHtmlEscapeCharacter(content[offset])) {
+            offset++
+        }
+        return offset
+    }
+
+    private fun isHtmlEscapeCharacter(character: Char): Boolean {
+        return when (character) {
+            '&', '<', '>', '"', '\'' -> true
+            else -> false
+        }
+    }
+
+    private fun reportCharacters(
+        characterCount: Int,
+        onContentCharactersWritten: (Long) -> Unit,
+    ) {
+        var remaining = characterCount
+        while (remaining > 0) {
+            val chunk = minOf(remaining, CONTENT_PROGRESS_CHARACTER_COUNT)
+            onContentCharactersWritten(chunk.toLong())
+            remaining -= chunk
+        }
+    }
+
+    private fun startsWithCodeFence(content: String, start: Int, end: Int): Boolean {
+        var firstNonWhitespace = start
+        while (firstNonWhitespace < end && content[firstNonWhitespace].isWhitespace()) {
+            firstNonWhitespace++
+        }
+        return firstNonWhitespace + 3 <= end && content.startsWith("```", firstNonWhitespace)
+    }
+
+    private fun findLineBreakStart(content: String, start: Int): Int? {
+        // 调试意图：分别查找两种换行符会在只有一种换行符的长文本上反复扫描剩余全文，退化为 O(n²)；单次顺序扫描保证每个字符只检查一次。
+        var offset = start
+        while (offset < content.length) {
+            when (content[offset]) {
+                '\r', '\n' -> return offset
+            }
+            offset++
+        }
+        return null
     }
 }

@@ -361,8 +361,13 @@ abstract class ChatContentDao {
     open suspend fun getVariantsForMessages(
         chatId: String,
         messageTimestamps: List<Long>,
-    ): List<MessageVariantEntity> =
-        materializeVariants(queryVariantsForMessages(chatId, messageTimestamps))
+    ): List<MessageVariantEntity> {
+        // Leave room for chatId under SQLite's oldest supported 999-variable limit.
+        // Sorting distinct timestamps preserves the original query's global ordering.
+        return messageTimestamps.distinct().sorted().chunked(900).flatMap { timestamps ->
+            materializeVariants(queryVariantsForMessages(chatId, timestamps))
+        }
+    }
 
     @Transaction
     open suspend fun getVariantsForMessage(
