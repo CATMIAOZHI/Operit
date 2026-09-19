@@ -77,6 +77,22 @@ object ChatUtils {
         }
     }
 
+    /**
+     * Removes the OpenAI Responses protocol markup that must not reach another provider's history:
+     * the reasoning meta this module already knows about, plus the `<search>` blocks that carry
+     * web-search results.
+     *
+     * Mirrors upstream `ChatUtils.stripOpenAiResponsesProtocolMarkup`, except that upstream also
+     * drops the `openai:responses_output_item` meta layer; this module's `ChatMarkupRegex` has no
+     * provider constant for it.
+     */
+    fun stripOpenAiResponsesProtocolMarkup(content: String): String {
+        return stripOpenAiResponsesReasoningMeta(content)
+            .replace(ChatMarkupRegex.searchTag, "")
+            .replace(ChatMarkupRegex.searchSelfClosingTag, "")
+            .trim()
+    }
+
     fun isGeminiProviderModel(providerModel: String): Boolean {
         return when (providerModel.substringBefore(":").uppercase()) {
             "GOOGLE", "GEMINI_GENERIC", "GOOGLE_ANTIGRAVITY" -> true
