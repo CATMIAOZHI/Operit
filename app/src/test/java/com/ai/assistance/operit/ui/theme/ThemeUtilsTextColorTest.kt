@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.theme
 
 import androidx.compose.ui.graphics.Color
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -31,6 +32,26 @@ class ThemeUtilsTextColorTest {
     fun `the extremes pick the only side that reads`() {
         assertEquals(Color.Black, getTextColorForBackground(Color.White))
         assertEquals(Color.White, getTextColorForBackground(Color.Black))
+    }
+
+    @Test
+    fun `the picker rating agrees with the sample text next to it`() {
+        // The rating used to threshold a luma, so these picks read "low contrast" while the sample
+        // text drawn on them measured 10.93:1 and 16.52:1.
+        val brightGreen = Color(0xFF00D901.toInt())
+        val nearBlack = Color(0xFF102030.toInt())
+        assertTrue(contrastRatio(Color.Black, brightGreen) >= 7.0)
+        assertTrue(isHighContrast(brightGreen))
+        assertTrue(contrastRatio(Color.White, nearBlack) >= 7.0)
+        assertTrue(isHighContrast(nearBlack))
+
+        // A mid tone keeps the colour picker honest: readable, but no AAA headroom.
+        val midGrey = Color(0xFF808080.toInt())
+        assertTrue(contrastRatio(Color.Black, midGrey) >= 4.5)
+        assertFalse(isHighContrast(midGrey))
+
+        assertTrue(isHighContrast(Color.White))
+        assertTrue(isHighContrast(Color.Black))
     }
 
     /** Independent WCAG contrast check, so the assertion does not reuse the production maths. */

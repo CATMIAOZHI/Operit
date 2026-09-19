@@ -135,7 +135,7 @@
     <string name="colorpicker_select_color">选择颜色</string>
     <string name="colorpicker_sample_text">示例文本</string>
     <string name="colorpicker_high_contrast">高对比度</string>
-    <string name="colorpicker_low_contrast">低对比度</string>
+    <string name="colorpicker_low_contrast">对比度一般</string>
     <string name="colorpicker_manual_input">手动输入颜色</string>
     <string name="colorpicker_paste">粘贴</string>
     <string name="colorpicker_apply">应用</string>
