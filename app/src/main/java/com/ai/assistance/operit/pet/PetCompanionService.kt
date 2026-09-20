@@ -143,6 +143,9 @@ class PetCompanionService : Service() {
                 MaterialTheme(colorScheme = PetTheme.colors, typography = PetTheme.typography) {
                     PetCompanion(
                         currentSettings.copy(showBubble = false),
+                        // The bubble lives in its own window, but the pet still lifts its
+                        // transparency while that bubble is open.
+                        bubbleOnScreen = currentSettings.showBubble,
                         onToggleBubble = { preferences.update { it.copy(showBubble = !it.showBubble) } },
                         dragging = dragging,
                         onDragStart = ::startDrag,
