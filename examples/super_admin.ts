@@ -17,7 +17,7 @@ METADATA
             "parameters": [
                 {
                     "name": "command",
-                    "description": { "zh": "要执行的命令", "en": "Command to execute." },
+                    "description": { "zh": "要执行的 Ubuntu 命令；切换目录请在命令中使用 cd。本工具不接受 environment/path/timeout 参数，超时参数名为 timeoutMs。", "en": "Ubuntu command to execute; use cd inside the command to change directory. environment/path/timeout are unsupported; the timeout parameter is timeoutMs." },
                     "type": "string",
                     "required": true
                 },
@@ -95,7 +95,7 @@ METADATA
             "parameters": [
                 {
                     "name": "command",
-                    "description": { "zh": "要执行的Shell命令", "en": "Shell command to execute." },
+                    "description": { "zh": "要执行的 Android Shell 命令。本工具仅接受 command，不接受 timeoutMs；不要与 Ubuntu terminal 的参数混用。", "en": "Android Shell command to execute. This tool accepts only command, not timeoutMs; do not reuse Ubuntu terminal parameters." },
                     "type": "string",
                     "required": true
                 }

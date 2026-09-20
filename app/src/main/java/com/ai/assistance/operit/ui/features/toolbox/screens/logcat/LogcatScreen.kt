@@ -6,6 +6,7 @@ import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -29,6 +30,7 @@ fun LogcatScreen(navController: NavController? = null) {
     val isSaving by viewModel.isSaving.collectAsState()
     val saveResult by viewModel.saveResult.collectAsState()
     var selectedTab by rememberSaveable { mutableStateOf(0) }
+    val tabState = rememberSaveableStateHolder()
 
     CustomScaffold(
         topBar = {
@@ -48,8 +50,13 @@ fun LogcatScreen(navController: NavController? = null) {
                     text = { Text(stringResource(R.string.tool_errors_app_logs)) })
                 Tab(selected = selectedTab == 1, onClick = { selectedTab = 1 },
                     text = { Text(stringResource(R.string.tool_errors_title)) })
+                Tab(selected = selectedTab == 2, onClick = { selectedTab = 2 },
+                    text = { Text(stringResource(R.string.tool_repairs_title)) })
             }
-            if (selectedTab == 1) {
+            tabState.SaveableStateProvider(selectedTab) {
+            if (selectedTab == 2) {
+                ToolRepairPanel(Modifier.weight(1f).padding(top = 12.dp))
+            } else if (selectedTab == 1) {
                 ToolErrorPanel(Modifier.weight(1f).padding(top = 12.dp))
             } else {
                 Box(
@@ -107,6 +114,7 @@ fun LogcatScreen(navController: NavController? = null) {
                         }
                     }
                 }
+            }
             }
         }
     }

@@ -16,6 +16,19 @@ import org.junit.Test
 @OptIn(ExperimentalCoroutinesApi::class)
 class ChatTodoRepositoryTest {
     @Test
+    fun waitingTodosDoNotNeedAnActiveItem() {
+        validateChatTodoSnapshot(listOf(
+            todo("finished").copy(status = ChatTodoStatus.COMPLETED),
+            todo("waiting for user").copy(status = ChatTodoStatus.PENDING),
+        ))
+    }
+
+    @Test(expected = IllegalArgumentException::class)
+    fun multipleActiveTodosAreRejected() {
+        validateChatTodoSnapshot(listOf(todo("first"), todo("second")))
+    }
+
+    @Test
     fun switchingChatsClearsPreviousRowsBeforeNewQueryEmits() = runTest {
         val chatIds = MutableSharedFlow<String?>()
         val firstChatRows = MutableSharedFlow<List<ChatTodo>>()

@@ -35,7 +35,7 @@ object SystemToolPrompts {
   - Use this tool for work with at least three distinct steps, multiple user requests, or other non-trivial execution. Skip it for simple one-step or informational responses.
   - Every call replaces the entire list, so always include every Todo item in order. Never send only the changed item.
   - Each agent owns the Todo list of its own chat. Subagent updates do not change the parent or sibling agents' lists; track only your assigned work.
-  - While unfinished work remains, exactly one item must be `in_progress`. Mark work `completed` only after it and its required verification are actually finished.
+  - At most one item may be `in_progress`. While waiting for user input or an external dependency, unfinished items may all be `pending`. Mark work `completed` only after it and its required verification are actually finished.
   - Update statuses as progress changes instead of batching updates at the end. Keep completed items in the list so the chat can retain its final progress record.
   - This tool is host-managed and read-only to the user.
 """,
@@ -64,7 +64,7 @@ object SystemToolPrompts {
   - 当任务包含至少三个独立步骤、多个用户要求或其他非简单执行时使用；简单的一步操作或仅回答信息时不要使用。
   - 每次调用都会替换整个列表，因此必须按顺序传入全部 Todo，不能只传发生变化的一项。
   - 每个代理独立维护自己聊天的 Todo；子代理更新不会修改父代理或兄弟代理的列表，只跟踪分配给自己的工作。
-  - 仍有未完成工作时必须且只能有一项为 `in_progress`。只有任务及必要验证确实完成后，才能标为 `completed`。
+  - 最多一项为 `in_progress`；等待用户回复或外部条件时，未完成项可以全部为 `pending`。只有任务及必要验证确实完成后，才能标为 `completed`。
   - 进展发生时立即更新状态，不要全部堆到最后更新。保留已完成项，让聊天持久保存最终进度记录。
   - 这是宿主管理、用户只读的工具。
 """,
@@ -240,7 +240,7 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "read_file",
-                description = "Read file content. Images are loaded on demand: the current model receives the image when it supports vision; otherwise a configured image-recognition model is used, with OCR as fallback.",
+                description = "Read file content. For start_line/end_line, use read_file_part instead; this tool does not accept line ranges. Images are loaded on demand: the current model receives the image when it supports vision; otherwise a configured image-recognition model is used, with OCR as fallback.",
                 parametersStructured = listOf(
                     ToolParameterSchema(
                         name = "path",
@@ -386,7 +386,7 @@ object SystemToolPrompts {
             ),
             ToolPrompt(
                 name = "read_file",
-                description = "读取文件内容。图片按需加载：当前模型支持视觉时直接交给当前模型，否则调用已配置的识图模型，均不可用时回退OCR。",
+                description = "读取文件内容。按 start_line/end_line 读取时请用 read_file_part，本工具不接受行号范围。图片按需加载：当前模型支持视觉时直接交给当前模型，否则调用已配置的识图模型，均不可用时回退OCR。",
                 parametersStructured = listOf(
                     ToolParameterSchema(name = "path", type = "string", description = "文件路径", required = true),
                     ToolParameterSchema(

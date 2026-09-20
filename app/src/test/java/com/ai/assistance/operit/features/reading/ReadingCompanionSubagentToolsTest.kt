@@ -194,6 +194,7 @@ class ReadingCompanionSubagentToolsTest {
         targetContent: String = "第一段\n第二段\n第三段",
         rolePrompt: String = "",
         summaryOnly: Boolean = false,
+        missingPreviousContent: Boolean = false,
     ): ReadingCompanionRunSession {
         val session =
             ReadingCompanionRunSession(
@@ -210,7 +211,7 @@ class ReadingCompanionSubagentToolsTest {
                 chapters = (-2..7).map { index ->
                     ReaderChapter("book-A", "source-$index", index, "第${index + 1}章")
                 },
-                previousContext = (-1..2).map { index ->
+                previousContext = (if (missingPreviousContent) emptyList() else (-1..2).toList()).map { index ->
                     AutoCommentContextChapter(
                         sourceId = "source-$index",
                         chapterIndex = index,
@@ -746,6 +747,56 @@ class ReadingCompanionSubagentToolsTest {
             assertTrue(payload.getJSONArray("chapters").getJSONObject(4).getBoolean("isTarget"))
         } finally {
             ReadingCompanionSubagentSessionRegistry.unregister("child-6")
+        }
+    }
+
+    @Test
+    fun `quote mismatch explains correction and corrected quote finalizes`() {
+        val session = registerSession("child-quote", FakeBackend())
+        try {
+            assertTrue(stageSummary("child-quote", "目标章摘要").success)
+            fun submit(quote: String) = withCaller("child-quote") {
+                ReadingCompanionSubagentTools.execute(tool(
+                    ReadingCompanionSubagentTools.TOOL_SUBMIT_COMMENTS,
+                    "comments" to """[{"anchorId":"p0001","text":"评论","kind":"reaction","evidenceIds":["p0001"],"evidenceQuote":"$quote"}]""",
+                ))
+            }
+            val rejected = submit("第一…段")
+            assertFalse(rejected.success)
+            assertFalse(session.submissionFinalized)
+            val diagnostic = JSONObject(rejected.error.orEmpty())
+            assertEquals(1, diagnostic.getJSONObject("reasons").getInt("quote_not_found"))
+            assertTrue(diagnostic.getString("hint").contains("exact continuous substring"))
+            assertTrue(submit("第一段").success)
+            assertTrue(session.submissionFinalized)
+            assertEquals("第一段", session.candidateDrafts.single().evidenceQuote)
+        } finally {
+            ReadingCompanionSubagentSessionRegistry.unregister("child-quote")
+        }
+    }
+
+    @Test
+    fun `unavailable chapters are advertised and cannot be retried in this run`() {
+        registerSession("child-missing", FakeBackend(), missingPreviousContent = true)
+        try {
+            val listed = withCaller("child-missing") {
+                ReadingCompanionSubagentTools.execute(tool(ReadingCompanionSubagentTools.TOOL_LIST_CHAPTERS))
+            }
+            val chapters = JSONObject(listed.result.toString()).getJSONArray("chapters")
+            assertFalse(chapters.getJSONObject(0).getBoolean("contentAvailable"))
+            assertTrue(chapters.getJSONObject(4).getBoolean("contentAvailable"))
+            val read = withCaller("child-missing") {
+                ReadingCompanionSubagentTools.execute(tool(
+                    ReadingCompanionSubagentTools.TOOL_READ_CHAPTER,
+                    "chapterRef" to chapters.getJSONObject(0).getString("chapterRef"),
+                ))
+            }
+            assertFalse(read.success)
+            val error = JSONObject(read.error.orEmpty())
+            assertEquals("chapter_content_unavailable", error.getString("code"))
+            assertFalse(error.getBoolean("retryable"))
+        } finally {
+            ReadingCompanionSubagentSessionRegistry.unregister("child-missing")
         }
     }
 

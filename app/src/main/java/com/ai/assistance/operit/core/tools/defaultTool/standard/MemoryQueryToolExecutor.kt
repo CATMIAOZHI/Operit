@@ -282,7 +282,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         val finalLimit = limit ?: defaultLimit
 
         if (query.isBlank()) {
-            return ToolResult(toolName = tool.name, success = false, result = StringResultData(""), error = "Query parameter cannot be empty.")
+            return ToolResult(toolName = tool.name, success = false, result = StringResultData(""), error = "Missing nonempty query parameter. Call query_memory with query set to your search keywords; use query=\"*\" only when you intend to list all memories.")
         }
 
         // limit 无上限，但至少为 1
