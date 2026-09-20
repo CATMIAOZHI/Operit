@@ -62,7 +62,8 @@ object ReadingCompanionSubagentTools {
                 name = TOOL_LIST_CHAPTERS,
                 description =
                     "List the target chapter and its four immediately preceding catalog entries. " +
-                        "Use the returned opaque chapterRef values; never guess chapter numbers.",
+                        "Use the returned opaque chapterRef values; never guess chapter numbers. " +
+                        "Read only entries with contentAvailable=true; unavailable content cannot be retried in this run.",
             ),
             ToolPrompt(
                 name = TOOL_READ_CHAPTER,
@@ -129,7 +130,9 @@ object ReadingCompanionSubagentTools {
                 description =
                     "Submit 0 to 6 sparse in-character comments after submit_summary. Use an empty " +
                         "JSON array when no comment fits. Each comment uses anchorId, text, kind, " +
-                        "evidenceIds and optional evidenceQuote. Set anchorId to the latest (highest) " +
+                        "evidenceIds and optional evidenceQuote. If supplied, evidenceQuote must be an exact " +
+                        "continuous substring copied from a single paragraph in evidenceIds, without " +
+                        "paraphrasing, ellipses or paragraph anchor labels. Set anchorId to the latest (highest) " +
                         "paragraph needed to understand the comment. evidenceIds must include anchorId, " +
                         "and every evidenceId must be less than or equal to anchorId. If a comment " +
                         "depends on a later paragraph, move anchorId to that later paragraph. The whole " +
@@ -301,7 +304,8 @@ object ReadingCompanionSubagentTools {
                             .put("chapterIndex", chapter.index)
                             .put("chapterNumber", chapter.index + 1)
                             .put("chapterTitle", chapter.title)
-                            .put("isTarget", chapter.index == session.chapterIndex),
+                            .put("isTarget", chapter.index == session.chapterIndex)
+                            .put("contentAvailable", chapterContent(session, chapter) != null),
                     )
                 }
             }
@@ -322,13 +326,17 @@ object ReadingCompanionSubagentTools {
             ReadingCompanionFileStore.chapterRef(session.bookId, it.sourceId) == chapterRef
         } ?: return failure(tool, "chapterRef 不属于目标章及其前四章，请先调用 list_chapters")
         val target = chapter.index == session.chapterIndex
-        val content =
-            if (target) {
-                session.targetContent
-            } else {
-                session.previousContext.firstOrNull { it.sourceId == chapter.sourceId }?.content
-                    ?: return failure(tool, "该前文章节正文未能从 Legado 加载")
-            }
+        val content = chapterContent(session, chapter)
+            ?: return failure(
+                tool,
+                JSONObject()
+                    .put("code", "chapter_content_unavailable")
+                    .put("chapterRef", chapterRef)
+                    .put("retryable", false)
+                    .put("hint", "Content was not loaded for this run. Do not retry this chapter; " +
+                        "continue with available chapters and do not invent missing context.")
+                    .toString(),
+            )
         val payload =
             JSONObject()
                 .put("chapterRef", chapterRef)
@@ -347,6 +355,14 @@ object ReadingCompanionSubagentTools {
         appendChapterPage(payload, text, offset, limit)
         return success(tool, payload)
     }
+
+    private fun chapterContent(session: ReadingCompanionRunSession, chapter: ReaderChapter): String? =
+        if (chapter.index == session.chapterIndex) {
+            session.targetContent.takeIf { it.isNotBlank() }
+        } else {
+            session.previousContext.firstOrNull { it.sourceId == chapter.sourceId }
+                ?.content?.takeIf { it.isNotBlank() }
+        }
 
     // Even JSON-escaped control characters stay below the final 64K tool-message limit.
     internal fun appendChapterPage(payload: JSONObject, text: String, offset: Int, limit: Int) {
@@ -512,7 +528,12 @@ object ReadingCompanionSubagentTools {
                         "nothing from this attempt was finalized; resubmit the complete corrected " +
                             "array. anchorId must be the latest supporting paragraph, evidenceIds " +
                             "must include it, and no evidenceId may be after it. Use [] when this " +
-                            "chapter should have no comments",
+                            "chapter should have no comments. For quote_not_found, re-read the " +
+                            "referenced target paragraph and copy an exact continuous substring from " +
+                            "that single paragraph; do not paraphrase, combine paragraphs, include " +
+                            "anchor labels or add ellipses. evidenceQuote is optional. For " +
+                            "evidence_after_anchor, move anchorId to the latest supporting paragraph " +
+                            "and include it in evidenceIds.",
                     )
             return ToolResult(
                 toolName = tool.name,

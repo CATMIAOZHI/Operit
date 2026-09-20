@@ -3228,7 +3228,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                 toolName = toolName,
                 success = false,
                 result = StringResultData(""),
-                error = "Missing required parameter: package_name"
+                error = "Missing required parameter: package_name. Pass the exact package name returned by search; do not call use_package with an empty parameter object."
             )
         }
 

@@ -21,6 +21,8 @@ import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.ToolErrorRepository
 import com.ai.assistance.operit.core.tools.createToolErrorRecord
 import com.ai.assistance.operit.core.tools.ToolParameterObservation
+import com.ai.assistance.operit.core.tools.ToolCallRepairRouter
+import com.ai.assistance.operit.core.tools.ToolCallRepairLogger
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.data.model.ToolInvocation
@@ -881,15 +883,16 @@ object ToolExecutionManager {
             )
         val boundInvocations =
             invocations.map { invocation ->
+                val repaired = ToolCallRepairRouter.route(invocation)?.invocation ?: invocation
                 if (
-                    invocation.tool.name == PACKAGE_PROXY_TOOL_NAME ||
-                    invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
+                    repaired.tool.name == PACKAGE_PROXY_TOOL_NAME ||
+                    repaired.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
                 ) {
-                    invocation.copy(
-                        tool = bindProxyContextParameters(invocation.tool, hostContext)
+                    repaired.copy(
+                        tool = bindProxyContextParameters(repaired.tool, hostContext)
                     )
                 } else {
-                    invocation
+                    repaired
                 }
             }
         // Exact-repeat detection must fingerprint the model's raw call, never the bound copy:
@@ -968,12 +971,20 @@ object ToolExecutionManager {
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
         }
 
+        // Record after batch splitting so recursive execution does not log a repair twice.
+        rawInvocations.forEach { invocation ->
+            ToolCallRepairRouter.route(invocation)?.let { ToolCallRepairLogger.record(context, it) }
+        }
         val errorBatchId = java.util.UUID.randomUUID().toString()
         val parameterObservers = java.util.concurrent.ConcurrentHashMap<String, ToolParameterObservation>()
         fun rawInvocation(invocation: ToolInvocation): ToolInvocation =
             rawInvocations.firstOrNull {
                 it.callId == invocation.callId && it.invocationIndex == invocation.invocationIndex
             } ?: invocation
+        fun routedRawInvocation(invocation: ToolInvocation): ToolInvocation {
+            val raw = rawInvocation(invocation)
+            return ToolCallRepairRouter.route(raw)?.invocation ?: raw
+        }
         fun diagnosticKey(invocation: ToolInvocation) = "$errorBatchId:${invocation.callId ?: invocation.invocationIndex}"
         val recordDiagnostic: (ToolInvocation, ToolResult) -> Unit = { invocation, result ->
             try {
@@ -1449,8 +1460,8 @@ object ToolExecutionManager {
                         permissionCheckedToolName =
                             resolveToolTarget(invocation.tool).tool.name,
                         parameterObserver = ToolParameterObservation(
-                            rawTool = rawInvocation(invocation).tool,
-                            targetTool = resolveToolTarget(rawInvocation(invocation).tool).tool,
+                            rawTool = routedRawInvocation(invocation).tool,
+                            targetTool = resolveToolTarget(routedRawInvocation(invocation).tool).tool,
                             onFailure = { ToolErrorRepository.getInstance(context).reportRecordingFailure(it) },
                         ).also { parameterObservers[diagnosticKey(invocation)] = it },
                     ),

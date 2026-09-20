@@ -394,7 +394,7 @@ class ReadingCompanionSubagentCoordinator private constructor(context: Context) 
             } else {
                 append("以角色卡「$roleCardName」的口吻，为小说《$bookName》即将阅读的第 ${chapterIndex + 1} 章")
                 append("生成 0 到 6 条段落级 AI 段评，并提交一份客观章节摘要。")
-                append("\n阅读范围：目标章和目录中紧邻目标章的前四章；书籍开头不足四章时读取列表中的全部已有前文章节。")
+                append("\n阅读范围：目标章和目录中紧邻目标章的前四章；仅读取 contentAvailable=true 的章节。不可用的前文在本轮重试无法恢复，请继续读取可用章节，不得编造缺失的前文。")
             }
         }
 

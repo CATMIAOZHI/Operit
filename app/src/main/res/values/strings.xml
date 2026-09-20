@@ -8656,7 +8656,7 @@
     <string name="chat_todo_tool_active_chat_required">更新 Todo 需要一个当前聊天</string>
     <string name="chat_todo_tool_missing_todos">缺少必要参数：todos</string>
     <string name="chat_todo_tool_updated">Todo 列表已更新（%1$d 项）</string>
-    <string name="chat_todo_tool_invalid_list">Todo 列表格式无效</string>
+    <string name="chat_todo_tool_invalid_list">Todo 列表无效：todos 必须为 JSON 数组，每项包含非空 content、status（pending/in_progress/completed/cancelled）和 priority（high/medium/low）；最多一项为 in_progress，等待时可以全部为 pending。</string>
     <string name="chat_todo_tool_save_failed">保存 Todo 列表失败</string>
     <string name="terminal_startup_title">终端启动服务</string>
     <string name="terminal_startup_entry_description">与 MCP 同阶段启动命令或脚本</string>
@@ -8751,6 +8751,18 @@
     <string name="tool_errors_all_time">全部时间</string>
     <string name="tool_errors_day">近 24 小时</string>
     <string name="tool_errors_week">近 7 天</string>
+    <string name="tool_errors_fortnight">近 14 天</string>
+    <string name="tool_errors_month">近 30 天</string>
+    <string name="tool_repairs_title">工具调用修复</string>
+    <string name="tool_repairs_scope">记录工具执行前的自动路由修复，不代表执行成功。</string>
+    <string name="tool_repairs_total">共 %1$d 条修复记录</string>
+    <string name="tool_repairs_empty">暂无工具调用修复记录</string>
+    <string name="tool_repairs_line_range">按行号读取，自动转为分段读取工具</string>
+    <string name="tool_repairs_separator">将终端工具名中的双冒号修正为单冒号</string>
+    <string name="tool_repairs_timeout">将终端 timeout 参数统一为 timeoutMs</string>
+    <string name="tool_repairs_package">移除与目标工具包一致的重复 package_name</string>
+    <string name="tool_repairs_invalid_record">记录格式无效，点击查看原始记录</string>
+    <string name="tool_repairs_refresh">刷新</string>
     <string name="tool_errors_totals">%1$d 条记录 · %2$d 个工具</string>
     <string name="tool_errors_breakdown">执行失败 %1$d 次 · 参数问题 %2$d 次（同一次调用可能同时包含两类问题）</string>
     <string name="tool_errors_failed">执行失败</string>

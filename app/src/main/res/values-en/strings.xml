@@ -8680,7 +8680,7 @@
     <string name="chat_todo_tool_active_chat_required">Updating Todos requires an active chat</string>
     <string name="chat_todo_tool_missing_todos">Missing required parameter: todos</string>
     <string name="chat_todo_tool_updated">Todo list updated (%1$d items)</string>
-    <string name="chat_todo_tool_invalid_list">Invalid Todo list format</string>
+    <string name="chat_todo_tool_invalid_list">Invalid Todo list: todos must be a JSON array. Each item needs nonempty content, status (pending/in_progress/completed/cancelled), and priority (high/medium/low). At most one item may be in_progress; all may be pending while waiting.</string>
     <string name="chat_todo_tool_save_failed">Failed to save Todo list</string>
     <string name="terminal_startup_title">Terminal startup services</string>
     <string name="terminal_startup_entry_description">Start commands or scripts alongside MCP</string>
@@ -8775,6 +8775,18 @@
     <string name="tool_errors_all_time">All time</string>
     <string name="tool_errors_day">Last 24 hours</string>
     <string name="tool_errors_week">Last 7 days</string>
+    <string name="tool_errors_fortnight">Last 14 days</string>
+    <string name="tool_errors_month">Last 30 days</string>
+    <string name="tool_repairs_title">Tool call repairs</string>
+    <string name="tool_repairs_scope">Automatic routing repairs before execution; these do not indicate successful execution.</string>
+    <string name="tool_repairs_total">%1$d repair records</string>
+    <string name="tool_repairs_empty">No tool call repairs yet</string>
+    <string name="tool_repairs_line_range">Line range redirected to the partial file reader</string>
+    <string name="tool_repairs_separator">Corrected the terminal tool name to use a single colon</string>
+    <string name="tool_repairs_timeout">Normalized terminal timeout to timeoutMs</string>
+    <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
+    <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
+    <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>
     <string name="tool_errors_breakdown">%1$d execution failures · %2$d parameter issues (a call may contain both)</string>
     <string name="tool_errors_failed">Execution failed</string>
