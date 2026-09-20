@@ -7418,6 +7418,8 @@
     <string name="terminal_error_missing_session_id">Missing parameter: session_id</string>
     <string name="terminal_error_session_not_exist">Terminal session \'%1$s\' does not exist or is closed</string>
     <string name="terminal_error_command_failed">Terminal command execution failed</string>
+    <string name="terminal_error_timeout_session_retained">Terminal command wait timed out (%1$d ms). This call was cancelled; the session still exists. Cancelling a queued command does not interrupt another running command.</string>
+    <string name="terminal_error_timeout_session_closed">Terminal command wait timed out (%1$d ms). The original session was closed. Continue in a new session; the previous working directory and variables are not preserved. The command will not be retried automatically.</string>
     <string name="terminal_error_command_non_zero_exit">Terminal command exited with non-zero status (exitCode=%1$d)</string>
     <string name="terminal_error_execute_command">Error executing terminal command: %1$s</string>
     <string name="terminal_error_hidden_command_non_zero_exit">Hidden terminal command exited with non-zero status (exitCode=%1$d)</string>

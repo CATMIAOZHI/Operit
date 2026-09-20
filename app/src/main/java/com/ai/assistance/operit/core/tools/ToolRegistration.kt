@@ -397,9 +397,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val sessionId = tool.parameters.find { it.name == "session_id" }?.value
                 s(R.string.toolreg_execute_in_terminal_session_desc, sessionId ?: "", command)
             },
-            executor = { tool ->
-                val terminalTool = ToolGetter.getTerminalCommandExecutor(context)
-                terminalTool.executeCommandInSession(tool)
+            executor = object : ToolExecutor {
+                override fun invoke(tool: AITool): ToolResult =
+                    ToolGetter.getTerminalCommandExecutor(context).executeCommandInSession(tool)
+
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    ToolGetter.getTerminalCommandExecutor(context).executeCommandInSessionResult(tool)
             }
     )
 

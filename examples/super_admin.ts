@@ -13,7 +13,7 @@ METADATA
     "tools": [
         {
             "name": "terminal",
-            "description": { "zh": "在Ubuntu环境中执行命令并收集输出结果。运行环境：完整的Ubuntu系统，已正确挂载sdcard和storage目录，可访问Android存储空间。所有命令将会在相同的会话执行且上下文连贯。强烈建议每次都显式传 timeoutMs，避免命令卡住。禁止使用 `set -e`、`set -o errexit` 等会改变 shell 退出行为的命令，这会导致终端会话直接退出并卡死。若未传，前台默认15秒超时；background=true 时不使用该默认超时。命令超时时会取消当前命令并保留终端会话。", "en": "Execute commands in an Ubuntu environment and collect output. Environment: full Ubuntu system with sdcard/storage mounted, allowing access to Android storage. Automatically preserves working-directory context. Strongly recommend explicitly passing timeoutMs every time to avoid hangs. Do not use commands such as `set -e` or `set -o errexit` that change shell exit behavior, because they can cause the terminal session to exit and hang. If omitted, foreground mode defaults to 15s timeout; background=true does not use this default timeout. When a command times out, the current command is cancelled and the terminal session is kept." },
+            "description": { "zh": "在Ubuntu环境中执行命令并收集输出结果，可访问Android存储空间。正常情况下复用当前对话的终端会话。建议显式传 timeoutMs；前台默认15秒，background=true 时不使用该默认超时。排队超时只取消本次调用；执行中超时先尝试中断，无法恢复则关闭故障会话，后续调用新建会话。会话重建后原工作目录和变量不再保留，命令不会自动重试。context_preserved=true 仅表示本次调用复用了已有会话且未超时，不保证跨故障保留上下文。避免使用 set -e 或 set -o errexit，以免改变会话退出行为。", "en": "Execute commands in Ubuntu with access to Android storage. Normally reuses the current chat's terminal session. Specify timeoutMs; foreground defaults to 15s, while background=true does not use this default. A queued timeout cancels only that call. A running timeout first attempts interruption; if recovery fails, the faulty session is closed and a later call creates a new one. A new session does not preserve the previous working directory or variables. Commands are not retried automatically. context_preserved=true only means this call reused an existing session without timing out; it does not guarantee context across failures. Avoid set -e or set -o errexit, which change shell exit behavior." },
             "parameters": [
                 {
                     "name": "command",
@@ -37,7 +37,7 @@ METADATA
         },
         {
             "name": "terminal_wait",
-            "description": { "zh": "等待同一终端会话中的上一条命令执行完成。与 sleep 不同，本工具会在命令实际完成时提前返回，而不是固定睡眠。超时时会取消当前执行中的命令并保留终端会话。", "en": "Wait until the previous command in the same terminal session finishes. Unlike sleep, this tool can return early as soon as the command actually completes. On timeout, the currently executing command is cancelled and the terminal session is kept." },
+            "description": { "zh": "通过向同一终端会话排入检测命令，等待前序命令完成。等待超时会取消本次检测；若仍在排队，不会中断前序命令。若检测已执行但无法中断，故障会话可能被关闭，不保证保留会话或上下文。", "en": "Wait for preceding commands by queueing a probe in the same terminal session. A timeout cancels this probe. If it is still queued, preceding commands are not interrupted. If an already running probe cannot be interrupted, the faulty session may be closed; session and context preservation are not guaranteed." },
             "parameters": [
                 {
                     "name": "sessionId",
@@ -173,7 +173,7 @@ const superAdmin = (function () {
     /**
      * 在Ubuntu环境中执行终端命令并收集输出结果
      * 运行环境：完整的Ubuntu系统，已正确挂载sdcard和storage目录
-     * 禁止使用 set -e / set -o errexit 等会改变 shell 退出行为的命令，否则可能导致终端会话退出并卡死
+     * 避免使用 set -e / set -o errexit，以免改变会话退出行为。
      * @param command - 要执行的命令
      * @param background - 是否后台运行（"true" 为后台执行并立即返回，适合启动服务器等长时间运行任务，AI 不会收到该命令的输出结果）
      * @param timeoutMs - 可选的超时时间（毫秒，最低 3000ms）。强烈建议显式传入；前台未传时默认 15000ms，后台模式不应用该默认值。
@@ -237,6 +237,7 @@ const superAdmin = (function () {
             const persistedResult = await persistTerminalOutputIfTooLong(command, result);
             if (persistedResult) {
                 persistedResult.timeoutMsUsed = timeout;
+                persistedResult.context_preserved = !session.isNewSession && !timedOut;
                 return persistedResult;
             }
 
@@ -247,7 +248,7 @@ const superAdmin = (function () {
                 sessionId: result.sessionId,
                 timedOut: timedOut,
                 timeoutMsUsed: timeout,
-                context_preserved: !timedOut
+                context_preserved: !session.isNewSession && !timedOut
             };
         } catch (error) {
             console.error(`[terminal] 错误: ${error.message}`);
@@ -281,7 +282,7 @@ const superAdmin = (function () {
 
             const session =
                 params.sessionId
-                    ? { sessionId: params.sessionId }
+                    ? { sessionId: params.sessionId, isNewSession: false }
                     : await Tools.System.terminal.create(getDefaultTerminalSessionName());
             const sessionId = session.sessionId;
 
@@ -305,7 +306,7 @@ const superAdmin = (function () {
                 waitCompleted: !timedOut && markerSeen,
                 markerSeen,
                 exitCode: result?.exitCode,
-                context_preserved: !timedOut
+                context_preserved: !session.isNewSession && !timedOut
             };
         } catch (error) {
             console.error(`[terminal_wait] 错误: ${error.message}`);
