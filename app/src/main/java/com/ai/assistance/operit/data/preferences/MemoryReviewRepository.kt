@@ -62,8 +62,12 @@ data class MemoryReviewChange(
     val automatic: Boolean = false
 )
 
-class MemoryReviewRepository internal constructor(private val root: File, val profileId: String) {
-    constructor(context: Context, profileId: String) : this(File(context.filesDir, "memory_reviews"), profileId)
+class MemoryReviewRepository internal constructor(
+    private val root: File, val profileId: String,
+    private val autoApprovalEnabled: () -> Boolean = { false }
+) {
+    constructor(context: Context, profileId: String) : this(File(context.filesDir, "memory_reviews"), profileId,
+        { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() })
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
@@ -106,6 +110,11 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
     suspend fun list(): List<MemoryReviewChange> = withContext(Dispatchers.IO) {
         mutex.withLock { read().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
     }
+    /** Only AI proposal call sites use this; manual edits and old pending items are not swept. */
+    suspend fun applyAutomaticDecision(context: Context, change: MemoryReviewChange): MemoryReviewChange {
+        if (!MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges()) return change
+        return decide(context, change.id, true, "automatic", "Auto-approval enabled for this memory space")
+    }
     suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
         mutex.withLock {
             val items = read().toMutableList()
@@ -114,7 +123,10 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
                 it.description == change.description && it.baseVersion == change.baseVersion &&
                 it.addition == change.addition && it.path==change.path && it.operation==change.operation &&
                 it.automatic==change.automatic }?.let { return@withLock it }
-            require(items.count { it.status in setOf("pending", "applying") } < 30) { "Pending review limit reached" }
+            // Old pending items must not block newly enabled automatic saving.
+            require(items.count { it.status in setOf("pending", "applying") } < 30 || autoApprovalEnabled()) {
+                "Pending review limit reached"
+            }
             val created = change.copy(id = java.util.UUID.randomUUID().toString())
             items.add(created)
             write(items)
@@ -137,9 +149,12 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
         ),onCreated)
 
     suspend fun proposeUser(before: String, after: String, sourceChatId: String = "",
-        onCreated: () -> Unit = {}) = propose(MemoryReviewChange(id="", kind="user",
-        title="user.md",body=after,before=before,baseVersion=LearnedSkillRepository.version(before),
-        sourceChatId=sourceChatId),onCreated)
+        onCreated: () -> Unit = {}): MemoryReviewChange {
+        require(after.length <= UserProfileDocumentRepository.MAX_CONTENT_CHARS) { "user.md exceeds the character limit" }
+        return propose(MemoryReviewChange(id="", kind="user",
+            title="user.md",body=after,before=before,baseVersion=LearnedSkillRepository.version(before),
+            sourceChatId=sourceChatId),onCreated)
+    }
     suspend fun proposeSkillDeletion(name: String, before: LearnedSkillRepository.Snapshot, sourceChatId: String="",
         onCreated: () -> Unit = {}) = propose(MemoryReviewChange(id="",kind="skill_delete",title=name,body="",
         before=before.text,baseVersion=before.version,sourceChatId=sourceChatId,operation="delete"),onCreated)

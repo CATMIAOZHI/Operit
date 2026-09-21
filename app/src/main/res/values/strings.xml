@@ -1005,7 +1005,14 @@
     <string name="user_preferences_guide">个性化设置</string>
     <string name="user_preferences">用户偏好设置</string>
     <string name="user_preferences_settings">用户资料（user.md）</string>
-    <string name="user_md_description">唯一的用户资料文件。这里的 Markdown 会在启用时作为用户上下文发送给 AI。</string>
+    <string name="user_md_description">user.md 按三类保存。旧内容保留在 Profile，可自行整理。修改后，新对话立即使用；已有对话重建或压缩后更新。</string>
+    <string name="user_md_profile">Profile · 个人资料</string>
+    <string name="user_md_preferences">Preferences · 偏好</string>
+    <string name="user_md_interaction_rules">Interaction Rules · 交互规则</string>
+    <string name="user_md_profile_hint">稳定的个人事实：身份、职业、背景、熟悉的领域…</string>
+    <string name="user_md_preferences_hint">长期偏好：喜欢的语言、工具、内容形式和习惯…</string>
+    <string name="user_md_interaction_rules_hint">明确要求 AI 遵守的沟通与协作规则，例如：先给结论；提交代码前询问我…</string>
+    <string name="user_md_reserved_headings">内容中包含系统分区标记 operit:user-section，请移除此标记后保存。普通 Markdown 标题可以保留。</string>
     <string name="user_md_edit_tab">编辑</string>
     <string name="user_md_preview_tab">预览</string>
     <string name="user_md_reset">清空文档</string>

@@ -20,7 +20,8 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
     val api = remember { ApiPreferences.getInstance(context) }
     val prefs = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
     val master by api.enableMemoryAutoUpdateFlow.collectAsState(initial = false)
-    val graph by api.enableLegacyMemoryExtractionFlow.collectAsState(initial = true)
+    val graph by api.enableLegacyMemoryExtractionFlow.collectAsState(initial = false)
+    var autoApprove by remember(profileId) { mutableStateOf(prefs.shouldAutoApproveChanges()) }
     var notes by remember(profileId) { mutableStateOf(prefs.shouldExtractNewMemory()) }
     var skills by remember(profileId) { mutableStateOf(prefs.shouldExtractSkills()) }
     var revise by remember(profileId) { mutableStateOf(prefs.mayReviseLearnedSkills()) }
@@ -32,6 +33,10 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                 scope.launch { api.saveEnableMemoryAutoUpdate(it) }
             }
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            AutomationSwitch(stringResource(R.string.memory_auto_approve),
+                stringResource(R.string.memory_auto_approve_desc), autoApprove) {
+                prefs.setAutoApproveChanges(it); autoApprove = it
+            }
             if (!master) Text(stringResource(R.string.memory_auto_master_off),
                 Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
             AutomationSwitch(stringResource(R.string.memory_extract_old),

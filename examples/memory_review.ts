@@ -11,15 +11,15 @@
   "tools": [
     {
       "name": "manage",
-      "description": {"zh": "读取/整理 memory.md 与 user.md，维护技能及配套文件。前台修改进入待审。修改前读取并传回 version。", "en": "Read/consolidate memory.md and user.md, and maintain skills and supporting files. Foreground changes require review. Read first and pass the returned version."},
+      "description": {"zh": "读取/整理 memory.md 与 user.md，维护技能及配套文件。修改按当前空间自动通过设置生效或进入待审，均保留历史。修改前读取并传回 version。", "en": "Read/consolidate memory.md and user.md, and maintain skills and supporting files. Changes follow this space's auto-approval setting and retain history. Read first and pass the returned version."},
       "parameters": [
         {"name": "action", "type": "string", "required": true, "description": {"zh": "memory_read/memory_change/skill_list/skill_read/skill_create/skill_write/skill_patch/skill_remove_file/skill_delete（整包删除需传读取所得directory_version作为version）", "en": "memory_read/memory_change/skill_list/skill_read/skill_create/skill_write/skill_patch/skill_remove_file/skill_delete (use directory_version as version for package deletion)"}},
-        {"name": "arguments", "type": "string", "required": false, "description": {"zh": "JSON对象：target=memory/user，operation=add/replace/remove，name，path（默认SKILL.md），content，old_text，description，reason，version。技能配套文件仅支持references/scripts/templates/assets下的相对路径。", "en": "JSON object: target=memory/user, operation=add/replace/remove, name, path (default SKILL.md), content, old_text, description, reason, version. Supporting files use relative paths under references/scripts/templates/assets."}}
+        {"name": "arguments", "type": "string", "required": false, "description": {"zh": "JSON对象：target=memory/user，operation=add/replace/remove；user 修改用 section=profile/preferences/interaction_rules，分别为个人事实、长期偏好、用户明确的交互规则。读取返回完整文档和三类内容，version仍对应完整文档。另有 name，path（默认SKILL.md），content，old_text，description，reason，version。技能配套文件仅支持references/scripts/templates/assets下的相对路径。", "en": "JSON object: target=memory/user, operation=add/replace/remove; for user edits use section=profile/preferences/interaction_rules for personal facts, durable preferences or explicit interaction instructions. Reads return the full document and sections; version still covers the whole document. Also name, path (default SKILL.md), content, old_text, description, reason, version. Supporting files use relative paths under references/scripts/templates/assets."}}
       ]
     },
     {
       "name": "notes",
-      "description": {"zh": "读取 memory.md，或提出增删改草稿。修改待审批后才生效。", "en": "Read memory.md or propose changes. Changes take effect only after approval."},
+      "description": {"zh": "读取或修改 memory.md。修改按自动通过设置直接生效或等待审批，保留历史。", "en": "Read or change memory.md. Changes apply automatically or wait for review according to auto-approval, with history retained."},
       "parameters": [
         {"name": "action", "type": "string", "required": true, "description": {"zh": "read/add/replace/remove", "en": "read/add/replace/remove"}},
         {"name": "content", "type": "string", "required": false, "description": {"zh": "新增或替换内容", "en": "New or replacement content"}},

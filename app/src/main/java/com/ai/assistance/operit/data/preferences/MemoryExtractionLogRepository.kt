@@ -24,7 +24,11 @@ data class MemoryExtractionLog(
     val skills: Boolean,
     val status: String = "running",
     val proposals: Int = 0,
-    val detail: String = ""
+    val detail: String = "",
+    val runId: String = "",
+    val childChatId: String = "",
+    val modelRounds: Int = 0,
+    val toolCalls: Int = 0
 )
 
 /** Separate from approval history: bounded operational records, without conversation contents. */
@@ -41,7 +45,8 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
             val obj = data.getJSONObject(i)
             MemoryExtractionLog(obj.getString("id"), obj.getLong("startedAt"), obj.optLong("finishedAt"),
                 obj.optString("sourceChatId"), obj.getBoolean("graph"), obj.getBoolean("notes"),
-                obj.getBoolean("skills"), obj.getString("status"), obj.optInt("proposals"), obj.optString("detail"))
+                obj.getBoolean("skills"), obj.getString("status"), obj.optInt("proposals"), obj.optString("detail"),
+                obj.optString("runId"), obj.optString("childChatId"), obj.optInt("modelRounds"), obj.optInt("toolCalls"))
         }
     }
     suspend fun list(): List<MemoryExtractionLog> = withContext(Dispatchers.IO) {
@@ -53,7 +58,9 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
             (read().filterNot { it.id == log.id } + log).sortedByDescending { it.startedAt }.take(500).forEach {
                 data.put(JSONObject().put("id", it.id).put("startedAt", it.startedAt).put("finishedAt", it.finishedAt)
                     .put("sourceChatId", it.sourceChatId).put("graph", it.graph).put("notes", it.notes)
-                    .put("skills", it.skills).put("status", it.status).put("proposals", it.proposals).put("detail", it.detail))
+                    .put("skills", it.skills).put("status", it.status).put("proposals", it.proposals).put("detail", it.detail)
+                    .put("runId", it.runId).put("childChatId", it.childChatId)
+                    .put("modelRounds", it.modelRounds).put("toolCalls", it.toolCalls))
             }
             file.parentFile!!.mkdirs()
             val temp = File.createTempFile(".extract-", ".tmp", file.parentFile)

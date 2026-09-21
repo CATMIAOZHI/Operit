@@ -1295,7 +1295,7 @@
       },
       {
         "name": "update_user_profile",
-        "description": "Replaces the private user.md profile after the user approves the tool call. Preserve useful existing content and write the complete Markdown document.",
+        "description": "Submit a complete user.md change. It applies or awaits review according to this memory space's auto-approval setting, with history retained. Preserve useful content and section markers. Organize Profile (personal facts), Preferences (durable preferences), and Interaction Rules (explicit user instructions).",
         "parameters": "",
         "parametersStructured": [
           {

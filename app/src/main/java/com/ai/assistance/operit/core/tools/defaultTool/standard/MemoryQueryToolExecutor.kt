@@ -752,12 +752,16 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 val content = tool.parameters.find { it.name == "content" }?.value.orEmpty()
                 val proposal = repository.preview(action, content,
                     tool.parameters.find { it.name == "old_text" }?.value.orEmpty())
-                val change = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
-                    .proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
+                val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
+                val change = review.applyAutomaticDecision(context,
+                    review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
                         ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty())
+                )
                 return ToolResult(toolName = tool.name, success = true,
                     result = StringResultData(org.json.JSONObject().put("change_id", change.id)
-                        .put("status", change.status).put("message", context.getString(R.string.memory_review_staged)).toString()))
+                        .put("status", change.status).put("message", context.getString(
+                            if (change.status == "approved") R.string.memory_review_auto_applied
+                            else R.string.memory_review_staged)).toString()))
             }
             val snapshot = repository.load()
             ToolResult(
@@ -836,11 +840,14 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            withContext(Dispatchers.IO) {
-                UserProfileDocumentRepository.getInstance(context).save(markdown)
+            require(markdown.length <= UserProfileDocumentRepository.MAX_CONTENT_CHARS) {
+                "user.md exceeds the character limit"
             }
-
-            val message = "Successfully updated user.md"
+            val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
+            val before = UserProfileDocumentRepository.getInstance(context).load()
+            val change = review.applyAutomaticDecision(context, review.proposeUser(before, markdown,
+                ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+            val message = "user.md change ${change.id}: ${change.status}"
             AppLogger.d(TAG, message)
             
             ToolResult(
@@ -889,20 +896,24 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
         return try {
             val repository = UserProfileDocumentRepository.getInstance(context)
-            withContext(Dispatchers.IO) {
-                val current = repository.load().trimEnd()
+            val change = withContext(Dispatchers.IO) {
+                val current = repository.load()
                 val importedSection =
                     buildString {
                         appendLine("## Imported profile update")
                         appendLine()
                         updates.forEach { (label, value) -> appendLine("- $label: $value") }
                     }.trimEnd()
-                repository.save("$current\n\n$importedSection\n")
+                val sections = com.ai.assistance.operit.data.preferences.UserProfileSections.parse(current)
+                val after = sections.copy(profile = sections.profile.trimEnd() + "\n\n" + importedSection).markdown()
+                val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
+                review.applyAutomaticDecision(context, review.proposeUser(current, after,
+                    ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
             }
             ToolResult(
                 toolName = tool.name,
                 success = true,
-                result = StringResultData("Successfully preserved the preference update in user.md")
+                result = StringResultData("user.md change ${change.id}: ${change.status}")
             )
         } catch (error: Exception) {
             AppLogger.e(TAG, "Failed to preserve legacy preference update in user.md", error)

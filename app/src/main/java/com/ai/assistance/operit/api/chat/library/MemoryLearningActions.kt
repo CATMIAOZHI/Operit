@@ -29,7 +29,14 @@ class MemoryLearningActions(
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val version = LearnedSkillRepository.version(content)
                 readVersions[if(user) "user" else "memory"] = version
-                JSONObject().put("content",content).put("version",version)
+                JSONObject().put("content",content).put("version",version).apply {
+                    if (user) {
+                        val sections = UserProfileSections.parse(content)
+                        put("sections", JSONObject().put("profile", sections.profile)
+                            .put("preferences", sections.preferences)
+                            .put("interaction_rules", sections.interactionRules))
+                    }
+                }
             }
             "memory_change" -> {
                 check(notesEnabled)
@@ -40,7 +47,12 @@ class MemoryLearningActions(
                 val expected = if(background) readVersions[key] else arg("version")
                 check(expected==LearnedSkillRepository.version(current)) { "Read the current document before changing it" }
                 val operation = arg("operation")
-                val after = editText(current,operation,arg("content"),arg("old_text"))
+                val section = arg("section")
+                val after = if (user && section.isNotBlank()) {
+                    val sections = UserProfileSections.parse(current)
+                    sections.with(section, editText(sections.get(section), operation,
+                        arg("content"), arg("old_text"))).markdown()
+                } else editText(current,operation,arg("content"),arg("old_text"))
                 val change = if(user) {
                     require(after.length<=12_000)
                     reviews.proposeUser(current,after,sourceChatId,onCreated)
@@ -51,7 +63,9 @@ class MemoryLearningActions(
                     require(after.length<=MemoryNotesRepository.MAX_CHARS)
                     reviews.proposeNotes(before,after,if(operation=="add") arg("content") else "",sourceChatId,onCreated)
                 }
-                reviews.toJson(change)
+                val applied = reviews.applyAutomaticDecision(context, change)
+                readVersions.remove(key)
+                reviews.toJson(applied)
             }
             "skill_list" -> {
                 check(skillsEnabled)
@@ -73,19 +87,33 @@ class MemoryLearningActions(
             }
             "skill_create" -> {
                 check(skillsEnabled)
+                require(Regex("[a-z][a-z0-9-]{2,63}").matches(name)) {
+                    "Skill name must be 3-64 lowercase ASCII letters, digits or hyphens, start with a letter; underscores are not allowed"
+                }
+                require(arg("description").trim().length in 1..240 && !arg("description").contains('\n')) {
+                    "Skill description must be one line, 1-240 characters"
+                }
+                require(arg("content").trim().length in 50..6000) {
+                    "Skill content must be 50-6000 characters"
+                }
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
                     .put("description",arg("description")).put("body",arg("content"))),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
                 check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
-                reviews.toJson(reviews.proposeSkill(parsed.single(),onCreated))
+                reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated)))
             }
             "skill_delete" -> {
                 check(skillsEnabled)
+                if (background) check(name in skills.owned(profileId) &&
+                    MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
+                    "Background deletion is limited to enabled learned skills in this space"
+                }
                 val before=skills.readDirectory(name)
                 check((if(background) readVersions["$name/"] else arg("version"))==before.version) {
                     "Read the skill and use its directory_version before proposing deletion"
                 }
-                reviews.toJson(reviews.proposeSkillDeletion(name,before,sourceChatId,onCreated))
+                reviews.toJson(reviews.applyAutomaticDecision(context,
+                    reviews.proposeSkillDeletion(name,before,sourceChatId,onCreated)))
             }
             "skill_write","skill_patch","skill_remove_file" -> {
                 check(skillsEnabled)
@@ -97,8 +125,12 @@ class MemoryLearningActions(
                     else arg("content")
                 val automatic = background && !remove && name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()
+                if (background) check(name in skills.owned(profileId) &&
+                    MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
+                    "Background revision is limited to enabled learned skills in this space"
+                }
                 val change = reviews.proposeSkillFile(name,path,before,content,remove,automatic,sourceChatId,onCreated)
-                val applied = if(automatic) reviews.decide(context,change.id,true,"background",arg("reason")) else change
+                val applied = reviews.applyAutomaticDecision(context,change)
                 readVersions.remove("$name/$path")
                 reviews.toJson(applied)
             }

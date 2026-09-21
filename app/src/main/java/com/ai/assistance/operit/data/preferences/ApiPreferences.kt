@@ -340,7 +340,7 @@ class ApiPreferences private constructor(private val context: Context) {
             preferences[ENABLE_MEMORY_AUTO_UPDATE] ?: DEFAULT_ENABLE_MEMORY_AUTO_UPDATE
         }
     val enableLegacyMemoryExtractionFlow: Flow<Boolean> =
-        context.apiDataStore.data.map { it[ENABLE_LEGACY_MEMORY_EXTRACTION] ?: true }
+        context.apiDataStore.data.map { it[ENABLE_LEGACY_MEMORY_EXTRACTION] ?: false }
 
     suspend fun saveEnableLegacyMemoryExtraction(enabled: Boolean) {
         context.apiDataStore.edit { it[ENABLE_LEGACY_MEMORY_EXTRACTION] = enabled }

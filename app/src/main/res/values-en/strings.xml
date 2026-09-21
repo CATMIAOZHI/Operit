@@ -1047,7 +1047,14 @@
     <string name="user_preferences_guide">Personalization</string>
     <string name="user_preferences">User Preferences</string>
     <string name="user_preferences_settings">User Profile (user.md)</string>
-    <string name="user_md_description">The single user profile file. When enabled, this Markdown is sent to the AI as user context.</string>
+    <string name="user_md_description">user.md has three sections. Existing unstructured content stays in Profile for you to organize. Changes apply to new chats; existing chats update after rebuilding or compression.</string>
+    <string name="user_md_profile">Profile</string>
+    <string name="user_md_preferences">Preferences</string>
+    <string name="user_md_interaction_rules">Interaction Rules</string>
+    <string name="user_md_profile_hint">Stable personal facts: identity, occupation, background and areas of expertise…</string>
+    <string name="user_md_preferences_hint">Durable preferences: languages, tools, content formats and habits…</string>
+    <string name="user_md_interaction_rules_hint">Explicit communication and collaboration instructions, such as: lead with the conclusion; ask before committing code…</string>
+    <string name="user_md_reserved_headings">Content contains a reserved operit:user-section marker. Remove that marker before saving. Ordinary Markdown headings can be kept.</string>
     <string name="user_md_edit_tab">Edit</string>
     <string name="user_md_preview_tab">Preview</string>
     <string name="user_md_reset">Clear document</string>
