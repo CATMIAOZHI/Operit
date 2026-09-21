@@ -2623,10 +2623,18 @@ class JsEngine(private val context: Context) {
         @JavascriptInterface
         fun registerImageFromPath(path: String): String {
             return try {
-                val id = ImagePoolManager.addImage(path)
+                val source = com.ai.assistance.operit.util.ImageSourcePathPolicy.resolve(
+                    path,
+                    listOfNotNull(
+                        android.os.Environment.getExternalStorageDirectory(),
+                        com.ai.assistance.operit.util.OperitPaths.cleanOnExitInternalDir(context)
+                    ) + context.getExternalFilesDirs(null).filterNotNull() +
+                        context.externalCacheDirs.filterNotNull()
+                )
+                val id = ImagePoolManager.addImage(source.path)
                 if (id != "error") {
                     // 带上源路径：图片池回收后历史消息还能从文件恢复这张图。
-                    MediaLinkParser.buildImageLink(id, path)
+                    MediaLinkParser.buildImageLink(id, source.path)
                 } else {
                     "[image registration failed]"
                 }
