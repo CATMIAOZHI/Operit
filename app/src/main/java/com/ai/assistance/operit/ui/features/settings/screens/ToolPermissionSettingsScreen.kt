@@ -58,11 +58,12 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
     var policyExpanded by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
-    val allTools = remember {
-        toolHandler.getAllToolNames().filterNot {
+    val storedOverrides by toolPermissionSystem.toolPermissionOverridesFlow.collectAsState(initial = emptyMap())
+    val allTools = remember(storedOverrides.keys) {
+        (toolHandler.getAllToolNames().filterNot {
             it == "package_proxy" || it == "proxy" || it == "search" ||
                 it in PermissionReviewInternalTools.names
-        }
+        } + storedOverrides.keys).distinct()
     }
     val toolPermissions = remember { mutableStateMapOf<String, PermissionLevel>() }
     // The stored choice is read asynchronously, so the slider waits for it instead of starting on a
@@ -80,13 +81,9 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         if (pendingStop != null && selectedStop != pendingBase) pendingStop = null
     }
 
-    LaunchedEffect(allTools) {
-        allTools.forEach { toolName ->
-            val override = toolPermissionSystem.getToolPermissionOverride(toolName)
-            if (override != null) {
-                toolPermissions[toolName] = override
-            }
-        }
+    LaunchedEffect(storedOverrides) {
+        toolPermissions.clear()
+        toolPermissions.putAll(storedOverrides)
     }
 
     fun handlePermissionChange(toolName: String, newLevel: PermissionLevel) {

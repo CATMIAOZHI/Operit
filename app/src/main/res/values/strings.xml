@@ -1,4 +1,9 @@
 <resources>
+    <string name="permission_review_always_allow">始终允许此工具</string>
+    <string name="permission_review_always_allowed">此工具已设为始终允许</string>
+    <string name="permission_review_always_allow_confirm">将“%1$s”加入始终允许列表？\n\n该设置对所有对话生效，允许此工具的所有参数，不再进行权限询问或自动审核。其他工具不受影响。\n\n已结束的调用不会自动重试。可在“设置 → 工具权限管理”中撤销。</string>
+    <string name="permission_review_always_allow_confirm_button">确认始终允许</string>
+    <string name="permission_review_always_allow_failed">保存失败，请重试。</string>
     <string name="phone_control_observing">正在观察屏幕</string>
     <string name="phone_control_waiting">正在等待下一步操作</string>
     <string name="phone_control_acting">正在操作手机</string>

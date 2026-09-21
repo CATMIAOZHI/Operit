@@ -182,6 +182,11 @@ class ToolPermissionPoliciesTest {
                     defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW),
                 )
             }
+        assertEquals(PermissionLevel.ALLOW, defaultPermissionLevelFor("todowrite", PermissionLevel.AUTO_REVIEW))
+        assertEquals(PermissionLevel.ALLOW, defaultPermissionLevelFor("todowrite", PermissionLevel.ASK))
+        assertNull(defaultPermissionLevelFor("todowrite", PermissionLevel.FORBID))
+        assertEquals(PermissionLevel.FORBID, resolveEffectivePermissionLevel(
+            masterLevel = PermissionLevel.AUTO_REVIEW, toolOverride = PermissionLevel.FORBID))
         assertNull(defaultPermissionLevelFor("read_file", PermissionLevel.AUTO_REVIEW))
         assertNull(defaultPermissionLevelFor("terminal", PermissionLevel.ASK))
         // A global forbid is a whitelist, so it wins over the built-in default. An explicit per-tool

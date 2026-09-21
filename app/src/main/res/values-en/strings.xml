@@ -1,4 +1,9 @@
 <resources>
+    <string name="permission_review_always_allow">Always allow this tool</string>
+    <string name="permission_review_always_allowed">This tool is always allowed</string>
+    <string name="permission_review_always_allow_confirm">Always allow “%1$s”?\n\nThis applies to all conversations and all arguments for this tool, without permission prompts or automatic reviews. Other tools are unaffected.\n\nFinished calls will not be retried automatically. Revoke this in Settings → Tool permissions.</string>
+    <string name="permission_review_always_allow_confirm_button">Confirm always allow</string>
+    <string name="permission_review_always_allow_failed">Could not save. Please try again.</string>
     <string name="phone_control_observing">Observing the screen</string>
     <string name="phone_control_waiting">Waiting for the next action</string>
     <string name="phone_control_acting">Controlling the phone</string>

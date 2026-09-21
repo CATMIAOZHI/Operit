@@ -918,6 +918,7 @@ private fun PermissionReviewEventRow(event: PermissionReviewEvent) {
                         Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
+                    com.ai.assistance.operit.ui.permissions.AlwaysAllowReviewedToolButton(event.action.toolName)
                     Text(
                         text = stringResource(R.string.permission_review_detail_status, statusText),
                         color = statusColor,

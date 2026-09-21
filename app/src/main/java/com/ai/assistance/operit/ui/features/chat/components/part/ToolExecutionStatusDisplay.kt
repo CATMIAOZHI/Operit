@@ -574,6 +574,7 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                             .heightIn(max = 420.dp)
                             .verticalScroll(rememberScrollState()),
                 ) {
+                    com.ai.assistance.operit.ui.permissions.AlwaysAllowReviewedToolButton(event.action.toolName)
                     Text(
                         stringResource(R.string.permission_review_detail_status, lifecycle),
                         color = statusColor,
