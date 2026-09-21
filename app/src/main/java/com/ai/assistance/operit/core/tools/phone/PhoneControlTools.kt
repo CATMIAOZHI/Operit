@@ -22,6 +22,7 @@ import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
 import com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel
 import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.ImageRegistrationOptions
+import com.ai.assistance.operit.util.ImageOutputFormat
 import com.ai.assistance.operit.pet.PetAutomationVisibility
 import java.io.File
 import java.util.UUID
@@ -209,6 +210,27 @@ object PhoneControlTools {
         }
     }
 
+    private suspend fun <T> withoutCardInputWindow(id: String, block: suspend () -> T): T {
+        try {
+            withContext(Dispatchers.Main) { overlay?.takeIf { it.first == id }?.second?.detachForInput() }
+            return block()
+        } finally {
+            withContext(NonCancellable + Dispatchers.Main) {
+                if (lease.active()?.id == id) {
+                    try {
+                        checkNotNull(overlay?.takeIf { it.first == id }?.second).restoreAfterInput()
+                    } catch (error: Exception) {
+                        // Do not keep an active session with no visible Stop control.
+                        // Let this call report failure rather than cancelling its own coroutine.
+                        if (operationJob?.first == id) operationJob = null
+                        stop(id)
+                        throw IllegalStateException("Control card could not be restored; phone control has stopped.", error)
+                    }
+                }
+            }
+        }
+    }
+
     private suspend fun observe(context: Context, tool: AITool, owner: PhoneControlLease.Owner, id: String,
         mode: String): ToolResult {
         require(mode in setOf("both", "screenshot", "accessibility")) { "mode must be both, screenshot or accessibility." }
@@ -223,6 +245,7 @@ object PhoneControlTools {
         val page = page(ui)
         val directory = File(context.cacheDir, "phone-control").apply { mkdirs() }
         val image = File(directory, "phone-${UUID.randomUUID()}.png")
+        val modelImage = File(directory, image.nameWithoutExtension + ".jpg")
         var source: String? = null
         var elements = emptyList<PhoneControlElement>()
         var accessibilityError: String? = null
@@ -250,18 +273,27 @@ object PhoneControlTools {
                 if (capture) withoutCard(id) { collectObservation() } else collectObservation()
             }
             lease.requireSession(owner, id)
-            val imageId = if (capture) ImagePoolManager.addImage(image.absolutePath, ImageRegistrationOptions(maxLongEdge = 0)) else null
+            val imageId = if (capture) ImagePoolManager.addImage(image.absolutePath,
+                ImageRegistrationOptions(scalePercent = 100, maxLongEdge = 0,
+                    outputFormat = ImageOutputFormat.JPEG, jpegQuality = 80)) else null
             check(imageId != "error") { "Unable to attach the screenshot to the main model." }
+            if (imageId != null) {
+                ImagePoolManager.exportImageSource(imageId, modelImage)
+                image.delete()
+            }
             val token = UUID.randomUUID().toString()
             observation = Observation(id, token, before, page, elements)
             lease.observed(owner, id, token)
             updateStatus(id, context.getString(R.string.phone_control_waiting))
-            val files = directory.listFiles()?.filter { it.name.startsWith("phone-") && it.extension == "png" }
+            val files = directory.listFiles()?.filter { it.name.startsWith("phone-") && it.extension in setOf("png", "jpg") }
                 ?.sortedByDescending { it.lastModified() }.orEmpty()
             var retainedBytes = 0L
             files.forEachIndexed { index, file ->
                 retainedBytes += file.length()
-                if (file != image && (index >= 100 || retainedBytes > 64L * 1024 * 1024)) file.delete()
+                if (file != modelImage && (index >= 100 || retainedBytes > 64L * 1024 * 1024)) {
+                    file.delete()
+                    File("${file.absolutePath}.image-id").delete()
+                }
             }
             return result(tool, buildString {
                 appendLine("session_id=$id")
@@ -283,10 +315,13 @@ object PhoneControlTools {
                     }
                 } else appendLine("Accessibility unavailable: ${accessibilityError ?: "not requested"}. Use screenshot coordinates for visual actions or batches.")
                 appendLine("Batch only known actions; observe when the next target depends on a new page or result. act automatically returns controls or a screenshot; override with post_observe.")
-                if (imageId != null) append(MediaLinkParser.buildImageLink(imageId, image.absolutePath))
+                appendLine("Prefer accessibility when text and controls suffice; request images for visual content or unclear layouts. Avoid redundant screenshots. Images retain physical screen coordinates.")
+                if (imageId != null) append(MediaLinkParser.buildImageLink(imageId, modelImage.absolutePath))
             })
         } catch (e: Exception) {
             image.delete()
+            modelImage.delete()
+            File("${modelImage.absolutePath}.image-id").delete()
             throw e
         } finally {
             // This file was created for this capture by the backend, not supplied by the model.
@@ -410,20 +445,28 @@ object PhoneControlTools {
                 val outcome = if (step.points.isEmpty()) sendInput() else {
                     val minY = step.points.minOf { it.second }
                     val maxY = step.points.maxOf { it.second }
-                    withContext(Dispatchers.Main) {
-                        overlay?.second?.avoidGesture(minY, maxY, prior.screen.height)
+                    val movedFromTarget = withContext(Dispatchers.Main) {
+                        val panel = overlay?.takeIf { it.first == id }?.second
+                        val intersected = panel?.intersectsGesture(minY, maxY) == true
+                        panel?.avoidGesture(minY, maxY, prior.screen.height)
+                        intersected
                     }
                     PetAutomationVisibility.awaitHiddenFrames()
                     val covered = withContext(Dispatchers.Main) { overlay?.second?.intersectsGesture(minY, maxY) == true }
-                    // A full-height swipe cannot leave room for the card. Hide only for this input.
-                    if (covered) withoutCard(id) { lease.requireSession(owner, id); sendInput() }
+                    // WindowManager input routing can still use the old region after layout moved.
+                    // Remove that window's input channel until the gesture has completed.
+                    if (movedFromTarget || covered) withoutCardInputWindow(id) { lease.requireSession(owner, id); sendInput() }
                     else { lease.requireSession(owner, id); sendInput() }
                 }
                 if (outcome.success) null else outcome.error ?: "Input outcome is unknown."
             })
         }
-        lease.requireSession(owner, id)
         val summary = "completed_actions=${progress.completed}; attempted_actions=${progress.attempted}; total_actions=${progress.total}"
+        if (lease.active()?.id != id && progress.error != null) {
+            return ToolResult(toolName = tool.name, success = false,
+                error = progress.error, result = StringResultData("$summary\nDo not repeat attempted inputs."))
+        }
+        lease.requireSession(owner, id)
         val failure = progress.error?.let { "$summary\n$it\nDo not replay attempted actions; use the fresh observation below if present. Call stop before replying or asking the user." }
         if (postMode != "none") {
             try {

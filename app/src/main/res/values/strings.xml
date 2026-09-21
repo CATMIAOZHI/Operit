@@ -4,10 +4,10 @@
     <string name="permission_review_always_allow_confirm">将“%1$s”加入始终允许列表？\n\n该设置对所有对话生效，允许此工具的所有参数，不再进行权限询问或自动审核。其他工具不受影响。\n\n已结束的调用不会自动重试。可在“设置 → 工具权限管理”中撤销。</string>
     <string name="permission_review_always_allow_confirm_button">确认始终允许</string>
     <string name="permission_review_always_allow_failed">保存失败，请重试。</string>
-    <string name="phone_control_observing">正在观察屏幕</string>
-    <string name="phone_control_waiting">正在等待下一步操作</string>
-    <string name="phone_control_acting">正在操作手机</string>
-    <string name="phone_control_retry">操作未完成，等待重新观察</string>
+    <string name="phone_control_observing">正在操作</string>
+    <string name="phone_control_waiting">正在思考</string>
+    <string name="phone_control_acting">正在操作</string>
+    <string name="phone_control_retry">正在思考</string>
     <string name="accessibility_adb_enable">通过 ADB 一键启用无障碍</string>
     <string name="accessibility_adb_enabling">正在启用…</string>
     <string name="accessibility_adb_unavailable">请先启动 Shizuku 并授权 Operit，以使用 ADB 权限启用服务。</string>
@@ -15,7 +15,7 @@
     <string name="accessibility_adb_failed">启用失败：%1$s</string>
     <string name="accessibility_adb_success">无障碍服务已启用</string>
     <string name="accessibility_adb_not_active">服务尚未生效，请打开系统无障碍设置查看状态。</string>
-    <string name="phone_control_title">前台操控手机</string>
+    <string name="phone_control_title">Opeirt正在控制你的手机</string>
     <string name="phone_control_stop">停止操控</string>
     <string name="phone_control_overlay_required">请先允许 Operit 显示悬浮窗，以便随时停止操控。</string>
     <string name="subagent_v2_limits">v2 运行限制</string>

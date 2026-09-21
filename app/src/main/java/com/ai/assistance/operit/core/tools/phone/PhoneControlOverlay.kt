@@ -17,5 +17,7 @@ internal class PhoneControlOverlay(private val context: Context, private val onS
     fun containsStop(x: Int, y: Int): Boolean = panel.containsPoint(x, y)
     fun avoidGesture(minY: Int, maxY: Int, height: Int) = panel.avoidGesture(minY, maxY, height)
     fun intersectsGesture(minY: Int, maxY: Int) = panel.intersectsGesture(minY, maxY)
+    fun detachForInput() = panel.detachForInput()
+    fun restoreAfterInput() = panel.restoreAfterInput()
     fun close() = panel.hide()
 }

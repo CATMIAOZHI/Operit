@@ -4,10 +4,10 @@
     <string name="permission_review_always_allow_confirm">Always allow “%1$s”?\n\nThis applies to all conversations and all arguments for this tool, without permission prompts or automatic reviews. Other tools are unaffected.\n\nFinished calls will not be retried automatically. Revoke this in Settings → Tool permissions.</string>
     <string name="permission_review_always_allow_confirm_button">Confirm always allow</string>
     <string name="permission_review_always_allow_failed">Could not save. Please try again.</string>
-    <string name="phone_control_observing">Observing the screen</string>
-    <string name="phone_control_waiting">Waiting for the next action</string>
-    <string name="phone_control_acting">Controlling the phone</string>
-    <string name="phone_control_retry">Action incomplete; waiting to observe again</string>
+    <string name="phone_control_observing">Acting</string>
+    <string name="phone_control_waiting">Thinking</string>
+    <string name="phone_control_acting">Acting</string>
+    <string name="phone_control_retry">Thinking</string>
     <string name="accessibility_adb_enable">Enable accessibility via ADB</string>
     <string name="accessibility_adb_enabling">Enabling…</string>
     <string name="accessibility_adb_unavailable">Start Shizuku and authorize Operit to enable the service using ADB privileges.</string>
@@ -15,7 +15,7 @@
     <string name="accessibility_adb_failed">Could not enable service: %1$s</string>
     <string name="accessibility_adb_success">Accessibility service enabled</string>
     <string name="accessibility_adb_not_active">The service is not active yet. Open system accessibility settings to check its status.</string>
-    <string name="phone_control_title">Control phone in foreground</string>
+    <string name="phone_control_title">Opeirt is controlling your phone</string>
     <string name="phone_control_stop">Stop control</string>
     <string name="phone_control_overlay_required">Allow Operit to display overlays so you can always stop phone control.</string>
     <string name="subagent_v2_limits">v2 runtime limits</string>
