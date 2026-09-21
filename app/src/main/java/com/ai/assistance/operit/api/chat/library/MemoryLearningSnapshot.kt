@@ -29,8 +29,11 @@ internal object MemoryLearningSnapshot {
     fun digest(messages: List<Pair<String, String>>, byteBudget: Int): String {
         val header = "[Bounded evidence excerpts; omissions are not evidence of absence. Use history for details.]\n"
         val available = (byteBudget - header.toByteArray(Charsets.UTF_8).size).coerceAtLeast(0)
-        val summaries = messages.filter { it.first == "SUMMARY" }
-        val other = messages.filter { it.first != "SUMMARY" }
+        // Strip before truncation: a page/excerpt starting inside a think block has no opening tag.
+        val visible = messages.map { (role, text) -> role to memoryEvidenceText(role, text) }
+            .filter { it.second.isNotBlank() }
+        val summaries = visible.filter { it.first == "SUMMARY" }
+        val other = visible.filter { it.first != "SUMMARY" }
         val older = other.dropLast(24).filter { it.first != "TOOL_RESULT" }
         val summaryBudget = if (summaries.isEmpty()) 0 else available / 4
         val olderBudget = if (older.isEmpty()) 0 else available / 4
