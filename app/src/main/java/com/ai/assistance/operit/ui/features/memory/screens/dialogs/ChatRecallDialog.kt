@@ -28,6 +28,8 @@ import java.util.Date
 @Composable
 fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val recallError = stringResource(R.string.chat_recall_error)
+    val draftExtracted = stringResource(R.string.skill_draft_extracted)
     val repo = remember { ChatRecallRepository(context) }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
@@ -76,7 +78,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
             busy=true; message=null
             try { block() }
             catch(e: CancellationException) { throw e }
-            catch(e: Exception) { message=context.getString(R.string.chat_recall_error) }
+            catch(e: Exception) { message=recallError }
             finally { busy=false }
         }
     }
@@ -102,7 +104,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         try { load(false) }
         catch(e: CancellationException) { throw e }
-        catch(e: Exception) { message=context.getString(R.string.chat_recall_error) }
+        catch(e: Exception) { message=recallError }
     }
     fullMessage?.let { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
@@ -219,7 +221,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                 sourceChat?.let { id ->
                     TextButton(onClick={ run {
                         MemoryLearningService.extract(context,profileId,id)
-                        message=context.getString(R.string.skill_draft_extracted)
+                        message=draftExtracted
                     } },enabled=!busy) { Text(stringResource(R.string.skill_draft_extract)) }
                 }
             }
