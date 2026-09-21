@@ -23,7 +23,7 @@ class MemoryLearningActions(
         return when(action) {
             "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true)
             "memory_read" -> {
-                check(notesEnabled)
+                check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
                 val content = if(user) UserProfileDocumentRepository.getInstance(context).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
@@ -39,7 +39,7 @@ class MemoryLearningActions(
                 }
             }
             "memory_change" -> {
-                check(notesEnabled)
+                check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
                 val current = if(user) UserProfileDocumentRepository.getInstance(context).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
@@ -68,7 +68,7 @@ class MemoryLearningActions(
                 reviews.toJson(applied)
             }
             "skill_list" -> {
-                check(skillsEnabled)
+                check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val owned = skills.owned(profileId)
                 JSONObject().put("skills",JSONArray().apply {
                     SkillManager.getInstance(context).getAvailableSkills().values.forEach {
@@ -78,7 +78,7 @@ class MemoryLearningActions(
                 })
             }
             "skill_read" -> {
-                check(skillsEnabled)
+                check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val snapshot = skills.read(name,path)
                 readVersions["$name/$path"] = snapshot.version
                 JSONObject().put("content",snapshot.text).put("version",snapshot.version)
@@ -86,7 +86,7 @@ class MemoryLearningActions(
                     .put("directory_version",skills.readDirectory(name).also { readVersions["$name/"] = it.version }.version)
             }
             "skill_create" -> {
-                check(skillsEnabled)
+                check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 require(Regex("[a-z][a-z0-9-]{2,63}").matches(name)) {
                     "Skill name must be 3-64 lowercase ASCII letters, digits or hyphens, start with a letter; underscores are not allowed"
                 }
@@ -103,7 +103,7 @@ class MemoryLearningActions(
                 reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated)))
             }
             "skill_delete" -> {
-                check(skillsEnabled)
+                check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 if (background) check(name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
                     "Background deletion is limited to enabled learned skills in this space"
@@ -116,7 +116,7 @@ class MemoryLearningActions(
                     reviews.proposeSkillDeletion(name,before,sourceChatId,onCreated)))
             }
             "skill_write","skill_patch","skill_remove_file" -> {
-                check(skillsEnabled)
+                check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val before = skills.read(name,path)
                 val expected = if(background) readVersions["$name/$path"] else arg("version")
                 check(expected==before.version) { "Read this file before editing it" }
