@@ -47,6 +47,10 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
     }
     fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
+    fun shouldAutoApproveChanges(): Boolean = searchPrefs.getBoolean("auto_approve_memory_changes", true)
+    fun setAutoApproveChanges(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("auto_approve_memory_changes", enabled).apply()
+    }
     fun setAiReviewChanges(enabled: Boolean) {
         searchPrefs.edit().putBoolean("allow_ai_memory_decisions", enabled).apply()
     }

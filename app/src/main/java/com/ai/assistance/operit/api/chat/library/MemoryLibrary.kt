@@ -388,8 +388,9 @@ object MemoryLibrary {
                     val proposal = notesRepo
                         .preview("add", addition)
                     if (proposal.before.markdown != proposal.after) {
-                        com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
-                            .proposeNotes(proposal.before, proposal.after, addition, sourceChatId, onProposal)
+                        val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
+                        review.applyAutomaticDecision(context,
+                            review.proposeNotes(proposal.before, proposal.after, addition, sourceChatId, onProposal))
                     }
                     }
                 } catch (e: CancellationException) {
@@ -410,7 +411,8 @@ object MemoryLibrary {
                         .getAvailableSkills().keys
                     val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                     analysis.skills.filterNot { it.name in installed }.forEach {
-                        review.proposeSkill(it.copy(sourceChatId = sourceChatId), onProposal)
+                        review.applyAutomaticDecision(context,
+                            review.proposeSkill(it.copy(sourceChatId = sourceChatId), onProposal))
                     }
                 } catch (e: CancellationException) {
                     throw e

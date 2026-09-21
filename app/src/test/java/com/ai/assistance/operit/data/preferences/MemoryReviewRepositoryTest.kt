@@ -97,16 +97,38 @@ class MemoryReviewRepositoryTest {
         assertEquals(1, parseSkillDrafts(JSONArray().put(valid), "chat").size)
         assertTrue(parseSkillDrafts(JSONArray().put(JSONObject(valid.toString()).put("name", "../bad")), "chat").isEmpty())
         assertTrue(parseSkillDrafts(JSONObject(), "chat").isEmpty())
+        assertTrue(parseSkillDrafts(JSONArray().put(JSONObject(valid.toString()).put("name", "tool_capability_inquiry")), "chat").isEmpty())
+        assertEquals(1, parseSkillDrafts(JSONArray().put(JSONObject(valid.toString()).put("name", "capability-inquiry")), "chat").size)
     }
 
     @Test fun `extraction logs retain outcome after reload and isolate spaces`() = runBlocking {
         val repo = MemoryExtractionLogRepository(folder.root, "a")
         val initial = MemoryExtractionLog(sourceChatId = "chat", graph = false, notes = true, skills = true)
         repo.save(initial)
-        repo.save(initial.copy(status = "failed", finishedAt = initial.startedAt + 12, detail = "IOException"))
+        repo.save(initial.copy(status = "failed", finishedAt = initial.startedAt + 12, detail = "IOException",
+            runId = "run", childChatId = "child", modelRounds = 2, toolCalls = 7))
         val result = MemoryExtractionLogRepository(folder.root, "a").list().single()
         assertEquals("failed", result.status)
         assertEquals(initial.id, result.id)
+        assertEquals("run", result.runId)
+        assertEquals("child", result.childChatId)
+        assertEquals(2, result.modelRounds)
+        assertEquals(7, result.toolCalls)
         assertTrue(MemoryExtractionLogRepository(folder.root, "b").list().isEmpty())
+    }
+
+    @Test fun `old extraction logs without audit metadata still load`() = runBlocking {
+        val repo = MemoryExtractionLogRepository(folder.root, "a")
+        val log = MemoryExtractionLog(sourceChatId = "chat", graph = false, notes = true, skills = true)
+        repo.save(log)
+        val file = folder.root.listFiles()!!.single { it.extension == "json" }
+        val json = JSONArray(file.readText())
+        listOf("runId", "childChatId", "modelRounds", "toolCalls").forEach { json.getJSONObject(0).remove(it) }
+        file.writeText(json.toString())
+        val restored = repo.list().single()
+        assertEquals(log.id, restored.id)
+        assertEquals("", restored.runId)
+        assertEquals("", restored.childChatId)
+        assertEquals(0, restored.modelRounds)
     }
 }

@@ -1295,7 +1295,7 @@
       },
       {
         "name": "update_user_profile",
-        "description": "在用户批准工具调用后替换私有 user.md。保留仍然有用的现有内容，并写入完整的 Markdown 文档。",
+        "description": "提交私有 user.md 完整改动，按当前记忆空间自动通过开关直接生效或进入待审，保留历史。保留有用内容及分区标记，按 Profile（个人事实）、Preferences（长期偏好）、Interaction Rules（用户明确的交互规则）组织。",
         "parameters": "",
         "parametersStructured": [
           {
