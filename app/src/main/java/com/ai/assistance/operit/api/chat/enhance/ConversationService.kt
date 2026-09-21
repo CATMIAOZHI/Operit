@@ -31,6 +31,7 @@ import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
+import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.core.avatar.impl.factory.AvatarModelFactoryImpl
 import com.ai.assistance.operit.data.repository.AvatarRepository
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -589,6 +590,17 @@ class ConversationService(
                     )
                 val allowPersonalContext =
                     ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
+                // Use the same space as memory tools, including a fixed role-card binding.
+                val notesSpaceId = memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+                    ?: activeCard?.takeIf {
+                        com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
+                            com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
+                    }?.memoryProfileId?.takeIf { it.isNotBlank() }
+                    ?: preferencesManager.activeMemorySpaceIdFlow.first()
+                val memoryNotes = if (allowPersonalContext &&
+                    com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, notesSpaceId).shouldInjectNotes()) {
+                    com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown
+                } else ""
 
                 // 获取工具启用状态
                 val enableTools = apiPreferences.enableToolsFlow.first()
@@ -681,6 +693,14 @@ class ConversationService(
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
+                    if (memoryNotes.isNotBlank()) {
+                        append("\n\n")
+                        append(context.getString(R.string.memory_notes_prompt_intro))
+                        // Escape delimiters so stored material cannot close its own data block.
+                        append("\n<memory_notes source=\"memory.md\">\n")
+                        append(memoryNotes.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+                        append("\n</memory_notes>")
+                    }
                     if (
                         allowPersonalContext &&
                             !disableUserPreferenceDescription &&

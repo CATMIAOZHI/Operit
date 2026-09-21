@@ -610,6 +610,9 @@ class UserPreferencesManager private constructor(private val context: Context) {
             }
         }
         ObjectBoxManager.delete(context, memorySpaceId)
+        MemoryNotesRepository(context, memorySpaceId).delete()
+        MemoryReviewRepository(context, memorySpaceId).delete()
+        MemoryExtractionLogRepository(context, memorySpaceId).delete()
     }
 
     suspend fun readLegacyUserProfiles(): LegacyUserProfileSnapshot {

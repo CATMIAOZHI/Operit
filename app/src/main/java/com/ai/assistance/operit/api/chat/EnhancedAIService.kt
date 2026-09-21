@@ -2020,12 +2020,16 @@ class EnhancedAIService private constructor(
             }
         }
 
-        if (enableMemoryAutoUpdate && !isSubTask && content.isNotBlank()) {
+        if (!isSubTask && content.isNotBlank()) {
             runCatching {
                 val currentChatId = chatId?.takeIf { it.isNotBlank() }
                 val profileId =
                     memorySpaceIdOverride?.takeIf { it.isNotBlank() }
                         ?: preferencesManager.activeMemorySpaceIdFlow.first()
+                if (!enableMemoryAutoUpdate &&
+                    !com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(
+                        this@EnhancedAIService.context, profileId
+                    ).shouldExtractNewMemory()) return@runCatching
                 if (currentChatId.isNullOrBlank()) {
                     AppLogger.w(TAG, "自动保存长期记忆入队跳过：chatId为空")
                 } else {

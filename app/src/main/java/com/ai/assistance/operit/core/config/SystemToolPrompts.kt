@@ -553,68 +553,9 @@ object SystemToolPrompts {
         )
     )
     
-    // ==================== 记忆库工具 ====================
-    val memoryTools = SystemToolPromptCategory(
-        categoryName = "Memory and Memory Library Tools",
-        tools = listOf(
-            ToolPrompt(
-                name = "query_memory",
-                description = "Searches the memory library for relevant memories and document chunks.",
-                parametersStructured = listOf(
-                    ToolParameterSchema(name = "query", type = "string", description = "string, the search query. You can pass a natural-language question, a space-separated phrase, or use `|` to separate multiple keywords, for example `network error timeout` or `network|error|timeout`. Inside a keyword, `*` acts as a fuzzy wildcard placeholder, for example `error*timeout`; use only `*` to return all memories", required = true),
-                    ToolParameterSchema(name = "folder_path", type = "string", description = "optional, string, the specific folder path to search within", required = false),
-                    ToolParameterSchema(name = "start_time", type = "string", description = "optional, local-time string in `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` format. Filters memories by createdAt >= start_time", required = false),
-                    ToolParameterSchema(name = "end_time", type = "string", description = "optional, local-time string in `YYYY-MM-DD` or `YYYY-MM-DD HH:mm` format. Filters memories by createdAt <= end_time", required = false),
-                    ToolParameterSchema(name = "snapshot_id", type = "string", description = "optional, string. Omit or pass empty to create a new snapshot automatically. If you pass a non-empty snapshot_id, that exact id will be used; if it does not exist yet, it will be created and can be reused across follow-up or parallel queries to exclude memories already returned by that snapshot", required = false),
-                    ToolParameterSchema(name = "threshold", type = "number", description = "optional, number >= 0. Minimum relevance score required for a memory to be returned. Defaults to 0 for query_memory", required = false, default = "0"),
-                    ToolParameterSchema(name = "limit", type = "integer", description = "optional, int >= 1, maximum number of results to return. When > 20, only titles and truncated content are returned", required = false, default = "20")
-                )
-            ),
-            ToolPrompt(
-                name = "get_memory_by_title",
-                description = "Retrieves a memory by exact title, including document content or selected chunks.",
-                parametersStructured = listOf(
-                    ToolParameterSchema(name = "title", type = "string", description = "required, string, the exact title of the memory", required = true),
-                    ToolParameterSchema(name = "chunk_index", type = "integer", description = "optional, int, read a specific chunk by its number, e.g., 3 for the 3rd chunk", required = false),
-                    ToolParameterSchema(name = "chunk_range", type = "string", description = "optional, string, read a range of chunks in \"start-end\" format, e.g., \"3-7\" for chunks 3 through 7", required = false),
-                    ToolParameterSchema(name = "query", type = "string", description = "optional, string, search inside the document by natural-language question or keywords. You can pass a short question, a space-separated phrase, or use `|` to separate multiple keywords, for example `error log timeout` or `error|timeout|retry`. Inside a keyword, `*` acts as a fuzzy wildcard placeholder, for example `error*timeout`", required = false),
-                    ToolParameterSchema(name = "limit", type = "integer", description = "optional, int >= 1, maximum number of document chunks to return when using query. Default 20", required = false, default = "20")
-                )
-            )
-        ),
-        categoryFooter = "\nNote: The memory library and user personality profile may be updated automatically after the current reply is finalized. If you need to manage memories immediately or update user preferences, use the appropriate tools directly."
-    )
-    
-    val memoryToolsCn = SystemToolPromptCategory(
-        categoryName = "记忆与记忆库工具",
-        tools = listOf(
-            ToolPrompt(
-                name = "query_memory",
-                description = "从记忆库中搜索相关记忆和文档分块。",
-                parametersStructured = listOf(
-                    ToolParameterSchema(name = "query", type = "string", description = "string, 搜索查询。可以传自然语言问题、空格分隔的短语，或使用 `|` 分隔多个关键词，例如 `network error timeout` 或 `network|error|timeout`。在单个关键词内部，`*` 可作为模糊通配占位符，例如 `error*timeout`；仅传 `*` 时返回所有记忆", required = true),
-                    ToolParameterSchema(name = "folder_path", type = "string", description = "可选, string, 要搜索的特定文件夹路径", required = false),
-                    ToolParameterSchema(name = "start_time", type = "string", description = "可选, 本地时间字符串，格式支持 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:mm`。按创建时间过滤 createdAt >= start_time", required = false),
-                    ToolParameterSchema(name = "end_time", type = "string", description = "可选, 本地时间字符串，格式支持 `YYYY-MM-DD` 或 `YYYY-MM-DD HH:mm`。按创建时间过滤 createdAt <= end_time", required = false),
-                    ToolParameterSchema(name = "snapshot_id", type = "string", description = "可选, 字符串。不传或传空时会自动创建新快照；传入任意非空 snapshot_id 时会直接使用这个 id，不存在则按该 id 创建。后续串行或并发查询复用同一个 snapshot_id 时，会排除该快照里已经返回过的记忆", required = false),
-                    ToolParameterSchema(name = "threshold", type = "number", description = "可选, number >= 0。返回记忆所需的最小相关度分数。query_memory 默认值为 0", required = false, default = "0"),
-                    ToolParameterSchema(name = "limit", type = "integer", description = "可选, int >= 1, 返回结果的最大数量. 当 > 20 时，只返回标题和截断内容", required = false, default = "20")
-                )
-            ),
-            ToolPrompt(
-                name = "get_memory_by_title",
-                description = "通过精确标题检索记忆，可读取完整内容或文档分块。",
-                parametersStructured = listOf(
-                    ToolParameterSchema(name = "title", type = "string", description = "必需, 字符串, 记忆的精确标题", required = true),
-                    ToolParameterSchema(name = "chunk_index", type = "integer", description = "可选, 整数, 读取特定编号的分块, 例如3表示第3块", required = false),
-                    ToolParameterSchema(name = "chunk_range", type = "string", description = "可选, 字符串, 读取分块范围，格式为\"起始-结束\"，例如\"3-7\"表示第3到第7块", required = false),
-                    ToolParameterSchema(name = "query", type = "string", description = "可选, 字符串, 在文档内部搜索匹配分块。可以传自然语言问题、空格分隔的短语，或使用 `|` 分隔多个关键词，例如 `error log timeout` 或 `error|timeout|retry`。在单个关键词内部，`*` 可作为模糊通配占位符，例如 `error*timeout`", required = false),
-                    ToolParameterSchema(name = "limit", type = "integer", description = "可选, int >= 1, 使用 query 时最多返回多少个文档分块，默认 20", required = false, default = "20")
-                )
-            )
-        ),
-        categoryFooter = "\n注意：记忆库和用户性格档案可能会在当前回复结束后由独立系统自动更新。如果需要立即管理记忆或更新用户偏好，请直接使用相应工具。"
-    )
+    // Memory APIs are exposed only by independently enabled tool packages.
+    val memoryTools = SystemToolPromptCategory(categoryName = "Memory", tools = emptyList())
+    val memoryToolsCn = SystemToolPromptCategory(categoryName = "记忆", tools = emptyList())
 
     private val internalToolCategoriesEn: List<SystemToolPromptCategory> = SystemToolPromptsInternal.internalToolCategoriesEn
     private val internalToolCategoriesCn: List<SystemToolPromptCategory> = SystemToolPromptsInternal.internalToolCategoriesCn
