@@ -2,6 +2,26 @@ import java.io.File
 import java.io.FileInputStream
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+
+abstract class BundleAccessibilityProvider : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val providerApk: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun bundle() {
+        val source = providerApk.get().asFile
+        check(source.isFile) { "A signed accessibility provider APK is required." }
+        val output = outputDirectory.get().asFile
+        output.mkdirs()
+        source.copyTo(File(output, "operit-ry-accessibility.apk"), overwrite = true)
+    }
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -116,23 +136,13 @@ androidComponents.onVariants { variant ->
     val providerType = if (variant.buildType in setOf("release", "nightly")) "release" else "debug"
     val providerTask = providerType.replaceFirstChar(Char::uppercase)
     val suffix = variant.name.replaceFirstChar(Char::uppercase)
-    val output = layout.buildDirectory.dir("generated/accessibilityAssets/${variant.name}")
-    val bundle = tasks.register("bundle${suffix}AccessibilityProvider") {
+    val bundle = tasks.register<BundleAccessibilityProvider>("bundle${suffix}AccessibilityProvider") {
         dependsOn(":accessibility-provider:assemble$providerTask")
-        val source = project(":accessibility-provider").layout.buildDirectory.file(
-            "outputs/apk/$providerType/accessibility-provider-$providerType.apk")
-        inputs.file(source)
-        outputs.dir(output)
-        doLast {
-            check(source.get().asFile.isFile) {
-                "A signed accessibility provider APK is required."
-            }
-            output.get().asFile.mkdirs()
-            source.get().asFile.copyTo(output.get().file("operit-ry-accessibility.apk").asFile, overwrite = true)
-        }
+        providerApk.set(project(":accessibility-provider").layout.buildDirectory.file(
+            "outputs/apk/$providerType/accessibility-provider-$providerType.apk"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/accessibilityAssets/${variant.name}"))
     }
-    android.sourceSets.getByName(variant.name).assets.srcDir(output)
-    tasks.matching { it.name == "merge${suffix}Assets" }.configureEach { dependsOn(bundle) }
+    variant.sources.assets?.addGeneratedSourceDirectory(bundle, BundleAccessibilityProvider::outputDirectory)
 }
 
 android {
