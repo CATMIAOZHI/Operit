@@ -21,7 +21,7 @@ class MemoryLearningActions(
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context).execute(args)
+            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true)
             "memory_read" -> {
                 check(notesEnabled)
                 val user = arg("target")=="user"
