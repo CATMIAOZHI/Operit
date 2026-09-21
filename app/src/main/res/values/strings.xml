@@ -1,4 +1,18 @@
 <resources>
+    <string name="phone_control_observing">正在观察屏幕</string>
+    <string name="phone_control_waiting">正在等待下一步操作</string>
+    <string name="phone_control_acting">正在操作手机</string>
+    <string name="phone_control_retry">操作未完成，等待重新观察</string>
+    <string name="accessibility_adb_enable">通过 ADB 一键启用无障碍</string>
+    <string name="accessibility_adb_enabling">正在启用…</string>
+    <string name="accessibility_adb_unavailable">请先启动 Shizuku 并授权 Operit，以使用 ADB 权限启用服务。</string>
+    <string name="accessibility_adb_service_missing">未找到唯一的 Operit 无障碍服务，请先安装或更新组件。</string>
+    <string name="accessibility_adb_failed">启用失败：%1$s</string>
+    <string name="accessibility_adb_success">无障碍服务已启用</string>
+    <string name="accessibility_adb_not_active">服务尚未生效，请打开系统无障碍设置查看状态。</string>
+    <string name="phone_control_title">前台操控手机</string>
+    <string name="phone_control_stop">停止操控</string>
+    <string name="phone_control_overlay_required">请先允许 Operit 显示悬浮窗，以便随时停止操控。</string>
     <string name="subagent_v2_limits">v2 运行限制</string>
     <string name="subagent_v2_max_active">同时运行的子代理数</string>
     <string name="subagent_v2_max_depth">最大子代理层数</string>

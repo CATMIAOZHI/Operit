@@ -51,6 +51,9 @@ import java.util.Locale
 
 /** Base class for UI automation tools - standard version does not support UI operations */
 open class StandardUITools(protected val context: Context) : ToolImplementations {
+    open suspend fun foregroundIdentity(): Pair<String, String>? {
+        return com.ai.assistance.operit.data.repository.UIHierarchyManager.getForegroundIdentity(context)
+    }
 
     companion object {
         private const val TAG = "UITools"

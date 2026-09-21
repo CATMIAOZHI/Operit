@@ -51,6 +51,7 @@ class PetCompanionService : Service() {
     private lateinit var windows: WindowManager
     private var view: ComposeView? = null
     private var bubbleView: ComposeView? = null
+    private val fadingBubbles = mutableSetOf<ComposeView>()
     private var bubbleFadeJob: Job? = null
     private var bubbleGeneration = 0
     private var bubbleHeight = 0
@@ -78,6 +79,7 @@ class PetCompanionService : Service() {
         preferences = PetPreferences.get(this)
         model = PetTasks.get(this)
         windows = getSystemService(WINDOW_SERVICE) as WindowManager
+        activeInstance = this
         rowHeight = (preferences.settings.value.sizeDp * resources.displayMetrics.density).roundToInt()
         rowWidth = rowHeight
         owner = ServiceLifecycleOwner()
@@ -123,7 +125,7 @@ class PetCompanionService : Service() {
             stopSelf()
             return
         }
-        if (!screenOn || model.appVisible.value || !settings.isReady || entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN) {
+        if (PetAutomationVisibility.hidden.value || !screenOn || model.appVisible.value || !settings.isReady || entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN) {
             removeWindow()
             return
         }
@@ -306,6 +308,7 @@ class PetCompanionService : Service() {
     private fun removeBubble() {
         val bubble = bubbleView ?: return
         bubbleView = null
+        fadingBubbles.add(bubble)
         bubbleHeight = 0
         bubbleWidth = 0
         bubbleFadeJob?.cancel()
@@ -333,6 +336,8 @@ class PetCompanionService : Service() {
     }
 
     private fun detachBubble(bubble: ComposeView) {
+        fadingBubbles.remove(bubble)
+        bubble.animate().cancel()
         bubble.disposeComposition()
         try {
             windows.removeViewImmediate(bubble)
@@ -418,6 +423,7 @@ class PetCompanionService : Service() {
     }
 
     private fun removeWindow() {
+        fadingBubbles.toList().forEach(::detachBubble)
         val existing = view ?: return
         view = null
         // Disposing pointerInput does not guarantee onDragCancel. A hidden window must not
@@ -448,6 +454,7 @@ class PetCompanionService : Service() {
     }
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         removeWindow()
         unregisterReceiver(screenReceiver)
         scope.cancel()
@@ -461,5 +468,7 @@ class PetCompanionService : Service() {
 
     companion object {
         private const val ACTION_HIDE = "pet_hide_overlay"
+        private var activeInstance: PetCompanionService? = null
+        internal fun refreshAutomationVisibility() { activeInstance?.reconcile() }
     }
 }

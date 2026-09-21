@@ -104,6 +104,9 @@ class AIToolHandler private constructor(private val context: Context) {
 
     /** Ask hooks whether the tool call should continue. */
     fun checkToolInterception(tool: AITool): AIToolHookDecision {
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.legacyBlockReason(tool)?.let {
+            return AIToolHookDecision.Block(it)
+        }
         toolHooks.forEach { hook ->
             val decision =
                     try {

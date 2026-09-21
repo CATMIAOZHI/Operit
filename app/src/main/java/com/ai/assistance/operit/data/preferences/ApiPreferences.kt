@@ -281,6 +281,8 @@ class ApiPreferences private constructor(private val context: Context) {
             val updated = (existing.filterNot { it.uri == uri } + SafBookmark(uri = uri, name = name))
                 .sortedBy { it.name.lowercase() }
             preferences[SAF_BOOKMARKS_JSON] = Json.encodeToString(updated)
+            if (existing.map { it.name }.toSet() != updated.map { it.name }.toSet())
+                LearningPromptSnapshotRepository.markChanged(context, "settings")
         }
     }
 
@@ -293,6 +295,8 @@ class ApiPreferences private constructor(private val context: Context) {
                 }.getOrElse { emptyList() }
             val updated = existing.filterNot { it.uri == uri }
             preferences[SAF_BOOKMARKS_JSON] = Json.encodeToString(updated)
+            if (existing.map { it.name }.toSet() != updated.map { it.name }.toSet())
+                LearningPromptSnapshotRepository.markChanged(context, "settings")
         }
     }
 

@@ -76,7 +76,7 @@
 
     <queries>
         <!-- 允许查询和绑定到无障碍服务提供者应用 -->
-        <package android:name="com.ai.assistance.operit.provider" />
+        <package android:name="com.rainy.operitry.provider" />
         <provider android:authorities="com.legado.app.release.readerProvider" />
         <provider android:authorities="com.legado.app.debug.readerProvider" />
         <provider android:authorities="com.legado.app.readerProvider" />

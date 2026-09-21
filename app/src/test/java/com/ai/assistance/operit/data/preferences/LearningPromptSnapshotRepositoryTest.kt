@@ -15,6 +15,29 @@ class LearningPromptSnapshotRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
     private fun repo(chat: String) = LearningPromptSnapshotRepository(folder.root, chat)
 
+    @Test fun `configuration changes flag only their chat while dynamic candidates remain frozen`() = runBlocking {
+        val context = mock<Context>()
+        val prefs = mock<SharedPreferences>()
+        whenever(context.getSharedPreferences(any(), any())).thenReturn(prefs)
+        whenever(prefs.getString(any(), any())).thenReturn("")
+        for (chat in listOf("a", "b")) {
+            repo(chat).trackConfiguration("workspace", "")
+            repo(chat).bindSystem("original", emptyMap())
+        }
+        repo("a").bindSystem("dynamic worldbook", emptyMap())
+        assertFalse(repo("a").status(context).needsRebuild)
+        repo("a").trackConfiguration("workspace", "new rule")
+        assertTrue(repo("a").status(context).needsRebuild)
+        assertFalse(repo("b").status(context).needsRebuild)
+        assertEquals("original", repo("a").bindSystem("new system", emptyMap()))
+        repo("a").beginEpoch("summary")
+        repo("a").trackConfiguration("workspace", "")
+        repo("a").bindSystem("fresh", emptyMap())
+        assertFalse(repo("a").status(context).needsRebuild)
+        repo("a").markChatChanged()
+        assertTrue(repo("a").status(context).needsRebuild)
+    }
+
     @Test fun `old chats retain complete prefixes after restart while new chats use latest`() = runBlocking {
         repo("old").beginEpoch("")
         assertEquals("v1", repo("old").bindSystem("v1", mapOf("user" to "one")))
@@ -79,5 +102,23 @@ class LearningPromptSnapshotRepositoryTest {
         repo("new").bindSystem("updated", revisions.toMap())
         assertFalse(repo("new").status(context).needsRebuild)
         assertTrue(repo("old").status(context).needsRebuild)
+    }
+
+    @Test fun `package settings changes notify existing snapshots until rebuild or compression`() = runBlocking {
+        val context = mock<Context>()
+        val prefs = mock<SharedPreferences>()
+        val revisions = mutableMapOf("settings" to "packages-enabled")
+        whenever(context.getSharedPreferences(any(), any())).thenReturn(prefs)
+        whenever(prefs.getString(any(), any())).thenAnswer { revisions[it.getArgument<String>(0)].orEmpty() }
+        repo("old").beginEpoch("")
+        repo("old").bindSystem("old package catalog", revisions.toMap())
+        revisions["settings"] = "packages-disabled"
+        assertTrue(repo("old").status(context).needsRebuild)
+        assertEquals("old package catalog", repo("old").bindSystem("new catalog", revisions.toMap()))
+        repo("new").bindSystem("new catalog", revisions.toMap())
+        assertFalse(repo("new").status(context).needsRebuild)
+        repo("old").beginEpoch("persisted summary")
+        repo("old").bindSystem("new catalog", revisions.toMap())
+        assertFalse(repo("old").status(context).needsRebuild)
     }
 }

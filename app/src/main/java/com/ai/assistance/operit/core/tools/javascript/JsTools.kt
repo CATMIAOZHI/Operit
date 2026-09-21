@@ -1118,7 +1118,8 @@ fun getJsToolsDefinition(): String {
                  * Run the built-in UI automation subagent.
                  * @param intent High-level task description for the subagent.
                  * @param maxSteps Optional maximum number of steps (default 20).
-                 * @param agentId Optional agent id to reuse the same virtual screen session.
+                 * @deprecated The main agent must use the phone_control package directly.
+                 * @param agentId Retained for source compatibility; this entry now returns a migration error.
                  * @param targetApp Optional target app package name.
                  */
                 runSubAgent: (intent, maxSteps, agentId, targetApp) => {

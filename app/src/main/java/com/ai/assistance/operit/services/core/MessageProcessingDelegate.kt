@@ -34,6 +34,7 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -807,7 +808,7 @@ class MessageProcessingDelegate(
         setChatInputProcessingState(chatId, EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
 
         val sendJob =
-            coroutineScope.launch(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
             val sendUserMessageStartTime = messageTimingNow()
             val effectivePersistTurn = turnOptions.persistTurn
             val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
@@ -1354,7 +1355,7 @@ class MessageProcessingDelegate(
                 // 启动一个独立的协程来收集流内容并持续更新数据库
                 val streamCollectionResult = CompletableDeferred<Throwable?>()
                 chatRuntime.streamCollectionJob =
-                    coroutineScope.launch(Dispatchers.IO) {
+                    coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatStreamPersistence")) {
                         try {
                             var hasLoggedFirstChunk = false
                             var lastStreamingPersistAt = 0L

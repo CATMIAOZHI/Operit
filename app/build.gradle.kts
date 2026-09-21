@@ -112,6 +112,29 @@ if (localPropertiesFile.exists()) {
 }
 val devBuildNumber = System.getenv("OPERIT_DEV_BUILD_NUMBER")?.toIntOrNull()?.takeIf { it > 0 }
 
+androidComponents.onVariants { variant ->
+    val providerType = if (variant.buildType in setOf("release", "nightly")) "release" else "debug"
+    val providerTask = providerType.replaceFirstChar(Char::uppercase)
+    val suffix = variant.name.replaceFirstChar(Char::uppercase)
+    val output = layout.buildDirectory.dir("generated/accessibilityAssets/${variant.name}")
+    val bundle = tasks.register("bundle${suffix}AccessibilityProvider") {
+        dependsOn(":accessibility-provider:assemble$providerTask")
+        val source = project(":accessibility-provider").layout.buildDirectory.file(
+            "outputs/apk/$providerType/accessibility-provider-$providerType.apk")
+        inputs.file(source)
+        outputs.dir(output)
+        doLast {
+            check(source.get().asFile.isFile) {
+                "A signed accessibility provider APK is required."
+            }
+            output.get().asFile.mkdirs()
+            source.get().asFile.copyTo(output.get().file("operit-ry-accessibility.apk").asFile, overwrite = true)
+        }
+    }
+    android.sourceSets.getByName(variant.name).assets.srcDir(output)
+    tasks.matching { it.name == "merge${suffix}Assets" }.configureEach { dependsOn(bundle) }
+}
+
 android {
     namespace = "com.ai.assistance.operit"
     compileSdk = 36

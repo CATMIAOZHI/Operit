@@ -256,7 +256,11 @@ class DisplayPreferencesManager private constructor(private val context: Context
                 preferences[KEY_START_WITH_NEW_CHAT] = it
             }
             globalUserAvatarUri?.let { preferences[KEY_GLOBAL_USER_AVATAR_URI] = it }
-            globalUserName?.let { preferences[KEY_GLOBAL_USER_NAME] = it }
+            globalUserName?.let {
+                if ((preferences[KEY_GLOBAL_USER_NAME] ?: "User") != it)
+                    LearningPromptSnapshotRepository.markChanged(context, "settings")
+                preferences[KEY_GLOBAL_USER_NAME] = it
+            }
             enableBackgroundKeepAlive?.let {
                 preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] = it
             }
@@ -326,6 +330,8 @@ class DisplayPreferencesManager private constructor(private val context: Context
      */
     suspend fun resetDisplaySettings() {
         context.displayPreferencesDataStore.edit { preferences ->
+            if ((preferences[KEY_GLOBAL_USER_NAME] ?: "User") != "User")
+                LearningPromptSnapshotRepository.markChanged(context, "settings")
             preferences[KEY_SHOW_FPS_COUNTER] = false
             preferences[KEY_ENABLE_REPLY_NOTIFICATION] = true
             preferences[KEY_ENABLE_REPLY_NOTIFICATION_SOUND] = false

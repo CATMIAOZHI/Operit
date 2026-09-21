@@ -25,6 +25,7 @@ fun PetCompanionHost() {
     val model = remember { PetTasks.get(context) }
     val settings by preferences.settings.collectAsState()
     val enabled by preferences.enabled.collectAsState()
+    val hiddenForAutomation by PetAutomationVisibility.hidden.collectAsState()
     val entry by FloatingPetEntry.mode.collectAsState()
     val tasks by model.visibleTasks.collectAsState()
     val colors = MaterialTheme.colorScheme
@@ -66,7 +67,7 @@ fun PetCompanionHost() {
             }
         }
     }
-    if (!enabled || (!settings.inApp && entry != FloatingPetEntryMode.PET) ||
+    if (hiddenForAutomation || !enabled || (!settings.inApp && entry != FloatingPetEntryMode.PET) ||
         entry == FloatingPetEntryMode.LEGACY_BALL || entry == FloatingPetEntryMode.HIDDEN || !resumed || !settings.isReady) return
     BoxWithConstraints(
         Modifier.fillMaxSize().safeDrawingPadding().imePadding()

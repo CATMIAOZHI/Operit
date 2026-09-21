@@ -197,7 +197,8 @@ object ToolExecutionManager {
                 (if (result.success) {
                     result.result.toString()
                 } else {
-                    "Step error: ${result.error ?: "Unknown error"}"
+                    listOf("Step error: ${result.error ?: "Unknown error"}", result.result.toString())
+                        .filter { it.isNotBlank() }.joinToString("\n")
                 }).trim()
 
             if (resultCount > 0) {

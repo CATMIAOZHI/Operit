@@ -1859,6 +1859,8 @@ open class OpenAIProvider(
         }
         checkCancellation(context, exception)
 
+        if (exception is CommandCodeProtocolException) throw exception
+
         val errorText = resolveRetryErrorText(context, exception)
 
         if (!enableRetry) {

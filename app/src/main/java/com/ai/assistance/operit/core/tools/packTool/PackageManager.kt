@@ -352,15 +352,24 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     }
 
     private fun persistEnabledPackageNamesToPrefs(enabledPackageNames: List<String>) {
+        val changed = decodeEnabledPackageNamesFromPrefs() != enabledPackageNames
         val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
         val updatedJson = Json.encodeToString(enabledPackageNames)
         prefs.edit().putString(ENABLED_PACKAGES_KEY, updatedJson).apply()
+        if (changed) {
+            // Existing chat snapshots already track "settings"; do not invalidate their prefix.
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+        }
     }
 
     private fun persistToolPkgSubpackageStatesToPrefs(states: Map<String, Boolean>) {
+        val changed = decodeToolPkgSubpackageStatesFromPrefs() != states
         val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
         val updatedJson = Json.encodeToString(states)
         prefs.edit().putString(TOOLPKG_SUBPACKAGE_STATES_KEY, updatedJson).apply()
+        if (changed) {
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+        }
     }
 
     private fun decodeEnabledPackageNamesFromPrefs(): List<String> {
@@ -1728,9 +1737,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         if (packagesChanged) {
-            val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
-            val updatedJson = Json.encodeToString(enabledPackageNames.toList())
-            prefs.edit().putString(ENABLED_PACKAGES_KEY, updatedJson).apply()
+            persistEnabledPackageNamesToPrefs(enabledPackageNames.toList())
             AppLogger.d(TAG, "Updated enabled package names with default packages.")
         }
     }
@@ -1761,9 +1768,23 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         if (isInitialized) {
             refreshToolPkgRuntimeState(persistIfChanged = true)
         }
+        trackPackageDescriptions()
         logToolPkgInfo(
             "loadAvailablePackages finish, elapsedMs=${System.currentTimeMillis() - loadStart}, available=${mergedSnapshot.availablePackages.size}, containers=${mergedSnapshot.toolPkgContainers.size}, subpackages=${mergedSnapshot.toolPkgSubpackages.size}, errors=${mergedSnapshot.packageLoadErrors.size}"
         )
+    }
+
+    private fun trackPackageDescriptions() {
+        val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
+        val key = "prefix_package_descriptions"
+        val old = prefs.getString(key, null)?.let { org.json.JSONObject(it) }
+        val current = org.json.JSONObject(availablePackages.mapValues { it.value.description.toString() })
+        val enabled = getEnabledPackageNamesInternal().toSet()
+        val changed = old != null && enabled.any { name ->
+            old.optString(name) != current.optString(name)
+        }
+        prefs.edit().putString(key, current.toString()).apply()
+        if (changed) com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     private fun registerToolPkg(loadResult: ToolPkgLoadResult): Boolean {
@@ -3293,6 +3314,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
     /** Registers all tools in a package with the AIToolHandler */
     private fun registerPackageTools(toolPackage: ToolPackage) {
+        val isPhoneControlPackage = toolPackage.isBuiltIn &&
+            toolPackage.name == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME
+        if (isPhoneControlPackage) {
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(true)
+        }
         val packageToolExecutor = PackageToolExecutor(toolPackage, context, this)
         val executableTools = toolPackage.tools.filter { !it.advice }
         val newToolNames = executableTools.map { packageTool -> "${toolPackage.name}:${packageTool.name}" }.toSet()
@@ -3315,6 +3341,17 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             packageTool.parameters.map { it.name }.toSet()
 
                         override fun invoke(tool: AITool): ToolResult {
+                            if (isPhoneControlPackage) {
+                                // Native execution retains the host's turn identity; the legacy
+                                // JavaScript bridge cannot securely supply it.
+                                if (!isPackageEnabled(toolPackage.name)) {
+                                    return ToolResult(toolName = tool.name, success = false,
+                                        result = StringResultData(""), error = "Phone control package is disabled.")
+                                }
+                                return com.ai.assistance.operit.core.tools.runBlockingIoPreservingToolRuntimeContext {
+                                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.execute(context, tool)
+                                }
+                            }
                             return packageToolExecutor.invoke(tool)
                         }
                     }
@@ -3678,6 +3715,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     }
 
     internal fun unregisterPackageTools(packageName: String) {
+        if (packageName == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME) {
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(false)
+        }
         val activeTools = activePackageToolNames.remove(packageName).orEmpty()
         activeTools.forEach { toolName ->
             aiToolHandler.unregisterTool(toolName)

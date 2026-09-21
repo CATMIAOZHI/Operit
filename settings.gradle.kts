@@ -19,6 +19,7 @@ dependencyResolutionManagement {
 
 rootProject.name = "Operit"
 include(":app")
+include(":accessibility-provider")
 include(":chat-parser")
 include(":dragonbones")
 include(":terminal")

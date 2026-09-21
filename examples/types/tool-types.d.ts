@@ -137,6 +137,10 @@ export interface ToolResultMap {
     'trigger_tasker_event': string;
 
     // UI operations
+    'phone_control:start': string;
+    'phone_control:observe': string;
+    'phone_control:act': string;
+    'phone_control:stop': string;
     'get_page_info': UIPageResultData;
     'capture_screenshot': string;
     'click_element': UIActionResultData;

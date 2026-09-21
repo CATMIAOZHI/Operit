@@ -80,13 +80,15 @@ class ConversationMarkupManager {
                         append(detail)
                     }
                 }
-                createBoundedToolResultXml(
+                val (toolPayload, imageLinkPayload) = splitImageLinksForModel(errorPayload)
+                val xml = createBoundedToolResultXml(
                     result = result,
                     status = "error",
-                    rawPayload = errorPayload
+                    rawPayload = toolPayload
                 ) { payload ->
                     "<content><error>$payload</error></content>"
                 }
+                if (imageLinkPayload.isBlank()) xml else "$xml\n$imageLinkPayload"
             }
         }
 

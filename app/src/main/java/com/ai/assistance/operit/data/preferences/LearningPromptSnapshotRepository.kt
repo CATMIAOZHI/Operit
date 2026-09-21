@@ -73,6 +73,28 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
 
     data class Status(val exists: Boolean, val needsRebuild: Boolean)
 
+    suspend fun markChatChanged() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = read()
+            if (data.has("_systems")) write(data.put("_changed", true))
+        }
+    }
+
+    /** Only deterministic configuration inputs, never dynamic prompt-hook output. */
+    suspend fun trackConfiguration(key: String, value: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = read()
+            val inputs = data.optJSONObject("_configuration") ?: JSONObject().also { data.put("_configuration", it) }
+            val fingerprint = LearnedSkillRepository.version(value)
+            if (inputs.optString(key) == fingerprint) return@withLock
+            // Legacy snapshots have no input baseline: conservatively ask once, never rebuild.
+            if (data.has("_systems"))
+                data.put("_changed", true)
+            inputs.put(key, fingerprint)
+            write(data)
+        }
+    }
+
     suspend fun status(context: Context): Status = withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = read()
@@ -80,10 +102,10 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
             val changed = systems.keys().asSequence().any { lane ->
                 val system = systems.getJSONObject(lane)
                 val saved = system.getJSONObject("revisions")
-                system.optBoolean("incompatible") ||
+                system.optBoolean("incompatible") || system.optBoolean("changed") ||
                     revisions(context, saved.keys().asSequence().toList()).any { (key, value) -> saved.optString(key) != value }
             }
-            Status(systems.length() > 0, changed)
+            Status(systems.length() > 0, changed || data.optBoolean("_changed"))
         }
     }
 

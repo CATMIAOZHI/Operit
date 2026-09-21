@@ -1,4 +1,5 @@
 package com.ai.assistance.operit.provider;
+import android.os.ParcelFileDescriptor;
 
 interface IAccessibilityProvider {
     String getUiHierarchy();
@@ -8,7 +9,8 @@ interface IAccessibilityProvider {
     boolean performSwipe(int startX, int startY, int endX, int endY, long duration);
     String findFocusedNodeId();
     boolean setTextOnNode(String nodeId, String text);
-    boolean takeScreenshot(String path, String format);
+    boolean takeScreenshot(in ParcelFileDescriptor destination, String format);
     boolean isAccessibilityServiceEnabled();
     String getCurrentActivityName();
-} 
+    String getForegroundIdentity();
+}

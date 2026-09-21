@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Operit Ry</string>
+    <string name="service_description">供 Operit Ry 读取当前界面、截图并执行用户请求的点击、滑动和输入。</string>
+</resources>

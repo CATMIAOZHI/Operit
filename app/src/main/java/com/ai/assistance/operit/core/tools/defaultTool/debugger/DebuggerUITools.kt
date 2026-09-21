@@ -38,6 +38,18 @@ open class DebuggerUITools(context: Context) : AccessibilityUITools(context) {
 
     protected open val uiShellIdentity: ShellIdentity? = null
 
+    override suspend fun foregroundIdentity(): Pair<String, String>? {
+        if (UIHierarchyManager.isAccessibilityServiceEnabled(context)) {
+            super.foregroundIdentity()?.let { return it }
+        }
+        // Some OEM builds omit focus state from the "windows" subsection.
+        val result = executeUiShellCommand("dumpsys window | grep 'mCurrentFocus'")
+        if (!result.success) return null
+        val matches = Regex("""mCurrentFocus=Window\{(\S+)\s[^}]*\s([A-Za-z0-9_.]+)/([A-Za-z0-9_.$]+)\}""")
+            .findAll(result.stdout).map { it.groupValues[2] to "${it.groupValues[1]}:${it.groupValues[3]}" }.distinct().toList()
+        return matches.singleOrNull()
+    }
+
     protected suspend fun executeUiShellCommand(command: String): AndroidShellExecutor.CommandResult {
         return AndroidShellExecutor.executeShellCommand(command, uiShellIdentity)
     }

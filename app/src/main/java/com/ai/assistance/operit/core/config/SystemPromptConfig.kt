@@ -368,12 +368,21 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     } else {
         if (useEnglish) SYSTEM_PROMPT_TEMPLATE else SYSTEM_PROMPT_TEMPLATE_CN
     }
-    val workspaceRuleFile =
-        WorkspaceRuleFileReader.readWorkspaceRootRuleFile(
+    val workspaceRuleRead =
+        WorkspaceRuleFileReader.readWorkspaceRootRuleFileWithStatus(
             context = context,
             workspacePath = workspacePath,
             workspaceEnv = workspaceEnv
         )
+    val workspaceRuleFile = workspaceRuleRead.file
+    if (!chatId.isNullOrBlank()) {
+        val snapshot = com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, chatId)
+        snapshot.trackConfiguration("language", useEnglish.toString())
+        // Failed remote reads are not proof that the file was deleted.
+        if (workspaceRuleRead.reliable) snapshot.trackConfiguration(
+            "workspace-rules:${workspaceEnv.orEmpty()}:${workspacePath.orEmpty()}",
+            workspaceRuleFile?.let { it.name + "\n" + it.content }.orEmpty())
+    }
 
     // Generate workspace guidelines
     val workspaceGuidelines = getWorkspaceGuidelines(

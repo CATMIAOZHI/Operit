@@ -195,10 +195,18 @@ class ModelConfigManager(
 
     // 保存配置
     suspend fun saveModelConfig(config: ModelConfigData) {
+        val changed = prefixCapabilities(loadConfigFromDataStore(config.id)) != prefixCapabilities(config)
         val configKey = stringPreferencesKey("config_${config.id}")
         configDataStore.edit { preferences ->
             preferences[configKey] = json.encodeToString(config)
         }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
+    }
+
+    private fun prefixCapabilities(config: ModelConfigData?) = config?.let {
+        listOf(it.enableDirectImageProcessing, it.enableDirectAudioProcessing,
+            it.enableDirectVideoProcessing, it.enableToolCall,
+            it.modelMultimodalCapabilities, it.modelProtocolSettings, it.apiProviderType, it.modelName)
     }
 
     // 从DataStore加载配置
@@ -328,6 +336,7 @@ class ModelConfigManager(
     ): ModelConfigData {
         val configKey = stringPreferencesKey("config_${configId}")
         var updated: ModelConfigData? = null
+        var prefixChanged = false
         configDataStore.edit { preferences ->
             val current =
                     run {
@@ -352,9 +361,11 @@ class ModelConfigManager(
                     }
 
             val newConfig = transform(current)
+            prefixChanged = prefixCapabilities(current) != prefixCapabilities(newConfig)
             preferences[configKey] = json.encodeToString(newConfig)
             updated = newConfig
         }
+        if (prefixChanged) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return updated ?: ModelConfigData(id = configId, name = context.getString(R.string.model_config_config_id, configId))
     }
 
@@ -1146,6 +1157,7 @@ class ModelConfigManager(
                 json.encodeToString(mergedConfigCollapsed.toList())
         }
 
+        if (newCount + updatedCount > 0) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return Triple(newCount, updatedCount, skippedCount)
     }
 
@@ -1181,6 +1193,7 @@ class ModelConfigManager(
             // 旧版导入不修改本地收藏与折叠
         }
 
+        if (newCount + updatedCount > 0) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return Triple(newCount, updatedCount, skippedCount)
     }
 }

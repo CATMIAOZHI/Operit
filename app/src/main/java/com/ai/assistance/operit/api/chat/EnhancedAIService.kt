@@ -509,13 +509,16 @@ class EnhancedAIService private constructor(
 
     private fun registerExecutionContext(context: MessageExecutionContext) {
         activeExecutionContexts[context.executionId] = context
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(context.toolSequence.scopeId)
     }
 
     private fun unregisterExecutionContext(context: MessageExecutionContext) {
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
         activeExecutionContexts.remove(context.executionId, context)
     }
 
     private fun invalidateExecutionContext(context: MessageExecutionContext, reason: String) {
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
         context.turnInputInbox?.seal()
         if (context.isConversationActive.compareAndSet(true, false)) {
             AppLogger.d(TAG, "执行上下文已失效: id=${context.executionId}, reason=$reason")
@@ -871,7 +874,9 @@ class EnhancedAIService private constructor(
                     execution.eventChannel.replayCache.size,
                 ),
             )
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(execution.toolSequence.scopeId)
             execution.toolSequence.startMessage(scopeId)
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(scopeId)
             // The split allocates this next segment ID under transcriptMutex. A concurrent
             // stream persistence may already insert it, so a later database MAX is unsafe.
             val cutoff = scopeId.toLong() - 1
@@ -2442,7 +2447,9 @@ class EnhancedAIService private constructor(
                 if (nextAssistantScope != null) {
                     // Tool rows are indexed within a displayed assistant message. Steering
                     // starts a new message, so both live timings and result indices move with it.
+                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
                     context.toolSequence.startMessage(nextAssistantScope)
+                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(nextAssistantScope)
                 }
                 turnInputs.forEach { input ->
                     val inputTurn = PromptTurn(
