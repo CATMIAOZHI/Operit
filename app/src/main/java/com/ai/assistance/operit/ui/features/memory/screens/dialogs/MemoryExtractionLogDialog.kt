@@ -25,6 +25,7 @@ import java.util.Date
 @Composable
 fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val ioError = stringResource(R.string.memory_notes_io_error)
     val repo = remember(profileId) { MemoryExtractionLogRepository(context, profileId) }
     var logs by remember { mutableStateOf<List<MemoryExtractionLog>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -62,7 +63,7 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
                             scope.launch {
                                 try { openMemoryExtractionConversation(context, log) }
                                 catch (e: CancellationException) { throw e }
-                                catch (e: Exception) { openError = e.message ?: context.getString(R.string.memory_notes_io_error) }
+                                catch (e: Exception) { openError = e.message ?: ioError }
                                 finally { opening = false }
                             }
                         }) {

@@ -34,6 +34,8 @@ fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> U
     var confirmDiscard by remember { mutableStateOf(false) }
     val ioError = stringResource(R.string.memory_notes_io_error)
     val conflictError = stringResource(R.string.memory_notes_conflict)
+    val fullError = stringResource(R.string.memory_notes_full)
+    val manualEditReason = stringResource(R.string.memory_review_manual_edit)
     LaunchedEffect(repository) {
         try {
             base = repository.load()
@@ -64,13 +66,13 @@ fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> U
                 )
                 val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                 val change = reviews.proposeNotes(latest, draft.orEmpty())
-                reviews.decide(context, change.id, true, "user", context.getString(R.string.memory_review_manual_edit))
+                reviews.decide(context, change.id, true, "user", manualEditReason)
                 onDismiss()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: MemoryNotesRepository.NotesException) {
                 error = if (e.reason == MemoryNotesRepository.Failure.CONFLICT) conflictError
-                    else context.getString(R.string.memory_notes_full)
+                    else fullError
                 try {
                     conflict = repository.load()
                 } catch (e: CancellationException) {

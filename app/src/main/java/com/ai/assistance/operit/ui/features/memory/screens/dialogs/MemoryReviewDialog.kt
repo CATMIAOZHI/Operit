@@ -24,6 +24,7 @@ import java.util.Date
 @Composable
 fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val reviewErrorFormat = stringResource(R.string.memory_review_error)
     val repo = remember(profileId) { MemoryReviewRepository(context, profileId) }
     val settings = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
     val api = remember { ApiPreferences.getInstance(context) }
@@ -52,14 +53,14 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
             error = null
             try { block(); records = repo.list() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = context.getString(R.string.memory_review_error, e.message.orEmpty()) }
+            catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
             finally { busy = false }
         }
     }
     LaunchedEffect(repo) {
         try { records = repo.list() }
         catch (e: CancellationException) { throw e }
-        catch (e: Exception) { error = context.getString(R.string.memory_review_error, e.message.orEmpty()) }
+        catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
     }
     MemoryLibraryPage(selected?.title ?: stringResource(R.string.memory_review_title), profileId,
         { leave(if (selectedId == null) "close" else "back") }) {

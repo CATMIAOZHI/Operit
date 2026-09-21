@@ -1376,7 +1376,7 @@ private fun ThinkingSettingsItem(
     val stateText = buildString {
         append(stringResource(R.string.thinking_mode))
         append(": ")
-        append(if (enableThinkingMode) context.getString(R.string.enabled) else context.getString(R.string.disabled))
+        append(stringResource(if (enableThinkingMode) R.string.enabled else R.string.disabled))
     }
     val accessibilityDesc =
             "${stringResource(R.string.thinking_settings)}: $thinkingTypeText, $stateText, $expandStateDesc"

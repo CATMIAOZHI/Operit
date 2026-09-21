@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.demo.screens
 
+import androidx.compose.ui.res.stringResource
+
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -53,6 +55,8 @@ fun ShizukuDemoScreen(
         navigateTo: ScreenNavigationHandler? = null
 ) {
     val context = LocalContext.current
+    val updateNotify = stringResource(R.string.shizuku_demo_update_notify)
+    val operationFailedFormat = stringResource(R.string.toast_operation_failed)
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     var adbEnablingAccessibility by remember { mutableStateOf(false) }
@@ -655,9 +659,7 @@ fun ShizukuDemoScreen(
                                         context.startActivity(installIntent)
                                         Toast.makeText(
                                                         context,
-                                                        context.getString(
-                                                                R.string.shizuku_demo_update_notify
-                                                        ),
+                                                        updateNotify,
                                                         Toast.LENGTH_LONG
                                                 )
                                                 .show()
@@ -667,10 +669,7 @@ fun ShizukuDemoScreen(
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(
                                                         context,
-                                                        context.getString(
-                                                                R.string.toast_operation_failed,
-                                                                e.message ?: ""
-                                                        ),
+                                                        operationFailedFormat.format(e.message.orEmpty()),
                                                         Toast.LENGTH_SHORT
                                                 )
                                                 .show()
