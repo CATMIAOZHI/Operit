@@ -206,6 +206,13 @@ class MemoryAutoSaveScheduler(
                 MemoryAutoSaveCandidate.isSelectedUserMessageSource(it.sourceType)
             }
         val candidateIds = candidates.map { it.id }
+        val settings = MemorySearchSettingsPreferences(context, profileId)
+        val extractGraph = isSelectedUserBatch ||
+            com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()
+        val chat = AppDatabase.getDatabase(context).chatDao().getChatById(chatId)
+        val extractNew = !isSelectedUserBatch && settings.shouldExtractNewMemory() &&
+            chat != null && !chat.isHidden && chat.parentChatId == null && chat.chatKind == "NORMAL"
+        if (!extractGraph && !extractNew) return
         repository.markProcessing(candidateIds)
 
         try {
@@ -284,7 +291,12 @@ class MemoryAutoSaveScheduler(
                 conversationHistory = conversationHistory,
                 content = memoryContent,
                 aiService = memoryService,
-                profileIdOverride = profileId
+                profileIdOverride = profileId,
+                includeGraph = extractGraph,
+                includeNotes = extractNew,
+                includeSkills = extractNew && settings.shouldExtractSkills(),
+                sourceChatId = chatId,
+                propagateFailure = true
             )
             repository.deleteCandidates(candidateIds)
             AppLogger.d(

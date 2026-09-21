@@ -38,6 +38,28 @@ class ChatContentDaoTest {
     }
 
     @Test
+    fun `recall search excludes hidden and child chats and matches wildcard text literally`() = runBlocking {
+        val chats = listOf(
+            ChatEntity(id = "visible", title = "Visible"),
+            ChatEntity(id = "hidden", title = "Hidden", isHidden = true),
+            ChatEntity(id = "child", title = "Child", parentChatId = "visible")
+        )
+        chats.forEach { chat ->
+            database.chatDao().insertChat(chat)
+            database.messageDao().insertMessage(MessageEntity(chatId = chat.id, sender = "user",
+                content = "prefix %_needle suffix", timestamp = 10L, orderIndex = 0))
+        }
+        database.messageDao().insertMessage(MessageEntity(chatId = "visible", sender = "tool",
+            content = "%_needle", timestamp = 11L, orderIndex = 1))
+        val dao = database.chatContentDao()
+        val hits = dao.searchRecallMessages("%_NEEDLE", 20, 0)
+        assertEquals(listOf("visible"), hits.map { it.chatId })
+        assertEquals(listOf("visible"), dao.readRecallContext(hits.single().messageId).map { it.chatId })
+        assertEquals(emptyList<ChatRecallHit>(), dao.searchRecallMessages("", 20, 0))
+        assertEquals(emptyList<ChatRecallHit>(), dao.searchRecallMessages("%_needle", 20, 1))
+    }
+
+    @Test
     fun `variant lookup handles large sparse duplicate timestamp sets in query order`() = runBlocking {
         val chatId = "many-variants"
         database.chatDao().insertChat(ChatEntity(id = chatId, title = "Variants"))

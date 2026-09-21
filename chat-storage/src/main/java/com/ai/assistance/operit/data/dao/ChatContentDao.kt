@@ -80,9 +80,41 @@ data class MessageVariantContentRow(
     val contentByteCount: Long,
 )
 
+data class ChatRecallHit(
+    val messageId: Long,
+    val chatId: String,
+    val chatTitle: String,
+    val sender: String,
+    val timestamp: Long,
+    val excerpt: String,
+)
+
 /** Reads message text in bounded rows so a single large message cannot overflow CursorWindow. */
 @Dao
 abstract class ChatContentDao {
+    /** Bounded projections keep even very large archived tool outputs out of CursorWindow. */
+    @Query("""
+        SELECT m.messageId, m.chatId, c.title AS chatTitle, m.sender, m.timestamp,
+            SUBSTR(m.content, MAX(1, INSTR(LOWER(m.content), LOWER(:query)) - 120), 800) AS excerpt
+        FROM messages m INNER JOIN chats c ON c.id = m.chatId
+        WHERE c.isHidden = 0 AND c.chatKind = 'NORMAL' AND c.parentChatId IS NULL
+            AND m.sender IN ('user', 'ai') AND LENGTH(:query) > 0
+            AND INSTR(LOWER(m.content), LOWER(:query)) > 0
+        ORDER BY m.timestamp DESC, m.messageId DESC LIMIT :limit OFFSET :offset
+    """)
+    abstract suspend fun searchRecallMessages(query: String, limit: Int, offset: Int): List<ChatRecallHit>
+
+    @Query("""
+        SELECT m.messageId, m.chatId, c.title AS chatTitle, m.sender, m.timestamp,
+            SUBSTR(m.content, 1, 2000) AS excerpt
+        FROM messages a INNER JOIN chats c ON c.id = a.chatId
+            INNER JOIN messages m ON m.chatId = a.chatId
+        WHERE a.messageId = :anchorMessageId AND c.isHidden = 0
+            AND c.chatKind = 'NORMAL' AND c.parentChatId IS NULL AND m.sender IN ('user', 'ai')
+        ORDER BY ABS(m.orderIndex - a.orderIndex), m.messageId LIMIT 11
+    """)
+    abstract suspend fun readRecallContext(anchorMessageId: Long): List<ChatRecallHit>
+
     @Query(MESSAGE_CONTENT_ROW_QUERY + " WHERE chatId = :chatId ORDER BY timestamp ASC")
     protected abstract suspend fun queryMessagesForChat(chatId: String): List<MessageContentRow>
 

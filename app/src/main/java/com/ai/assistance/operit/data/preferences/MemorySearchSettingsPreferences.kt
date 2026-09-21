@@ -27,6 +27,23 @@ class MemorySearchSettingsPreferences(context: Context, profileId: String) {
         return config.normalized()
     }
 
+    fun shouldInjectNotes(): Boolean = searchPrefs.getBoolean("inject_memory_notes", true)
+    fun setInjectNotes(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("inject_memory_notes", enabled).apply()
+    }
+    fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
+    fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
+    fun setAiReviewChanges(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("allow_ai_memory_decisions", enabled).apply()
+    }
+    fun shouldExtractNewMemory(): Boolean = searchPrefs.getBoolean("extract_new_memory", true)
+    fun setExtractNewMemory(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("extract_new_memory", enabled).apply()
+    }
+    fun setExtractSkills(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("extract_skill_drafts", enabled).apply()
+    }
+
     fun save(config: MemorySearchConfig) {
         val normalized = config.normalized()
         searchPrefs.edit()

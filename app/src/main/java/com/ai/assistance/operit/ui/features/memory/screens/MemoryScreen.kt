@@ -1,5 +1,8 @@
 package com.ai.assistance.operit.ui.features.memory.screens
 
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
+
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -153,7 +156,43 @@ fun MemoryScreen() {
     }
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
+    var notesProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var memoryPanel by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var panelProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    androidx.compose.runtime.key(panelProfileId, memoryPanel) {
+        when (memoryPanel) {
+            "history" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.ChatRecallDialog(panelProfileId) { memoryPanel = null }
+            "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(panelProfileId) { memoryPanel = null }
+            "logs" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryExtractionLogDialog(panelProfileId) { memoryPanel = null }
+            "skills" -> androidx.compose.ui.window.Dialog(
+                onDismissRequest = { memoryPanel = null },
+                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
+            ) {
+                androidx.compose.material3.Surface(Modifier.fillMaxWidth(.95f).fillMaxHeight(.9f)) {
+                    Column {
+                        Box(Modifier.weight(1f)) {
+                            com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
+                                com.ai.assistance.operit.data.skill.SkillRepository.getInstance(context),
+                                remember { androidx.compose.material3.SnackbarHostState() }
+                            )
+                        }
+                        androidx.compose.material3.TextButton(onClick = { memoryPanel = null }) { Text(stringResource(R.string.close)) }
+                    }
+                }
+            }
+        }
+    }
     var showFolderNavigator by remember { mutableStateOf(false) }
+
+    notesProfileId?.let { id ->
+        androidx.compose.runtime.key(id) {
+            com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(
+                profileId = id,
+                profileName = profileNameMap[id] ?: id,
+                onDismiss = { notesProfileId = null }
+            )
+        }
+    }
 
     LaunchedEffect(activeProfileId) { selectedProfileId = activeProfileId }
 
@@ -338,6 +377,20 @@ fun MemoryScreen() {
                 modifier = Modifier
                     .fillMaxSize()
             ) {
+                Row(Modifier.horizontalScroll(rememberScrollState())) {
+                androidx.compose.material3.TextButton(
+                    onClick = { notesProfileId = selectedProfileId },
+                    modifier = Modifier.padding(horizontal = 8.dp)
+                ) {
+                    Text(stringResource(R.string.memory_notes_title))
+                }
+                listOf("review" to R.string.memory_review_title, "history" to R.string.chat_recall_title,
+                    "skills" to R.string.memory_extraction_skills, "logs" to R.string.memory_extraction_logs).forEach { (panel, label) ->
+                    androidx.compose.material3.TextButton(onClick = {
+                        panelProfileId = selectedProfileId; memoryPanel = panel
+                    }) { Text(stringResource(label)) }
+                }
+                }
                 MemorySearchBar(
                     query = uiState.searchQuery,
                     onQueryChange = { viewModel.onSearchQueryChange(it) },

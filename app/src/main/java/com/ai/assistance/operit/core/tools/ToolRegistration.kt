@@ -815,6 +815,27 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
+    handler.registerTool(
+        name = "memory_notes",
+        descriptionGenerator = { tool ->
+            s(R.string.memory_notes_tool_description, tool.parameters.find { it.name == "action" }?.value ?: "read")
+        },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
+    )
+    handler.registerTool(
+        name = "search_chat_history",
+        descriptionGenerator = { s(R.string.chat_recall_title) },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
+    )
+    // Exposed on demand by the memory_review package; decisions use the normal permission gate.
+    handler.registerTool(
+        name = "memory_review",
+        descriptionGenerator = { tool ->
+            s(R.string.memory_review_operation, tool.parameters.find { it.name == "action" }?.value.orEmpty())
+        },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
+    )
+
     // Register the document-level profile update. The normal tool confirmation UI is the safety
     // boundary; unlike the released analyzer, no background process may rewrite user.md.
     handler.registerTool(
