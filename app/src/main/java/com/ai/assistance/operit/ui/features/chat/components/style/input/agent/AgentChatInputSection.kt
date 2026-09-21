@@ -2619,6 +2619,19 @@ private fun AgentMemorySelectorItem(
     onDisableUserPreferenceDescriptionInfoClick: () -> Unit,
     onManualMemoryUpdateInfoClick: () -> Unit,
 ) {
+    val notesContext = LocalContext.current
+    val notesSettings = remember(notesContext, currentProfileId) {
+        com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(notesContext, currentProfileId)
+    }
+    val injectNotes by remember(notesSettings) { notesSettings.observeInjectNotes() }
+        .collectAsState(initial = notesSettings.shouldInjectNotes())
+    var showNotesInfo by remember { mutableStateOf(false) }
+    if (showNotesInfo) AlertDialog(
+        onDismissRequest = { showNotesInfo = false },
+        title = { Text(stringResource(R.string.disable_memory_notes)) },
+        text = { Text(stringResource(R.string.disable_memory_notes_desc)) },
+        confirmButton = { TextButton(onClick = { showNotesInfo = false }) { Text(stringResource(R.string.close)) } }
+    )
     val currentProfileName =
         preferenceProfiles.find { it.id == currentProfileId }?.name ?: stringResource(R.string.not_selected)
 
@@ -2739,6 +2752,13 @@ private fun AgentMemorySelectorItem(
                 isChecked = disableUserPreferenceDescription,
                 onToggle = onToggleDisableUserPreferenceDescription,
                 onInfoClick = onDisableUserPreferenceDescriptionInfoClick,
+            )
+            AgentSimpleToggleSettingItem(
+                title = stringResource(R.string.disable_memory_notes),
+                icon = Icons.Outlined.Block,
+                isChecked = !injectNotes,
+                onToggle = { notesSettings.setInjectNotes(!injectNotes) },
+                onInfoClick = { showNotesInfo = true },
             )
             AgentActionSettingItem(
                 title = stringResource(R.string.manual_memory_update),

@@ -103,6 +103,7 @@ class WaifuPreferences private constructor(private val context: Context) {
         context.waifuDataStore.edit { preferences ->
             preferences[ENABLE_WAIFU_MODE] = isEnabled
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun saveWaifuCharDelay(delayMs: Int) {
@@ -121,12 +122,14 @@ class WaifuPreferences private constructor(private val context: Context) {
         context.waifuDataStore.edit { preferences ->
             preferences[WAIFU_ENABLE_EMOTICONS] = enableEmoticons
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun saveWaifuEnableSelfie(enableSelfie: Boolean) {
         context.waifuDataStore.edit { preferences ->
             preferences[WAIFU_ENABLE_SELFIE] = enableSelfie
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun saveWaifuEnableMergeSend(enableMergeSend: Boolean) {
@@ -145,12 +148,14 @@ class WaifuPreferences private constructor(private val context: Context) {
         context.waifuDataStore.edit { preferences ->
             preferences[WAIFU_CUSTOM_PROMPT] = prompt
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun saveWaifuSelfiePrompt(prompt: String) {
         context.waifuDataStore.edit { preferences ->
             preferences[WAIFU_SELFIE_PROMPT] = prompt
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     // ========== Waifu模式角色卡/群组绑定功能 ==========

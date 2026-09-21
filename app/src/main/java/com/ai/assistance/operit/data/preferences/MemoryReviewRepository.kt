@@ -56,7 +56,10 @@ data class MemoryReviewChange(
     val reviewedAt: Long = 0,
     val reviewer: String = "",
     val reason: String = "",
-    val audits: String = ""
+    val audits: String = "",
+    val path: String = "SKILL.md",
+    val operation: String = "write",
+    val automatic: Boolean = false
 )
 
 class MemoryReviewRepository internal constructor(private val root: File, val profileId: String) {
@@ -78,7 +81,8 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
                 obj.getString("body"), obj.optString("description"), obj.optString("before"),
                 obj.optString("baseVersion"), obj.optString("addition"), obj.optString("sourceChatId"),
                 obj.getLong("createdAt"), obj.getString("status"), obj.optLong("reviewedAt"),
-                obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"))
+                obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"),
+                obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"))
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
@@ -97,6 +101,7 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
         .put("baseVersion", d.baseVersion).put("addition", d.addition).put("sourceChatId", d.sourceChatId)
         .put("createdAt", d.createdAt).put("status", d.status).put("reviewedAt", d.reviewedAt)
         .put("reviewer", d.reviewer).put("reason", d.reason).put("audits", d.audits)
+        .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
 
     suspend fun list(): List<MemoryReviewChange> = withContext(Dispatchers.IO) {
         mutex.withLock { read().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
@@ -107,7 +112,8 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
             items.find { it.status in setOf("pending", "applying") &&
                 it.kind == change.kind && it.title == change.title && it.body == change.body &&
                 it.description == change.description && it.baseVersion == change.baseVersion &&
-                it.addition == change.addition }?.let { return@withLock it }
+                it.addition == change.addition && it.path==change.path && it.operation==change.operation &&
+                it.automatic==change.automatic }?.let { return@withLock it }
             require(items.count { it.status in setOf("pending", "applying") } < 30) { "Pending review limit reached" }
             val created = change.copy(id = java.util.UUID.randomUUID().toString())
             items.add(created)
@@ -122,6 +128,21 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
         kind = "skill", title = draft.name, description = draft.description, body = draft.body,
         sourceChatId = draft.sourceChatId
     ), onCreated)
+
+    suspend fun proposeSkillFile(name: String, path: String, before: LearnedSkillRepository.Snapshot,
+        body: String, remove: Boolean = false, automatic: Boolean = false, sourceChatId: String = "",
+        onCreated: () -> Unit = {}): MemoryReviewChange = propose(MemoryReviewChange(
+            id = "",kind="skill_file",title=name,body=body,before=before.text,baseVersion=before.version,
+            path=path,operation=if(remove) "remove" else "write",automatic=automatic,sourceChatId=sourceChatId
+        ),onCreated)
+
+    suspend fun proposeUser(before: String, after: String, sourceChatId: String = "",
+        onCreated: () -> Unit = {}) = propose(MemoryReviewChange(id="", kind="user",
+        title="user.md",body=after,before=before,baseVersion=LearnedSkillRepository.version(before),
+        sourceChatId=sourceChatId),onCreated)
+    suspend fun proposeSkillDeletion(name: String, before: LearnedSkillRepository.Snapshot, sourceChatId: String="",
+        onCreated: () -> Unit = {}) = propose(MemoryReviewChange(id="",kind="skill_delete",title=name,body="",
+        before=before.text,baseVersion=before.version,sourceChatId=sourceChatId,operation="delete"),onCreated)
 
     suspend fun proposeNotes(
         before: MemoryNotesRepository.Snapshot, after: String, addition: String = "", sourceChatId: String = "",
@@ -154,7 +175,8 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
             val index = items.indexOfFirst { it.id == id }
             require(index >= 0 && items[index].status == "pending")
             val previous = items[index]
-            require(body.length <= 6000)
+            require(previous.kind!="skill_delete") { "Reject and submit a new deletion request instead of editing it" }
+            require(body.length <= when(previous.kind) { "skill_file" -> 24_000; "user" -> 12_000; else -> 6000 })
             if (previous.kind == "skill") require(parseSkillDrafts(JSONArray().put(
                 JSONObject().put("name", previous.title).put("description", description).put("body", body)
             ), previous.sourceChatId).isNotEmpty())
@@ -188,11 +210,20 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
             if (approve) {
                 items[index] = change.copy(status = "applying", reviewer = reviewer, reason = reason)
                 write(items)
+                var skillInstalled = false
                 try {
                     if (change.kind == "notes") {
                         val notes = MemoryNotesRepository(context, profileId)
                         if (change.addition.isNotEmpty()) notes.mutate("add", change.addition)
                         else if (notes.load().markdown != change.body) notes.save(change.body, change.baseVersion)
+                        if (reviewer=="user") LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
+                    } else if(change.kind=="user") {
+                        UserProfileDocumentRepository.getInstance(context).saveIfUnchanged(change.body,change.before)
+                    } else if(change.kind=="skill_delete") {
+                        LearnedSkillRepository(context).delete(change.title,change.baseVersion)
+                    } else if (change.kind=="skill_file") {
+                        LearnedSkillRepository(context).apply(profileId,change.title,change.path,change.body,
+                            change.baseVersion,change.operation=="remove",change.automatic)
                     } else skillInstallMutex.withLock {
                         if (change.status == "pending") {
                             check(SkillManager.getInstance(context).getAvailableSkills()[change.title] == null) {
@@ -200,6 +231,8 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
                             }
                         }
                         installSkill(context, change)
+                        skillInstalled = true
+                        LearnedSkillRepository(context).register(change.title,profileId)
                     }
                 } catch (e: MemoryNotesRepository.NotesException) {
                     // A rejected CAS/capacity check made no write; it is safe to return to pending.
@@ -207,7 +240,7 @@ class MemoryReviewRepository internal constructor(private val root: File, val pr
                     write(items)
                     throw e
                 } catch (e: Exception) {
-                    if (change.kind == "skill") {
+                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user")) {
                         // Import returned no success: keep the proposal editable/rejectable.
                         items[index] = change.copy(status = "pending", reason = e.javaClass.simpleName)
                         write(items)

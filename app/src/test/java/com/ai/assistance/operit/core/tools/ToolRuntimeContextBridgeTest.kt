@@ -12,6 +12,7 @@ class ToolRuntimeContextBridgeTest {
             ToolExecutionManager.ToolRuntimeContext(
                 parentModelSupportsVision = true,
                 imageRecognitionModelAvailable = true,
+                resolvedMemorySpaceId = "fixed-space",
             )
 
         runBlocking(ToolExecutionManager.toolRuntimeContextElement(expected)) {

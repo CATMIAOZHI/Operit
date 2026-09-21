@@ -3297,6 +3297,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     AppLogger.w(TAG, "Chat $chatId subtree deletion refused (locked or missing)")
                     return false
                 }
+                subtreeChatIds.forEach { id ->
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(id)
+                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,id).delete()
+                }
 
                 // 如果删除的是当前聊天，清除当前聊天ID
                 val currentChatId = currentChatIdFlow.first()

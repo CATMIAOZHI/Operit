@@ -10,6 +10,14 @@
   "enabledByDefault": true,
   "tools": [
     {
+      "name": "manage",
+      "description": {"zh": "读取/整理 memory.md 与 user.md，维护技能及配套文件。前台修改进入待审。修改前读取并传回 version。", "en": "Read/consolidate memory.md and user.md, and maintain skills and supporting files. Foreground changes require review. Read first and pass the returned version."},
+      "parameters": [
+        {"name": "action", "type": "string", "required": true, "description": {"zh": "memory_read/memory_change/skill_list/skill_read/skill_create/skill_write/skill_patch/skill_remove_file/skill_delete（整包删除需传读取所得directory_version作为version）", "en": "memory_read/memory_change/skill_list/skill_read/skill_create/skill_write/skill_patch/skill_remove_file/skill_delete (use directory_version as version for package deletion)"}},
+        {"name": "arguments", "type": "string", "required": false, "description": {"zh": "JSON对象：target=memory/user，operation=add/replace/remove，name，path（默认SKILL.md），content，old_text，description，reason，version。技能配套文件仅支持references/scripts/templates/assets下的相对路径。", "en": "JSON object: target=memory/user, operation=add/replace/remove, name, path (default SKILL.md), content, old_text, description, reason, version. Supporting files use relative paths under references/scripts/templates/assets."}}
+      ]
+    },
+    {
       "name": "notes",
       "description": {"zh": "读取 memory.md，或提出增删改草稿。修改待审批后才生效。", "en": "Read memory.md or propose changes. Changes take effect only after approval."},
       "parameters": [
@@ -24,6 +32,15 @@
       "parameters": [
         {"name": "query", "type": "string", "required": false, "description": {"zh": "搜索文字（最多200字）", "en": "Search text (up to 200 characters)"}},
         {"name": "message_id", "type": "string", "required": false, "description": {"zh": "查看上下文的消息 ID", "en": "Message ID for context"}},
+        {"name": "session_id", "type": "string", "required": false, "description": {"zh": "读取完整会话或限定搜索；query/session_id都省略则浏览最近会话", "en": "Read a session or restrict search; omit query/session_id to browse recent sessions"}},
+        {"name": "mode", "type": "string", "required": false, "description": {"zh": "message：分段读取单条完整消息；否则查看锚点附近", "en": "message: read a full message in chunks; otherwise read around the anchor"}},
+        {"name": "char_offset", "type": "number", "required": false, "description": {"zh": "单条消息字符偏移", "en": "Character offset within a message"}},
+        {"name": "window", "type": "number", "required": false, "description": {"zh": "上下文窗口，1至50，默认5", "en": "Context window, 1-50, default 5"}},
+        {"name": "role", "type": "string", "required": false, "description": {"zh": "user/ai，留空为全部", "en": "user/ai; empty for all"}},
+        {"name": "profile", "type": "string", "required": false, "description": {"zh": "角色卡名称筛选", "en": "Character card name filter"}},
+        {"name": "after", "type": "string", "required": false, "description": {"zh": "开始时间：ISO日期或7d/24h", "en": "Since: ISO date or 7d/24h"}},
+        {"name": "before", "type": "string", "required": false, "description": {"zh": "结束时间：ISO日期或7d/24h", "en": "Until: ISO date or 7d/24h"}},
+        {"name": "literal", "type": "boolean", "required": false, "description": {"zh": "true为字面包含；默认全文关键词检索", "en": "true for literal matching; default full-text keyword search"}},
         {"name": "offset", "type": "number", "required": false, "description": {"zh": "分页偏移", "en": "Page offset"}}
       ]
     },
@@ -47,3 +64,4 @@ async function callMemoryNative(name: string, params: any) {
 exports.notes = (params: any) => callMemoryNative("memory_notes", params);
 exports.history = (params: any) => callMemoryNative("search_chat_history", params);
 exports.review = (params: any) => callMemoryNative("memory_review", params);
+exports.manage = (params: any) => callMemoryNative("learning_manage", params);

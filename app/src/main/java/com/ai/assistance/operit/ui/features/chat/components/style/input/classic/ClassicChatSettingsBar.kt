@@ -220,6 +220,11 @@ fun ClassicChatSettingsBar(
         } else {
             activeProfileId
         }
+    val notesSettings = remember(context, effectiveCurrentProfileId) {
+        com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, effectiveCurrentProfileId)
+    }
+    val injectNotes by remember(notesSettings) { notesSettings.observeInjectNotes() }
+        .collectAsState(initial = notesSettings.shouldInjectNotes())
     LaunchedEffect(Unit) {
         val profileIds = userPreferencesManager.memorySpaceListFlow.first()
         preferenceProfiles =
@@ -586,6 +591,18 @@ fun ClassicChatSettingsBar(
                                     infoPopupContent =
                                         context.getString(R.string.disable_user_preference_description) to
                                             context.getString(R.string.disable_user_preference_description_desc)
+                                    showMenu = false
+                                }
+                            )
+                            SettingItem(
+                                title = stringResource(R.string.disable_memory_notes),
+                                icon = Icons.Outlined.Block,
+                                iconTint = if (!injectNotes) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                                isChecked = !injectNotes,
+                                onToggle = { notesSettings.setInjectNotes(!injectNotes) },
+                                onInfoClick = {
+                                    infoPopupContent = context.getString(R.string.disable_memory_notes) to
+                                        context.getString(R.string.disable_memory_notes_desc)
                                     showMenu = false
                                 }
                             )

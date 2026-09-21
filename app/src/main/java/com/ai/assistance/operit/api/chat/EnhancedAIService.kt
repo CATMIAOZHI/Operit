@@ -1092,6 +1092,7 @@ class EnhancedAIService private constructor(
         val customSystemPromptTemplate = options.customSystemPromptTemplate
         val additionalSystemPrompt = options.additionalSystemPrompt
         val isSubTask = options.isSubTask
+        if (!isSubTask) com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(chatId)
         val toolsEnabled = options.toolsEnabled
         val isolatedToolPrompts = options.isolatedToolPrompts
         val terminalToolNames = options.terminalToolNames
@@ -1106,7 +1107,19 @@ class EnhancedAIService private constructor(
         val notifyReplyOverride = options.notifyReplyOverride
         val chatModelConfigIdOverride = options.chatModelConfigIdOverride
         val chatModelIndexOverride = options.chatModelIndexOverride
-        val memorySpaceIdOverride = options.memorySpaceIdOverride
+        // Resolve once for both CHAT and VOICE so prompt, tools and post-turn learning use
+        // the same space even if the user switches the global selection during generation.
+        val memorySpaceIdOverride = options.memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+            ?: if (isSubTask) null else {
+                val card = roleCardId?.takeIf { it.isNotBlank() }?.let {
+                    com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context)
+                        .getCharacterCardFlow(it).first()
+                }
+                card?.takeIf {
+                    com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
+                        com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
+                }?.memoryProfileId?.takeIf { it.isNotBlank() } ?: preferencesManager.activeMemorySpaceIdFlow.first()
+            }
         val toolTimingScopeId = options.toolTimingScopeId
         val stream = options.stream
         val disableWarning = options.disableWarning
@@ -2026,18 +2039,23 @@ class EnhancedAIService private constructor(
                 val profileId =
                     memorySpaceIdOverride?.takeIf { it.isNotBlank() }
                         ?: preferencesManager.activeMemorySpaceIdFlow.first()
-                if (!enableMemoryAutoUpdate &&
-                    !com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(
-                        this@EnhancedAIService.context, profileId
-                    ).shouldExtractNewMemory()) return@runCatching
                 if (currentChatId.isNullOrBlank()) {
                     AppLogger.w(TAG, "自动保存长期记忆入队跳过：chatId为空")
                 } else {
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.replyCompleted(
+                        this@EnhancedAIService.context,profileId,currentChatId,
+                        context.conversationHistory.filter { it.kind.name in setOf("USER","ASSISTANT","TOOL_RESULT") }.takeLast(48)
+                            .joinToString("\n\n") { "${it.kind}:\n${it.content.take(6000)}" }.takeLast(80_000)
+                    )
+                    val memoryPreferences = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(this@EnhancedAIService.context)
+                    if (enableMemoryAutoUpdate && memoryPreferences.enableMemoryAutoUpdateFlow.first() &&
+                        memoryPreferences.enableLegacyMemoryExtractionFlow.first()) {
                     MemoryAutoSaveCandidateRepository(this@EnhancedAIService.context, profileId)
                         .enqueue(
                             chatId = currentChatId,
                             triggerMessageTimestamp = System.currentTimeMillis()
                         )
+                    }
                 }
             }.onFailure { e ->
                 AppLogger.e(TAG, "自动保存长期记忆候选入队失败", e)
@@ -2222,6 +2240,7 @@ class EnhancedAIService private constructor(
                 callerName = characterName,
                 callerChatId = chatId,
                 callerCardId = roleCardId,
+                resolvedMemorySpaceId = memorySpaceIdOverride,
                 conversationLabel = conversationLabel,
                 parentModelConfigId = modelSnapshot.config.id,
                 parentModelIndex = modelSnapshot.lease.modelIndex,

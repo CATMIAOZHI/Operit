@@ -150,6 +150,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
         // Key for Memory Auto Update
         val ENABLE_MEMORY_AUTO_UPDATE = booleanPreferencesKey("enable_memory_auto_update")
+        val ENABLE_LEGACY_MEMORY_EXTRACTION = booleanPreferencesKey("enable_legacy_memory_extraction")
 
         // Key for Auto Read
         val ENABLE_AUTO_READ = booleanPreferencesKey("enable_auto_read")
@@ -338,6 +339,13 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.data.map { preferences ->
             preferences[ENABLE_MEMORY_AUTO_UPDATE] ?: DEFAULT_ENABLE_MEMORY_AUTO_UPDATE
         }
+    val enableLegacyMemoryExtractionFlow: Flow<Boolean> =
+        context.apiDataStore.data.map { it[ENABLE_LEGACY_MEMORY_EXTRACTION] ?: true }
+
+    suspend fun saveEnableLegacyMemoryExtraction(enabled: Boolean) {
+        context.apiDataStore.edit { it[ENABLE_LEGACY_MEMORY_EXTRACTION] = enabled }
+        if (!enabled) com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler.getInstance()?.cancelAutomaticExtraction()
+    }
 
     // Flow for Auto Read
     val enableAutoReadFlow: Flow<Boolean> =
@@ -469,6 +477,10 @@ class ApiPreferences private constructor(private val context: Context) {
     // Save Memory Auto Update setting
     suspend fun saveEnableMemoryAutoUpdate(isEnabled: Boolean) {
         context.apiDataStore.edit { preferences -> preferences[ENABLE_MEMORY_AUTO_UPDATE] = isEnabled }
+        if (!isEnabled) {
+            com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.cancelAutomaticReviews()
+            com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler.getInstance()?.cancelAutomaticExtraction()
+        }
     }
 
     // Save Auto Read setting
@@ -479,6 +491,7 @@ class ApiPreferences private constructor(private val context: Context) {
     // Save Tools Enable/Disable setting
     suspend fun saveEnableTools(isEnabled: Boolean) {
         context.apiDataStore.edit { preferences -> preferences[ENABLE_TOOLS] = isEnabled }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     // Save prompt visibility for a single tool
@@ -490,6 +503,7 @@ class ApiPreferences private constructor(private val context: Context) {
             }.getOrElse { emptyMap() }
             preferences[TOOL_PROMPT_VISIBILITY_JSON] = Json.encodeToString(currentMap + (toolName to isVisible))
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     // Save prompt visibility map for all tools
@@ -497,6 +511,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[TOOL_PROMPT_VISIBILITY_JSON] = Json.encodeToString(visibilityMap)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun getToolPromptVisibilityMap(): Map<String, Boolean> {
@@ -512,6 +527,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[TOOL_PROMPT_ORDER_JSON] = Json.encodeToString(order)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun getToolPromptOrder(): List<String> {
@@ -527,6 +543,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[PLUGIN_ORDER_JSON] = Json.encodeToString(order)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun getPluginOrder(): List<String> {
@@ -542,6 +559,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[SKILL_ORDER_JSON] = Json.encodeToString(order)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun getSkillOrder(): List<String> {
@@ -562,6 +580,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[DISABLE_USER_PREFERENCE_DESCRIPTION] = isDisabled
         }
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     // Save Disable Status Tags setting
@@ -686,6 +705,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[CUSTOM_SYSTEM_PROMPT_TEMPLATE] = template
         }
+        LearningPromptSnapshotRepository.markChanged(context, "template")
     }
 
     // Reset custom system prompt template to default
@@ -693,6 +713,7 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.edit { preferences ->
             preferences[CUSTOM_SYSTEM_PROMPT_TEMPLATE] = DEFAULT_SYSTEM_PROMPT_TEMPLATE
         }
+        LearningPromptSnapshotRepository.markChanged(context, "template")
     }
 
     /**

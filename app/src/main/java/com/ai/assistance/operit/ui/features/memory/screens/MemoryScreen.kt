@@ -2,6 +2,9 @@ package com.ai.assistance.operit.ui.features.memory.screens
 
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.heightIn
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -48,6 +51,10 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.layout
+import androidx.compose.foundation.clickable
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.material3.HorizontalDivider
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -156,43 +163,10 @@ fun MemoryScreen() {
     }
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
-    var notesProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var memoryPanel by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var panelProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    androidx.compose.runtime.key(panelProfileId, memoryPanel) {
-        when (memoryPanel) {
-            "history" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.ChatRecallDialog(panelProfileId) { memoryPanel = null }
-            "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(panelProfileId) { memoryPanel = null }
-            "logs" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryExtractionLogDialog(panelProfileId) { memoryPanel = null }
-            "skills" -> androidx.compose.ui.window.Dialog(
-                onDismissRequest = { memoryPanel = null },
-                properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false)
-            ) {
-                androidx.compose.material3.Surface(Modifier.fillMaxWidth(.95f).fillMaxHeight(.9f)) {
-                    Column {
-                        Box(Modifier.weight(1f)) {
-                            com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
-                                com.ai.assistance.operit.data.skill.SkillRepository.getInstance(context),
-                                remember { androidx.compose.material3.SnackbarHostState() }
-                            )
-                        }
-                        androidx.compose.material3.TextButton(onClick = { memoryPanel = null }) { Text(stringResource(R.string.close)) }
-                    }
-                }
-            }
-        }
-    }
     var showFolderNavigator by remember { mutableStateOf(false) }
 
-    notesProfileId?.let { id ->
-        androidx.compose.runtime.key(id) {
-            com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(
-                profileId = id,
-                profileName = profileNameMap[id] ?: id,
-                onDismiss = { notesProfileId = null }
-            )
-        }
-    }
 
     LaunchedEffect(activeProfileId) { selectedProfileId = activeProfileId }
 
@@ -203,6 +177,7 @@ fun MemoryScreen() {
         )
     val uiState by viewModel.uiState.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
+    val memoryFocusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val isCurrentScreen = LocalIsCurrentScreen.current
 
@@ -297,6 +272,14 @@ fun MemoryScreen() {
         }
     )
 
+    Box(Modifier.fillMaxSize()) {
+    // Keep graph position and selection alive; an unplaced destination cannot receive input.
+    Box(Modifier.fillMaxSize().layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        layout(placeable.width, placeable.height) {
+            if (memoryPanel == null) placeable.place(0, 0)
+        }
+    }) {
     CustomScaffold(
         floatingActionButton = {
             Column(
@@ -367,29 +350,22 @@ fun MemoryScreen() {
             }
         }
     ) { padding ->
-        Box(
+        BoxWithConstraints(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
         ) {
 
+            val navigationMaxHeight = maxHeight * 0.35f
             Column(
                 modifier = Modifier
                     .fillMaxSize()
             ) {
-                Row(Modifier.horizontalScroll(rememberScrollState())) {
-                androidx.compose.material3.TextButton(
-                    onClick = { notesProfileId = selectedProfileId },
-                    modifier = Modifier.padding(horizontal = 8.dp)
-                ) {
-                    Text(stringResource(R.string.memory_notes_title))
-                }
-                listOf("review" to R.string.memory_review_title, "history" to R.string.chat_recall_title,
-                    "skills" to R.string.memory_extraction_skills, "logs" to R.string.memory_extraction_logs).forEach { (panel, label) ->
-                    androidx.compose.material3.TextButton(onClick = {
-                        panelProfileId = selectedProfileId; memoryPanel = panel
-                    }) { Text(stringResource(label)) }
-                }
+                MemoryLibraryNavigation(Modifier.heightIn(max = navigationMaxHeight)) { panel ->
+                    keyboardController?.hide()
+                    memoryFocusManager.clearFocus()
+                    panelProfileId = selectedProfileId
+                    memoryPanel = panel
                 }
                 MemorySearchBar(
                     query = uiState.searchQuery,
@@ -656,4 +632,60 @@ fun MemoryScreen() {
                 )
             }
         }
-    }}
+    }
+    }
+    memoryPanel?.let { page ->
+        androidx.compose.runtime.key(panelProfileId, page) {
+            MemoryLibraryDestination(page, panelProfileId) { memoryPanel = null }
+        }
+    }
+    }
+}
+
+@Composable
+private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+    val entries = listOf(
+        Triple("notes", R.string.memory_notes_title, R.string.memory_nav_notes),
+        Triple("review", R.string.memory_review_title, R.string.memory_nav_review),
+        Triple("learned", R.string.memory_learned_skills, R.string.memory_nav_learned),
+        Triple("history", R.string.chat_recall_title, R.string.memory_nav_history),
+        Triple("skills", R.string.memory_extraction_skills, R.string.memory_nav_skills),
+        Triple("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs),
+        Triple("automation", R.string.memory_automation_title, R.string.memory_nav_automation)
+    )
+    Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
+        entries.chunked(2).forEach { row ->
+            Row(Modifier.fillMaxWidth()) {
+                row.forEach { (page, title, description) ->
+                    Column(Modifier.weight(1f).clickable { onOpen(page) }.padding(horizontal = 8.dp, vertical = 12.dp)) {
+                        Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
+                        Text(stringResource(description), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+        }
+    }
+}
+
+@Composable
+private fun MemoryLibraryDestination(page: String, profileId: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    when (page) {
+        "automation" -> MemoryAutomationPage(profileId, onBack)
+        "notes" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(profileId, profileId, onBack)
+        "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(profileId, onBack)
+        "history" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.ChatRecallDialog(profileId, onBack)
+        "learned" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.LearnedSkillsDialog(profileId, onBack)
+        "logs" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryExtractionLogDialog(profileId, onBack)
+        "skills" -> MemoryLibraryPage(stringResource(R.string.memory_extraction_skills), profileId, onBack) {
+            val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
+            Box(Modifier.fillMaxSize()) {
+                com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
+                    com.ai.assistance.operit.data.skill.SkillRepository.getInstance(context), snackbar)
+                androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
+            }
+        }
+    }
+}

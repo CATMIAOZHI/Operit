@@ -783,7 +783,7 @@
     <string name="tool_prompt_manager_title">Tool Prompt Manager</string>
     <string name="manage_packages">Manage Packages</string>
     <string name="disable_user_preference_description">Disable user.md</string>
-    <string name="disable_user_preference_description_desc">When disabled, user.md is not injected into the system prompt</string>
+    <string name="disable_user_preference_description_desc">Exclude user.md from the system prompt. New chats apply this immediately; existing chats keep their snapshot until rebuilding or compression.</string>
     <string name="pause_reading">Pause Reading</string>
     <string name="resume_reading">Resume Reading</string>
     <string name="stop_reading">Stop Reading</string>
@@ -1963,8 +1963,8 @@
     <string name="nav_memory_base">Memory Base</string>
     
     <!-- Manual Memory Update -->
-    <string name="manual_memory_update">Manual Memory Save</string>
-    <string name="manual_memory_update_desc">If you need to store valuable content from this conversation immediately, manually trigger memory saving to write it directly into the long-term memory library.</string>
+    <string name="manual_memory_update">Organize graph memory now</string>
+    <string name="manual_memory_update_desc">Organize useful content from this conversation into the legacy graph now, regardless of the automatic saving switch. To extract notes and skills, use conversation history in the memory library.</string>
     <string name="manual_conversation_summary">Manual Conversation Summary</string>
     <string name="manual_conversation_summary_desc">Immediately trigger a conversation summary to compress context and keep key points from both sides. Useful for long chats or before sending new messages.</string>
     
@@ -3257,9 +3257,9 @@
     <string name="memory_space_delete">Delete memory space</string>
     <string name="memory_space_name">Memory space name</string>
     <string name="memory_space_delete_warning">Delete “%1$s” and all memories in it? This cannot be undone.</string>
-    <string name="memory_auto_update">Auto Save Memory</string>
-    <string name="memory_auto_update_desc">When enabled, candidate content from the current conversation is queued after the reply is finalized, then written into the memory library by periodic background processing while the app process remains alive.</string>
-    <string name="memory_auto_update_runtime_status">Pending memory extraction items: %1$d, next save in %2$d minute(s)</string>
+    <string name="memory_auto_update">Auto-save memory (master)</string>
+    <string name="memory_auto_update_desc">Global master switch for automatic learning. Off stops automatic graph, notes and skill extraction. On follows the individual paths in Memory library → Automatic saving. Manual extraction is unaffected.</string>
+    <string name="memory_auto_update_runtime_status">Graph candidates: %1$d, next graph check in %2$d minute(s)</string>
     <string name="chat_summarizing_memory">Summarizing memory...</string>
     <string name="chat_input_processing_collect_failed">Failed to collect input processing state: %1$s</string>
     <string name="chat_input_hint">Type a message...</string>
@@ -6196,7 +6196,7 @@
     <string name="memory_search_settings_title">Memory Search Settings</string>
     <string name="memory_search_calc_mode">Scoring Mode</string>
     <string name="memory_search_weight_section">Weights</string>
-    <string name="memory_auto_save_settings_title">Auto Save Memory</string>
+    <string name="memory_auto_save_settings_title">Memory graph saving interval</string>
     <string name="memory_auto_save_interval_minutes">Autosave interval (minutes)</string>
     <string name="memory_auto_save_interval_value">%1$d min · range %2$d-%3$d</string>
     <string name="memory_auto_save_interval_hint">Adjustable range %1$d-%2$d minutes, default %3$d minutes</string>
@@ -8947,7 +8947,7 @@
     <string name="toolreg_call_chat_model_desc">Call function model: %1$s</string>
     <string name="toolpkg_hook_timeout_continue_sending_with_plugin">Pre-send plugin "%1$s" timed out. It was skipped and the message will continue sending.</string>
     <string name="memory_notes_title">Long-term notes · memory.md</string>
-    <string name="memory_notes_editor_hint">Keep reusable environment facts, project conventions and verified lessons for this space. Background and AI changes require approval; manual saves are recorded in review history. Full notes are never automatically evicted. Start a new conversation to ensure the latest notes are used.</string>
+    <string name="memory_notes_editor_hint">Keep reusable environment facts, project conventions and verified lessons for this space. Background and AI changes require approval; manual saves are recorded in review history. Full notes are never automatically evicted. Existing chats keep their snapshots until a manual rebuild or compression. New chats use the latest notes.</string>
     <string name="memory_notes_tool_description">memory.md: %1$s</string>
     <string name="memory_notes_tool_result">memory.md (%1$d / %2$d characters). Latest content follows; existing conversation system prompts are not automatically rewritten.</string>
     <string name="memory_notes_full">memory.md has insufficient capacity. Read the latest content, consolidate or remove unneeded notes, then retry. This write changed nothing.</string>

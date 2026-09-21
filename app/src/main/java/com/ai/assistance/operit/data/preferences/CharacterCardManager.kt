@@ -488,6 +488,7 @@ class CharacterCardManager private constructor(private val context: Context) {
             // 更新修改时间
             preferences[longPreferencesKey("character_card_${card.id}_updated_at")] = System.currentTimeMillis()
         }
+        LearningPromptSnapshotRepository.markChanged(context, "card:${card.id}")
     }
     
     // 删除角色卡

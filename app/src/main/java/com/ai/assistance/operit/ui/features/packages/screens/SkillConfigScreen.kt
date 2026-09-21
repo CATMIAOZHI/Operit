@@ -91,6 +91,7 @@ fun SkillConfigScreen(
     searchQuery: String = "",
     skillOrder: List<String> = emptyList(),
     onSaveSkillOrder: (List<String>) -> Unit = {},
+    learnedOnlyProfileId: String? = null,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -98,6 +99,7 @@ fun SkillConfigScreen(
     val skillVisibilityPreferences = remember { SkillVisibilityPreferences.getInstance(context) }
 
     var skills by remember { mutableStateOf<Map<String, SkillPackage>>(emptyMap()) }
+    var learnedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isLoading by remember { mutableStateOf(true) }
 
     var selectedSkill by remember { mutableStateOf<SkillPackage?>(null) }
@@ -125,6 +127,7 @@ fun SkillConfigScreen(
                     skillRepository.getAvailableSkillPackagesSnapshot()
                 }
             skills = loaded.first
+            learnedNames = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).owned(learnedOnlyProfileId)
             skillLoadErrors = loaded.second
         } finally {
             isLoading = false
@@ -168,6 +171,7 @@ fun SkillConfigScreen(
                 .fillMaxSize()
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
+            if (learnedOnlyProfileId == null) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -219,11 +223,13 @@ fun SkillConfigScreen(
             }
 
             Spacer(modifier = Modifier.height(8.dp))
+            }
 
             val displayedSkills =
-                remember(skills, searchQuery, skillOrder) {
+                remember(skills, searchQuery, skillOrder, learnedNames, learnedOnlyProfileId) {
                     val searchText = searchQuery.trim()
                     val filtered = skills.values
+                        .filter { learnedOnlyProfileId==null || it.name in learnedNames }
                         .filter { skill ->
                             searchText.isEmpty() ||
                                 skill.name.contains(searchText, ignoreCase = true) ||
@@ -361,7 +367,7 @@ fun SkillConfigScreen(
                 }
             }
 
-            FloatingActionButton(
+            if (learnedOnlyProfileId == null) FloatingActionButton(
                 onClick = { showImportDialog = true }
             ) {
                 Icon(

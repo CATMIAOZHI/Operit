@@ -103,13 +103,28 @@ class UserProfileDocumentRepository private constructor(private val context: Con
         }
         initialize()
         writeMutex.withLock {
+            if (contentState.value == markdown) return@withLock
             writeAtomically(userFile, markdown)
             contentState.value = markdown
+            LearningPromptSnapshotRepository.markChanged(context, "user")
         }
     }
 
     suspend fun resetToTemplate() {
         save(DEFAULT_TEMPLATE)
+    }
+
+    suspend fun saveIfUnchanged(markdown: String, expected: String) {
+        require(markdown.length <= MAX_CONTENT_CHARS)
+        initialize()
+        writeMutex.withLock {
+            val current = userFile.readText(StandardCharsets.UTF_8)
+            if (current == markdown) return@withLock
+            check(current == expected) { "user.md changed since review; reload first" }
+            writeAtomically(userFile, markdown)
+            contentState.value = markdown
+            LearningPromptSnapshotRepository.markChanged(context, "user")
+        }
     }
 
     fun hasLegacyArchive(): Boolean = archiveFile.isFile && archiveFile.length() > 0L

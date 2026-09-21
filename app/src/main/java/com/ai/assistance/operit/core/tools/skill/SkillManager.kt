@@ -153,7 +153,11 @@ class SkillManager private constructor(private val context: Context) {
     }
 
     private fun parseSkillMetadata(skillFile: File): Pair<String, String> {
-        val lines = skillFile.bufferedReader().use { it.readLines() }
+        return parseSkillMetadataText(skillFile.readText())
+    }
+
+    internal fun parseSkillMetadataText(text: String): Pair<String,String> {
+        val lines = text.lines()
 
         var name = ""
         var description = ""
@@ -227,10 +231,11 @@ class SkillManager private constructor(private val context: Context) {
         }
     }
 
-    fun deleteSkill(skillName: String): Boolean {
+    fun deleteSkill(skillName: String, clearLearningOwnership: Boolean = true): Boolean {
         refreshAvailableSkills()
         val skill = availableSkills[skillName] ?: return false
         return try {
+            if(clearLearningOwnership) runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(skillName) }
             val ok =
                 if (skill.storageSource.isLegacy()) {
                     // Never delete the Download original; hide it by relative path so it does
@@ -456,6 +461,7 @@ class SkillManager private constructor(private val context: Context) {
             }
 
             // Copy the detected skill directory to final location
+            runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(metaName.ifBlank { finalDir.name }) }
             selectedSkillDir.copyRecursively(finalDir, overwrite = false)
             cleanupTmp()
 
