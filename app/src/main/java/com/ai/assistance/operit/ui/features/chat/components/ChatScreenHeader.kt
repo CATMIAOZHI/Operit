@@ -87,7 +87,9 @@ fun ChatScreenHeader(
     val isHiddenReadingAuditRun =
         currentChat?.chatKind == ChatKind.SUBAGENT.name &&
             currentChat.isHidden &&
-            ReadingCompanionAudit.isHiddenAuditRun(currentChat.hiddenReason)
+            (ReadingCompanionAudit.isHiddenAuditRun(currentChat.hiddenReason) ||
+                currentChat.hiddenReason == "MEMORY_LEARNING") ||
+            com.ai.assistance.operit.core.chat.AuditChatNavigation.hasPendingReturnFor(currentChatId)
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
     val managementParentChatId =

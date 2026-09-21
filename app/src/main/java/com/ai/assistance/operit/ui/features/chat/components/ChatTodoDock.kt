@@ -51,16 +51,17 @@ fun ChatTodoDock(
     chatId: String?,
     todos: List<ChatTodo>,
     modifier: Modifier = Modifier,
+    leadingContent: (@Composable () -> Unit)? = null,
 ) {
-    if (chatId == null || todos.isEmpty()) return
+    val hasTodos = chatId != null && todos.isNotEmpty()
 
     val allTerminal =
         todos.all {
             it.status == ChatTodoStatus.COMPLETED || it.status == ChatTodoStatus.CANCELLED
         }
-    val expanded = TranscriptExpansionState.isExpanded(chatId, TODO_DOCK_EXPANDED_ID)
+    val expanded = hasTodos && TranscriptExpansionState.isExpanded(chatId.orEmpty(), TODO_DOCK_EXPANDED_ID)
     LaunchedEffect(chatId, allTerminal) {
-        if (allTerminal) TranscriptExpansionState.setExpanded(chatId, TODO_DOCK_EXPANDED_ID, false)
+        if (chatId != null && allTerminal) TranscriptExpansionState.setExpanded(chatId, TODO_DOCK_EXPANDED_ID, false)
     }
 
     val currentStep = currentTodoStep(todos)
@@ -68,7 +69,7 @@ fun ChatTodoDock(
         todos.count {
             it.status == ChatTodoStatus.COMPLETED || it.status == ChatTodoStatus.CANCELLED
         }
-    val progress = terminalCount.toFloat() / todos.size.toFloat()
+    val progress = if (hasTodos) terminalCount.toFloat() / todos.size.toFloat() else 0f
 
     Column(
         modifier = modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -94,33 +95,38 @@ fun ChatTodoDock(
             }
         }
 
-        Surface(
-            modifier = Modifier.clickable { TranscriptExpansionState.toggle(chatId, TODO_DOCK_EXPANDED_ID) },
-            shape = RoundedCornerShape(50),
-            color = MaterialTheme.colorScheme.surfaceContainerHigh,
-            tonalElevation = 3.dp,
-            shadowElevation = 1.dp,
-        ) {
-            Row(
-                modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+            if (hasTodos) Surface(
+                modifier = Modifier.clickable { TranscriptExpansionState.toggle(chatId.orEmpty(), TODO_DOCK_EXPANDED_ID) },
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                tonalElevation = 3.dp,
+                shadowElevation = 1.dp,
             ) {
-                CircularProgressIndicator(
-                    progress = { progress },
-                    modifier = Modifier.size(14.dp),
-                    strokeWidth = 2.dp,
-                    strokeCap = StrokeCap.Round,
-                    trackColor = MaterialTheme.colorScheme.surfaceVariant,
-                )
-                Text(
-                    text = stringResource(R.string.chat_todo_step_progress, currentStep, todos.size),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Row(
+                    modifier = Modifier.padding(horizontal = 13.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    CircularProgressIndicator(
+                        progress = { progress },
+                        modifier = Modifier.size(14.dp),
+                        strokeWidth = 2.dp,
+                        strokeCap = StrokeCap.Round,
+                        trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                    )
+                    Text(
+                        text = stringResource(R.string.chat_todo_step_progress, currentStep, todos.size),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            leadingContent?.let { content ->
+                Box(Modifier.align(Alignment.CenterStart)) { content() }
             }
         }
-        Spacer(Modifier.size(6.dp))
+        if (hasTodos) Spacer(Modifier.size(6.dp))
     }
 }
 

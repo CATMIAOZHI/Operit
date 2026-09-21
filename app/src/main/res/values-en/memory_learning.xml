@@ -2,6 +2,11 @@
     <string name="disable_memory_notes">Disable memory.md</string>
     <string name="disable_memory_notes_desc">Exclude this space’s memory.md from the system prompt, without deleting notes or disabling extraction. New chats apply this immediately; existing chats retain their snapshot until rebuilding or compression.</string>
     <string name="memory_automation_title">Automatic saving</string>
+    <string name="memory_learning_delay">Notes and skills extraction delay</string>
+    <string name="memory_learning_delay_desc">Counted per chat: by default, memory needs 10 user turns and skills need 10 tool iterations (one batch counts once). Once eligible, wait for 5 idle minutes. Continuing the chat postpones review and uses the latest content; eligible paths share one review. Manual extraction bypasses these limits. Settings apply from the next reply.</string>
+    <string name="memory_review_interval">Memory interval (user turns)</string>
+    <string name="skill_review_interval">Skill interval (tool iterations)</string>
+    <string name="memory_learning_delay_minutes">%1$d min</string>
     <string name="memory_auto_master_off">The master switch is off. Automatic graph, notes and skill extraction are paused. Path settings are retained; manual extraction remains available.</string>
     <string name="memory_graph_path_desc">When the master switch is on, periodically organize conversations into the legacy memory graph. This path switch applies to all spaces.</string>
     <string name="memory_notes_path_desc">When the master switch is on, review replies for this space’s memory.md and global user.md. Changes follow the auto-approval setting.</string>
@@ -83,7 +88,7 @@
     <string name="memory_review_applying">Applying; retry to finish</string>
     <string name="memory_extraction_logs">Extraction logs</string>
     <string name="memory_extraction_logs_hint">Latest 500 extractions for this space, refreshed every 3 seconds. Tap a record to audit the subagent. Local transcripts may include source conversation excerpts and tool content. Entries without an end time may have been interrupted by app exit.</string>
-    <string name="memory_audit_title">View extraction audit</string>
+    <string name="memory_audit_title">View extraction conversation</string>
     <string name="memory_audit_hint">Read the actual extraction subagent transcript: input, model replies, tool arguments and results. Tap a message for its full raw text. Viewing never reruns tools or calls the model.</string>
     <string name="memory_audit_message">View full raw message</string>
     <string name="memory_audit_counts">%1$d model rounds · %2$d tool calls · %3$d changes recorded</string>

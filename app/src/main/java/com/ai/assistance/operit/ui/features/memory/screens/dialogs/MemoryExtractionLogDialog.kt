@@ -11,14 +11,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
-import com.ai.assistance.operit.ui.features.memory.screens.MemoryExtractionAuditPage
-import com.ai.assistance.operit.ui.features.memory.screens.memoryExtractionStatusResource
+import com.ai.assistance.operit.ui.features.memory.screens.openMemoryExtractionConversation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.MemoryExtractionLog
 import com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
@@ -29,7 +29,9 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
     var logs by remember { mutableStateOf<List<MemoryExtractionLog>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var error by remember { mutableStateOf(false) }
-    var selected by remember(profileId) { mutableStateOf<MemoryExtractionLog?>(null) }
+    var opening by remember { mutableStateOf(false) }
+    var openError by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     LaunchedEffect(repo) {
         while (true) {
@@ -44,19 +46,26 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
             delay(3000)
         }
     }
-    selected?.let { log ->
-        MemoryExtractionAuditPage(log, profileId) { selected = null }
-        return
-    }
     MemoryLibraryPage(stringResource(R.string.memory_extraction_logs), profileId, onDismiss) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.memory_extraction_logs_hint), style = MaterialTheme.typography.bodySmall)
                 if (error) Text(stringResource(R.string.memory_notes_io_error), color = MaterialTheme.colorScheme.error)
+                openError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                if (opening) LinearProgressIndicator(Modifier.fillMaxWidth())
                 LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (logs.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
                     items(logs, key = { it.id }) { log ->
-                        Column(Modifier.fillMaxWidth().clickable { selected = log }) {
+                        Column(Modifier.fillMaxWidth().clickable(enabled = !opening) {
+                            opening = true
+                            openError = null
+                            scope.launch {
+                                try { openMemoryExtractionConversation(context, log) }
+                                catch (e: CancellationException) { throw e }
+                                catch (e: Exception) { openError = e.message ?: context.getString(R.string.memory_notes_io_error) }
+                                finally { opening = false }
+                            }
+                        }) {
                             Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                                 Text(DateFormat.getDateTimeInstance().format(Date(log.startedAt)))
                                 Text(titles[log.sourceChatId]?.takeIf { it.isNotBlank() }
@@ -79,4 +88,14 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
             }
         }
     }
+}
+
+private fun memoryExtractionStatusResource(status: String): Int = when (status) {
+    "success" -> R.string.memory_extraction_success
+    "warnings" -> R.string.memory_extraction_warnings
+    "partial" -> R.string.memory_extraction_partial
+    "timeout" -> R.string.memory_extraction_timeout
+    "failed" -> R.string.memory_extraction_failed
+    "cancelled" -> R.string.memory_extraction_cancelled
+    else -> R.string.memory_extraction_running
 }

@@ -25,6 +25,10 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
     var notes by remember(profileId) { mutableStateOf(prefs.shouldExtractNewMemory()) }
     var skills by remember(profileId) { mutableStateOf(prefs.shouldExtractSkills()) }
     var revise by remember(profileId) { mutableStateOf(prefs.mayReviseLearnedSkills()) }
+    var learningDelay by remember(profileId) { mutableStateOf(prefs.learningDelayMinutes()) }
+    var memoryInterval by remember(profileId) { mutableStateOf(prefs.memoryReviewInterval()) }
+    var skillInterval by remember(profileId) { mutableStateOf(prefs.skillReviewInterval()) }
+    var delayMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack) {
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
@@ -51,12 +55,57 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                 stringResource(R.string.memory_skills_path_desc), skills) {
                 prefs.setExtractSkills(it); skills = it
             }
+            LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval) {
+                prefs.setMemoryReviewInterval(it); memoryInterval = it
+            }
+            LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval) {
+                prefs.setSkillReviewInterval(it); skillInterval = it
+            }
+            ListItem(
+                headlineContent = { Text(stringResource(R.string.memory_learning_delay)) },
+                supportingContent = { Text(stringResource(R.string.memory_learning_delay_desc)) },
+                trailingContent = {
+                    Box {
+                        TextButton(onClick = { delayMenu = true }) {
+                            Text(stringResource(R.string.memory_learning_delay_minutes, learningDelay))
+                        }
+                        DropdownMenu(expanded = delayMenu, onDismissRequest = { delayMenu = false }) {
+                            listOf(1, 5, 10, 30, 60).forEach { minutes ->
+                                DropdownMenuItem(text = {
+                                    Text(stringResource(R.string.memory_learning_delay_minutes, minutes))
+                                }, onClick = {
+                                    prefs.setLearningDelayMinutes(minutes)
+                                    learningDelay = minutes
+                                    delayMenu = false
+                                })
+                            }
+                        }
+                    }
+                }
+            )
             AutomationSwitch(stringResource(R.string.memory_learned_revise),
                 stringResource(R.string.memory_learned_hint), revise) {
                 prefs.setReviseLearnedSkills(it); revise = it
             }
         }
     }
+}
+
+@Composable
+private fun LearningIntervalSetting(title: String, value: Int, onChange: (Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    ListItem(headlineContent = { Text(title) }, trailingContent = {
+        Box {
+            TextButton(onClick = { expanded = true }) { Text(value.toString()) }
+            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+                listOf(5, 10, 20, 50).forEach { interval ->
+                    DropdownMenuItem(text = { Text(interval.toString()) }, onClick = {
+                        onChange(interval); expanded = false
+                    })
+                }
+            }
+        }
+    })
 }
 
 @Composable

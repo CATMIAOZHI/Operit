@@ -273,8 +273,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val isHiddenReadingAuditChat =
         (
             currentChatView?.isHidden == true &&
-                ReadingCompanionAudit.isPermanentHiddenReason(currentChatView.hiddenReason)
-        ) || ReadingCompanionAudit.hasPendingReturnFor(currentChatId)
+                (ReadingCompanionAudit.isPermanentHiddenReason(currentChatView.hiddenReason) ||
+                    currentChatView.hiddenReason == "MEMORY_LEARNING")
+        ) || com.ai.assistance.operit.core.chat.AuditChatNavigation.hasPendingReturnFor(currentChatId)
     val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditChat
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
@@ -1908,8 +1909,9 @@ private fun ChatInputBottomBar(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        ChatTodoDock(chatId = currentChatId, todos = todos)
-        SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
+        ChatTodoDock(chatId = currentChatId, todos = todos) {
+            SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
+        }
 
         if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {
             AgentChatInputSection(
