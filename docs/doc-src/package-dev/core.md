@@ -139,6 +139,11 @@ complete<T>(result: T): void
 
 这两个方法都会返回一个可嵌入消息的 `<link type="image" id="...">` 字符串。
 
+`registerImageFromPath` 只接受绝对路径，且解析符号链接后必须位于主共享存储、
+应用外部文件/缓存目录或内部 `Operit/cleanOnExit` 临时目录内。应用数据库、
+偏好设置及其他私有目录不开放给这个脚本入口；次存储卷的任意目录也不在此范围内。
+路径不符合要求时返回图片注册失败信息。
+
 ### 错误上报
 
 - `reportError(errorType, errorMessage, errorLine, errorStack)`
