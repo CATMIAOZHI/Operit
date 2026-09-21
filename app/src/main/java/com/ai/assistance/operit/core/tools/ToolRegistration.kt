@@ -48,6 +48,12 @@ internal fun <T> runBlockingIoPreservingToolRuntimeContext(
  * @param context Application context for tools that need it
  */
 fun registerAllTools(handler: AIToolHandler, context: Context) {
+    listOf(
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.ACTION,
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.FINISH
+    ).forEach { name ->
+        handler.registerTool(name=name,executor=com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator::execute)
+    }
 
     // Hidden control-plane tool. It is never added to ordinary model tool prompts; permission
     // review turns expose it explicitly through an isolated per-turn tool override.
@@ -827,6 +833,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         descriptionGenerator = { s(R.string.chat_recall_title) },
         executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
     )
+    handler.registerTool(name="learning_manage",
+        descriptionGenerator={ context.getString(R.string.memory_learning_run) },
+        executor={ tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) })
     // Exposed on demand by the memory_review package; decisions use the normal permission gate.
     handler.registerTool(
         name = "memory_review",

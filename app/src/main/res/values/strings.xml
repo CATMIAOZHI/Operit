@@ -1669,7 +1669,7 @@
     <string name="tool_prompt_manager_title">工具提示词管理</string>
     <string name="manage_packages">管理包</string>
     <string name="disable_user_preference_description">禁用 user.md</string>
-    <string name="disable_user_preference_description_desc">禁用后，系统提示词中不再注入 user.md 用户资料</string>
+    <string name="disable_user_preference_description_desc">不向系统提示注入 user.md 用户资料。新对话直接生效；旧对话需手动重建系统提示或等待压缩。</string>
     <string name="reply_message">回复</string>
     <string name="pause_reading">暂停朗读</string>
     <string name="resume_reading">继续朗读</string>
@@ -3139,9 +3139,9 @@
     <string name="memory_space_delete">删除记忆空间</string>
     <string name="memory_space_name">记忆空间名称</string>
     <string name="memory_space_delete_warning">确定删除“%1$s”及其中的全部记忆吗？此操作无法撤销。</string>
-    <string name="memory_auto_update">自动保存记忆</string>
-    <string name="memory_auto_update_desc">开启后，当前轮回复结束时会先把候选内容加入长期记忆队列，并在应用存活期间由后台定时整理写入记忆库。</string>
-    <string name="memory_auto_update_runtime_status">待提取记忆的条数%1$d，距离下次保存%2$d分钟</string>
+    <string name="memory_auto_update">自动保存记忆（总开关）</string>
+    <string name="memory_auto_update_desc">全局控制自动记忆学习。关闭后停止图谱、笔记和技能的自动提取；开启后按「记忆库 → 自动保存设置」中的独立路径开关执行。手动提取不受影响。</string>
+    <string name="memory_auto_update_runtime_status">图谱候选 %1$d 条，距离下次图谱检查 %2$d 分钟</string>
     <string name="chat_summarizing_memory">正在总结记忆...</string>
     <string name="chat_input_processing_collect_failed">输入处理状态收集失败: %1$s</string>
     <string name="chat_input_hint">输入消息...</string>
@@ -5170,8 +5170,8 @@
     <string name="api_key_pool_test_failed">测试失败: %1$s</string>
 
     <!-- 手动更新记忆 -->
-    <string name="manual_memory_update">手动触发记忆保存</string>
-    <string name="manual_memory_update_desc">需要立即补存本次对话的有价值内容时，可手动触发记忆保存，直接写入长期记忆库。</string>
+    <string name="manual_memory_update">立即整理图谱记忆</string>
+    <string name="manual_memory_update_desc">立即将本次对话的有价值内容整理到旧记忆图谱，不受自动保存总开关影响。提炼笔记和技能请使用记忆库的对话历史入口。</string>
     <string name="manual_conversation_summary">手动总结对话</string>
     <string name="manual_conversation_summary_desc">立即触发一次对话总结，帮助压缩上下文并保留双方重点内容，适用于长对话或发送前清理历史。</string>
 
@@ -6501,7 +6501,7 @@
     <string name="memory_search_settings_title">记忆搜索设置</string>
     <string name="memory_search_calc_mode">计算方式</string>
     <string name="memory_search_weight_section">权重</string>
-    <string name="memory_auto_save_settings_title">自动保存记忆</string>
+    <string name="memory_auto_save_settings_title">图谱记忆保存间隔</string>
     <string name="memory_auto_save_interval_minutes">自动保存间隔（分钟）</string>
     <string name="memory_auto_save_interval_value">%1$d 分钟 · 范围 %2$d-%3$d</string>
     <string name="memory_auto_save_interval_hint">可调范围 %1$d-%2$d 分钟，默认 %3$d 分钟</string>
@@ -8921,7 +8921,7 @@
     <string name="toolreg_call_chat_model_desc">调用功能模型: %1$s</string>
     <string name="toolpkg_hook_timeout_continue_sending_with_plugin">前置插件「%1$s」响应超时，已跳过并继续发送</string>
     <string name="memory_notes_title">长期笔记 · memory.md</string>
-    <string name="memory_notes_editor_hint">保存当前空间常用的环境、项目约定和已验证经验。后台与 AI 的修改进入待审列表，通过后才生效；手动保存会记录审批历史。写满后不会自动删旧内容。开始新对话可确保使用最新笔记。</string>
+    <string name="memory_notes_editor_hint">保存当前空间常用的环境、项目约定和已验证经验。后台与 AI 的修改进入待审列表，通过后才生效；手动保存会记录审批历史。写满后不会自动删旧内容。旧对话保留快照，手动重建或压缩后更新；新对话直接使用最新笔记。</string>
     <string name="memory_notes_tool_description">memory.md：%1$s</string>
     <string name="memory_notes_tool_result">memory.md（%1$d / %2$d 字符）。以下是最新内容；已有对话的系统提示词不会因此自动重写。</string>
     <string name="memory_notes_full">memory.md 容量不足。请先读取最新内容，合并或删除不再需要的笔记，再重试。本次没有修改文件。</string>

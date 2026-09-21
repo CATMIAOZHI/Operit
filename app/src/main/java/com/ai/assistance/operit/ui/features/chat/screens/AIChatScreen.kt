@@ -1909,6 +1909,7 @@ private fun ChatInputBottomBar(
 
     Column(modifier = Modifier.fillMaxWidth()) {
         ChatTodoDock(chatId = currentChatId, todos = todos)
+        SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
 
         if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {
             AgentChatInputSection(

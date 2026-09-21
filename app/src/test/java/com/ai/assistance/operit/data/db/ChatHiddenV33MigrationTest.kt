@@ -74,6 +74,13 @@ class ChatHiddenV33MigrationTest {
                         "currentWindowSize, displayOrder, locked, pinned, isFavorite) " +
                         "VALUES ('legacy-chat', 'legacy', 1, 2, 3, 4, 5, 6, 0, 0, 0)"
                 )
+                statement.execute(
+                    "INSERT INTO messages (messageId,chatId,sender,content,timestamp,orderIndex," +
+                        "roleName,selectedVariantIndex,provider,modelName,inputTokens,outputTokens," +
+                        "cachedInputTokens,sentAt,outputDurationMs,waitDurationMs,completedAt,displayMode,isFavorite) " +
+                        "VALUES (1,'legacy-chat','user','legacy searchable evidence',1,0," +
+                        "'',0,'','',0,0,0,0,0,0,0,'NORMAL',0)"
+                )
             }
         }
     }
@@ -81,7 +88,7 @@ class ChatHiddenV33MigrationTest {
     private fun openV33Database(tempDir: File): AppDatabase =
         Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
             .setDriver(JdbcSQLiteDriver())
-            .addMigrations(AppDatabase.MIGRATION_32_33)
+            .addMigrations(AppDatabase.MIGRATION_32_33, AppDatabase.MIGRATION_33_34)
             .allowMainThreadQueries()
             .build()
 
@@ -99,6 +106,8 @@ class ChatHiddenV33MigrationTest {
                 val legacy = dao.getChatById("legacy-chat")
                 assertNotNull(legacy)
                 assertEquals(false, legacy!!.isHidden)
+                assertEquals(listOf("legacy-chat"), database.chatContentDao()
+                    .searchRecallIndex("\"searchable\"","","","",0,Long.MAX_VALUE,20,0).map { it.chatId })
                 assertNull(legacy.hiddenReason)
                 assertTrue(dao.getVisibleChats().first().any { it.id == "legacy-chat" })
                 assertTrue(dao.getRecentChats().first().any { it.id == "legacy-chat" })

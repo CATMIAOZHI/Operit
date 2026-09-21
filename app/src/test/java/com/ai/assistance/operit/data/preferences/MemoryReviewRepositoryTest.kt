@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.preferences
 
 import android.content.Context
+import android.content.SharedPreferences
 import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
@@ -10,10 +11,18 @@ import org.junit.Test
 import org.junit.rules.TemporaryFolder
 import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
+import org.mockito.kotlin.any
 
 class MemoryReviewRepositoryTest {
     @get:Rule val folder = TemporaryFolder()
-    private fun context(): Context = mock<Context>().also { whenever(it.filesDir).thenReturn(folder.root) }
+    private fun context(): Context = mock<Context>().also {
+        whenever(it.filesDir).thenReturn(folder.root)
+        val preferences = mock<SharedPreferences>()
+        val editor = mock<SharedPreferences.Editor>()
+        whenever(it.getSharedPreferences(any(), any())).thenReturn(preferences)
+        whenever(preferences.edit()).thenReturn(editor)
+        whenever(editor.putString(any(), any())).thenReturn(editor)
+    }
 
     @Test fun `proposals do not write notes and rejection retains content and audit`() = runBlocking {
         val context = context()

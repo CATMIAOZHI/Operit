@@ -12,8 +12,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
+import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
+import androidx.compose.foundation.clickable
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.*
 import kotlinx.coroutines.CancellationException
@@ -27,9 +27,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     val repo = remember(profileId) { MemoryReviewRepository(context, profileId) }
     val settings = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
     val api = remember { ApiPreferences.getInstance(context) }
-    val oldExtraction by api.enableMemoryAutoUpdateFlow.collectAsState(initial = false)
-    var newExtraction by remember { mutableStateOf(settings.shouldExtractNewMemory()) }
-    var skillsExtraction by remember { mutableStateOf(settings.shouldExtractSkills()) }
+    val autoSave by api.enableMemoryAutoUpdateFlow.collectAsState(initial = false)
     var aiDecisions by remember { mutableStateOf(settings.mayAiReviewChanges()) }
     val scope = rememberCoroutineScope()
     var records by remember { mutableStateOf<List<MemoryReviewChange>>(emptyList()) }
@@ -63,24 +61,12 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = context.getString(R.string.memory_review_error, e.message.orEmpty()) }
     }
-    Dialog(onDismissRequest = { leave("close") }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Surface(Modifier.fillMaxWidth(.95f).fillMaxHeight(.92f), shape = MaterialTheme.shapes.large) {
-            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(stringResource(R.string.memory_review_title), style = MaterialTheme.typography.titleLarge)
+    MemoryLibraryPage(selected?.title ?: stringResource(R.string.memory_review_title), profileId,
+        { leave(if (selectedId == null) "close" else "back") }) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (selected == null) {
-                    Row {
-                        Text(stringResource(R.string.memory_extract_old), Modifier.weight(1f))
-                        Switch(oldExtraction, { run { api.saveEnableMemoryAutoUpdate(it) } }, enabled = !busy)
-                    }
-                    Row {
-                        Text(stringResource(R.string.memory_extract_new), Modifier.weight(1f))
-                        Switch(newExtraction, { settings.setExtractNewMemory(it); newExtraction = it })
-                    }
-                    Row {
-                        Text(stringResource(R.string.memory_extract_skills), Modifier.weight(1f))
-                        Switch(skillsExtraction, { settings.setExtractSkills(it); skillsExtraction = it }, enabled = newExtraction)
-                    }
-                    Text(stringResource(R.string.memory_packages_hint), style = MaterialTheme.typography.bodySmall)
+                    if (!autoSave) Text(stringResource(R.string.memory_auto_master_off), style = MaterialTheme.typography.bodySmall)
                     Row {
                         Text(stringResource(R.string.memory_review_ai_allowed), Modifier.weight(1f))
                         Switch(aiDecisions, { settings.setAiReviewChanges(it); aiDecisions = it })
@@ -94,13 +80,15 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (visible.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
                         items(visible, key = { it.id }) { record ->
-                            OutlinedButton(onClick = {
+                            Column(modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
                                 selectedId = record.id; body = record.body; description = record.description; reason = ""
-                            }, modifier = Modifier.fillMaxWidth(), enabled = !busy) {
-                                Column(Modifier.fillMaxWidth()) {
-                                    Text(record.title)
-                                    Text(reviewStatus(record.status) + " · " + DateFormat.getDateTimeInstance().format(Date(record.createdAt)))
+                            }) {
+                                Column(Modifier.fillMaxWidth().padding(vertical = 16.dp)) {
+                                    Text(record.title, style = MaterialTheme.typography.titleMedium)
+                                    Text(reviewStatus(record.status) + " · " + DateFormat.getDateTimeInstance().format(Date(record.createdAt)),
+                                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
+                                HorizontalDivider()
                             }
                         }
                     }
@@ -109,14 +97,15 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                     val pending = record.status == "pending"
                     val changed = body != record.body || description != record.description
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text(record.title + " · " + reviewStatus(record.status))
+                        Text(record.title + (if(record.kind=="skill_file") "/${record.path}" else "") + " · " + reviewStatus(record.status))
                         if (record.before.isNotEmpty()) {
                             Text(stringResource(R.string.memory_review_before))
                             OutlinedTextField(record.before, {}, readOnly = true, modifier = Modifier.fillMaxWidth(), maxLines = 5)
                         }
                         if (record.kind == "skill") OutlinedTextField(description, { description = it },
                             readOnly = !pending, enabled = !busy, label = { Text(stringResource(R.string.memory_review_description)) })
-                        OutlinedTextField(body, { body = it }, readOnly = !pending, enabled = !busy,
+                        if (record.kind=="skill_delete") Text(stringResource(R.string.memory_review_delete_skill))
+                        else OutlinedTextField(body, { body = it }, readOnly = !pending, enabled = !busy,
                             label = { Text(stringResource(R.string.memory_review_after)) },
                             modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12)
                         if (record.audits.isNotBlank()) Text(record.audits)
@@ -142,7 +131,6 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                 if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
                 Row {
                     if (selected != null) TextButton(onClick = { leave("back") }, enabled = !busy) { Text(stringResource(R.string.chat_recall_back)) }
-                    TextButton(onClick = { leave("close") }, enabled = !busy) { Text(stringResource(R.string.close)) }
                 }
             }
         }

@@ -38,6 +38,48 @@ class ChatContentDaoTest {
     }
 
     @Test
+    fun `FTS tracks edits and deletion with bounded snippets and visible filtered sessions`() = runBlocking {
+        val dao = database.chatContentDao()
+        database.chatDao().insertChat(ChatEntity(id="fts",title="FTS",characterCardName="work"))
+        database.chatDao().insertChat(ChatEntity(id="secret",title="Hidden",isHidden=true))
+        val id=database.messageDao().insertMessage(MessageEntity(chatId="fts",sender="user",
+            content="needle "+"x".repeat(2_500_000),timestamp=10,orderIndex=0))
+        database.messageDao().insertMessage(MessageEntity(chatId="secret",sender="user",
+            content="needle secret",timestamp=10,orderIndex=0))
+        val hit=dao.searchRecallIndex("\"needle\"","user","work","",0,20,20,0).single()
+        assertEquals(id,hit.messageId)
+        assertEquals(true,hit.excerpt.length<=2000)
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"needle\"","ai","","",0,20,20,0))
+        database.messageDao().updateMessageContent(id,"replacement")
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"needle\"","","","",0,20,20,0))
+        assertEquals(1,dao.searchRecallIndex("\"replacement\"","","","",0,20,20,0).size)
+        database.messageDao().deleteAllMessagesForChat("fts")
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"replacement\"","","","",0,20,20,0))
+        assertEquals(listOf("fts"),dao.browseRecallSessions("work",0,Long.MAX_VALUE,20,0).map { it.chatId })
+    }
+
+    @Test
+    fun `long messages with emoji can be read in complete codepoint pages`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id="pages",title="Pages"))
+        val text="😀".repeat(5000)+"终点\u0000"+"word ".repeat(3000)
+        val id=database.messageDao().insertMessage(MessageEntity(chatId="pages",sender="ai",content=text,orderIndex=0))
+        val repo=com.ai.assistance.operit.data.repository.ChatRecallRepository(database.chatContentDao())
+        var offset=0
+        val collected=StringBuilder()
+        while(true) {
+            val page=repo.execute(mapOf("mode" to "message","message_id" to id.toString(),"char_offset" to offset.toString()))
+                .getJSONObject("message")
+            collected.append(page.getString("content"))
+            if(page.isNull("next_char_offset")) break
+            val next=page.getInt("next_char_offset")
+            org.junit.Assert.assertTrue(next>offset)
+            offset=next
+        }
+        assertEquals(text,collected.toString())
+        assertEquals(listOf(id),repo.search("终点").map { it.messageId })
+    }
+
+    @Test
     fun `recall search excludes hidden and child chats and matches wildcard text literally`() = runBlocking {
         val chats = listOf(
             ChatEntity(id = "visible", title = "Visible"),

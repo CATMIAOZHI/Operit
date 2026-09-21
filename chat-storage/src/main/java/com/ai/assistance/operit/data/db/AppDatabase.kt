@@ -42,6 +42,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         ChatFolderEntity::class,
         ChatTodoEntity::class,
         MessageEntity::class,
+        com.ai.assistance.operit.data.model.ChatRecallIndex::class,
         MessageVariantEntity::class,
         SubagentRunEntity::class,
         TokenStatEventEntity::class,
@@ -55,7 +56,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatCleanupOperationEntity::class,
         TokenStatCleanupItemEntity::class,
     ],
-    version = 33,
+    version = 34,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -986,6 +987,19 @@ abstract class AppDatabase : RoomDatabase() {
                 }
             }
 
+        val MIGRATION_33_34 = object : Migration(33, 34) {
+            override fun migrate(db: SupportSQLiteDatabase) = createRecallIndex { db.execSQL(it) }
+            override fun migrate(connection: SQLiteConnection) = createRecallIndex { connection.execSQL(it) }
+        }
+
+        private fun createRecallIndex(exec: (String) -> Unit) {
+            exec("CREATE VIRTUAL TABLE IF NOT EXISTS `chat_recall_fts` USING FTS4(`content` TEXT NOT NULL, tokenize=unicode61, content=`messages`)")
+            exec("INSERT INTO chat_recall_fts(chat_recall_fts) VALUES('rebuild')")
+            exec("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_BEFORE_UPDATE BEFORE UPDATE ON `messages` BEGIN DELETE FROM `chat_recall_fts` WHERE `docid`=OLD.`rowid`; END")
+            exec("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_BEFORE_DELETE BEFORE DELETE ON `messages` BEGIN DELETE FROM `chat_recall_fts` WHERE `docid`=OLD.`rowid`; END")
+            exec("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_AFTER_UPDATE AFTER UPDATE ON `messages` BEGIN INSERT INTO `chat_recall_fts`(`docid`, `content`) VALUES (NEW.`rowid`, NEW.`content`); END")
+            exec("CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_AFTER_INSERT AFTER INSERT ON `messages` BEGIN INSERT INTO `chat_recall_fts`(`docid`, `content`) VALUES (NEW.`rowid`, NEW.`content`); END")
+        }
         private val duplicateColumnRegex = Regex("(?i)duplicate column name")
 
         private val finalTrueAttributeRegex =
@@ -1125,6 +1139,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_30_31,
                                 MIGRATION_31_32,
                                 MIGRATION_32_33,
+                                MIGRATION_33_34,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

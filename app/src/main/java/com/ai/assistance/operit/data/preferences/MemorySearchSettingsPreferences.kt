@@ -1,11 +1,12 @@
 package com.ai.assistance.operit.data.preferences
 
 import android.content.Context
+import kotlinx.coroutines.channels.awaitClose
 import com.ai.assistance.operit.data.model.CloudEmbeddingConfig
 import com.ai.assistance.operit.data.model.MemoryScoreMode
 import com.ai.assistance.operit.data.model.MemorySearchConfig
 
-class MemorySearchSettingsPreferences(context: Context, profileId: String) {
+class MemorySearchSettingsPreferences(private val context: Context, profileId: String) {
     private val profileId = profileId
     private val searchPrefs = context.applicationContext.getSharedPreferences(
         "memory_search_settings_$profileId",
@@ -28,10 +29,23 @@ class MemorySearchSettingsPreferences(context: Context, profileId: String) {
     }
 
     fun shouldInjectNotes(): Boolean = searchPrefs.getBoolean("inject_memory_notes", true)
+    fun observeInjectNotes(): kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.callbackFlow {
+        val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
+            if (key == "inject_memory_notes") trySend(shouldInjectNotes())
+        }
+        searchPrefs.registerOnSharedPreferenceChangeListener(listener)
+        trySend(shouldInjectNotes())
+        awaitClose { searchPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
+    }
     fun setInjectNotes(enabled: Boolean) {
         searchPrefs.edit().putBoolean("inject_memory_notes", enabled).apply()
+        LearningPromptSnapshotRepository.markChanged(context, "notes-policy:$profileId")
     }
     fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
+    fun mayReviseLearnedSkills(): Boolean = searchPrefs.getBoolean("revise_learned_skills", true)
+    fun setReviseLearnedSkills(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
+    }
     fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
     fun setAiReviewChanges(enabled: Boolean) {
         searchPrefs.edit().putBoolean("allow_ai_memory_decisions", enabled).apply()

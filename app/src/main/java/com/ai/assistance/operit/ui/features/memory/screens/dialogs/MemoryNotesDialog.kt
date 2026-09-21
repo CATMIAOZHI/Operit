@@ -10,7 +10,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
-import androidx.compose.ui.window.Dialog
+import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.MemoryNotesRepository
 import kotlinx.coroutines.CancellationException
@@ -23,7 +23,7 @@ fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> U
     val settings = remember(profileId) {
         com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, profileId)
     }
-    var inject by remember(profileId) { mutableStateOf(settings.shouldInjectNotes()) }
+    val inject by remember(settings) { settings.observeInjectNotes() }.collectAsState(initial = settings.shouldInjectNotes())
     val scope = rememberCoroutineScope()
     var base by remember { mutableStateOf<MemoryNotesRepository.Snapshot?>(null) }
     var draft by rememberSaveable(profileId) { mutableStateOf<String?>(null) }
@@ -85,20 +85,17 @@ fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> U
             }
         }
     }
-    Dialog(onDismissRequest = ::dismiss) {
-        Surface(shape = MaterialTheme.shapes.large) {
+    MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss) {
+        Box(Modifier.fillMaxSize()) {
             Column(
-                Modifier.fillMaxWidth().heightIn(max = 620.dp).padding(20.dp)
+                Modifier.fillMaxSize().padding(20.dp)
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Text(stringResource(R.string.memory_notes_title), style = MaterialTheme.typography.titleLarge)
-                Text(profileName, style = MaterialTheme.typography.labelLarge)
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                     Text(stringResource(R.string.memory_notes_inject), modifier = Modifier.weight(1f))
                     Switch(checked = inject, onCheckedChange = {
                         settings.setInjectNotes(it)
-                        inject = it
                     })
                 }
                 Text(stringResource(R.string.memory_notes_editor_hint), style = MaterialTheme.typography.bodySmall)
@@ -108,7 +105,7 @@ fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> U
                     onValueChange = { draft = it },
                     enabled = base != null && !busy,
                     modifier = Modifier.fillMaxWidth(),
-                    minLines = 6, maxLines = 12,
+                    minLines = 12, maxLines = 24,
                     isError = draft.orEmpty().length > MemoryNotesRepository.MAX_CHARS,
                     supportingText = {
                         Text("${draft.orEmpty().length} / ${MemoryNotesRepository.MAX_CHARS}")

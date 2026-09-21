@@ -89,7 +89,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun resolveActiveProfileId(tool: AITool): String {
-        return resolveRoleCardProfileId(resolveCallerCardId(tool))
+        return ToolExecutionManager.currentToolRuntimeContext()?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
+            ?: resolveRoleCardProfileId(resolveCallerCardId(tool))
             ?: resolveGlobalActiveProfileId()
     }
 
@@ -200,6 +201,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 "memory_notes" -> executeMemoryNotes(tool)
                 "search_chat_history" -> executeChatRecall(tool)
                 "memory_review" -> executeMemoryReview(tool)
+                "learning_manage" -> executeLearningManage(tool)
                 "update_user_preferences" -> executeLegacyUserPreferencesUpdate(tool)
                 "link_memories" -> executeLinkMemories(tool)
                 "query_memory_links" -> executeQueryMemoryLinks(tool)
@@ -715,21 +717,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     private suspend fun executeChatRecall(tool: AITool): ToolResult {
         return try {
             val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(context)
-            val anchor = tool.parameters.find { it.name == "message_id" }?.value?.toLongOrNull()
-            val offset = tool.parameters.find { it.name == "offset" }?.value?.toIntOrNull()?.coerceAtLeast(0) ?: 0
-            val results = if (anchor != null) repository.context(anchor) else repository.search(
-                tool.parameters.find { it.name == "query" }?.value.orEmpty(), offset
-            )
-            val json = org.json.JSONObject()
-                .put("messages", org.json.JSONArray().apply {
-                    results.forEach { hit ->
-                        put(org.json.JSONObject().put("message_id", hit.messageId).put("chat_id", hit.chatId)
-                            .put("chat_title", hit.chatTitle).put("sender", hit.sender)
-                            .put("timestamp", hit.timestamp).put("excerpt", hit.excerpt))
-                    }
-                })
-                .put("next_offset", if (anchor == null && results.size == 20) offset.toLong() + 20 else org.json.JSONObject.NULL)
-                .put("note", context.getString(R.string.chat_recall_tool_note))
+            val json = repository.execute(tool.parameters.associate { it.name to it.value })
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
@@ -737,6 +725,22 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
                 error = context.getString(R.string.chat_recall_error))
         }
+    }
+
+    private suspend fun executeLearningManage(tool: AITool): ToolResult = try {
+        val args = tool.parameters.associate { it.name to it.value }
+        val json = org.json.JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
+        val params = json.keys().asSequence().associateWith { json.get(it).toString() }
+        val actions = com.ai.assistance.operit.api.chat.library.MemoryLearningActions(
+            context,resolveActiveProfileId(tool),
+            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty(),
+            notesEnabled=true,skillsEnabled=true,background=false)
+        val result = actions.execute(args["action"].orEmpty(),params)
+        ToolResult(toolName=tool.name,success=true,result=StringResultData(result.toString()))
+    } catch(e: kotlinx.coroutines.CancellationException) { throw e }
+    catch(e: Exception) {
+        ToolResult(toolName=tool.name,success=false,result=StringResultData(""),
+            error=context.getString(R.string.memory_review_error,e.message.orEmpty()))
     }
 
     private suspend fun executeMemoryNotes(tool: AITool): ToolResult {
