@@ -226,6 +226,8 @@ class MemoryReviewRepository internal constructor(
                 items[index] = change.copy(status = "applying", reviewer = reviewer, reason = reason)
                 write(items)
                 var skillInstalled = false
+                val previousSkillDescription = if (change.kind == "skill_file")
+                    SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description else null
                 try {
                     if (change.kind == "notes") {
                         val notes = MemoryNotesRepository(context, profileId)
@@ -249,6 +251,10 @@ class MemoryReviewRepository internal constructor(
                         skillInstalled = true
                         LearnedSkillRepository(context).register(change.title,profileId)
                     }
+                    if (reviewer == "user" && (change.kind in setOf("skill", "skill_delete") ||
+                        (change.kind == "skill_file" &&
+                            previousSkillDescription != SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description)))
+                        LearningPromptSnapshotRepository.markChanged(context, "settings")
                 } catch (e: MemoryNotesRepository.NotesException) {
                     // A rejected CAS/capacity check made no write; it is safe to return to pending.
                     items[index] = change.copy(status = "pending", reason = e.reason.name)
@@ -290,7 +296,7 @@ class MemoryReviewRepository internal constructor(
                 stream.write(markdown.toByteArray())
                 stream.closeEntry()
             }
-            val result = manager.importSkillFromZipDetailed(zip, null)
+            val result = manager.importSkillFromZipDetailed(zip, null, notifyPrefix = false)
             check(result.installedDir != null) { result.message }
         } finally { zip.delete() }
     }

@@ -1,4 +1,18 @@
 <resources>
+    <string name="phone_control_observing">Observing the screen</string>
+    <string name="phone_control_waiting">Waiting for the next action</string>
+    <string name="phone_control_acting">Controlling the phone</string>
+    <string name="phone_control_retry">Action incomplete; waiting to observe again</string>
+    <string name="accessibility_adb_enable">Enable accessibility via ADB</string>
+    <string name="accessibility_adb_enabling">Enabling…</string>
+    <string name="accessibility_adb_unavailable">Start Shizuku and authorize Operit to enable the service using ADB privileges.</string>
+    <string name="accessibility_adb_service_missing">A unique Operit accessibility service was not found. Install or update the component first.</string>
+    <string name="accessibility_adb_failed">Could not enable service: %1$s</string>
+    <string name="accessibility_adb_success">Accessibility service enabled</string>
+    <string name="accessibility_adb_not_active">The service is not active yet. Open system accessibility settings to check its status.</string>
+    <string name="phone_control_title">Control phone in foreground</string>
+    <string name="phone_control_stop">Stop control</string>
+    <string name="phone_control_overlay_required">Allow Operit to display overlays so you can always stop phone control.</string>
     <string name="subagent_v2_limits">v2 runtime limits</string>
     <string name="subagent_v2_max_active">Concurrent child agents</string>
     <string name="subagent_v2_max_depth">Maximum child depth</string>

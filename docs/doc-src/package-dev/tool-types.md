@@ -137,7 +137,8 @@ interface ToolResultMap {
 - `press_key` → `UIActionResultData`
 - `swipe` → `UIActionResultData`
 - `combined_operation` → `CombinedOperationResultData`
-- `run_ui_subagent` → `AutomationExecutionResultData`
+- `phone_control:start` / `phone_control:observe` / `phone_control:act` / `phone_control:stop` → `string`：启用“前台手机操控”工具包后由主 agent 调用，使用会话 ID 和观察 ID。内置包在宿主原生执行，第一版不通过脚本桥执行。
+- `run_ui_subagent` 已停用，旧调用返回迁移提示。
 
 ### 计算器
 

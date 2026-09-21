@@ -15,7 +15,7 @@ import kotlin.math.min
 class AccessibilityProviderInstaller {
     companion object {
         private const val TAG = "AccessibilityProviderInstaller"
-        private const val ACCESSIBILITY_PACKAGE_NAME = "com.ai.assistance.operit.provider"
+        private const val ACCESSIBILITY_PACKAGE_NAME = UIHierarchyManager.PROVIDER_PACKAGE_NAME
 
         // 缓存版本信息
         private var cachedInstalledVersion: String? = null
@@ -33,9 +33,7 @@ class AccessibilityProviderInstaller {
             }
 
             try {
-                val versionInfo = context.assets.open("accessibility_version.txt").use {
-                    it.bufferedReader().readText().trim()
-                }
+                val versionInfo = "1.0"
                 cachedBundledVersion = versionInfo
                 return versionInfo
             } catch (e: Exception) {

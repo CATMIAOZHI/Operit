@@ -693,6 +693,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
             userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "card:$id")
     }
 
     private suspend fun ensureBuiltInSystemAvatar(id: String) {
@@ -1067,6 +1068,7 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
         }
 
+        LearningPromptSnapshotRepository.markChanged(context, "card:${card.id}")
         if (card.id != DEFAULT_CHARACTER_CARD_ID) {
             if (!userPreferencesManager.hasCharacterCardTheme(card.id)) {
                 createDefaultThemeForCharacterCard(card.id, resolveEmojiSourcePrompt())

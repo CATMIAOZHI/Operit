@@ -2719,43 +2719,6 @@
         "parametersStructured": [],
         "details": "",
         "notes": ""
-      },
-      {
-        "name": "run_ui_subagent",
-        "description": "运行轻量 UI 自动化子代理。",
-        "parameters": "",
-        "parametersStructured": [
-          {
-            "name": "intent",
-            "type": "string",
-            "description": "任务描述",
-            "required": true,
-            "default": null
-          },
-          {
-            "name": "max_steps",
-            "type": "integer",
-            "description": "可选",
-            "required": false,
-            "default": "20"
-          },
-          {
-            "name": "agent_id",
-            "type": "string",
-            "description": "可选，可复用的 agent 会话 ID。不传或传 'default' 时使用主屏幕；传入且不为 'default' 时表示请求使用对应的虚拟屏幕会话，虚拟屏幕必须处于可用状态，否则本次运行将失败。",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "target_app",
-            "type": "string",
-            "description": "可选，目标应用包名",
-            "required": false,
-            "default": null
-          }
-        ],
-        "details": "",
-        "notes": ""
       }
     ],
     "categoryFooter": ""

@@ -43,11 +43,14 @@ fun AccessibilityWizardCard(
     updateNeeded: Boolean,
     installedVersion: String?,
     bundledVersion: String,
-    onUpdateProvider: () -> Unit
+    onUpdateProvider: () -> Unit,
+    onEnableViaAdb: () -> Unit,
+    adbAvailable: Boolean,
+    adbEnabling: Boolean
 ) {
-    var showWarningDialog by remember { mutableStateOf(false) }
-    var confirmText by remember { mutableStateOf("") }
-    var isError by remember { mutableStateOf(false) }
+
+
+
     
     Surface(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
@@ -166,7 +169,7 @@ fun AccessibilityWizardCard(
                             Spacer(modifier = Modifier.height(16.dp))
 
                             Button(
-                                onClick = { showWarningDialog = true },
+                                onClick = onInstallProvider,
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(8.dp),
                                 contentPadding = PaddingValues(vertical = 12.dp)
@@ -213,6 +216,18 @@ fun AccessibilityWizardCard(
 
                             Spacer(modifier = Modifier.height(16.dp))
 
+                            Button(
+                                onClick = onEnableViaAdb,
+                                enabled = adbAvailable && !adbEnabling,
+                                modifier = Modifier.fillMaxWidth()
+                            ) {
+                                Text(stringResource(if (adbEnabling) R.string.accessibility_adb_enabling else R.string.accessibility_adb_enable))
+                            }
+                            if (!adbAvailable) {
+                                Text(stringResource(R.string.accessibility_adb_unavailable),
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
                             Button(
                                 onClick = onOpenAccessibilitySettings,
                                 modifier = Modifier.fillMaxWidth(),
@@ -271,94 +286,13 @@ fun AccessibilityWizardCard(
         }
     }
     
-    // 警告对话框
-    if (showWarningDialog) {
-        val warningTitle = stringResource(R.string.accessibility_risk_warning_title)
-        val warningMessage = stringResource(R.string.accessibility_risk_warning_message) + "\n\n" +
-                stringResource(R.string.accessibility_risk_warning_additional)
-        val warningInputError = stringResource(R.string.accessibility_risk_warning_input_error)
-        val warningConfirm = stringResource(R.string.accessibility_risk_warning_confirm)
-        val expectedText = stringResource(R.string.a11y_wizard_risk_acknowledgment)
-        val expectedTextEn = "I understand and acknowledge the risks of account bans and restricted account functions caused by accessibility permissions, and I bear the consequences myself"
-
-        AlertDialog(
-            onDismissRequest = { showWarningDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.Warning,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.error
-                )
-            },
-            title = {
-                Text(
-                    text = warningTitle,
-                    textAlign = TextAlign.Center,
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Bold
-                    )
-                )
-            },
-            text = {
-                Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(
-                        text = warningMessage,
-                        style = MaterialTheme.typography.bodyMedium,
-                        textAlign = TextAlign.Center
-                    )
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    OutlinedTextField(
-                        value = confirmText,
-                        onValueChange = { 
-                            confirmText = it
-                            isError = false
-                        },
-                        label = { Text(stringResource(R.string.accessibility_risk_warning_input)) },
-                        isError = isError,
-                        supportingText = if (isError) {
-                            { Text(warningInputError) }
-                        } else null,
-                        modifier = Modifier.fillMaxWidth(),
-                        singleLine = true
-                    )
-                }
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        if (confirmText.trim().equals(expectedText, ignoreCase = true) ||
-                            confirmText.trim().equals(expectedTextEn, ignoreCase = true)) {
-                            showWarningDialog = false
-                            onInstallProvider()
-                        } else {
-                            isError = true
-                        }
-                    }
-                ) {
-                    Text(warningConfirm)
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    onClick = { 
-                        showWarningDialog = false
-                        confirmText = ""
-                        isError = false
-                    }
-                ) {
-                    Text(stringResource(R.string.accessibility_risk_warning_cancel))
-                }
-            }
-        )
-    }
-}
 }
 
 /**
  * 显示有可用更新的信息组件
  */
+}
+
 @Composable
 private fun UpdateAvailableInfo(
     installedVersion: String?,
@@ -395,4 +329,4 @@ private fun UpdateAvailableInfo(
             }
         }
     }
-} 
+}

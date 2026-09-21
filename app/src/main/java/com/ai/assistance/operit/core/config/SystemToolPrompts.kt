@@ -559,6 +559,7 @@ object SystemToolPrompts {
 
     private val internalToolCategoriesEn: List<SystemToolPromptCategory> = SystemToolPromptsInternal.internalToolCategoriesEn
     private val internalToolCategoriesCn: List<SystemToolPromptCategory> = SystemToolPromptsInternal.internalToolCategoriesCn
+
     
     /**
      * 获取所有英文工具分类
@@ -641,7 +642,11 @@ object SystemToolPrompts {
             chatModelHasDirectVideo = chatModelHasDirectVideo,
             safBookmarkNames = safBookmarkNames,
             includeSubagentTools = includeSubagentTools
-        ) + internalToolCategoriesEn
+        ) + internalToolCategoriesEn.map { category ->
+            category.copy(tools = category.tools.filterNot {
+                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames
+            })
+        }
     }
     
     /**
@@ -725,7 +730,11 @@ object SystemToolPrompts {
             chatModelHasDirectVideo = chatModelHasDirectVideo,
             safBookmarkNames = safBookmarkNames,
             includeSubagentTools = includeSubagentTools
-        ) + internalToolCategoriesCn
+        ) + internalToolCategoriesCn.map { category ->
+            category.copy(tools = category.tools.filterNot {
+                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames
+            })
+        }
     }
 
     data class ManageableToolPrompt(

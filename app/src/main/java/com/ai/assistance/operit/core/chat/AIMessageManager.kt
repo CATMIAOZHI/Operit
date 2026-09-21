@@ -37,6 +37,7 @@ import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.share
 import com.ai.assistance.operit.util.stream.shareRevisable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
@@ -83,7 +84,7 @@ object AIMessageManager {
     // private const val SUMMARY_CHUNK_SIZE = 4
 
     // 使用独立的协程作用域，确保AI操作的生命周期独立于任何特定的ViewModel
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + CoroutineName("AIMessageProducer"))
 
     private const val DEFAULT_CHAT_KEY = "__DEFAULT_CHAT__"
 

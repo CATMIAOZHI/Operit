@@ -48,7 +48,7 @@ object ThrowableTextFormatter {
     private fun buildMinimalText(throwable: Throwable, maxChars: Int): String {
         val base = buildString {
             append(throwable.javaClass.name)
-            val message = throwable.message?.trim().takeUnless { it.isNullOrEmpty() }
+            val message = (throwable.message ?: throwable.localizedMessage)?.trim().takeUnless { it.isNullOrEmpty() }
             if (message != null) {
                 append(": ").append(message)
             }
@@ -62,21 +62,22 @@ object ThrowableTextFormatter {
         throwable: Throwable,
         seen: MutableSet<Throwable>,
         maxChars: Int,
-        depth: Int
+        depth: Int,
+        prefix: String = ""
     ): Boolean {
         if (depth >= MAX_CAUSE_DEPTH) {
-            return appendBounded(builder, "Caused by: <cause chain truncated>\n", maxChars)
+            return appendBounded(builder, "$prefix<exception chain truncated>\n", maxChars)
         }
         if (!seen.add(throwable)) {
-            return appendBounded(builder, "Caused by: <circular cause omitted>\n", maxChars)
+            return appendBounded(builder, "$prefix<circular exception omitted>\n", maxChars)
         }
-        if (depth > 0 && !appendBounded(builder, "Caused by: ", maxChars)) {
+        if (!appendBounded(builder, prefix, maxChars)) {
             return false
         }
         if (!appendBounded(builder, throwable.javaClass.name, maxChars)) {
             return false
         }
-        val message = throwable.message?.trim().takeUnless { it.isNullOrEmpty() }
+        val message = (throwable.message ?: throwable.localizedMessage)?.trim().takeUnless { it.isNullOrEmpty() }
         if (message != null && !appendBounded(builder, ": $message", maxChars)) {
             return false
         }
@@ -95,9 +96,16 @@ object ThrowableTextFormatter {
             return false
         }
 
+        // Coroutine crash diagnostics (including CoroutineName) live in suppressed exceptions.
+        // Keep the same identity, depth and character bounds as the cause chain.
+        for (suppressed in throwable.suppressed) {
+            if (!appendThrowable(builder, suppressed, seen, maxChars, depth + 1, "Suppressed: ")) {
+                return false
+            }
+        }
         val cause = throwable.cause
         if (cause != null && cause !== throwable) {
-            return appendThrowable(builder, cause, seen, maxChars, depth + 1)
+            return appendThrowable(builder, cause, seen, maxChars, depth + 1, "Caused by: ")
         }
         return true
     }

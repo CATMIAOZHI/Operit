@@ -55,6 +55,7 @@ fun ShizukuDemoScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    var adbEnablingAccessibility by remember { mutableStateOf(false) }
 
     // Collect UI state from ViewModel
     val uiState by viewModel.uiState.collectAsState()
@@ -363,6 +364,28 @@ fun ShizukuDemoScreen(
                     onUpdateProvider = {
                         scope.launch(Dispatchers.IO) {
                             UIHierarchyManager.launchProviderInstall(context)
+                        }
+                    },
+                    adbAvailable = uiState.isShizukuRunning.value && uiState.hasShizukuPermission.value,
+                    adbEnabling = adbEnablingAccessibility,
+                    onEnableViaAdb = {
+                        adbEnablingAccessibility = true
+                        scope.launch {
+                            try {
+                                val message = withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.core.tools.system.AccessibilityAdbAuthorizer.enable(context)
+                                }
+                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                Toast.makeText(context, context.getString(R.string.accessibility_adb_not_active), Toast.LENGTH_LONG).show()
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.makeText(context, e.message ?: context.getString(R.string.accessibility_adb_not_active), Toast.LENGTH_LONG).show()
+                            } finally {
+                                adbEnablingAccessibility = false
+                                withContext(Dispatchers.IO) { viewModel.refreshStatus(context) }
+                            }
                         }
                     }
                 )

@@ -201,8 +201,15 @@ internal class CommandCodeTransport : Interceptor {
     }
 }
 
+/** Replaying the same request cannot repair an oversized or malformed protocol event. */
+internal class CommandCodeProtocolException(message: String) : IOException(message)
+
 /** Decode one bounded NDJSON event at a time, preserving backpressure and cancellation. */
 internal class CommandCodeEventSource(private val upstream: BufferedSource) : Source {
+    private companion object {
+        const val MAX_EVENT_BYTES = 32L * 1024 * 1024
+    }
+
     private val output = Buffer()
     private var terminal: JSONObject? = null
     private var ended = false
@@ -211,9 +218,11 @@ internal class CommandCodeEventSource(private val upstream: BufferedSource) : So
     override fun read(sink: Buffer, byteCount: Long): Long {
         if (byteCount == 0L) return 0
         while (output.size == 0L && !ended) {
-            val line = try { upstream.readUtf8LineStrict(8L * 1024 * 1024) }
+            val line = try { upstream.readUtf8LineStrict(MAX_EVENT_BYTES) }
             catch (_: EOFException) {
-                if (upstream.buffer.size > 8L * 1024 * 1024) throw IOException("Command Code event too large")
+                if (upstream.buffer.size > MAX_EVENT_BYTES) {
+                    throw CommandCodeProtocolException("Command Code response event exceeds 32 MiB")
+                }
                 if (upstream.buffer.size > 0) upstream.readUtf8() else {
                     finish(terminal ?: throw IOException("Command Code stream ended before completion"))
                     continue
@@ -221,7 +230,7 @@ internal class CommandCodeEventSource(private val upstream: BufferedSource) : So
             }.trim().removePrefix("data:").trim()
             if (line.isEmpty() || line.startsWith(":") || line.startsWith("event:")) continue
             val event = try { JSONObject(line) } catch (_: org.json.JSONException) {
-                throw IOException("Invalid Command Code stream event")
+                throw CommandCodeProtocolException("Invalid Command Code stream event")
             }
             when (event.optString("type")) {
                 "text-delta" -> emit(JSONObject().put("content", event.optString("text")))

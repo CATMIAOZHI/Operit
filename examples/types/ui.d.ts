@@ -10,6 +10,8 @@ import {
  * UI operations namespace
  */
 export namespace UI {
+    // Legacy UI script calls now return a migration error. The main agent uses
+    // the phone_control package directly so its control session has a trusted turn identity.
     /**
      * Get current page information
      */
@@ -129,6 +131,7 @@ export namespace UI {
      * @param agentId - Optional agent id to reuse the same virtual screen session.
      * @param targetApp - Optional target app name/package name used for virtual display prewarm.
      */
+    /** @deprecated Retired. Use foreground control from the main agent. */
     function runSubAgent(intent: string, maxSteps?: number, agentId?: string, targetApp?: string): Promise<AutomationExecutionResultData>;
 }
 

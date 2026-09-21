@@ -220,6 +220,7 @@ class SkillRepository private constructor(private val context: Context) {
                 }
 
                 skillManager.refreshAvailableSkills()
+                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
 
                 if (trimmedDescription.isNotBlank()) {
                     context.getString(R.string.skill_imported_with_desc, finalDir.name, trimmedDescription)

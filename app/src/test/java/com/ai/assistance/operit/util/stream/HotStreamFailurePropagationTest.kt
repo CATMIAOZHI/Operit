@@ -14,6 +14,9 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
 import kotlinx.coroutines.yield
+import kotlinx.coroutines.async
+import kotlinx.coroutines.CompletableDeferred
+import java.io.IOException
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -26,6 +29,49 @@ import org.junit.Test
  * reached the process-wide uncaught handler and killed the app instead of only failing the turn.
  */
 class HotStreamFailurePropagationTest {
+
+    @Test
+    fun toolContinuationFailureReachesActiveAndLateSubscribersWithoutCrashing() = runBlocking {
+        val scope = rootScope()
+        val tools = rootScope()
+        val wasEnabled = StreamLogger.isEnabled
+        StreamLogger.setEnabled(false)
+        try {
+            val failure = IOException("Command Code event too large")
+            val release = CompletableDeferred<Unit>()
+            val events = MutableSharedStreamImpl<TextStreamEvent>(replay = Int.MAX_VALUE)
+            val shared = stream<String> {
+                events.emit(TextStreamEvent(TextStreamEventType.SAVEPOINT, "turn"))
+                emit("before tools")
+                tools.async {
+                    release.await()
+                    emit("tool continuation")
+                    throw failure
+                }.await()
+            }.withEventChannel(events).shareRevisable(scope, replay = Int.MAX_VALUE)
+
+            val active = scope.async {
+                runCatching { shared.collect { } }.exceptionOrNull()
+            }
+            withTimeout(5_000) { while (shared.subscriptionCount == 0) yield() }
+            release.complete(Unit)
+            // Coroutine stack-trace recovery may copy IOException and retain it as the cause.
+            fun original(error: Throwable?): Throwable? =
+                generateSequence(error) { it.cause }.lastOrNull()
+            assertSame(failure, original(withTimeout(5_000) { active.await() }))
+            assertSame(failure, original(runCatching { shared.collect { } }.exceptionOrNull()))
+            assertSame(failure, original(runCatching {
+                (shared as TextStreamEventCarrier).eventChannel.collect { }
+            }.exceptionOrNull()))
+            awaitScopeIdle(scope)
+            awaitScopeIdle(tools)
+            assertNothingEscaped(scope, "tool continuation")
+        } finally {
+            scope.cancel()
+            tools.cancel()
+            StreamLogger.setEnabled(wasEnabled)
+        }
+    }
 
     /**
      * Every failure that reached the process-wide uncaught handler of a test scope. A queue rather

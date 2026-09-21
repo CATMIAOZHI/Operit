@@ -564,12 +564,21 @@ class MCPLocalServer private constructor(private val context: Context) {
 
     /** Persist first and publish the new in-memory state only after the atomic write succeeds. */
     private suspend fun applyPersistedInternalConfig(updated: MCPConfig) {
+        fun catalog(config: MCPConfig) =
+            (config.mcpServers.keys + config.pluginMetadata.keys).sorted().map { id ->
+                val metadata = config.pluginMetadata[id]
+                listOf(id, metadata?.name, metadata?.description,
+                    config.mcpServers[id]?.disabled ?: metadata?.disabled ?: false)
+            }
+        val before = catalog(_effectiveConfig.value)
         _internalConfig.value =
             persistMcpConfigBeforePublish(updated) { config ->
                 val configJson = gson.toJson(config)
                 atomicWrite(internalConfigFile, configJson)
             }
         recomputeEffectiveConfig()
+        if (before != catalog(_effectiveConfig.value))
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     /**

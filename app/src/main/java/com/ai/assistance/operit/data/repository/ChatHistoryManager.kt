@@ -3495,6 +3495,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatMutex(chatId).withLock {
             try {
                 chatDao.updateChatWorkspace(chatId, workspace, workspaceEnv)
+                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, chatId).markChatChanged()
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to update chat workspace for chat $chatId", e)
                 throw e
@@ -3559,6 +3560,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                 workspace = targetDir.absolutePath,
                 workspaceEnv = chat.workspaceEnv
             )
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, chatId).markChatChanged()
 
             return WorkspaceRenameResult(
                 workspacePath = targetDir.absolutePath,

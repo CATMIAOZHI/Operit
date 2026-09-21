@@ -13,6 +13,20 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ToolExecutionMarkupTest {
+    @Test fun failedBatchRetainsProgressAndFreshObservationThroughAggregation() {
+        val original = ToolResult(toolName = "phone_control:act", success = false,
+            error = "completed_actions=2; attempted_actions=3",
+            result = StringResultData("""observation_id=fresh
+<link type="image" id="batch-image"></link>"""))
+        val accumulator = ToolExecutionManager.BoundedToolResultAccumulator()
+        accumulator.add(original)
+        val markup = ConversationMarkupManager.formatToolResultForMessage(
+            original.copy(result = StringResultData(accumulator.combinedResultText())))
+        assertTrue(markup.contains("completed_actions=2"))
+        assertTrue(markup.contains("observation_id=fresh"))
+        assertTrue(markup.indexOf("""<link type="image" id="batch-image">""") > markup.indexOf("</tool_result"))
+    }
+
     @Test
     fun finalResult_persistsInvocationIdentityAndDuration() {
         val result =

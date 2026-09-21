@@ -42,9 +42,9 @@ object UIHierarchyManager {
     private const val BIND_SERVICE_TIMEOUT_MS = 3000L // 3秒超时
 
     // 新的无障碍服务提供者应用的包名
-    private const val PROVIDER_PACKAGE_NAME = "com.ai.assistance.operit.provider"
+    const val PROVIDER_PACKAGE_NAME = "com.rainy.operitry.provider"
     // 无障碍服务提供者APK的文件名
-    private const val PROVIDER_APK_NAME = "accessibility.apk"
+    private const val PROVIDER_APK_NAME = "operit-ry-accessibility.apk"
     // 用于绑定的自定义Action，必须与服务提供者应用中的声明一致
     private const val PROVIDER_ACTION = "com.ai.assistance.operit.provider.IAccessibilityProvider"
     // TODO: 如果你不在Google Play上发布，可以将其更改为直接下载的URL
@@ -462,7 +462,12 @@ object UIHierarchyManager {
             return false
         }
         return try {
-            accessibilityProvider?.takeScreenshot(path, format) ?: false
+            android.os.ParcelFileDescriptor.open(File(path),
+                android.os.ParcelFileDescriptor.MODE_CREATE or
+                    android.os.ParcelFileDescriptor.MODE_TRUNCATE or
+                    android.os.ParcelFileDescriptor.MODE_WRITE_ONLY).use {
+                accessibilityProvider?.takeScreenshot(it, format) ?: false
+            }
         } catch (e: RemoteException) {
             AppLogger.e(TAG, "请求截取屏幕截图失败", e)
             false
@@ -499,5 +504,14 @@ object UIHierarchyManager {
             AppLogger.e(TAG, "从提供者获取Activity名称失败", e)
             null
         }
+    }
+
+    suspend fun getForegroundIdentity(context: Context): Pair<String, String>? {
+        if (!ensureBound(context)) return null
+        return try {
+            val identity = accessibilityProvider?.foregroundIdentity.orEmpty()
+            val parts = identity.split('/', limit = 2)
+            if (parts.size == 2 && parts.all { it.isNotBlank() }) parts[0] to parts[1] else null
+        } catch (e: RemoteException) { null }
     }
 }

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Operit Ry</string>
+    <string name="service_description">Lets Operit Ry read the current screen, capture screenshots, and perform requested taps, swipes and text input.</string>
+</resources>

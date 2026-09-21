@@ -130,10 +130,15 @@ class FunctionalConfigManager(private val context: Context) {
 
     // 保存功能配置映射（包含modelIndex）
     suspend fun saveFunctionConfigMappingWithIndex(mapping: Map<FunctionType, FunctionConfigMapping>) {
+        fun projection(values: Map<FunctionType, FunctionConfigMapping>) = values
+            .filterKeys { it.name in setOf("CHAT", "VOICE", "IMAGE_RECOGNITION", "AUDIO_RECOGNITION", "VIDEO_RECOGNITION") }
+            .mapValues { it.value.configId to it.value.modelIndex }
+        val changed = projection(functionConfigMappingWithIndexFlow.first()) != projection(mapping)
         val stringMapping = mapping.entries.associate { it.key.name to it.value }
         context.functionalConfigDataStore.edit { preferences ->
             preferences[FUNCTION_CONFIG_MAPPING] = json.encodeToString(stringMapping)
         }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     // 获取指定功能的配置ID
