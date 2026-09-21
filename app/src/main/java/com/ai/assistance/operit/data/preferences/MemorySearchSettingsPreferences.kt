@@ -42,6 +42,52 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         LearningPromptSnapshotRepository.markChanged(context, "notes-policy:$profileId")
     }
     fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
+    fun learningDelayMinutes(): Int = searchPrefs.getInt("learning_delay_minutes", 5).coerceIn(1, 60)
+    fun setLearningDelayMinutes(minutes: Int) {
+        searchPrefs.edit().putInt("learning_delay_minutes", minutes.coerceIn(1, 60)).apply()
+    }
+    fun memoryReviewInterval(): Int = searchPrefs.getInt("memory_review_interval", 10).coerceIn(1, 100)
+    fun skillReviewInterval(): Int = searchPrefs.getInt("skill_review_interval", 10).coerceIn(1, 100)
+    fun setMemoryReviewInterval(value: Int) {
+        searchPrefs.edit().putInt("memory_review_interval", value.coerceIn(1, 100)).apply()
+    }
+    fun setSkillReviewInterval(value: Int) {
+        searchPrefs.edit().putInt("skill_review_interval", value.coerceIn(1, 100)).apply()
+    }
+    internal fun advanceLearningCadence(chatId: String, toolIterations: Int): MemoryLearningTick =
+        synchronized(cadenceLock) {
+            val turnsKey = "learning_turns:$chatId"
+            val iterationsKey = "learning_iterations:$chatId"
+            val tick = MemoryLearningCadence(
+                searchPrefs.getInt(turnsKey, 0), searchPrefs.getInt(iterationsKey, 0)
+            ).advance(shouldExtractNewMemory(), shouldExtractSkills(), toolIterations,
+                memoryReviewInterval(), skillReviewInterval())
+            searchPrefs.edit().putInt(turnsKey, tick.next.turns)
+                .putInt(iterationsKey, tick.next.iterations)
+                .putBoolean("learning_pending_notes:$chatId", shouldExtractNewMemory() &&
+                    (tick.notes || searchPrefs.getBoolean("learning_pending_notes:$chatId", false)))
+                .putBoolean("learning_pending_skills:$chatId", shouldExtractSkills() &&
+                    (tick.skills || searchPrefs.getBoolean("learning_pending_skills:$chatId", false))).apply()
+            tick.copy(notes = searchPrefs.getBoolean("learning_pending_notes:$chatId", false),
+                skills = searchPrefs.getBoolean("learning_pending_skills:$chatId", false))
+        }
+    internal fun consumePendingLearning(chatId: String): Pair<Boolean, Boolean> = synchronized(cadenceLock) {
+        val notes = shouldExtractNewMemory() && searchPrefs.getBoolean("learning_pending_notes:$chatId", false)
+        val skills = shouldExtractSkills() && searchPrefs.getBoolean("learning_pending_skills:$chatId", false)
+        val editor = searchPrefs.edit().remove("learning_pending_notes:$chatId")
+            .remove("learning_pending_skills:$chatId")
+        // This review sees the latest snapshot, including turns accumulated during the idle wait.
+        if (notes) editor.putInt("learning_turns:$chatId", 0)
+        if (skills) editor.putInt("learning_iterations:$chatId", 0)
+        editor.apply()
+        notes to skills
+    }
+    internal fun restorePendingLearning(chatId: String, notes: Boolean, skills: Boolean) = synchronized(cadenceLock) {
+        val editor = searchPrefs.edit()
+        if (notes) editor.putBoolean("learning_pending_notes:$chatId", true)
+        if (skills) editor.putBoolean("learning_pending_skills:$chatId", true)
+        editor.apply()
+    }
     fun mayReviseLearnedSkills(): Boolean = searchPrefs.getBoolean("revise_learned_skills", true)
     fun setReviseLearnedSkills(enabled: Boolean) {
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
@@ -128,6 +174,7 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
     }
 
     companion object {
+        private val cadenceLock = Any()
         private const val KEY_SCORE_MODE = "score_mode"
         private const val KEY_KEYWORD_WEIGHT = "keyword_weight"
         private const val KEY_TAG_WEIGHT = "tag_weight"

@@ -489,6 +489,7 @@ class EnhancedAIService private constructor(
         val promptHooksEnabled: Boolean = true,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
+        val learningToolIterations: AtomicInteger = AtomicInteger(0),
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null
@@ -2044,8 +2045,9 @@ class EnhancedAIService private constructor(
                 } else {
                     com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.replyCompleted(
                         this@EnhancedAIService.context,profileId,currentChatId,
-                        context.conversationHistory.filter { it.kind.name in setOf("USER","ASSISTANT","TOOL_RESULT") }.takeLast(48)
-                            .joinToString("\n\n") { "${it.kind}:\n${it.content.take(6000)}" }.takeLast(80_000)
+                        context.conversationHistory.filter { it.kind.name != "SYSTEM" }
+                            .map { it.kind.name to it.content },
+                        toolIterations = context.learningToolIterations.get()
                     )
                     val memoryPreferences = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(this@EnhancedAIService.context)
                     if (enableMemoryAutoUpdate && memoryPreferences.enableMemoryAutoUpdateFlow.first() &&
@@ -2159,6 +2161,8 @@ class EnhancedAIService private constructor(
         }
 
         if (!isSubTask && toolInvocations.isNotEmpty()) {
+            // One tool batch is one iteration, regardless of the number of parallel calls.
+            context.learningToolIterations.incrementAndGet()
             withContext(Dispatchers.Main) {
                 val toolNames = toolInvocations.joinToString(", ") { resolveToolDisplayName(it.tool) }
                 _inputProcessingState.value = InputProcessingState.ExecutingTool(toolNames)

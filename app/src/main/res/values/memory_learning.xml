@@ -2,6 +2,11 @@
     <string name="disable_memory_notes">禁用 memory.md</string>
     <string name="disable_memory_notes_desc">不向系统提示注入当前记忆空间的 memory.md，不删除内容，也不关闭自动提取。新对话直接生效；旧对话需手动重建系统提示或等待压缩。</string>
     <string name="memory_automation_title">自动保存设置</string>
+    <string name="memory_learning_delay">笔记与技能提取等待时间</string>
+    <string name="memory_learning_delay_desc">每个对话分别累计：记忆默认10轮用户对话，技能默认10次工具迭代（同批多个工具算1次）。达标后等待空闲5分钟；继续聊天会推迟并使用最新内容，两项都达标时合并提取。手动提取不受限制。设置从下一次回复生效。</string>
+    <string name="memory_review_interval">记忆提取间隔（用户对话轮数）</string>
+    <string name="skill_review_interval">技能提取间隔（工具迭代次数）</string>
+    <string name="memory_learning_delay_minutes">%1$d 分钟</string>
     <string name="memory_auto_master_off">总开关已关闭：图谱、笔记和技能的自动提取均暂停。路径设置会保留，手动提取不受影响。</string>
     <string name="memory_graph_path_desc">总开关开启后，定时整理对话并写入旧记忆图谱。此路径开关对所有记忆空间生效。</string>
     <string name="memory_notes_path_desc">总开关开启后，每次回复结束可整理当前空间的 memory.md 和全局 user.md，按自动通过设置生效或等待审批。</string>
@@ -83,7 +88,7 @@
     <string name="memory_review_applying">应用中，请重试完成</string>
     <string name="memory_extraction_logs">提取日志</string>
     <string name="memory_extraction_logs_hint">当前空间最近500次提取，每3秒刷新。点击记录可审计子代理过程；过程记录可能包含原对话片段和工具内容，仅保存在本机。无结束时间的记录可能因应用退出而中断。</string>
-    <string name="memory_audit_title">查看提取审计</string>
+    <string name="memory_audit_title">查看提取对话</string>
     <string name="memory_audit_hint">只读查看提取子代理的实际过程，包括输入、模型回复、工具参数和结果。点击消息查看完整原文；不会重新执行工具或再次调用模型。</string>
     <string name="memory_audit_message">查看完整原始消息</string>
     <string name="memory_audit_counts">模型 %1$d 轮 · 工具 %2$d 次 · 记录 %3$d 条改动</string>
