@@ -264,6 +264,21 @@ object ImagePoolManager {
                 return true
             }
 
+            // Sources exported by us already contain the exact model input. Re-encoding after
+            // eviction/restart would change historical request bytes and lose prefix cache reuse.
+            if (runCatching { File("$sourcePath.image-id").readText() == id }.getOrDefault(false)) {
+                try {
+                    val data = ImageData(Base64.encodeToString(file.readBytes(), Base64.NO_WRAP),
+                        sourceMimeType, bitmap.width, bitmap.height)
+                    imagePool[id] = data
+                    saveToDisk(id, data)
+                    return true
+                } catch (error: Exception) {
+                    AppLogger.w(TAG, "Unable to restore encoded image: $id", error)
+                    return false
+                } finally { bitmap.recycle() }
+            }
+
             val restored =
                 try {
                     registerBitmap(
@@ -290,6 +305,14 @@ object ImagePoolManager {
             AppLogger.d(TAG, "已从源文件恢复图片到池子: $id, path=$sourcePath")
             return true
         }
+    }
+
+    /** Persist exactly the encoded image sent to the model, for stable history rehydration. */
+    @Synchronized
+    fun exportImageSource(id: String, file: File) {
+        val data = checkNotNull(getImage(id)) { "Image is unavailable." }
+        file.writeBytes(Base64.decode(data.base64, Base64.DEFAULT))
+        File("${file.absolutePath}.image-id").writeText(id)
     }
 
     @Synchronized

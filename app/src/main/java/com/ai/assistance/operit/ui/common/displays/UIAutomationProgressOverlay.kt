@@ -343,6 +343,21 @@ class UIAutomationProgressOverlay private constructor(private val context: Conte
         return maxY >= position[1] && minY < position[1] + view.height
     }
 
+    /** Remove the input channel, not just its asynchronously updated touch region. Main thread only. */
+    fun detachForInput() {
+        val view = overlayView ?: return
+        if (!view.isAttachedToWindow) return
+        // Keep the card composition while temporarily detached; hide() destroys its lifecycle.
+        view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        checkNotNull(windowManager).removeViewImmediate(view)
+    }
+
+    fun restoreAfterInput() {
+        val view = overlayView ?: return
+        if (view.isAttachedToWindow || progressInfo == null) return
+        checkNotNull(windowManager).addView(view, checkNotNull(layoutParams))
+    }
+
     fun hide() {
         runOnMainThread {
             try {
