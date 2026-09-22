@@ -4,6 +4,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MemoryLearningSnapshotTest {
+    @Test fun thinkingCanBeIncludedWithoutProtocolMetadataOrBudgetOverflow() {
+        val text = "<think>先点击计算器，再输入12乘34</think>完成" +
+            "<meta provider=\"gemini:thought_signature\">opaque-secret</meta>"
+        val included = MemoryLearningSnapshot.digest(listOf("ai" to text), 3000, includeThinking = true)
+        assertTrue(included.contains("先点击计算器"))
+        assertFalse(included.contains("opaque-secret"))
+        assertFalse(MemoryLearningSnapshot.digest(listOf("ai" to text), 3000, includeThinking = false)
+            .contains("先点击计算器"))
+        val bounded = MemoryLearningSnapshot.digest(listOf("ai" to "<think>${"思考".repeat(10000)}</think>完成"),
+            1000, includeThinking = true)
+        assertTrue(bounded.toByteArray(Charsets.UTF_8).size <= 1000)
+    }
     @Test fun assistantReasoningIsRemovedBeforeExcerptsButUserQuotesRemain() {
         val result = MemoryLearningSnapshot.digest(listOf(
             "USER" to "引用 <think>用户示例</think>",

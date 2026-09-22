@@ -135,7 +135,7 @@ object MemoryLearningCoordinator {
                     db.chatContentDao().getMessagesForChatDesc(chatId,48).asReversed()
                         .filter { it.sender in setOf("user","ai","summary") }
                         .map { (if (it.sender == "summary") "SUMMARY" else it.sender) to it.content },
-                    instructions.toByteArray(Charsets.UTF_8).size)
+                    instructions.toByteArray(Charsets.UTF_8).size, settings.shouldIncludeThinking())
                 // Conservative byte accounting bounds repeated history/skill reads as well as SOURCE.
                 // Leave room for the scoped tool schema, model output and protocol overhead.
                 session.evidenceBudget = (recent.contextWindow * 0.75).toLong()

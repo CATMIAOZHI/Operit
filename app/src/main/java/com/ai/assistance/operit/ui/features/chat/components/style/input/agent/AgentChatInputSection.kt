@@ -2760,12 +2760,6 @@ private fun AgentMemorySelectorItem(
                 onToggle = { notesSettings.setInjectNotes(!injectNotes) },
                 onInfoClick = { showNotesInfo = true },
             )
-            AgentActionSettingItem(
-                title = stringResource(R.string.manual_memory_update),
-                icon = Icons.Outlined.Save,
-                onClick = onManualMemoryUpdate,
-                onInfoClick = onManualMemoryUpdateInfoClick,
-            )
         }
     }
 }

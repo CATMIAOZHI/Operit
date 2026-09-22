@@ -21,7 +21,8 @@ class MemoryLearningActions(
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true)
+            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true,
+                includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"

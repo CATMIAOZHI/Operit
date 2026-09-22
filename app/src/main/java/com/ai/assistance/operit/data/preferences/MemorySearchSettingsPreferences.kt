@@ -42,6 +42,10 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         LearningPromptSnapshotRepository.markChanged(context, "notes-policy:$profileId")
     }
     fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
+    fun shouldIncludeThinking(): Boolean = searchPrefs.getBoolean("extract_include_thinking", true)
+    fun setIncludeThinking(enabled: Boolean) {
+        searchPrefs.edit().putBoolean("extract_include_thinking", enabled).apply()
+    }
     fun learningDelayMinutes(): Int = searchPrefs.getInt("learning_delay_minutes", 5).coerceIn(1, 60)
     fun setLearningDelayMinutes(minutes: Int) {
         searchPrefs.edit().putInt("learning_delay_minutes", minutes.coerceIn(1, 60)).apply()

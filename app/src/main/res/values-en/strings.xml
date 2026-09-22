@@ -1,4 +1,6 @@
 <resources>
+    <string name="memory_include_thinking">Include thinking in extraction</string>
+    <string name="memory_include_thinking_desc">Graph, note and skill extraction in this memory space can use model thinking, including history read during extraction. On by default. Turn off to use only visible replies and tool records. Chat display and context caching are unchanged.</string>
     <string name="permission_review_always_allow">Always allow this tool</string>
     <string name="permission_review_always_allowed">This tool is always allowed</string>
     <string name="permission_review_always_allow_confirm">Always allow “%1$s”?\n\nThis applies to all conversations and all arguments for this tool, without permission prompts or automatic reviews. Other tools are unaffected.\n\nFinished calls will not be retried automatically. Revoke this in Settings → Tool permissions.</string>

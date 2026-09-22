@@ -337,7 +337,7 @@ object MemoryLibrary {
             // Prune tool results to reduce token usage
             val prunedContent =
                 ChatUtils.stripGeminiThoughtSignatureMeta(
-                    pruneToolResultContent(context, memoryEvidenceText("assistant", content))
+                    pruneToolResultContent(context, memoryEvidenceText("assistant", content, MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking()))
                 )
 
             // Process conversation history: remove system messages and clean user messages
@@ -350,7 +350,7 @@ object MemoryLibrary {
                         msgContent
                     }
                     role to ChatUtils.stripGeminiThoughtSignatureMeta(
-                        pruneToolResultContent(context, memoryEvidenceText(role, cleanedContent))
+                        pruneToolResultContent(context, memoryEvidenceText(role, cleanedContent, MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking()))
                     )
                 }.filter { it.second.isNotBlank() }
 
