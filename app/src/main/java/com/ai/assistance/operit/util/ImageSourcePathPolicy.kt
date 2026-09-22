@@ -6,11 +6,14 @@ import java.io.File
 object ImageSourcePathPolicy {
     fun resolve(path: String, allowedRoots: List<File>): File {
         require(File(path).isAbsolute) { "Image path must be absolute" }
-        val source = File(path).toPath().toRealPath().toFile()
-        require(allowedRoots.any { root ->
-            root.isDirectory &&
-                source.path.startsWith(root.toPath().toRealPath().toString().trimEnd(File.separatorChar) + File.separator)
-        }) { "Image path is outside permitted storage directories" }
-        return source
+        val source = File(path).toPath().toRealPath()
+        for (root in allowedRoots) {
+            if (!root.isDirectory) continue
+            val allowedRoot = root.toPath().toRealPath()
+            if (source.startsWith(allowedRoot) && source != allowedRoot) {
+                return source.toFile()
+            }
+        }
+        throw IllegalArgumentException("Image path is outside permitted storage directories")
     }
 }
