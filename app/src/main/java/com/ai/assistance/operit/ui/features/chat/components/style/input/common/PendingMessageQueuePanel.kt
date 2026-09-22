@@ -38,6 +38,7 @@ data class PendingQueueMessageItem(
     val text: String,
     internal val chatGeneration: Long = 0L,
     val isSteering: Boolean = false,
+    val attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
 )
 
 @Composable
@@ -120,7 +121,8 @@ fun PendingMessageQueuePanel(
                                     tint = actionIconTint
                                 )
                                 Text(
-                                    text = item.text,
+                                    text = listOf(item.text, item.attachments.joinToString { it.fileName })
+                                        .filter { it.isNotBlank() }.joinToString("\n"),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                     maxLines = 1,

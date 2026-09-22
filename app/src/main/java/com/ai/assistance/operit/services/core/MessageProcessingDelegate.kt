@@ -214,6 +214,7 @@ class MessageProcessingDelegate(
     private data class ChatRuntime(
         @Volatile var inputInbox: TurnInputInbox? = null,
         @Volatile var canSteer: Boolean = false,
+        @Volatile var prepareSteeringInput: (suspend (String, List<AttachmentInfo>) -> String)? = null,
         val transcriptMutex: Mutex = Mutex(),
         val steeredTranscript: SteeredTranscript = SteeredTranscript(),
         var sendJob: Job? = null,
@@ -235,6 +236,15 @@ class MessageProcessingDelegate(
 
     fun steeringTurnId(chatId: String): String? =
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
+
+    suspend fun prepareSteeringInput(
+        chatId: String, expectedTurnId: String, text: String, attachments: List<AttachmentInfo>
+    ): String? {
+        val runtime = chatRuntimes[chatId] ?: return null
+        if (!runtime.canSteer || runtime.inputInbox?.turnId != expectedTurnId) return null
+        if (attachments.isEmpty()) return text
+        return runtime.prepareSteeringInput?.invoke(text, attachments)
+    }
 
     fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
         chatRuntimes[chatId]?.inputInbox?.pendingInputKind()
@@ -519,6 +529,7 @@ class MessageProcessingDelegate(
     private suspend fun cancelMessageInternal(chatId: String, keepPartialResponse: Boolean) {
         val chatRuntime = runtimeFor(chatId)
         chatRuntime.canSteer = false
+        chatRuntime.prepareSteeringInput = null
         chatRuntime.inputInbox?.seal()
         val currentTurnOptions = chatRuntime.currentTurnOptions
         val cancellationSnapshot =
@@ -803,6 +814,7 @@ class MessageProcessingDelegate(
         chatRuntime.currentTurnOptions = turnOptions
         chatRuntime.inputInbox = TurnInputInbox()
         chatRuntime.canSteer = false
+        chatRuntime.prepareSteeringInput = null
         chatRuntime.steeredTranscript.clear()
         updateGlobalLoadingState()
         setChatInputProcessingState(chatId, EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
@@ -1261,6 +1273,16 @@ class MessageProcessingDelegate(
                 val collaborationEnabled =
                     com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
                         .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
+                chatRuntime.prepareSteeringInput = { text, inputAttachments ->
+                    AIMessageManager.buildUserMessageContent(
+                        context = context, messageText = text, attachments = inputAttachments,
+                        workspacePath = workspacePath, workspaceEnv = workspaceEnv,
+                        enableDirectAudioProcessing = multimodalCapabilities.audio,
+                        enableDirectVideoProcessing = multimodalCapabilities.video,
+                        chatId = chatId, roleCardId = roleCardId,
+                        isSubTask = turnOptions.isSubTask, promptHooksEnabled = turnOptions.promptHooksEnabled,
+                    )
+                }
                 chatRuntime.canSteer = effectivePersistTurn && (!isWaifuModeEnabled || collaborationEnabled) &&
                     (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
                 if (chatRuntime.canSteer) {
@@ -1700,6 +1722,7 @@ class MessageProcessingDelegate(
                 }
             } finally {
                 chatRuntime.canSteer = false
+                chatRuntime.prepareSteeringInput = null
                 val unconsumedInputs = chatRuntime.inputInbox?.close().orEmpty()
                 unconsumedInputs.forEach { it.returned() }
                 val finalizeMessageStartTime = messageTimingNow()

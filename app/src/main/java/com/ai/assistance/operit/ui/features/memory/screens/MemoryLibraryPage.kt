@@ -11,7 +11,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.preferencesManager
-import kotlinx.coroutines.flow.first
 
 /** Regular in-app destination, without a dialog window or floating surface. */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -22,10 +21,8 @@ fun MemoryLibraryPage(
     onBack: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    var profileName by remember(profileId) { mutableStateOf(profileId) }
-    LaunchedEffect(profileId) {
-        profileName = preferencesManager.getMemorySpaceFlow(profileId).first().name
-    }
+    val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
+    val profileName = profileNames[profileId] ?: profileId
     BackHandler(onBack = onBack)
     Scaffold(
         modifier = Modifier.fillMaxSize(),
