@@ -80,6 +80,12 @@ object ChatConfigReadiness {
         if (providerType in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
             return ChatConfigReadinessResult()
         }
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            return ChatConfigReadinessResult(
+                if (config.apiKey.isBlank() || ApiKeyFormatValidator.isValid(config.apiKey)) null
+                else ChatConfigReadinessIssue.API_KEY_INVALID
+            )
+        }
 
         val hasConfiguredKey =
             config.apiKey.isNotBlank() ||

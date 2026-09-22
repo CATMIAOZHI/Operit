@@ -29,5 +29,7 @@ fun ModelConfigData.protocolSettingsForModel(model: String): ModelProtocolSettin
 fun supportsModelProtocolOverrides(providerTypeId: String): Boolean =
     ApiProviderType.fromProviderTypeId(providerTypeId)?.let {
         it != ApiProviderType.MNN && it != ApiProviderType.LLAMA_CPP &&
-            it !in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY)
+            it !in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT,
+                ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY,
+                ApiProviderType.OPENCODE_ZEN_FREE)
     } == true

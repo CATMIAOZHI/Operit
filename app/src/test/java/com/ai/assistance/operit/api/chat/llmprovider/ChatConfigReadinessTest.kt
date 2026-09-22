@@ -9,6 +9,18 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ChatConfigReadinessTest {
+    @Test
+    fun zenFreeAllowsAnonymousRequestsEvenWithAnOldEmptyKeyPool() {
+        val config = remoteConfig(
+            ApiProviderType.OPENCODE_ZEN_FREE,
+            apiKey = "",
+            endpoint = OpenCodeZenFree.CHAT_ENDPOINT,
+        ).copy(modelName = OpenCodeZenFree.DEFAULT_MODEL, useMultipleApiKeys = true)
+        assertReady(config)
+        assertReady(config.copy(apiKey = "zen-key"))
+        assertIssue(ChatConfigReadinessIssue.API_KEY_INVALID, config.copy(apiKey = "中文"))
+    }
+
     @Test fun accountProvidersRequireLoginInsteadOfApiKey() {
         for (provider in listOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
             val config = remoteConfig(provider, apiKey = "")

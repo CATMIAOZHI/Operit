@@ -77,6 +77,7 @@ object ModelListFetcher {
                     ApiProviderType.DEEPSEEK -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENCODE_GO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OPENCODE_ZEN_FREE -> OpenCodeZenFree.MODELS_ENDPOINT
                     ApiProviderType.FOUR_ROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.NOUS_PORTAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.MOONSHOT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -299,8 +300,10 @@ object ModelListFetcher {
                             Request.Builder()
                                     .url(modelsUrl)
                                     .addHeader("Content-Type", "application/json")
-                    customHeaders.forEach { (name, value) ->
-                        requestBuilder.header(name, value)
+                    if (apiProviderType != ApiProviderType.OPENCODE_ZEN_FREE) {
+                        customHeaders.forEach { (name, value) ->
+                            requestBuilder.header(name, value)
+                        }
                     }
 
                     // 根据不同供应商添加不同的认证头
@@ -438,6 +441,7 @@ object ModelListFetcher {
                                     ApiProviderType.NVIDIA,
                                     ApiProviderType.BAICHUAN,
                                     ApiProviderType.OPENROUTER,
+                                    ApiProviderType.OPENCODE_ZEN_FREE,
                                     ApiProviderType.FOUR_ROUTER,
                                     ApiProviderType.NOUS_PORTAL,
                                     ApiProviderType.INFINIAI,
@@ -459,8 +463,11 @@ object ModelListFetcher {
                                 return@withContext Result.failure(e)
                             }
 
-                    AppLogger.d(TAG, "成功解析模型列表，共获取 ${modelOptions.size} 个模型")
-                    return@withContext Result.success(modelOptions)
+                    val visibleModels = if (apiProviderType == ApiProviderType.OPENCODE_ZEN_FREE) {
+                        modelOptions.filter { OpenCodeZenFree.isFreeModel(it.id) }
+                    } else modelOptions
+                    AppLogger.d(TAG, "成功解析模型列表，共获取 ${visibleModels.size} 个模型")
+                    return@withContext Result.success(visibleModels)
                 } catch (e: SocketTimeoutException) {
                     lastException = e
                     retryCount++

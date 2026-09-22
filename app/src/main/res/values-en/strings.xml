@@ -4236,6 +4236,12 @@
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (Multi-model Hub)</string>
     <string name="provider_opencode_go">OpenCode Go</string>
+    <string name="provider_opencode_zen_free">OpenCode Zen Free (data may be used for training)</string>
+    <string name="provider_opencode_zen_free_warning">Prompts, attachments, and replies sent to free models may be used to train or improve models. Do not send sensitive information. You can leave the Zen API key blank, but anonymous requests may be rejected. Your own key is more reliable. Only free models are allowed.</string>
+    <string name="provider_opencode_zen_free_endpoint_fixed">Uses the official OpenCode Zen endpoint</string>
+    <string name="provider_opencode_zen_free_key_optional">Optional: leave blank to try anonymous access, or enter your Zen API key</string>
+    <string name="provider_opencode_zen_free_model_required">This provider only allows OpenCode Zen free models. Choose one from the model list.</string>
+    <string name="provider_opencode_zen_free_anonymous_denied">Zen rejected anonymous access. Enter your own Zen API key and try again.</string>
     <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. Auto-configure protocols uses the local catalog. Refresh the catalog manually when needed, or configure each model yourself.</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>

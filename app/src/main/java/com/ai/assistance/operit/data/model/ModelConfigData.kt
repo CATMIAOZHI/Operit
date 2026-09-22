@@ -47,6 +47,7 @@ enum class ApiProviderType {
         IFLOW, // iFlow
         OPENROUTER, // OpenRouter (多模型聚合)
         OPENCODE_GO, // OpenCode Go subscription
+        OPENCODE_ZEN_FREE, // OpenCode Zen free models
         FOUR_ROUTER, // 4Router
         NOUS_PORTAL, // Nous Portal / Inference API
         INFINIAI, // 无问芯穹

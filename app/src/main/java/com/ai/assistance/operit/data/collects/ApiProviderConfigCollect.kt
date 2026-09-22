@@ -180,6 +180,12 @@ object ApiProviderConfigs {
             defaultApiEndpoint = "https://opencode.ai/zen/go/v1/chat/completions"
         ),
         ProviderApiConfig(
+            providerType = ApiProviderType.OPENCODE_ZEN_FREE,
+            defaultModelName = "mimo-v2.5-free",
+            defaultApiEndpoint = "https://opencode.ai/zen/v1/chat/completions",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
             providerType = ApiProviderType.FOUR_ROUTER,
             defaultModelName = "gpt-5.4-mini",
             defaultApiEndpoint = "https://4router.net/v1/chat/completions"

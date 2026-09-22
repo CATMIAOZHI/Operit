@@ -308,6 +308,8 @@ open class OpenAIProvider(
     ) {
         if (currentApiKey.isNotEmpty()) {
             builder.addHeader("Authorization", "Bearer $currentApiKey")
+        } else if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            builder.addHeader("Authorization", "Bearer public")
         }
     }
 
@@ -907,6 +909,10 @@ open class OpenAIProvider(
             }
 
         customizeFinalRequestObject(finalRequestObject, messagesArray, toolsJson)
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            OpenCodeZenFree.enforceFreeModel(finalRequestObject, modelName)
+            OpenCodeZenFree.ensureAnonymousRequestShape(finalRequestObject)
+        }
 
         // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
         logRequestBodyForDebugging("AIService", "Request body: ") {
@@ -2034,6 +2040,7 @@ open class OpenAIProvider(
 
     // 创建请求
     private val openCodeGoHeaders = OpenCodeGoHeaders()
+    private val openCodeZenFreeHeaders = OpenCodeZenFreeHeaders()
 
     private suspend fun createRequest(
         requestBody: RequestBody,
@@ -2066,6 +2073,9 @@ open class OpenAIProvider(
         }
 
         openCodeGoHeaders.applyTo(builder)
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            openCodeZenFreeHeaders.applyTo(builder, logicalRequestId)
+        }
         applyRequestIdentityHeaders(builder, logicalRequestId)
         val request = builder.post(requestBody).build()
         val bodyBytes = runCatching { requestBody.contentLength() }.getOrDefault(-1L)
@@ -3018,7 +3028,8 @@ open class OpenAIProvider(
         enableRetry: Boolean,
         statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> {
-        val effectiveStream = stream || requiresStreamingResponse
+        val effectiveStream = stream || requiresStreamingResponse ||
+            providerType == ApiProviderType.OPENCODE_ZEN_FREE
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val responseStream = stream {
             val logicalRequestId = UUID.randomUUID().toString()
@@ -3122,8 +3133,16 @@ open class OpenAIProvider(
                             )
                             // 4xx错误仍保留单独的异常类型，具体是否重试由统一策略决定
                             if (response.code in 400..499) {
+                                val errorMessage =
+                                    if (providerType == ApiProviderType.OPENCODE_ZEN_FREE &&
+                                        response.code == 403 &&
+                                        apiKeyProvider.getApiKey().isBlank()) {
+                                        context.getString(R.string.provider_opencode_zen_free_anonymous_denied)
+                                    } else {
+                                        context.getString(R.string.openai_error_api_request_failed_with_status, response.code, errorBody)
+                                    }
                                 throw NonRetriableException(
-                                    context.getString(R.string.openai_error_api_request_failed_with_status, response.code, errorBody),
+                                    errorMessage,
                                     statusCode = response.code
                                 )
                             }
