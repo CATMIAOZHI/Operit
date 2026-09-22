@@ -2082,10 +2082,9 @@ class EnhancedAIService private constructor(
                 if (currentChatId.isNullOrBlank()) {
                     AppLogger.w(TAG, "自动保存长期记忆入队跳过：chatId为空")
                 } else {
-                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.replyCompleted(
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.prepareReview(
                         this@EnhancedAIService.context,profileId,currentChatId,
-                        context.conversationHistory.filter { it.kind.name != "SYSTEM" }
-                            .map { it.kind.name to it.content },
+                        turnKey = context.toolTimingScopeId,
                         toolIterations = context.learningToolIterations.get()
                     )
                     val memoryPreferences = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(this@EnhancedAIService.context)

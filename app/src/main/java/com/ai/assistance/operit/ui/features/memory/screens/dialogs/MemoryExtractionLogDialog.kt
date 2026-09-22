@@ -92,6 +92,7 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
 }
 
 private fun memoryExtractionStatusResource(status: String): Int = when (status) {
+    "batch_complete" -> R.string.memory_extraction_batch_complete
     "success" -> R.string.memory_extraction_success
     "warnings" -> R.string.memory_extraction_warnings
     "partial" -> R.string.memory_extraction_partial

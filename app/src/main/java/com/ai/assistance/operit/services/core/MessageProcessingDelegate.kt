@@ -2056,6 +2056,8 @@ class MessageProcessingDelegate(
                     completedAt = completedAt,
                 )
             )
+            com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.sourceCommitted(
+                context,chatId,targetMessageTimestamp.toString(),revisedTimestamp=targetMessageTimestamp)
             terminalState = EnhancedInputProcessingState.Completed
             shouldResetInputStateToIdle = true
         } catch (e: Exception) {
@@ -2077,6 +2079,7 @@ class MessageProcessingDelegate(
             }
             exceptionToPropagate = e
         } finally {
+            com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundEnded(context,chatId)
             clearCurrentTurnToolInvocationCount(chatId)
             if (chatRuntime.sendJob === currentJob) {
                 chatRuntime.sendJob = null
@@ -2163,6 +2166,10 @@ class MessageProcessingDelegate(
                     }
                 }
             }
+            if (turnOptions.persistTurn && !turnOptions.isSubTask && chatId != null) {
+                com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.sourceCommitted(
+                    context, chatId, aiMessage.timestamp.toString())
+            }
         } catch (e: UninitializedPropertyAccessException) {
             AppLogger.d(TAG, "AI消息未初始化，跳过流清理步骤")
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -2192,6 +2199,7 @@ class MessageProcessingDelegate(
     }
 
     private fun cleanupRuntimeAfterSend(chatId: String, chatRuntime: ChatRuntime) {
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundEnded(context,chatId)
         chatRuntime.steeredTranscript.closeStream()
         chatRuntime.streamCollectionJob = null
         chatRuntime.stateCollectionJob?.cancel()
