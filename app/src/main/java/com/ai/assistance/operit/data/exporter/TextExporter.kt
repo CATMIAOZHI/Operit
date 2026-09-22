@@ -4,115 +4,163 @@ import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatHistory
 import com.ai.assistance.operit.data.model.ChatMessage
+import java.io.StringWriter
+import java.io.Writer
 import java.time.format.DateTimeFormatter
 
 /**
  * 纯文本格式导出器
  */
 object TextExporter {
-    
+
+    private const val CONTENT_WRITE_CHUNK_CHARACTER_COUNT = 64 * 1024
     private val dateFormatter = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")
-    
+
     /**
      * 导出单个对话为纯文本
      */
     fun exportSingle(context: Context, chatHistory: ChatHistory, folderPath: String? = null): String {
-        val sb = StringBuilder()
-        
-        // 标题
-        sb.appendLine("=" .repeat(60))
-        sb.appendLine(chatHistory.title.center(60))
-        sb.appendLine("=".repeat(60))
-        sb.appendLine()
-        
-        // 元信息
-        sb.appendLine(
+        val writer = StringWriter()
+        writeSingleToWriter(context, chatHistory, writer, folderPath = folderPath)
+        return writer.toString()
+    }
+
+    /**
+     * 导出多个对话为纯文本
+     */
+    fun exportMultiple(context: Context, chatHistories: List<ChatHistory>, folderPathsByChatId: Map<String, String> = emptyMap()): String {
+        val writer = StringWriter()
+        writeMultipleHeader(
+            context = context,
+            chatHistories = chatHistories,
+            totalMessageCount = chatHistories.sumOf { it.messages.size },
+            writer = writer,
+        )
+        chatHistories.forEachIndexed { index, chatHistory ->
+            writeConversationSeparator(writer, index)
+            writeSingleToWriter(context, chatHistory, writer, folderPath = folderPathsByChatId[chatHistory.id])
+        }
+        writeMultipleFooter(context, writer)
+        return writer.toString()
+    }
+
+    /**
+     * 写入多个对话的纯文本头部。
+     *
+     * 长文本导出使用 Writer，避免把所有结果拼接成一个大字符串。
+     */
+    fun writeMultipleHeader(
+        context: Context,
+        chatHistories: List<ChatHistory>,
+        totalMessageCount: Int,
+        writer: Writer,
+    ) {
+        // 总览信息
+        writer.appendLine("=".repeat(60))
+        writer.appendLine(context.getString(R.string.export_chat_history).center(60))
+        writer.appendLine("=".repeat(60))
+        writer.appendLine()
+        writer.appendLine(
+            context.getString(
+                R.string.export_export_time,
+                java.time.LocalDateTime.now().format(dateFormatter)
+            )
+        )
+        writer.appendLine(context.getString(R.string.export_conversation_count, chatHistories.size))
+        writer.appendLine(context.getString(R.string.export_total_message_count, totalMessageCount))
+        writer.appendLine()
+        writer.appendLine("=".repeat(60))
+        writer.appendLine()
+        writer.appendLine()
+    }
+
+    /**
+     * 写入对话之间的分隔内容。
+     */
+    fun writeConversationSeparator(writer: Writer, index: Int) {
+        if (index > 0) {
+            writer.appendLine()
+            writer.appendLine()
+        }
+    }
+
+    /**
+     * 写入单个对话。
+     *
+     * 长文本按固定大小写入，避免 Writer 调用方再次创建整段正文副本。
+     */
+    fun writeSingleToWriter(
+        context: Context,
+        chatHistory: ChatHistory,
+        writer: Writer,
+        onContentCharactersWritten: (Long) -> Unit = {},
+        folderPath: String? = null,
+    ) {
+        writeConversationHeader(context, chatHistory, writer, chatHistory.messages.size, folderPath)
+        chatHistory.messages.forEachIndexed { index, message ->
+            if (index > 0) writer.appendLine()
+            writeMessage(context, writer, message, onContentCharactersWritten)
+        }
+        writeConversationFooter(writer)
+    }
+
+    fun writeConversationHeader(
+        context: Context,
+        chatHistory: ChatHistory,
+        writer: Writer,
+        messageCount: Int,
+        folderPath: String?,
+    ) {
+        writer.appendLine("=".repeat(60))
+        writer.appendLine(chatHistory.title.center(60))
+        writer.appendLine("=".repeat(60))
+        writer.appendLine()
+
+        writer.appendLine(
             context.getString(
                 R.string.export_created_time,
                 chatHistory.createdAt.format(dateFormatter)
             )
         )
-        sb.appendLine(
+        writer.appendLine(
             context.getString(
                 R.string.export_updated_time,
                 chatHistory.updatedAt.format(dateFormatter)
             )
         )
         if (folderPath != null) {
-            sb.appendLine(context.getString(R.string.export_group, folderPath))
+            writer.appendLine(context.getString(R.string.export_group, folderPath))
         }
-        sb.appendLine(context.getString(R.string.export_message_count, chatHistory.messages.size))
-        sb.appendLine()
-        sb.appendLine("-".repeat(60))
-        sb.appendLine()
-        
-        // 消息内容
-        for ((index, message) in chatHistory.messages.withIndex()) {
-            if (index > 0) {
-                sb.appendLine()
-            }
-            appendMessage(context, sb, message)
-        }
-        
-        sb.appendLine()
-        sb.appendLine("=".repeat(60))
-        
-        return sb.toString()
+        writer.appendLine(context.getString(R.string.export_message_count, messageCount))
+        writer.appendLine()
+        writer.appendLine("-".repeat(60))
+        writer.appendLine()
+
     }
-    
+
+    fun writeConversationFooter(writer: Writer) {
+        writer.appendLine()
+        writer.appendLine("=".repeat(60))
+    }
+
     /**
-     * 导出多个对话为纯文本
+     * 写入多个对话的纯文本尾部。
      */
-    fun exportMultiple(
-        context: Context,
-        chatHistories: List<ChatHistory>,
-        folderPathsByChatId: Map<String, String> = emptyMap(),
-    ): String {
-        val sb = StringBuilder()
-        
-        // 总览信息
-        sb.appendLine("=" .repeat(60))
-        sb.appendLine(context.getString(R.string.export_chat_history).center(60))
-        sb.appendLine("=".repeat(60))
-        sb.appendLine()
-        sb.appendLine(
-            context.getString(
-                R.string.export_export_time,
-                java.time.LocalDateTime.now().format(dateFormatter)
-            )
-        )
-        sb.appendLine(context.getString(R.string.export_conversation_count, chatHistories.size))
-        sb.appendLine(
-            context.getString(
-                R.string.export_total_message_count,
-                chatHistories.sumOf { it.messages.size }
-            )
-        )
-        sb.appendLine()
-        sb.appendLine("=".repeat(60))
-        sb.appendLine()
-        sb.appendLine()
-        
-        for ((index, chatHistory) in chatHistories.withIndex()) {
-            if (index > 0) {
-                sb.appendLine()
-                sb.appendLine()
-            }
-            
-            sb.append(exportSingle(context, chatHistory, folderPathsByChatId[chatHistory.id]))
-        }
-        
-        sb.appendLine()
-        sb.appendLine()
-        sb.appendLine(context.getString(R.string.export_completed))
-        
-        return sb.toString()
+    fun writeMultipleFooter(context: Context, writer: Writer) {
+        writer.appendLine()
+        writer.appendLine()
+        writer.appendLine(context.getString(R.string.export_completed))
     }
-    
+
     /**
      * 添加单条消息
      */
-    private fun appendMessage(context: Context, sb: StringBuilder, message: ChatMessage) {
+    fun writeMessage(
+        context: Context,
+        writer: Writer,
+        message: ChatMessage,
+        onContentCharactersWritten: (Long) -> Unit = {},
+    ) {
         val roleIcon = if (message.sender == "user") "👤" else "🤖"
         val roleText =
             if (message.sender == "user") {
@@ -120,19 +168,37 @@ object TextExporter {
             } else {
                 context.getString(R.string.export_assistant)
             }
-        
-        sb.appendLine("[$roleIcon $roleText]")
-        
+
+        writer.appendLine("[$roleIcon $roleText]")
+
         if (message.modelName.isNotEmpty() && message.modelName != "markdown" && message.modelName != "unknown") {
-            sb.appendLine(context.getString(R.string.export_model, message.modelName))
+            writer.appendLine(context.getString(R.string.export_model, message.modelName))
         }
-        
-        sb.appendLine()
-        sb.appendLine(message.content)
-        sb.appendLine()
-        sb.appendLine("-".repeat(60))
+
+        writer.appendLine()
+        writeContent(writer, message.content, onContentCharactersWritten)
+        writer.appendLine()
+        writer.appendLine("-".repeat(60))
     }
-    
+
+    private fun writeContent(
+        writer: Writer,
+        content: String,
+        onContentCharactersWritten: (Long) -> Unit,
+    ) {
+        var offset = 0
+        while (offset < content.length) {
+            val chunkLength = minOf(
+                CONTENT_WRITE_CHUNK_CHARACTER_COUNT,
+                content.length - offset,
+            )
+            writer.write(content, offset, chunkLength)
+            onContentCharactersWritten(chunkLength.toLong())
+            offset += chunkLength
+        }
+        writer.appendLine()
+    }
+
     /**
      * 字符串居中扩展函数
      */

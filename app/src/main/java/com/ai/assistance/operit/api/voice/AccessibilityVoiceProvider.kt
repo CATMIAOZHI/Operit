@@ -305,9 +305,9 @@ class SimpleVoiceProvider(
                 }
             }
 
-            val prefs = SpeechServicesPreferences(context.applicationContext)
-            val effectiveRate = rate ?: prefs.ttsSpeechRateFlow.first()
-            val effectivePitch = pitch ?: prefs.ttsPitchFlow.first()
+            val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext).getCurrentTtsProfile()
+            val effectiveRate = rate ?: profile.speechRate
+            val effectivePitch = pitch ?: profile.pitch
             val queueSizeBefore = synchronized(queueLock) { queuedUtterances.size }
             AppLogger.d(
                 TAG,

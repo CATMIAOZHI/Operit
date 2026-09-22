@@ -57,12 +57,27 @@ data class SubagentTaskRequest(
     val parentModelIndex: Int? = null,
     /** Runtime functional-model route. Ordinary subagents remain CHAT. */
     val functionType: FunctionType = FunctionType.CHAT,
+    /**
+     * The provider conversation this run belongs to, when that is not its own child chat.
+     *
+     * The automatic permission reviewer is the caller this exists for: each review may run in a
+     * reviewer chat of its own, while every one of them is about the same reviewed conversation, so
+     * the reviews pin one identity and a provider that caches prompt prefixes keeps reusing what a
+     * sibling review already warmed. Null keeps the previous behavior: the child chat identifies the
+     * conversation.
+     */
+    val providerSessionId: String? = null,
     /** False hides every tool schema and ignores tool-call markup for the turn. */
     val toolsEnabled: Boolean = true,
     /** Optional isolated result-tool surface used by internal reviewer turns. */
     val isolatedToolPrompts: List<ToolPrompt>? = null,
     val terminalToolNames: Set<String> = emptySet(),
     val promptHooksEnabled: Boolean = true,
+    /**
+     * Keeps this run's child chat out of the automatic history summary. A run the next review
+     * continues has to keep its earlier prompt verbatim, because that prompt is the reused prefix.
+     */
+    val disableSummary: Boolean = false,
     /** Actual model lease held by a running parent Subagent, for reviewer-only reentrancy. */
     val reentrantParentModelConfigId: String? = null,
     /**
@@ -99,13 +114,17 @@ internal fun SubagentTaskRequest.toChatTurnOptions(
         notifyReply = false,
         isSubTask = true,
         isCollaborationAgent = collaborationSystemPrompt != null,
+        // The prompt is the task this host handed the subagent, not the owner typing in its chat.
+        deliveredByTool = true,
         collaborationHistory = collaborationHistory,
         collaborationHistoryCutoff = collaborationHistoryCutoff,
         functionType = functionType,
+        providerSessionId = providerSessionId,
         toolsEnabled = toolsEnabled,
         isolatedToolPrompts = isolatedToolPrompts,
         terminalToolNames = terminalToolNames,
         promptHooksEnabled = promptHooksEnabled,
+        disableSummary = disableSummary,
         systemPromptOverride = systemPrompt,
         userRoleNameOverride = parentAgentName,
         assistantRoleNameOverride = assistantRoleName,

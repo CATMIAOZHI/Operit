@@ -29,6 +29,7 @@ import com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences
 import com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel
 import com.ai.assistance.operit.core.tools.system.ShizukuAuthorizer
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.model.Workflow
 import com.ai.assistance.operit.data.preferences.EnvPreferences
 import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
@@ -101,6 +102,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         }
                 }
         }
+
     }
 
     // Map of package name to package description (all available packages in market)
@@ -111,6 +113,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     private val activePackageToolNames = ConcurrentHashMap<String, Set<String>>()
 
     private val activePackageStateIds = ConcurrentHashMap<String, String?>()
+
+    @Volatile
+    private var toolPkgPluginOrderCache: List<String> = emptyList()
 
     private val toolPkgManager = ToolPkgManager(context)
     private val toolPkgContainers: MutableMap<String, ToolPkgContainerRuntime>
@@ -143,7 +148,18 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val toolboxUiModules: List<ToolPkgToolboxUiModule>,
         val subpackages: List<ToolPkgSubpackageInfo>,
         val workflowTemplates: List<ToolPkgWorkflowTemplate>,
-        val workspaceTemplates: List<ToolPkgWorkspaceTemplate>
+        val workspaceTemplates: List<ToolPkgWorkspaceTemplate>,
+        val logoResourceKey: String? = null,
+        val logoMimeType: String? = null,
+        val apiVersion: String = ToolPkgApiCompatibility.LEGACY_API_VERSION,
+        val requires: List<ToolPkgManifestRequirement> = emptyList()
+    )
+
+    data class ToolPkgLogoBytes(
+        val resourceKey: String,
+        val mimeType: String,
+        val fileName: String,
+        val bytes: ByteArray
     )
 
     data class ToolPkgWasmModule(
@@ -261,7 +277,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val sourceFileName: String,
         val fileExtension: String,
         val isToolPkg: Boolean,
-        val inferredVersion: String? = null
+        val inferredVersion: String? = null,
+        val apiVersion: String? = null
     )
 
     private data class PackageScanSnapshot(
@@ -335,15 +352,24 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     }
 
     private fun persistEnabledPackageNamesToPrefs(enabledPackageNames: List<String>) {
+        val changed = decodeEnabledPackageNamesFromPrefs() != enabledPackageNames
         val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
         val updatedJson = Json.encodeToString(enabledPackageNames)
         prefs.edit().putString(ENABLED_PACKAGES_KEY, updatedJson).apply()
+        if (changed) {
+            // Existing chat snapshots already track "settings"; do not invalidate their prefix.
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+        }
     }
 
     private fun persistToolPkgSubpackageStatesToPrefs(states: Map<String, Boolean>) {
+        val changed = decodeToolPkgSubpackageStatesFromPrefs() != states
         val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
         val updatedJson = Json.encodeToString(states)
         prefs.edit().putString(TOOLPKG_SUBPACKAGE_STATES_KEY, updatedJson).apply()
+        if (changed) {
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+        }
     }
 
     private fun decodeEnabledPackageNamesFromPrefs(): List<String> {
@@ -374,7 +400,21 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     private fun buildEnabledToolPkgContainerRuntimes(
         enabledPackageNames: List<String>
     ): List<ToolPkgContainerRuntime> {
-        return toolPkgManager.getEnabledToolPkgContainerRuntimes(enabledPackageNames)
+        return toolPkgManager.getEnabledToolPkgContainerRuntimes(
+            enabledPackageNames = enabledPackageNames,
+            availablePackages = availablePackages,
+            preferredOrder = toolPkgPluginOrderCache
+        )
+    }
+
+    internal fun updateToolPkgPluginOrder(order: List<String>) {
+        toolPkgPluginOrderCache = order
+            .map(String::trim)
+            .filter(String::isNotBlank)
+            .distinctBy(String::lowercase)
+        if (runtimeCachesReady) {
+            notifyToolPkgRuntimeChangeListeners()
+        }
     }
 
     private fun notifyToolPkgRuntimeChangeListeners() {
@@ -631,6 +671,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
                     // Create packages directory if it doesn't exist
                     externalPackagesDir
+
+                    toolPkgPluginOrderCache = ApiPreferences.getInstance(context).getPluginOrder()
 
                     // Load available packages info (metadata only) from assets and external storage
                     loadAvailablePackages()
@@ -1190,6 +1232,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             append(file.lastModified())
             append('|')
             append(pluginDenylistRepository.cacheSignature())
+            append('|')
+            append(ToolPkgApiCompatibility.supportedApiVersionText())
         }
     }
 
@@ -1366,6 +1410,12 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             toolPkgContainers[packageName]?.version?.takeIf { it.isNotBlank() }
                         } else {
                             null
+                        },
+                    apiVersion =
+                        if (isToolPkg) {
+                            toolPkgContainers[packageName]?.apiVersion?.takeIf { it.isNotBlank() }
+                        } else {
+                            null
                         }
                 )
             }
@@ -1381,6 +1431,37 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         resolveContext: Context? = null
     ): ToolPkgContainerDetails? {
         return toolPkgFacade.getToolPkgContainerDetails(packageName, resolveContext)
+    }
+
+    /**
+     * Resolves the manifest API version for either a ToolPkg container or one of its subpackages.
+     * Execution code should use this package-centric lookup instead of inferring the container
+     * from UI-only runtime parameters.
+     */
+    internal fun getToolPkgApiVersion(packageName: String): String? {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val containerPackageName =
+            if (toolPkgContainers.containsKey(normalizedPackageName)) {
+                normalizedPackageName
+            } else {
+                toolPkgSubpackageByPackageName[normalizedPackageName]?.containerPackageName
+            }
+        return containerPackageName?.let { toolPkgContainers[it]?.apiVersion }
+    }
+
+    fun readToolPkgLogoBytes(packageName: String): ToolPkgLogoBytes? {
+        ensureInitialized()
+        val normalizedPackageName = normalizePackageName(packageName)
+        val runtime = toolPkgContainers[normalizedPackageName] ?: return null
+        val logoResource = runtime.logoResource ?: return null
+        val bytes = readToolPkgResourceBytes(runtime, logoResource.path) ?: return null
+        return ToolPkgLogoBytes(
+            resourceKey = logoResource.key,
+            mimeType = logoResource.mime,
+            fileName = logoResource.path.substringAfterLast('/'),
+            bytes = bytes
+        )
     }
 
     fun getToolPkgUiRoutes(
@@ -1563,7 +1644,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         onIntermediateResult: ((Any?) -> Unit)? = null,
         executionContextKey: String? = null,
         runtimeKind: String? = null,
-        dispatchIntermediateOnMain: Boolean = true
+        dispatchIntermediateOnMain: Boolean = true,
+        timeoutMillis: Long? = null
     ): Result<Any?> {
         return toolPkgFacade.runToolPkgMainHook(
             containerPackageName = containerPackageName,
@@ -1576,7 +1658,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             onIntermediateResult = onIntermediateResult,
             executionContextKey = executionContextKey,
             runtimeKind = runtimeKind,
-            dispatchIntermediateOnMain = dispatchIntermediateOnMain
+            dispatchIntermediateOnMain = dispatchIntermediateOnMain,
+            timeoutMillis = timeoutMillis
         )
     }
 
@@ -1654,9 +1737,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         if (packagesChanged) {
-            val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
-            val updatedJson = Json.encodeToString(enabledPackageNames.toList())
-            prefs.edit().putString(ENABLED_PACKAGES_KEY, updatedJson).apply()
+            persistEnabledPackageNamesToPrefs(enabledPackageNames.toList())
             AppLogger.d(TAG, "Updated enabled package names with default packages.")
         }
     }
@@ -1681,15 +1762,29 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                 scanAssetPackages().also { assetPackageScanSnapshot = it }
             }
 
-        val mergedSnapshot = scanExternalPackages(assetSnapshot)
+        val mergedSnapshot = validateToolPkgRelationships(scanExternalPackages(assetSnapshot))
         applyPackageScanSnapshot(mergedSnapshot)
         reconcileToolPkgCaches()
         if (isInitialized) {
             refreshToolPkgRuntimeState(persistIfChanged = true)
         }
+        trackPackageDescriptions()
         logToolPkgInfo(
             "loadAvailablePackages finish, elapsedMs=${System.currentTimeMillis() - loadStart}, available=${mergedSnapshot.availablePackages.size}, containers=${mergedSnapshot.toolPkgContainers.size}, subpackages=${mergedSnapshot.toolPkgSubpackages.size}, errors=${mergedSnapshot.packageLoadErrors.size}"
         )
+    }
+
+    private fun trackPackageDescriptions() {
+        val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
+        val key = "prefix_package_descriptions"
+        val old = prefs.getString(key, null)?.let { org.json.JSONObject(it) }
+        val current = org.json.JSONObject(availablePackages.mapValues { it.value.description.toString() })
+        val enabled = getEnabledPackageNamesInternal().toSet()
+        val changed = old != null && enabled.any { name ->
+            old.optString(name) != current.optString(name)
+        }
+        prefs.edit().putString(key, current.toString()).apply()
+        if (changed) com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     private fun registerToolPkg(loadResult: ToolPkgLoadResult): Boolean {
@@ -1700,6 +1795,48 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             toolPkgSubpackageByPackageNameTarget = toolPkgSubpackageByPackageName,
             packageLoadErrorsTarget = packageLoadErrors
         )
+    }
+
+    private fun validateToolPkgRelationships(snapshot: PackageScanSnapshot): PackageScanSnapshot {
+        var currentSnapshot = snapshot
+        while (true) {
+            val availablePackageNames = currentSnapshot.availablePackages.keys
+            val validation = ToolPkgLoadOrderResolver.resolve(
+                containers = currentSnapshot.toolPkgContainers.values,
+                availablePackages = currentSnapshot.availablePackages,
+                enabledPackageNames = availablePackageNames,
+                preferredOrder = currentSnapshot.toolPkgContainers.keys.toList()
+            )
+            if (validation.failures.isEmpty()) {
+                return currentSnapshot
+            }
+
+            val packageLoadErrors = LinkedHashMap(currentSnapshot.packageLoadErrors)
+            val availablePackages = LinkedHashMap(currentSnapshot.availablePackages)
+            val toolPkgContainers = LinkedHashMap(currentSnapshot.toolPkgContainers)
+            val toolPkgSubpackages = LinkedHashMap(currentSnapshot.toolPkgSubpackages)
+            validation.failures.forEach { (packageName, message) ->
+                val runtime = toolPkgContainers[packageName] ?: return@forEach
+                packageLoadErrors[packageName] =
+                    formatPackageLoadError(
+                        message = message,
+                        sourcePath = runtime.sourcePath
+                    )
+                removeToolPkgContainerFromTargets(
+                    containerPackageName = runtime.packageName,
+                    availablePackagesTarget = availablePackages,
+                    toolPkgContainersTarget = toolPkgContainers,
+                    toolPkgSubpackageByPackageNameTarget = toolPkgSubpackages
+                )
+                logToolPkgError("Rejected ToolPkg '$packageName': $message")
+            }
+            currentSnapshot = buildPackageScanSnapshot(
+                packageLoadErrors = packageLoadErrors,
+                availablePackages = availablePackages,
+                toolPkgContainers = toolPkgContainers,
+                toolPkgSubpackages = toolPkgSubpackages
+            )
+        }
     }
 
     private fun registerToolPkgInto(
@@ -2723,6 +2860,137 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
     }
 
+    private fun resolveToolPkgDependencyPackageName(reference: String): String? {
+        val normalizedReference = reference.trim()
+        if (normalizedReference.isBlank()) {
+            return null
+        }
+        resolveToolPkgSubpackageRuntime(normalizedReference)?.let { subpackage ->
+            return subpackage.packageName
+        }
+        return availablePackages.keys.firstOrNull { packageName ->
+            packageName.equals(normalizedReference, ignoreCase = true)
+        }
+    }
+
+    private fun formatToolPkgRequirement(requirement: ToolPkgManifestRequirement): String {
+        return buildString {
+            append("'")
+            append(requirement.id)
+            append("'")
+            if (requirement.description.isNotBlank()) {
+                append(" (")
+                append(requirement.description)
+                append(")")
+            }
+            requirement.versionConstraintText()?.let { constraint ->
+                append(" [")
+                append(constraint)
+                append("]")
+            }
+        }
+    }
+
+    private fun collectRequiredToolPkgPackages(packageName: String): List<String> {
+        val rootSubpackage = toolPkgSubpackageByPackageName[packageName]
+        val rootContainerName =
+            if (toolPkgContainers.containsKey(packageName)) {
+                packageName
+            } else {
+                rootSubpackage?.containerPackageName
+            }
+                ?: return emptyList()
+
+        val visitedContainers = mutableSetOf<String>()
+        val requiredPackages = mutableListOf<String>()
+
+        fun visitContainer(containerName: String) {
+            if (!visitedContainers.add(containerName.lowercase())) {
+                return
+            }
+            val container = toolPkgContainers[containerName] ?: return
+            container.requires.forEach { requirement ->
+                val resolvedName =
+                    resolveToolPkgDependencyPackageName(requirement.id)
+                        ?: throw IllegalArgumentException(
+                            "ToolPkg '${container.packageName}' requires ${formatToolPkgRequirement(requirement)}, but that package is not available."
+                        )
+                val requiredSubpackage = toolPkgSubpackageByPackageName[resolvedName]
+                val requiredContainerName = requiredSubpackage?.containerPackageName ?: resolvedName
+                val targetVersion =
+                    availablePackages[resolvedName]?.version
+                        ?: toolPkgContainers[requiredContainerName]?.version.orEmpty()
+                requirement.targetVersionFailure(targetVersion)?.let { versionFailure ->
+                    throw IllegalArgumentException(
+                        "ToolPkg '${container.packageName}' requires ${formatToolPkgRequirement(requirement)}, but $versionFailure."
+                    )
+                }
+                if (requiredContainerName.equals(rootContainerName, ignoreCase = true)) {
+                    throw IllegalArgumentException(
+                        "ToolPkg '${container.packageName}' requires its own container '$rootContainerName'."
+                    )
+                }
+                if (requiredSubpackage != null) {
+                    requiredPackages += requiredSubpackage.containerPackageName
+                    requiredPackages += requiredSubpackage.packageName
+                } else {
+                    requiredPackages += resolvedName
+                }
+                if (toolPkgContainers.containsKey(requiredContainerName)) {
+                    visitContainer(requiredContainerName)
+                }
+            }
+        }
+
+        visitContainer(rootContainerName)
+        return requiredPackages.distinctBy(String::lowercase)
+    }
+
+    private fun enableToolPkgContainerInSet(
+        runtime: ToolPkgContainerRuntime,
+        enabledPackageNames: MutableSet<String>,
+        subpackageStates: MutableMap<String, Boolean>
+    ) {
+        enabledPackageNames.add(runtime.packageName)
+        runtime.subpackages.forEach { subpackage ->
+            val shouldEnable =
+                subpackageStates[subpackage.packageName] ?: subpackage.enabledByDefault
+            subpackageStates.putIfAbsent(subpackage.packageName, shouldEnable)
+            if (shouldEnable) {
+                enabledPackageNames.add(subpackage.packageName)
+            } else {
+                enabledPackageNames.remove(subpackage.packageName)
+            }
+        }
+    }
+
+    private fun getEnabledToolPkgDependents(packageName: String): List<String> {
+        val normalizedPackageName = normalizePackageName(packageName)
+        val enabledPackageNames = getEnabledPackageNameSetInternal()
+        return toolPkgContainers.values
+            .asSequence()
+            .filter { container ->
+                enabledPackageNames.contains(container.packageName) ||
+                    container.subpackages.any { subpackage ->
+                        enabledPackageNames.contains(subpackage.packageName)
+                    }
+            }
+            .filter { container ->
+                container.requires.any { requirement ->
+                    val resolvedName = resolveToolPkgDependencyPackageName(requirement.id)
+                        ?: return@any false
+                    resolvedName.equals(normalizedPackageName, ignoreCase = true) ||
+                        toolPkgSubpackageByPackageName[resolvedName]
+                            ?.containerPackageName
+                            ?.equals(normalizedPackageName, ignoreCase = true) == true
+                }
+            }
+            .map(ToolPkgContainerRuntime::packageName)
+            .distinctBy(String::lowercase)
+            .sorted()
+            .toList()
+    }
+
     /**
      * Enable a package by name, adding it to the user's enabled package list.
      * For toolpkg containers this may also activate default-enabled subpackages.
@@ -2751,22 +3019,44 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val enabledPackageNames = LinkedHashSet(getEnabledPackageNames())
         val subpackageStates = getToolPkgSubpackageStatesInternal().toMutableMap()
 
+        val requiredPackages =
+            try {
+                collectRequiredToolPkgPackages(normalizedPackageName)
+            } catch (e: IllegalArgumentException) {
+                return e.message ?: "Failed to resolve ToolPkg dependencies"
+            }
+        requiredPackages.forEach { requiredPackageName ->
+            val requiredContainer = toolPkgContainers[requiredPackageName]
+            if (requiredContainer != null) {
+                enableToolPkgContainerInSet(
+                    runtime = requiredContainer,
+                    enabledPackageNames = enabledPackageNames,
+                    subpackageStates = subpackageStates
+                )
+                removeFromDisabledPackages(requiredContainer.packageName)
+                return@forEach
+            }
+
+            val requiredSubpackage = toolPkgSubpackageByPackageName[requiredPackageName]
+            if (requiredSubpackage != null) {
+                enabledPackageNames.add(requiredSubpackage.containerPackageName)
+                enabledPackageNames.add(requiredSubpackage.packageName)
+                subpackageStates[requiredSubpackage.packageName] = true
+                removeFromDisabledPackages(requiredSubpackage.containerPackageName)
+            } else {
+                enabledPackageNames.add(requiredPackageName)
+                removeFromDisabledPackages(requiredPackageName)
+            }
+        }
+
         val containerRuntime = toolPkgContainers[normalizedPackageName]
         if (containerRuntime != null) {
             val containerAlreadyEnabled = enabledPackageNames.contains(normalizedPackageName)
-            enabledPackageNames.add(normalizedPackageName)
-
-            containerRuntime.subpackages.forEach { subpackage ->
-                val shouldEnable =
-                    subpackageStates[subpackage.packageName] ?: subpackage.enabledByDefault
-                subpackageStates.putIfAbsent(subpackage.packageName, shouldEnable)
-
-                if (shouldEnable) {
-                    enabledPackageNames.add(subpackage.packageName)
-                } else {
-                    enabledPackageNames.remove(subpackage.packageName)
-                }
-            }
+            enableToolPkgContainerInSet(
+                runtime = containerRuntime,
+                enabledPackageNames = enabledPackageNames,
+                subpackageStates = subpackageStates
+            )
 
             saveEnabledPackageNames(enabledPackageNames.toList())
             saveToolPkgSubpackageStates(subpackageStates)
@@ -2959,7 +3249,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                 toolName = toolName,
                 success = false,
                 result = StringResultData(""),
-                error = "Missing required parameter: package_name"
+                error = "Missing required parameter: package_name. Pass the exact package name returned by search; do not call use_package with an empty parameter object."
             )
         }
 
@@ -3024,6 +3314,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
     /** Registers all tools in a package with the AIToolHandler */
     private fun registerPackageTools(toolPackage: ToolPackage) {
+        val isPhoneControlPackage = toolPackage.isBuiltIn &&
+            toolPackage.name == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME
+        if (isPhoneControlPackage) {
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(true)
+        }
         val packageToolExecutor = PackageToolExecutor(toolPackage, context, this)
         val executableTools = toolPackage.tools.filter { !it.advice }
         val newToolNames = executableTools.map { packageTool -> "${toolPackage.name}:${packageTool.name}" }.toSet()
@@ -3046,6 +3341,17 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             packageTool.parameters.map { it.name }.toSet()
 
                         override fun invoke(tool: AITool): ToolResult {
+                            if (isPhoneControlPackage) {
+                                // Native execution retains the host's turn identity; the legacy
+                                // JavaScript bridge cannot securely supply it.
+                                if (!isPackageEnabled(toolPackage.name)) {
+                                    return ToolResult(toolName = tool.name, success = false,
+                                        result = StringResultData(""), error = "Phone control package is disabled.")
+                                }
+                                return com.ai.assistance.operit.core.tools.runBlockingIoPreservingToolRuntimeContext {
+                                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.execute(context, tool)
+                                }
+                            }
                             return packageToolExecutor.invoke(tool)
                         }
                     }
@@ -3409,6 +3715,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     }
 
     internal fun unregisterPackageTools(packageName: String) {
+        if (packageName == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME) {
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(false)
+        }
         val activeTools = activePackageToolNames.remove(packageName).orEmpty()
         activeTools.forEach { toolName ->
             aiToolHandler.unregisterTool(toolName)
@@ -3456,6 +3765,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     fun disablePackage(packageName: String): String {
         ensureInitialized()
         val normalizedPackageName = normalizePackageName(packageName)
+
+        val dependents = getEnabledToolPkgDependents(normalizedPackageName)
+        if (dependents.isNotEmpty()) {
+            return "Cannot disable '$normalizedPackageName'; it is required by: ${dependents.joinToString(", ")}."
+        }
 
         val currentPackages = LinkedHashSet(getEnabledPackageNames())
         val subpackageStates = getToolPkgSubpackageStatesInternal().toMutableMap()

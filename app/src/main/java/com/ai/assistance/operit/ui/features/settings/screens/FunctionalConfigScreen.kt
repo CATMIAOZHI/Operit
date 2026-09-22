@@ -170,7 +170,7 @@ fun FunctionalConfigScreen(
                 }
 
                 // 功能类型列表
-                items(FunctionType.values()) { functionType ->
+                items(FunctionType.values().filter { it != FunctionType.UI_CONTROLLER }) { functionType ->
                     val currentConfigMapping =
                             configMappingWithIndex.value[functionType]
                                     ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)

@@ -16,6 +16,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.model.AITool
+import com.ai.assistance.operit.data.model.ConversationSummaryConfig
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -30,6 +31,7 @@ import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
+import com.ai.assistance.operit.data.preferences.preferencesManager
 import com.ai.assistance.operit.core.avatar.impl.factory.AvatarModelFactoryImpl
 import com.ai.assistance.operit.data.repository.AvatarRepository
 import com.ai.assistance.operit.util.ChatMarkupRegex
@@ -149,16 +151,17 @@ class ConversationService(
             messages: List<PromptTurn>,
             previousSummary: String?,
             multiServiceManager: MultiServiceManager,
-            customRules: String? = null
+            summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         try {
             val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
             val activePromptMetadata = buildActivePromptHookMetadata(context)
-            var systemPrompt = FunctionalPrompts.buildSummarySystemPrompt(previousSummary, useEnglish)
-            // 注入自定义总结规则
-            if (!customRules.isNullOrBlank()) {
-                systemPrompt += "\n\n${customRules.trim()}"
-            }
+            var systemPrompt =
+                FunctionalPrompts.buildSummarySystemPrompt(
+                    previousSummary = previousSummary,
+                    useEnglish = useEnglish,
+                    summaryConfig = summaryConfig
+                )
             val sanitizedMessages =
                 ChatUtils.stripOpenAiResponsesReasoningMetaTurns(
                     ChatUtils.stripGeminiThoughtSignatureMetaTurns(messages)
@@ -548,11 +551,26 @@ class ConversationService(
             if (!effectiveChatHistory.any { it.kind == PromptTurnKind.SYSTEM }) {
                 // user.md describes the one human user. Role cards and group proxy senders describe
                 // assistants, so they must never replace or select a different user document.
-                val userProfileMarkdown = userProfileDocumentRepository.load().trim()
+                val learningSnapshot = chatId?.takeIf { it.isNotBlank() && !isSubTask }?.let {
+                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
+                }
+                learningSnapshot?.beginEpoch(
+                    effectiveChatHistory.lastOrNull { it.kind == PromptTurnKind.SUMMARY }?.content.orEmpty()
+                )
+                val proxyCard = proxySenderName?.takeIf { it.isNotBlank() }
+                    ?.let { characterCardManager.findCharacterCardByName(it) }
+                val promptRevisions = com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
+                    context, listOfNotNull("user", "template", "settings",
+                        roleCardId?.takeIf { it.isNotBlank() }?.let { "card:$it" },
+                        proxyCard?.id?.let { "card:$it" })
+                ).toMutableMap()
+                val userProfileMarkdown = learningSnapshot?.getOrPut("user") {
+                    userProfileDocumentRepository.load().trim()
+                } ?: userProfileDocumentRepository.load().trim()
+                if (learningSnapshot != null) promptRevisions["user"] =
+                    learningSnapshot.getOrPut("_user_revision") { promptRevisions["user"].orEmpty() }
                 val proxyRolePrompt =
-                    proxySenderName
-                        ?.takeIf { it.isNotBlank() }
-                        ?.let { name -> characterCardManager.findCharacterCardByName(name) }
+                    proxyCard
                         ?.let { proxyCard ->
                             characterCardManager.combinePrompts(
                                 proxyCard.id,
@@ -587,6 +605,22 @@ class ConversationService(
                     )
                 val allowPersonalContext =
                     ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
+                // Use the same space as memory tools, including a fixed role-card binding.
+                val notesSpaceId = memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+                    ?: activeCard?.takeIf {
+                        com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
+                            com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
+                    }?.memoryProfileId?.takeIf { it.isNotBlank() }
+                    ?: preferencesManager.activeMemorySpaceIdFlow.first()
+                promptRevisions.putAll(com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
+                    context, listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId")))
+                if (learningSnapshot != null) listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId").forEach { key ->
+                    promptRevisions[key] = learningSnapshot.getOrPut("_revision:$key") { promptRevisions[key].orEmpty() }
+                }
+                suspend fun loadNotes() = if (allowPersonalContext &&
+                    com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, notesSpaceId).shouldInjectNotes())
+                    com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown else ""
+                val memoryNotes = learningSnapshot?.getOrPut("notes:$notesSpaceId") { loadNotes() } ?: loadNotes()
 
                 // 获取工具启用状态
                 val enableTools = apiPreferences.enableToolsFlow.first()
@@ -679,6 +713,14 @@ class ConversationService(
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
+                    if (memoryNotes.isNotBlank()) {
+                        append("\n\n")
+                        append(context.getString(R.string.memory_notes_prompt_intro))
+                        // Escape delimiters so stored material cannot close its own data block.
+                        append("\n<memory_notes source=\"memory.md\">\n")
+                        append(memoryNotes.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
+                        append("\n</memory_notes>")
+                    }
                     if (
                         allowPersonalContext &&
                             !disableUserPreferenceDescription &&
@@ -696,11 +738,20 @@ class ConversationService(
                     finalSystemPrompt,
                     aiName
                 )
+                val savedSystem = try {
+                    learningSnapshot?.bindSystem(finalSystemPromptWithReplacements, promptRevisions,
+                        "$useToolCallApi:${toolExposureMode.name}",
+                        listOf(roleCardId.orEmpty(), proxyCard?.id.orEmpty(), promptFunctionType.name,
+                            enableGroupOrchestrationHint.toString()).joinToString("|"))
+                        ?: finalSystemPromptWithReplacements
+                } catch (_: com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.IncompatiblePrefixException) {
+                    throw IllegalStateException(context.getString(R.string.system_prefix_protocol_changed))
+                }
                 preparedHistory.add(
                     0,
                     PromptTurn(
                         kind = PromptTurnKind.SYSTEM,
-                        content = finalSystemPromptWithReplacements
+                        content = savedSystem
                     )
                 )
             }

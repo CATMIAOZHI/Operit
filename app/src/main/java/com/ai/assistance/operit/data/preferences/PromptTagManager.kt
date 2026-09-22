@@ -123,7 +123,10 @@ class PromptTagManager private constructor(private val context: Context) {
         promptContent: String? = null,
         tagType: TagType? = null
     ) {
+        var prefixChanged = false
         dataStore.edit { preferences ->
+            prefixChanged = promptContent != null &&
+                preferences[stringPreferencesKey("prompt_tag_${id}_prompt_content")] != promptContent
             name?.let { preferences[stringPreferencesKey("prompt_tag_${id}_name")] = it }
             description?.let { preferences[stringPreferencesKey("prompt_tag_${id}_description")] = it }
             promptContent?.let { preferences[stringPreferencesKey("prompt_tag_${id}_prompt_content")] = it }
@@ -132,6 +135,7 @@ class PromptTagManager private constructor(private val context: Context) {
             // 更新修改时间
             preferences[longPreferencesKey("prompt_tag_${id}_updated_at")] = System.currentTimeMillis()
         }
+        if (prefixChanged) markAttachedCardsChanged(id)
     }
 
     // 删除标签
@@ -144,6 +148,13 @@ class PromptTagManager private constructor(private val context: Context) {
 
             removeTagPreferenceKeys(preferences, id)
         }
+        markAttachedCardsChanged(id)
+    }
+
+    private suspend fun markAttachedCardsChanged(id: String) {
+        CharacterCardManager.getInstance(context).getAllCharacterCards()
+            .filter { id in it.attachedTagIds }
+            .forEach { LearningPromptSnapshotRepository.markChanged(context, "card:${it.id}") }
     }
 
     // 获取所有标签

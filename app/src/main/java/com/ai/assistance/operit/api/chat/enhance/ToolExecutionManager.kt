@@ -21,6 +21,8 @@ import com.ai.assistance.operit.core.tools.ToolExecutionTimingRepository
 import com.ai.assistance.operit.core.tools.ToolErrorRepository
 import com.ai.assistance.operit.core.tools.createToolErrorRecord
 import com.ai.assistance.operit.core.tools.ToolParameterObservation
+import com.ai.assistance.operit.core.tools.ToolCallRepairRouter
+import com.ai.assistance.operit.core.tools.ToolCallRepairLogger
 import com.ai.assistance.operit.core.tools.climode.CliToolModeSupport
 import com.ai.assistance.operit.core.tools.climode.ToolExposureMode
 import com.ai.assistance.operit.data.model.ToolInvocation
@@ -169,6 +171,7 @@ object ToolExecutionManager {
         val batchSize: Int = 1,
         val permissionCheckedToolName: String? = null,
         val parameterObserver: ToolParameterObservation? = null,
+        val resolvedMemorySpaceId: String? = null,
     )
 
     internal class BoundedToolResultAccumulator(
@@ -194,7 +197,8 @@ object ToolExecutionManager {
                 (if (result.success) {
                     result.result.toString()
                 } else {
-                    "Step error: ${result.error ?: "Unknown error"}"
+                    listOf("Step error: ${result.error ?: "Unknown error"}", result.result.toString())
+                        .filter { it.isNotBlank() }.joinToString("\n")
                 }).trim()
 
             if (resultCount > 0) {
@@ -864,6 +868,7 @@ object ToolExecutionManager {
         liveAssistantContent: String? = null,
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
+        resolvedMemorySpaceId: String? = null,
     ): List<ToolResult> = coroutineScope {
         // Bind proxy context parameters to host values before any permission review or execution
         // happens, so the reviewed parameter set is exactly the executed one. The model can never
@@ -881,15 +886,16 @@ object ToolExecutionManager {
             )
         val boundInvocations =
             invocations.map { invocation ->
+                val repaired = ToolCallRepairRouter.route(invocation)?.invocation ?: invocation
                 if (
-                    invocation.tool.name == PACKAGE_PROXY_TOOL_NAME ||
-                    invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
+                    repaired.tool.name == PACKAGE_PROXY_TOOL_NAME ||
+                    repaired.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
                 ) {
-                    invocation.copy(
-                        tool = bindProxyContextParameters(invocation.tool, hostContext)
+                    repaired.copy(
+                        tool = bindProxyContextParameters(repaired.tool, hostContext)
                     )
                 } else {
-                    invocation
+                    repaired
                 }
             }
         // Exact-repeat detection must fingerprint the model's raw call, never the bound copy:
@@ -936,6 +942,7 @@ object ToolExecutionManager {
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
+                        resolvedMemorySpaceId = resolvedMemorySpaceId,
                     )
                 val reviewedSuffixResults =
                     executeInvocations(
@@ -959,6 +966,7 @@ object ToolExecutionManager {
                         liveAssistantContent = liveAssistantContent,
                         isSubagent = true,
                         subagentToolLoopGuard = subagentToolLoopGuard,
+                        resolvedMemorySpaceId = resolvedMemorySpaceId,
                     )
                 return@coroutineScope commonPrefixResults + reviewedSuffixResults
             }
@@ -968,12 +976,20 @@ object ToolExecutionManager {
             ToolExecutionTimingRepository.register(timingScopeId, invocation)
         }
 
+        // Record after batch splitting so recursive execution does not log a repair twice.
+        rawInvocations.forEach { invocation ->
+            ToolCallRepairRouter.route(invocation)?.let { ToolCallRepairLogger.record(context, it) }
+        }
         val errorBatchId = java.util.UUID.randomUUID().toString()
         val parameterObservers = java.util.concurrent.ConcurrentHashMap<String, ToolParameterObservation>()
         fun rawInvocation(invocation: ToolInvocation): ToolInvocation =
             rawInvocations.firstOrNull {
                 it.callId == invocation.callId && it.invocationIndex == invocation.invocationIndex
             } ?: invocation
+        fun routedRawInvocation(invocation: ToolInvocation): ToolInvocation {
+            val raw = rawInvocation(invocation)
+            return ToolCallRepairRouter.route(raw)?.invocation ?: raw
+        }
         fun diagnosticKey(invocation: ToolInvocation) = "$errorBatchId:${invocation.callId ?: invocation.invocationIndex}"
         val recordDiagnostic: (ToolInvocation, ToolResult) -> Unit = { invocation, result ->
             try {
@@ -1095,6 +1111,7 @@ object ToolExecutionManager {
                 isSubagent = isSubagent,
                 timingScopeId = timingScopeId,
                 batchSize = boundInvocations.size.coerceAtLeast(1),
+                resolvedMemorySpaceId = resolvedMemorySpaceId,
             )
 
         // 1. 顶层工具暴露模式拦截
@@ -1237,59 +1254,81 @@ object ToolExecutionManager {
                 )
         }
 
-        val permissionChecks =
-            parallelMapPreservingOrder(permissionCandidates) {
-                    (batchIndex, invocation, interceptionTool) ->
-                        val check =
-                        if (loopApprovedInvocations.containsKey(invocation)) {
-                            toolHandler.notifyToolPermissionChecked(
-                                interceptionTool,
-                                granted = true,
-                                reason = "Approved by Subagent exact-repeat loop review",
-                            )
-                            ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
-                        } else {
-                            checkToolPermission(
-                                toolHandler,
-                                invocation,
-                                toolExposureMode,
-                                conversationLabel,
-                                workspacePath,
-                                workspaceEnv,
-                                callerChatId,
-                                parentModelConfigId,
-                                parentModelIndex,
-                                timingScopeId,
-                                batchIndex + 1,
-                                roleCardPermittedInvocations.size,
-                                deferCircuitBreaker = true,
-                                liveAssistantContent = liveAssistantContent,
-                            )
-                        }
-                        val finalError =
-                            check.errorResult?.withExecutionMetadata(
-                                invocation = invocation,
-                                state = ToolExecutionState.NOT_EXECUTED,
-                            )
-                        if (check.granted) {
-                            ToolExecutionTimingRepository.markWaitingExecution(
-                                timingScopeId,
-                                invocation,
-                            )
-                        } else if (finalError != null) {
-                            ToolExecutionTimingRepository.markFinished(
-                                timingScopeId,
-                                invocation,
-                                finalError,
-                                durationMs = null,
-                                state = ToolExecutionState.NOT_EXECUTED,
-                            )
-                        }
-                        Triple(invocation, check, finalError)
-                }
+        // 3.3 The independent reviewer answers a batch in the order it is handed the actions: the
+        // first one it reaches builds the prompt, and the reviews behind it continue that same
+        // reviewer conversation instead of each paying for a prompt of their own. Walking the batch
+        // in the model's own call order is what makes that chain follow the order the actions are
+        // executed in and read in. Handing the whole batch over at once left that order to a race
+        // between coroutines: whichever arrived first built the prompt, and the ones behind it waited
+        // for that review only up to the reviewer's continuation timeout, past which they sent a
+        // prompt of their own. A level that never reaches the reviewer keeps the parallel dispatch,
+        // where order can only decide which reply comes back first.
+        val permissionSystem = toolHandler.getToolPermissionSystem()
+        val candidateLevels =
+            permissionCandidates.map { (_, _, interceptionTool) ->
+                permissionSystem.getEffectivePermissionLevel(interceptionTool.name)
+            }
+        val reviewsInOrder = batchNeedsReviewOrder(candidateLevels)
 
-        // awaitAll preserves the candidate order, so UI state and later execution remain stable
-        // even when individual reviewers finish out of order.
+        suspend fun checkCandidate(
+            batchIndex: Int,
+            invocation: ToolInvocation,
+            interceptionTool: AITool,
+        ): Triple<ToolInvocation, ToolPermissionCheckResult, ToolResult?> {
+            val check =
+                if (loopApprovedInvocations.containsKey(invocation)) {
+                    toolHandler.notifyToolPermissionChecked(
+                        interceptionTool,
+                        granted = true,
+                        reason = "Approved by Subagent exact-repeat loop review",
+                    )
+                    ToolPermissionCheckResult(ToolPermissionDecision.Allowed, null)
+                } else {
+                    checkToolPermission(
+                        toolHandler,
+                        invocation,
+                        toolExposureMode,
+                        conversationLabel,
+                        workspacePath,
+                        workspaceEnv,
+                        callerChatId,
+                        parentModelConfigId,
+                        parentModelIndex,
+                        timingScopeId,
+                        batchIndex + 1,
+                        roleCardPermittedInvocations.size,
+                        deferCircuitBreaker = true,
+                        liveAssistantContent = liveAssistantContent,
+                    )
+                }
+            val finalError =
+                check.errorResult?.withExecutionMetadata(
+                    invocation = invocation,
+                    state = ToolExecutionState.NOT_EXECUTED,
+                )
+            if (check.granted) {
+                ToolExecutionTimingRepository.markWaitingExecution(
+                    timingScopeId,
+                    invocation,
+                )
+            } else if (finalError != null) {
+                ToolExecutionTimingRepository.markFinished(
+                    timingScopeId,
+                    invocation,
+                    finalError,
+                    durationMs = null,
+                    state = ToolExecutionState.NOT_EXECUTED,
+                )
+            }
+            return Triple(invocation, check, finalError)
+        }
+
+        val permissionChecks =
+            mapBatchInReviewOrder(permissionCandidates, ordered = reviewsInOrder) {
+                    (batchIndex, invocation, interceptionTool) ->
+                    checkCandidate(batchIndex, invocation, interceptionTool)
+            }
+
         for ((invocation, permissionCheck, initialErrorResult) in permissionChecks) {
             var errorResult = initialErrorResult
             if (!callerChatId.isNullOrBlank()) {
@@ -1427,8 +1466,8 @@ object ToolExecutionManager {
                         permissionCheckedToolName =
                             resolveToolTarget(invocation.tool).tool.name,
                         parameterObserver = ToolParameterObservation(
-                            rawTool = rawInvocation(invocation).tool,
-                            targetTool = resolveToolTarget(rawInvocation(invocation).tool).tool,
+                            rawTool = routedRawInvocation(invocation).tool,
+                            targetTool = resolveToolTarget(routedRawInvocation(invocation).tool).tool,
                             onFailure = { ToolErrorRepository.getInstance(context).reportRecordingFailure(it) },
                         ).also { parameterObservers[diagnosticKey(invocation)] = it },
                     ),
@@ -1959,3 +1998,31 @@ internal suspend fun <T, R> parallelMapPreservingOrder(
 ): List<R> = coroutineScope {
     values.map { value -> async { transform(value) } }.awaitAll()
 }
+
+/**
+ * Runs one batch's permission checks, one at a time in the order [values] was given when [ordered],
+ * and through [parallelMapPreservingOrder] otherwise.
+ *
+ * Order belongs to the reviewer: the first action of a batch builds its prompt and the reviews behind
+ * it continue that conversation, so a batch the reviewer serves has to reach it in the order the
+ * model asked for its actions. Every other level decides each action on its own, and there a batch can
+ * be worked through in parallel.
+ */
+internal suspend fun <T, R> mapBatchInReviewOrder(
+    values: List<T>,
+    ordered: Boolean,
+    transform: suspend (T) -> R,
+): List<R> =
+    if (ordered) {
+        values.map { value -> transform(value) }
+    } else {
+        parallelMapPreservingOrder(values, transform)
+    }
+
+/**
+ * Whether one batch holds an action the independent reviewer serves, which is the only thing that
+ * makes the batch's order matter: every other level decides each action on its own, and only
+ * [PermissionLevel.AUTO_REVIEW] can route an action to the reviewer.
+ */
+internal fun batchNeedsReviewOrder(levels: List<PermissionLevel>): Boolean =
+    levels.any { level -> level == PermissionLevel.AUTO_REVIEW }

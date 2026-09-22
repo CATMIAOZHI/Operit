@@ -127,6 +127,7 @@ fun AIChatScreen(
         padding: PaddingValues = PaddingValues(),
         viewModel: ChatViewModel? = null,
         isFloatingMode: Boolean = false,
+        embedded: Boolean = false,
         onLoading: (Boolean) -> Unit = {},
         onError: (String) -> Unit = {},
         hasBackgroundImage: Boolean = false,
@@ -272,8 +273,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val isHiddenReadingAuditChat =
         (
             currentChatView?.isHidden == true &&
-                ReadingCompanionAudit.isPermanentHiddenReason(currentChatView.hiddenReason)
-        ) || ReadingCompanionAudit.hasPendingReturnFor(currentChatId)
+                (ReadingCompanionAudit.isPermanentHiddenReason(currentChatView.hiddenReason) ||
+                    currentChatView.hiddenReason == "MEMORY_LEARNING")
+        ) || com.ai.assistance.operit.core.chat.AuditChatNavigation.hasPendingReturnFor(currentChatId)
     val isReadOnlyTranscript = isSubagentChat || isHiddenReadingAuditChat
     val subagentRunRepository = remember(context) { SubagentRunRepository.getInstance(context) }
     val currentSubagentRunFlow =
@@ -707,7 +709,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         },
     )
     val shouldUseChatLocalImeHandling =
-        inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT &&
+        embedded &&
+            inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT &&
             !showWebView &&
             !showAiComputer
     var hasEverShownWebView by remember { mutableStateOf(false) }
@@ -756,7 +759,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val hasBoundWorkspace = !currentChatView?.workspace.isNullOrBlank()
 
     SideEffect {
-        if (isCurrentScreen) {
+        if (isCurrentScreen && !embedded) {
             setScreenSoftInputMode(requestedSoftInputMode)
             setUseScreenImePadding(shouldUseGlobalImePadding)
         }
@@ -765,8 +768,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
 
     // 当showWebView或showAiComputer状态改变时，更新TopAppBar的actions
     // 使用DisposableEffect确保当AIChatScreen离开组合时，actions被清空
-    LaunchedEffect(isCurrentScreen, showWebView, showAiComputer, isWorkspacePreparing, appBarContentColor, hasBoundWorkspace) {
-        if (isCurrentScreen) {
+    LaunchedEffect(isCurrentScreen, embedded, showWebView, showAiComputer, isWorkspacePreparing, appBarContentColor, hasBoundWorkspace) {
+        if (isCurrentScreen && !embedded) {
             setTopBarActions {
                 // AI电脑模式切换按钮
                 IconButton(
@@ -1224,7 +1227,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         )
 
         val workspaceOverlayModifier =
-            if (showWebView) {
+            if (!embedded && showWebView) {
                 Modifier
                     .fillMaxSize()
                     .clipToBounds()
@@ -1244,7 +1247,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     WorkspaceScreen(
                         actualViewModel = actualViewModel,
                         currentChat = currentChat,
-                        isVisible = showWebView, // Pass visibility state
+                        isVisible = !embedded && showWebView, // Pass visibility state
                         onExportClick = { workDir ->
                             webContentDir = workDir
                             AppLogger.d(
@@ -1260,7 +1263,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             if (measurables.isEmpty()) {
                 layout(0, 0) {}
             } else {
-                if (showWebView) {
+                if (!embedded && showWebView) {
                     val placeable = measurables.first().measure(constraints)
                     layout(placeable.width, placeable.height) {
                         placeable.placeRelative(0, 0)
@@ -1275,7 +1278,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
 
         // AI电脑模式作为浮层：关闭时完全移出组合，确保 SurfaceView 被释放，避免机型相关残影
-        if (showAiComputer) {
+        if (!embedded && showAiComputer) {
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1286,7 +1289,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
 
         AnimatedVisibility(
-            visible = isWorkspacePreparing,
+            visible = !embedded && isWorkspacePreparing,
             enter = fadeIn(animationSpec = tween(180)),
             exit = fadeOut(animationSpec = tween(120))
         ) {
@@ -1713,6 +1716,7 @@ private fun ChatInputBottomBar(
                             return@launch
                         }
                     }
+                    showChatInputHookMessage(submitDecision.noticeMessage)
                     val finalText = submitDecision.text ?: item.text
 
                     focusManager.clearFocus()
@@ -1781,6 +1785,7 @@ private fun ChatInputBottomBar(
                         return@launch
                     }
                 }
+                showChatInputHookMessage(decision.noticeMessage)
                 val finalItem = item.copy(text = decision.text ?: item.text)
                 resolved = actualViewModel.trySteerQueuedMessage(chatId, expectedTurnId, finalItem)
                 if (!resolved) {
@@ -1860,6 +1865,7 @@ private fun ChatInputBottomBar(
                     return@launch
                 }
             }
+            showChatInputHookMessage(submitDecision.noticeMessage)
 
             val finalText = submitDecision.text ?: userMessage.text
             if (finalText != userMessage.text) {
@@ -1903,7 +1909,9 @@ private fun ChatInputBottomBar(
     }
 
     Column(modifier = Modifier.fillMaxWidth()) {
-        ChatTodoDock(chatId = currentChatId, todos = todos)
+        ChatTodoDock(chatId = currentChatId, todos = todos) {
+            SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
+        }
 
         if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {
             AgentChatInputSection(

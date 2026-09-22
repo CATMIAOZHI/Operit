@@ -93,7 +93,7 @@
     <string name="colorpicker_select_color">색상 선택</string>
     <string name="colorpicker_sample_text">샘플 텍스트</string>
     <string name="colorpicker_high_contrast">고대비</string>
-    <string name="colorpicker_low_contrast">낮은 대비</string>
+    <string name="colorpicker_low_contrast">보통 대비</string>
     <string name="colorpicker_manual_input">수동으로 색상 입력</string>
     <string name="colorpicker_paste">붙여넣기</string>
     <string name="colorpicker_apply">적용</string>

@@ -488,6 +488,7 @@ class CharacterCardManager private constructor(private val context: Context) {
             // 更新修改时间
             preferences[longPreferencesKey("character_card_${card.id}_updated_at")] = System.currentTimeMillis()
         }
+        LearningPromptSnapshotRepository.markChanged(context, "card:${card.id}")
     }
     
     // 删除角色卡
@@ -692,6 +693,7 @@ class CharacterCardManager private constructor(private val context: Context) {
         UserPreferencesManager.getBuiltInCharacterAvatarUri(id)?.let { avatarUri ->
             userPreferencesManager.saveAiAvatarForCharacterCard(id, avatarUri)
         }
+        LearningPromptSnapshotRepository.markChanged(context, "card:$id")
     }
 
     private suspend fun ensureBuiltInSystemAvatar(id: String) {
@@ -1066,6 +1068,7 @@ class CharacterCardManager private constructor(private val context: Context) {
             }
         }
 
+        LearningPromptSnapshotRepository.markChanged(context, "card:${card.id}")
         if (card.id != DEFAULT_CHARACTER_CARD_ID) {
             if (!userPreferencesManager.hasCharacterCardTheme(card.id)) {
                 createDefaultThemeForCharacterCard(card.id, resolveEmojiSourcePrompt())
@@ -1618,7 +1621,7 @@ class CharacterCardManager private constructor(private val context: Context) {
                 if (!legacyValue.isNullOrBlank() && preferences[chatKey].isNullOrBlank()) {
                     preferences[chatKey] = legacyValue
                 }
-                if (preferences[voiceKey].isNullOrBlank() && cardId == DEFAULT_CHARACTER_CARD_ID) {
+                if (!preferences.contains(voiceKey) && cardId == DEFAULT_CHARACTER_CARD_ID) {
                     preferences[voiceKey] = CharacterCardBilingualData.getDefaultOtherContentVoice(context)
                 }
                 preferences.remove(legacyKey)

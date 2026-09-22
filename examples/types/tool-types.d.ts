@@ -17,7 +17,7 @@ import {
     FilePartContentData, FileApplyResultData, WorkflowListResultData, WorkflowResultData, WorkflowDetailResultData,
     ChatServiceStartResultData, ChatCreationResultData, ChatListResultData, ChatFindResultData, AgentStatusResultData,
     ChatSwitchResultData, ChatTitleUpdateResultData, ChatDeleteResultData, MessageSendResultData, MemoryQueryResultData, MemoryLinkResultData, MemoryLinkQueryResultData, GrepResultData,
-    ChatMessagesResultData, CharacterCardListResultData,
+    ChatMessagesResultData, ChatCallResultData, CharacterCardListResultData,
     EnvironmentVariableReadResultData, EnvironmentVariableWriteResultData,
     SandboxPackageResultItem, SandboxPackagesResultData, SandboxPackageUpdateResultData,
     McpRestartLogPluginResultItem, McpRestartWithLogsResultData,
@@ -137,6 +137,10 @@ export interface ToolResultMap {
     'trigger_tasker_event': string;
 
     // UI operations
+    'phone_control:start': string;
+    'phone_control:observe': string;
+    'phone_control:act': string;
+    'phone_control:stop': string;
     'get_page_info': UIPageResultData;
     'capture_screenshot': string;
     'click_element': UIActionResultData;
@@ -203,6 +207,7 @@ export interface ToolResultMap {
 
     'send_message_to_ai': MessageSendResultData;
     'send_message_to_ai_streaming': MessageSendResultData;
+    'call_chat_model': ChatCallResultData;
     'list_character_cards': CharacterCardListResultData;
     'get_chat_messages': ChatMessagesResultData;
     'get_chat_messages_range': ChatMessagesResultData;

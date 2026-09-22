@@ -92,7 +92,7 @@
     <string name="colorpicker_select_color">Pilih warna</string>
     <string name="colorpicker_sample_text">Teks contoh</string>
     <string name="colorpicker_high_contrast">Kontras tinggi</string>
-    <string name="colorpicker_low_contrast">Kontras rendah</string>
+    <string name="colorpicker_low_contrast">Kontras sederhana</string>
     <string name="colorpicker_manual_input">Masukkan warna secara manual</string>
     <string name="colorpicker_paste">Tampal</string>
     <string name="colorpicker_apply">Gunakan</string>

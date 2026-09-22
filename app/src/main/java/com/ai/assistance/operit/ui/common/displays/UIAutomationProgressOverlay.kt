@@ -80,6 +80,8 @@ class UIAutomationProgressOverlay private constructor(private val context: Conte
     private val TAG = "UIAutomationProgressOverlay"
 
     companion object {
+        fun create(context: Context): UIAutomationProgressOverlay =
+            UIAutomationProgressOverlay(context.applicationContext)
         @Volatile
         private var instance: UIAutomationProgressOverlay? = null
 
@@ -168,7 +170,8 @@ class UIAutomationProgressOverlay private constructor(private val context: Conte
                                         isPaused = newPaused
                                         takeOverToggleCallback?.invoke(newPaused)
                                     },
-                                    onDragBy = { dy -> moveOverlayBy(dy) }
+                                    onDragBy = { dy -> moveOverlayBy(dy) },
+                                    showTakeOver = takeOverToggleCallback != null
                                 )
                             }
                         }
@@ -278,10 +281,12 @@ class UIAutomationProgressOverlay private constructor(private val context: Conte
         totalSteps: Int,
         initialStatus: String,
         onCancel: () -> Unit,
-        onToggleTakeOver: (Boolean) -> Unit
+        onToggleTakeOver: ((Boolean) -> Unit)? = null
     ) {
         runOnMainThread {
             ensureOverlay()
+            // addView succeeds before the first traversal marks the view as attached.
+            check(overlayView != null) { "Unable to display phone control status." }
             cancelCallback = onCancel
             takeOverToggleCallback = onToggleTakeOver
             isPaused = false
@@ -302,6 +307,55 @@ class UIAutomationProgressOverlay private constructor(private val context: Conte
             val safeCurrent = if (currentStep <= 0) 1 else currentStep
             progressInfo = ProgressInfo(currentStep = safeCurrent, totalSteps = totalSteps, statusText = statusText)
         }
+    }
+
+    /** Prevent automated input from hitting the draggable control panel. Main thread only. */
+    fun containsPoint(x: Int, y: Int): Boolean {
+        val view = overlayView ?: return false
+        if (!view.isAttachedToWindow || view.visibility != View.VISIBLE) return false
+        val position = IntArray(2)
+        view.getLocationOnScreen(position)
+        return x >= position[0] && x < position[0] + view.width &&
+            y >= position[1] && y < position[1] + view.height
+    }
+
+    /** Move outside the entire gesture's vertical span. Caller waits for layout before input. */
+    fun avoidGesture(minY: Int, maxY: Int, screenHeight: Int): Boolean {
+        val view = overlayView ?: return true
+        val params = layoutParams ?: return false
+        val position = IntArray(2)
+        view.getLocationOnScreen(position)
+        if (maxY < position[1] || minY >= position[1] + view.height) return true
+        val margin = (16 * context.resources.displayMetrics.density).toInt()
+        val top = listOf(getStatusBarHeight() + margin, screenHeight - view.height - margin)
+            .firstOrNull { it >= 0 && (maxY + margin < it || minY - margin >= it + view.height) }
+            ?: return false
+        params.y -= top - position[1]
+        windowManager?.updateViewLayout(view, params)
+        return true
+    }
+
+    fun intersectsGesture(minY: Int, maxY: Int): Boolean {
+        val view = overlayView ?: return false
+        if (!view.isAttachedToWindow || view.visibility != View.VISIBLE) return false
+        val position = IntArray(2)
+        view.getLocationOnScreen(position)
+        return maxY >= position[1] && minY < position[1] + view.height
+    }
+
+    /** Remove the input channel, not just its asynchronously updated touch region. Main thread only. */
+    fun detachForInput() {
+        val view = overlayView ?: return
+        if (!view.isAttachedToWindow) return
+        // Keep the card composition while temporarily detached; hide() destroys its lifecycle.
+        view.setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnViewTreeLifecycleDestroyed)
+        checkNotNull(windowManager).removeViewImmediate(view)
+    }
+
+    fun restoreAfterInput() {
+        val view = overlayView ?: return
+        if (view.isAttachedToWindow || progressInfo == null) return
+        checkNotNull(windowManager).addView(view, checkNotNull(layoutParams))
     }
 
     fun hide() {
@@ -431,7 +485,8 @@ private fun ProgressCard(
     isPaused: Boolean,
     onCancel: () -> Unit,
     onToggleTakeOver: (Boolean) -> Unit,
-    onDragBy: (Float) -> Unit
+    onDragBy: (Float) -> Unit,
+    showTakeOver: Boolean = true
 ) {
     Box(
         modifier = Modifier
@@ -486,7 +541,9 @@ private fun ProgressCard(
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
-                                text = "${stringResource(R.string.common_phone_agent)} ${info.currentStep}/${info.totalSteps}",
+                                text = if (info.totalSteps > 0)
+                                    "${stringResource(R.string.common_phone_agent)} ${info.currentStep}/${info.totalSteps}"
+                                else stringResource(R.string.phone_control_title),
                                 fontSize = 14.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
@@ -503,7 +560,7 @@ private fun ProgressCard(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    IconButton(onClick = { onToggleTakeOver(!isPaused) }) {
+                    if (showTakeOver) IconButton(onClick = { onToggleTakeOver(!isPaused) }) {
                         Icon(
                             imageVector = if (isPaused) Icons.Filled.PlayArrow else Icons.Filled.Pause,
                             contentDescription = if (isPaused) stringResource(R.string.common_resume_agent) else stringResource(R.string.common_take_over),
@@ -514,7 +571,7 @@ private fun ProgressCard(
                     IconButton(onClick = onCancel) {
                         Icon(
                             imageVector = Icons.Filled.Close,
-                            contentDescription = stringResource(R.string.common_cancel),
+                            contentDescription = stringResource(if (showTakeOver) R.string.common_cancel else R.string.phone_control_stop),
                             modifier = Modifier.size(20.dp)
                         )
                     }

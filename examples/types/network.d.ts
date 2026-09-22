@@ -218,6 +218,17 @@ export namespace Net {
     }): Promise<string>;
 
     /**
+     * Capture the current browser page or a snapshot element as an image.
+     * Supplying `ref` requires its matching snapshot `element` description.
+     */
+    function browserTakeScreenshot(options: {
+        type?: string;
+        element?: string;
+        ref?: string;
+        fullPage?: boolean;
+    }): Promise<string>;
+
+    /**
      * Type text into an element by snapshot ref.
      */
     function browserType(options: {

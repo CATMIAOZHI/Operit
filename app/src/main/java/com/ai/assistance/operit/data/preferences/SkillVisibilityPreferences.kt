@@ -60,5 +60,6 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
     fun setSkillVisibleToAi(skillName: String, visible: Boolean) {
         if (skillName.isBlank()) return
         prefs.edit().putBoolean(keyForSkillName(skillName), visible).apply()
+        LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 }

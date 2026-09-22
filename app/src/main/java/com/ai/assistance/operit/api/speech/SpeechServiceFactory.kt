@@ -2,8 +2,8 @@ package com.ai.assistance.operit.api.speech
 
 import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
-import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
-import kotlinx.coroutines.flow.first
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences.SttHttpConfig
 import kotlinx.coroutines.runBlocking
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -28,52 +28,60 @@ object SpeechServiceFactory {
     fun createSpeechService(
         context: Context
     ): SpeechService {
-        val prefs = SpeechServicesPreferences(context)
-        val type = runBlocking { prefs.sttServiceTypeFlow.first() }
+        val profiles = SpeechServiceProfilesPreferences(context)
+        val profile = runBlocking { profiles.getCurrentSttProfile() }
 
-        return createSpeechService(context, type)
+        return createSpeechService(context, profile.serviceType, profile.httpConfig)
     }
 
     fun createWakeSpeechService(
         context: Context,
     ): SpeechService {
-        val prefs = SpeechServicesPreferences(context)
-        val selectedType = runBlocking { prefs.sttServiceTypeFlow.first() }
+        val profiles = SpeechServiceProfilesPreferences(context)
+        val profile = runBlocking { profiles.getCurrentSttProfile() }
+        val selectedType = profile.serviceType
         val effectiveType = when (selectedType) {
             SpeechServiceType.OPENAI_STT,
             SpeechServiceType.DEEPGRAM_STT,
             -> SpeechServiceType.SHERPA_NCNN
             else -> selectedType
         }
-        return createSpeechService(context, effectiveType)
+        return createSpeechService(context, effectiveType, profile.httpConfig)
     }
 
     fun createSpeechService(
         context: Context,
         type: SpeechServiceType,
     ): SpeechService {
-        val prefs = SpeechServicesPreferences(context)
+        val profiles = SpeechServiceProfilesPreferences(context)
+        val config = runBlocking { profiles.getCurrentSttProfile().httpConfig }
+        return createSpeechService(context, type, config)
+    }
+
+    private fun createSpeechService(
+        context: Context,
+        type: SpeechServiceType,
+        httpConfig: SttHttpConfig,
+    ): SpeechService {
         return when (type) {
             SpeechServiceType.SHERPA_NCNN -> acquireLocalSpeechService(context, type)
             SpeechServiceType.OPENAI_STT -> {
                 runBlocking {
-                    val sttConfig = prefs.sttHttpConfigFlow.first()
                     OpenAISttProvider(
                         context = context,
-                        endpointUrl = sttConfig.endpointUrl,
-                        apiKey = sttConfig.apiKey,
-                        model = sttConfig.modelName,
+                        endpointUrl = httpConfig.endpointUrl,
+                        apiKey = httpConfig.apiKey,
+                        model = httpConfig.modelName,
                     )
                 }
             }
             SpeechServiceType.DEEPGRAM_STT -> {
                 runBlocking {
-                    val sttConfig = prefs.sttHttpConfigFlow.first()
                     DeepgramSttProvider(
                         context = context,
-                        endpointUrl = sttConfig.endpointUrl,
-                        apiKey = sttConfig.apiKey,
-                        model = sttConfig.modelName,
+                        endpointUrl = httpConfig.endpointUrl,
+                        apiKey = httpConfig.apiKey,
+                        model = httpConfig.modelName,
                     )
                 }
             }
@@ -162,7 +170,7 @@ object SpeechServiceFactory {
 
     // 单例实例缓存
     private var instance: SpeechService? = null
-    private var currentType: SpeechServiceType? = null
+    private var currentProfile: SpeechServiceProfilesPreferences.SttProfile? = null
 
     /**
      * 获取语音识别服务单例实例
@@ -170,31 +178,35 @@ object SpeechServiceFactory {
      * @param context 应用上下文
      * @return 语音识别服务实例
      */
+    @Synchronized
     fun getInstance(
         context: Context,
     ): SpeechService {
-        val prefs = SpeechServicesPreferences(context)
-        val selectedType = runBlocking { prefs.sttServiceTypeFlow.first() }
-        
-        val needNewInstance = instance == null || selectedType != currentType
+        val profiles = SpeechServiceProfilesPreferences(context)
+        val profile = runBlocking { profiles.getCurrentSttProfile() }
+        val selectedProfileId = profile.id
+
+        val needNewInstance = instance == null || profile != currentProfile
         
         if (needNewInstance) {
             try {
                 instance?.shutdown()
             } catch (_: Exception) {
             }
+            instance = null
+            currentProfile = null
 
             val created =
                 try {
-                    createSpeechService(context)
+                    createSpeechService(context, profile.serviceType, profile.httpConfig)
                 } catch (e: IllegalStateException) {
-                    AppLogger.w(TAG, "Failed to create SpeechService for type=$selectedType, keeping previous instance", e)
+                    AppLogger.w(TAG, "Failed to create SpeechService for profile=$selectedProfileId, keeping previous instance", e)
                     null
                 }
 
             if (created != null) {
                 instance = created
-                currentType = selectedType
+                currentProfile = profile
             }
         }
 
@@ -210,12 +222,13 @@ object SpeechServiceFactory {
     }
 
     /** 重置单例实例 在需要更改语音识别服务类型或释放资源时调用 */
+    @Synchronized
     fun resetInstance() {
         try {
             instance?.shutdown()
         } catch (_: Exception) {
         }
         instance = null
-        currentType = null
+        currentProfile = null
     }
 }

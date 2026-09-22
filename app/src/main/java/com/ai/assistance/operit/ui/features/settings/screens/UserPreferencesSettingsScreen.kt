@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -64,6 +65,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
+import com.ai.assistance.operit.data.preferences.UserProfileSections
 import com.ai.assistance.operit.ui.common.displays.MarkdownTextComposable
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import com.ai.assistance.operit.ui.features.settings.components.rememberMarkdownSyntaxOutputTransformation
@@ -79,8 +81,11 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
 
     // State-based input commits a touch selection before focus-driven scrolling. The value-based
     // field can instead bring the stale cursor at the document start back into view.
-    val draftEditorState = rememberTextFieldState()
-    val editorScrollState = rememberScrollState()
+    val sectionEditors = listOf(rememberTextFieldState(), rememberTextFieldState(), rememberTextFieldState())
+    val sectionScrollStates = listOf(rememberScrollState(), rememberScrollState(), rememberScrollState())
+    var selectedSection by remember { mutableIntStateOf(0) }
+    val draftEditorState = sectionEditors[selectedSection]
+    val editorScrollState = sectionScrollStates[selectedSection]
     val markdownSyntaxOutputTransformation = rememberMarkdownSyntaxOutputTransformation()
     var savedMarkdown by remember { mutableStateOf("") }
     var selectedTab by remember { mutableIntStateOf(0) }
@@ -92,17 +97,26 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
     var archiveMarkdown by remember { mutableStateOf<String?>(null) }
     var archiveSheetMarkdown by remember { mutableStateOf<String?>(null) }
 
-    val draftMarkdown = draftEditorState.text.toString()
-    val hasUnsavedChanges = draftMarkdown != savedMarkdown
+    val sections = UserProfileSections(sectionEditors[0].text.toString(),
+        sectionEditors[1].text.toString(), sectionEditors[2].text.toString())
+    val serialized = runCatching { sections.markdown() }
+    val draftMarkdown = serialized.getOrElse {
+        sectionEditors.joinToString("\n\n") { it.text.toString() }
+    }
+    val hasUnsavedChanges = sections != UserProfileSections.parse(savedMarkdown)
     val exceedsLimit = draftMarkdown.length > UserProfileDocumentRepository.MAX_CONTENT_CHARS
 
     LaunchedEffect(repository) {
         try {
             val loadedMarkdown = repository.load()
             savedMarkdown = loadedMarkdown
-            draftEditorState.edit {
-                replace(0, length, loadedMarkdown)
-                selection = TextRange(0)
+            val loadedSections = UserProfileSections.parse(loadedMarkdown)
+            listOf(loadedSections.profile, loadedSections.preferences, loadedSections.interactionRules)
+                .forEachIndexed { index, content ->
+                sectionEditors[index].edit {
+                    replace(0, length, content)
+                    selection = TextRange(0)
+                }
             }
             archiveMarkdown = repository.readLegacyArchive()
         } catch (error: Exception) {
@@ -153,6 +167,16 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                     )
                 }
 
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf(R.string.user_md_profile, R.string.user_md_preferences,
+                        R.string.user_md_interaction_rules).forEachIndexed { index, label ->
+                        FilterChip(selected = selectedSection == index,
+                            onClick = { selectedSection = index; selectedTab = 0 },
+                            label = { Text(stringResource(label)) })
+                    }
+                }
+
                 Surface(
                     modifier = Modifier.fillMaxWidth(),
                     shape = RoundedCornerShape(14.dp),
@@ -186,8 +210,13 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                                 scope.launch {
                                     saving = true
                                     try {
-                                        repository.save(draftMarkdown)
+                                        repository.saveIfUnchanged(draftMarkdown, savedMarkdown)
                                         savedMarkdown = draftMarkdown
+                                        val saved = UserProfileSections.parse(draftMarkdown)
+                                        listOf(saved.profile, saved.preferences, saved.interactionRules)
+                                            .forEachIndexed { index, content ->
+                                                sectionEditors[index].edit { replace(0, length, content) }
+                                            }
                                         snackbarHostState.showSnackbar(
                                             context.getString(R.string.save_successful)
                                         )
@@ -200,7 +229,7 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                                     }
                                 }
                             },
-                            enabled = hasUnsavedChanges && !exceedsLimit && !saving
+                            enabled = hasUnsavedChanges && !exceedsLimit && !saving && !loading && serialized.isSuccess
                         ) {
                             if (saving) {
                                 CircularProgressIndicator(
@@ -231,6 +260,7 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                                 if (selectedTab == 0) {
                                     BasicTextField(
                                         state = draftEditorState,
+                                        readOnly = saving,
                                         scrollState = editorScrollState,
                                         modifier = Modifier.fillMaxSize().padding(16.dp),
                                         textStyle =
@@ -242,9 +272,13 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                                         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                                         decorator = { innerTextField ->
                                             Box(modifier = Modifier.fillMaxSize()) {
-                                                if (draftMarkdown.isEmpty()) {
+                                                if (draftEditorState.text.isEmpty()) {
                                                     Text(
-                                                        text = stringResource(R.string.user_md_editor_placeholder),
+                                                        text = stringResource(when (selectedSection) {
+                                                            0 -> R.string.user_md_profile_hint
+                                                            1 -> R.string.user_md_preferences_hint
+                                                            else -> R.string.user_md_interaction_rules_hint
+                                                        }),
                                                         style =
                                                             MaterialTheme.typography.bodyMedium.copy(
                                                                 fontFamily = FontFamily.Monospace
@@ -279,6 +313,8 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
                                 }
                             }
 
+                            if (serialized.isFailure) Text(stringResource(R.string.user_md_reserved_headings),
+                                color = MaterialTheme.colorScheme.error, modifier = Modifier.padding(horizontal = 16.dp))
                             Row(
                                 modifier =
                                     Modifier.fillMaxWidth()
@@ -365,9 +401,11 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
             confirmButton = {
                 TextButton(
                     onClick = {
-                        draftEditorState.edit {
-                            replace(0, length, UserProfileDocumentRepository.DEFAULT_TEMPLATE)
-                            selection = TextRange(0)
+                        sectionEditors.forEach { editor ->
+                            editor.edit {
+                                replace(0, length, "")
+                                selection = TextRange(0)
+                            }
                         }
                         selectedTab = 0
                         showResetDialog = false

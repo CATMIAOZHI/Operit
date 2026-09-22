@@ -2859,9 +2859,20 @@ class WebChatHttpBridge(
         pathOrName: String,
         fallback: String? = null
     ): String {
-        val extension = MimeTypeMap.getFileExtensionFromUrl(pathOrName)
-            ?.takeIf { it.isNotBlank() }
-            ?.lowercase(Locale.US)
+        val fileName = pathOrName.substringBefore('?').substringBefore('#').substringAfterLast('/')
+        val extension = fileName.substringAfterLast('.', missingDelimiterValue = "")
+            .lowercase(Locale.US)
+            .takeIf { it.isNotBlank() }
+        val webMimeType = when (extension) {
+            "js", "mjs", "cjs" -> "text/javascript"
+            "css" -> "text/css"
+            "json", "map" -> "application/json"
+            "wasm" -> "application/wasm"
+            "svg" -> "image/svg+xml"
+            "html", "htm" -> "text/html"
+            else -> null
+        }
+        if (webMimeType != null) return webMimeType
         val mimeType = extension?.let {
             MimeTypeMap.getSingleton().getMimeTypeFromExtension(it)
         } ?: URLConnection.guessContentTypeFromName(pathOrName)

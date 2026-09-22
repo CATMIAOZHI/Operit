@@ -1295,7 +1295,7 @@
       },
       {
         "name": "update_user_profile",
-        "description": "Replaces the private user.md profile after the user approves the tool call. Preserve useful existing content and write the complete Markdown document.",
+        "description": "Submit a complete user.md change. It applies or awaits review according to this memory space's auto-approval setting, with history retained. Preserve useful content and section markers. Organize Profile (personal facts), Preferences (durable preferences), and Interaction Rules (explicit user instructions).",
         "parameters": "",
         "parametersStructured": [
           {
@@ -2717,43 +2717,6 @@
         "description": "Capture a screenshot and return a file path.",
         "parameters": "",
         "parametersStructured": [],
-        "details": "",
-        "notes": ""
-      },
-      {
-        "name": "run_ui_subagent",
-        "description": "Run a lightweight UI automation subagent.",
-        "parameters": "",
-        "parametersStructured": [
-          {
-            "name": "intent",
-            "type": "string",
-            "description": "task description",
-            "required": true,
-            "default": null
-          },
-          {
-            "name": "max_steps",
-            "type": "integer",
-            "description": "optional",
-            "required": false,
-            "default": "20"
-          },
-          {
-            "name": "agent_id",
-            "type": "string",
-            "description": "optional, reuse agent session id. If omitted or 'default', uses the main screen. If provided and not 'default', the requested virtual screen session must be active/available; otherwise the run fails.",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "target_app",
-            "type": "string",
-            "description": "optional, target app package name",
-            "required": false,
-            "default": null
-          }
-        ],
         "details": "",
         "notes": ""
       }

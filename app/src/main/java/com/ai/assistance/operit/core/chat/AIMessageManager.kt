@@ -20,6 +20,7 @@ import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.AttachmentInfo
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.ConversationSummaryConfig
 import com.ai.assistance.operit.ui.permissions.permissionDenialSummary
 import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import com.ai.assistance.operit.data.model.ToolParameter
@@ -36,6 +37,7 @@ import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.share
 import com.ai.assistance.operit.util.stream.shareRevisable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.first
@@ -70,13 +72,19 @@ internal fun logMessageTiming(
  * - **封装逻辑**: 内部封装了与AI交互的策略，如是否需要总结、如何从历史中提取记忆等。
  */
 @SuppressLint("StaticFieldLeak")
+internal fun formatDialogueReviewHeader(defaultHeader: String, customTitle: String): String {
+    val normalizedTitle = customTitle.replace(Regex("\\s+"), " ").trim().trimEnd(':', '：')
+    val separator = if (defaultHeader.contains('：')) '：' else ':'
+    return if (normalizedTitle.isBlank()) defaultHeader else "\n\n$normalizedTitle$separator\n"
+}
+
 object AIMessageManager {
     private const val TAG = "AIMessageManager"
     // 聊天总结的消息数量阈值 - 移除硬编码，改用动态设置
     // private const val SUMMARY_CHUNK_SIZE = 4
 
     // 使用独立的协程作用域，确保AI操作的生命周期独立于任何特定的ViewModel
-    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+    private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob() + CoroutineName("AIMessageProducer"))
 
     private const val DEFAULT_CHAT_KEY = "__DEFAULT_CHAT__"
 
@@ -327,6 +335,7 @@ object AIMessageManager {
         workspaceEnv: String? = null,
         promptFunctionType: PromptFunctionType,
         functionType: FunctionType = FunctionType.CHAT,
+        providerSessionId: String? = null,
         enableThinking: Boolean,
         enableMemoryAutoUpdate: Boolean,
         maxTokens: Int,
@@ -485,6 +494,7 @@ object AIMessageManager {
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
                     functionType = functionType,
+                    providerSessionId = providerSessionId,
                     promptFunctionType = promptFunctionType,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
@@ -724,7 +734,7 @@ object AIMessageManager {
         messages: List<ChatMessage>,
         autoContinue: Boolean = false,
         isGroupChat: Boolean = false,
-        summaryCustomRules: String? = null
+        summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
         val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
@@ -1083,7 +1093,12 @@ object AIMessageManager {
 
         return try {
             AppLogger.d(TAG, "开始使用AI生成对话总结：总结 ${messagesToSummarize.size} 条消息")
-            val summary = enhancedAiService.generateSummary(conversationToSummarize, previousSummary, summaryCustomRules)
+            val summary =
+                enhancedAiService.generateSummary(
+                    conversationToSummarize,
+                    previousSummary,
+                    summaryConfig
+                )
             AppLogger.d(TAG, "AI生成总结完成: ${summary.take(50)}...")
 
             if (summary.isBlank()) {
@@ -1096,8 +1111,11 @@ object AIMessageManager {
                 val packageWarmupBlock = buildPackageWarmupBlock(messagesToSummarize, useEnglish)
                 val summaryWithQuotes = buildString {
                     append(trimmedSummary)
-                    if (conversationReviewEntries.isNotEmpty()) {
-                        append(context.getString(R.string.ai_message_dialogue_review))
+                    if (summaryConfig.dialogueReviewEnabled && conversationReviewEntries.isNotEmpty()) {
+                        append(formatDialogueReviewHeader(
+                            context.getString(R.string.ai_message_dialogue_review),
+                            summaryConfig.dialogueReviewTitle,
+                        ))
                         conversationReviewEntries.forEach { (speaker, content) ->
                             append("- ")
                             append(speaker)

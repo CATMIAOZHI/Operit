@@ -67,6 +67,7 @@ import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns
 import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
 import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
+import com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost
 import com.ai.assistance.operit.ui.features.chat.components.agentBadgeSeed
 import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
 import com.ai.assistance.operit.ui.features.chat.components.subagentInterruptionHintRes
@@ -82,6 +83,7 @@ import com.ai.assistance.operit.ui.permissions.PermissionReviewStatus
 import com.ai.assistance.operit.ui.permissions.ToolPermissionSystem
 import com.ai.assistance.operit.ui.permissions.effectiveExactOverrideState
 import com.ai.assistance.operit.ui.permissions.permissionDenialSummary
+import com.ai.assistance.operit.ui.permissions.permissionReviewJumpMarker
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.flowOf
@@ -572,6 +574,7 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                             .heightIn(max = 420.dp)
                             .verticalScroll(rememberScrollState()),
                 ) {
+                    com.ai.assistance.operit.ui.permissions.AlwaysAllowReviewedToolButton(event.action.toolName)
                     Text(
                         stringResource(R.string.permission_review_detail_status, lifecycle),
                         color = statusColor,
@@ -777,10 +780,15 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                     TextButton(
                         onClick = {
                             showDetails = false
-                            chatCore.switchChat(
-                                requireNotNull(reviewerRun).childChatId,
-                                scrollToBottom = false,
+                            val run = requireNotNull(reviewerRun)
+                            // Several reviews of one conversation share a reviewer chat, so name the
+                            // review the reader asked for: the transcript lands on the exchange that
+                            // judged it rather than on whatever the chat last showed.
+                            TranscriptJumpHost.request(
+                                run.childChatId,
+                                permissionReviewJumpMarker(event.id),
                             )
+                            chatCore.switchChat(run.childChatId, scrollToBottom = false)
                         }
                     ) {
                         Text(stringResource(R.string.permission_review_open_subagent))

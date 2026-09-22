@@ -111,4 +111,25 @@ class CommandCodeTransportTest {
     @Test(expected = IOException::class) fun streamErrorsAreNotSilentlyIgnored() {
         CommandCodeEventSource(Buffer().writeUtf8("""{"type":"error","error":{"message":"failed"}}""")).buffer().readUtf8()
     }
+
+    @Test(expected = CommandCodeProtocolException::class)
+    fun oversizedEventIsAProtocolFailureRatherThanARetryableDisconnect() {
+        val input = Buffer().writeUtf8("""{"type":"text-delta","text":"""")
+            .writeUtf8("x".repeat(32 * 1024 * 1024)).writeUtf8("\"}\n")
+        CommandCodeEventSource(input).buffer().readUtf8()
+    }
+
+    @Test fun eventLargerThanTheOldLimitDoesNotPreventTheFollowingReply() {
+        val input = Buffer().writeUtf8("""{"type":"metadata","payload":"""")
+            .writeUtf8("x".repeat(9 * 1024 * 1024)).writeUtf8("\"}\n")
+            .writeUtf8("{\"type\":\"text-delta\",\"text\":\"hello\"}\n{\"type\":\"finish\"}\n")
+        val result = CommandCodeEventSource(input).buffer().readUtf8()
+        assertTrue(result.contains("\"content\":\"hello\""))
+        assertTrue(result.contains("[DONE]"))
+    }
+
+    @Test(expected = CommandCodeProtocolException::class)
+    fun malformedEventIsAProtocolFailure() {
+        CommandCodeEventSource(Buffer().writeUtf8("{broken}\n")).buffer().readUtf8()
+    }
 }

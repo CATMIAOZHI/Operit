@@ -20,6 +20,7 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.StandardModelParameters
+import com.ai.assistance.operit.data.model.SummarySectionOverride
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ApiKeyInfo
 import com.ai.assistance.operit.data.model.getModelList
@@ -194,10 +195,18 @@ class ModelConfigManager(
 
     // 保存配置
     suspend fun saveModelConfig(config: ModelConfigData) {
+        val changed = prefixCapabilities(loadConfigFromDataStore(config.id)) != prefixCapabilities(config)
         val configKey = stringPreferencesKey("config_${config.id}")
         configDataStore.edit { preferences ->
             preferences[configKey] = json.encodeToString(config)
         }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
+    }
+
+    private fun prefixCapabilities(config: ModelConfigData?) = config?.let {
+        listOf(it.enableDirectImageProcessing, it.enableDirectAudioProcessing,
+            it.enableDirectVideoProcessing, it.enableToolCall,
+            it.modelMultimodalCapabilities, it.modelProtocolSettings, it.apiProviderType, it.modelName)
     }
 
     // 从DataStore加载配置
@@ -327,6 +336,7 @@ class ModelConfigManager(
     ): ModelConfigData {
         val configKey = stringPreferencesKey("config_${configId}")
         var updated: ModelConfigData? = null
+        var prefixChanged = false
         configDataStore.edit { preferences ->
             val current =
                     run {
@@ -351,9 +361,11 @@ class ModelConfigManager(
                     }
 
             val newConfig = transform(current)
+            prefixChanged = prefixCapabilities(current) != prefixCapabilities(newConfig)
             preferences[configKey] = json.encodeToString(newConfig)
             updated = newConfig
         }
+        if (prefixChanged) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return updated ?: ModelConfigData(id = configId, name = context.getString(R.string.model_config_config_id, configId))
     }
 
@@ -767,19 +779,22 @@ class ModelConfigManager(
 
     suspend fun updateSummarySettings(
             configId: String,
-            enableSummary: Boolean,
-            summaryTokenThreshold: Float,
-            enableSummaryByMessageCount: Boolean,
-            summaryMessageCountThreshold: Int,
-            summaryCustomRules: String = ""
+            enableSummary: Boolean? = null,
+            summaryTokenThreshold: Float? = null,
+            enableSummaryByMessageCount: Boolean? = null,
+            summaryMessageCountThreshold: Int? = null,
+            summaryCustomRules: String? = null,
+            summarySectionOverrides: List<SummarySectionOverride>? = null
     ): ModelConfigData {
         return updateConfigInternal(configId) {
             it.copy(
-                    enableSummary = enableSummary,
-                    summaryTokenThreshold = summaryTokenThreshold,
-                    enableSummaryByMessageCount = enableSummaryByMessageCount,
-                    summaryMessageCountThreshold = summaryMessageCountThreshold,
-                    summaryCustomRules = summaryCustomRules
+                    enableSummary = enableSummary ?: it.enableSummary,
+                    summaryTokenThreshold = summaryTokenThreshold ?: it.summaryTokenThreshold,
+                    enableSummaryByMessageCount = enableSummaryByMessageCount ?: it.enableSummaryByMessageCount,
+                    summaryMessageCountThreshold = summaryMessageCountThreshold ?: it.summaryMessageCountThreshold,
+                    summaryCustomRules = summaryCustomRules ?: it.summaryCustomRules,
+                    summarySectionOverrides =
+                        summarySectionOverrides ?: it.summarySectionOverrides
             )
         }
     }
@@ -789,6 +804,14 @@ class ModelConfigManager(
      * @param configId 配置ID
      * @return 模型参数列表
      */
+    suspend fun updateSummaryDialogueReviewSettings(
+        configId: String,
+        enabled: Boolean,
+        title: String,
+    ): ModelConfigData = updateConfigInternal(configId) {
+        it.copy(enableSummaryDialogueReview = enabled, summaryDialogueReviewTitle = title)
+    }
+
     suspend fun getModelParametersForConfig(configId: String): List<ModelParameter<*>> {
         val config = getModelConfigFlow(configId).first()
         return getModelParametersForConfigSnapshot(config)
@@ -1134,6 +1157,7 @@ class ModelConfigManager(
                 json.encodeToString(mergedConfigCollapsed.toList())
         }
 
+        if (newCount + updatedCount > 0) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return Triple(newCount, updatedCount, skippedCount)
     }
 
@@ -1169,6 +1193,7 @@ class ModelConfigManager(
             // 旧版导入不修改本地收藏与折叠
         }
 
+        if (newCount + updatedCount > 0) LearningPromptSnapshotRepository.markChanged(context, "settings")
         return Triple(newCount, updatedCount, skippedCount)
     }
 }

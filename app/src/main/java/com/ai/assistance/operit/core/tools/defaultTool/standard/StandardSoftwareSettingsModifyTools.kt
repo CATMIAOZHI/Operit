@@ -54,7 +54,7 @@ import com.ai.assistance.operit.data.model.withModelNames
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
-import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
 import com.ai.assistance.operit.data.skill.SkillRepository
 import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingStateRegistry
 import com.ai.assistance.operit.ui.features.startup.screens.PluginInitializationCompletion
@@ -457,16 +457,18 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     suspend fun getSpeechServicesConfig(tool: AITool): ToolResult {
         return try {
-            val prefs = SpeechServicesPreferences(context)
-            val ttsServiceType = prefs.ttsServiceTypeFlow.first()
-            val ttsHttpConfig = prefs.ttsHttpConfigFlow.first()
-            val ttsVitsConfig = prefs.ttsVitsPackageConfigFlow.first()
-            val ttsCleanerRegexs = prefs.ttsCleanerRegexsFlow.first()
-            val ttsSpeechRate = prefs.ttsSpeechRateFlow.first()
-            val ttsPitch = prefs.ttsPitchFlow.first()
+            val profilePrefs = SpeechServiceProfilesPreferences(context)
+            val ttsProfile = profilePrefs.getCurrentTtsProfile()
+            val sttProfile = profilePrefs.getCurrentSttProfile()
+            val ttsServiceType = ttsProfile.serviceType
+            val ttsHttpConfig = ttsProfile.httpConfig
+            val ttsVitsConfig = ttsProfile.vitsConfig
+            val ttsCleanerRegexs = ttsProfile.cleanerRegexs
+            val ttsSpeechRate = ttsProfile.speechRate
+            val ttsPitch = ttsProfile.pitch
 
-            val sttServiceType = prefs.sttServiceTypeFlow.first()
-            val sttHttpConfig = prefs.sttHttpConfigFlow.first()
+            val sttServiceType = sttProfile.serviceType
+            val sttHttpConfig = sttProfile.httpConfig
 
             ToolResult(
                 toolName = tool.name,
@@ -519,17 +521,18 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     suspend fun setSpeechServicesConfig(tool: AITool): ToolResult {
         return try {
-            val prefs = SpeechServicesPreferences(context)
+            val profilePrefs = SpeechServiceProfilesPreferences(context)
+            val currentTtsProfile = profilePrefs.getCurrentTtsProfile()
+            val currentSttProfile = profilePrefs.getCurrentSttProfile()
+            val currentTtsServiceType = currentTtsProfile.serviceType
+            val currentTtsHttpConfig = currentTtsProfile.httpConfig
+            val currentTtsVitsConfig = currentTtsProfile.vitsConfig
+            val currentTtsCleanerRegexs = currentTtsProfile.cleanerRegexs
+            val currentTtsSpeechRate = currentTtsProfile.speechRate
+            val currentTtsPitch = currentTtsProfile.pitch
 
-            val currentTtsServiceType = prefs.ttsServiceTypeFlow.first()
-            val currentTtsHttpConfig = prefs.ttsHttpConfigFlow.first()
-            val currentTtsVitsConfig = prefs.ttsVitsPackageConfigFlow.first()
-            val currentTtsCleanerRegexs = prefs.ttsCleanerRegexsFlow.first()
-            val currentTtsSpeechRate = prefs.ttsSpeechRateFlow.first()
-            val currentTtsPitch = prefs.ttsPitchFlow.first()
-
-            val currentSttServiceType = prefs.sttServiceTypeFlow.first()
-            val currentSttHttpConfig = prefs.sttHttpConfigFlow.first()
+            val currentSttServiceType = currentSttProfile.serviceType
+            val currentSttHttpConfig = currentSttProfile.httpConfig
 
             val hasField = { name: String -> tool.parameters.any { it.name == name } }
 
@@ -784,17 +787,21 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 )
             }
 
-            prefs.saveTtsSettings(
-                serviceType = ttsServiceType,
-                httpConfig = ttsHttpConfig,
-                vitsConfig = ttsVitsConfig,
-                cleanerRegexs = ttsCleanerRegexs,
-                speechRate = ttsSpeechRate,
-                pitch = ttsPitch
+            profilePrefs.updateTtsProfile(
+                currentTtsProfile.copy(
+                    serviceType = ttsServiceType,
+                    httpConfig = ttsHttpConfig,
+                    vitsConfig = ttsVitsConfig,
+                    cleanerRegexs = ttsCleanerRegexs,
+                    speechRate = ttsSpeechRate,
+                    pitch = ttsPitch,
+                ),
             )
-            prefs.saveSttSettings(
-                serviceType = sttServiceType,
-                httpConfig = sttHttpConfig
+            profilePrefs.updateSttProfile(
+                currentSttProfile.copy(
+                    serviceType = sttServiceType,
+                    httpConfig = sttHttpConfig,
+                ),
             )
 
             VoiceServiceFactory.resetInstance()
@@ -841,7 +848,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             )
         }
 
-        val prefs = SpeechServicesPreferences(context)
+        val profilePrefs = SpeechServiceProfilesPreferences(context)
         var ttsServiceTypeName = ""
         var providerClass = ""
         var initialized = false
@@ -850,7 +857,8 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
         var pitch = 0f
 
         return try {
-            val ttsServiceType = prefs.ttsServiceTypeFlow.first()
+            val ttsProfile = profilePrefs.getCurrentTtsProfile()
+            val ttsServiceType = ttsProfile.serviceType
             ttsServiceTypeName = ttsServiceType.name
             val hasSpeechRateOverride = tool.parameters.any { it.name == "speech_rate" }
             val hasPitchOverride = tool.parameters.any { it.name == "pitch" }
@@ -864,14 +872,14 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                     getParameterValue(tool, "speech_rate")?.trim()?.toFloatOrNull()
                         ?: throw IllegalArgumentException("Invalid number parameter: speech_rate")
                 } else {
-                    prefs.ttsSpeechRateFlow.first()
+                    ttsProfile.speechRate
                 }
             pitch =
                 if (hasPitchOverride) {
                     getParameterValue(tool, "pitch")?.trim()?.toFloatOrNull()
                         ?: throw IllegalArgumentException("Invalid number parameter: pitch")
                 } else {
-                    prefs.ttsPitchFlow.first()
+                    ttsProfile.pitch
                 }
 
             VoiceServiceFactory.resetInstance()

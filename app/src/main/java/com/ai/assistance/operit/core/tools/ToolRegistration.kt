@@ -48,6 +48,12 @@ internal fun <T> runBlockingIoPreservingToolRuntimeContext(
  * @param context Application context for tools that need it
  */
 fun registerAllTools(handler: AIToolHandler, context: Context) {
+    listOf(
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.ACTION,
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.FINISH
+    ).forEach { name ->
+        handler.registerTool(name=name,executor=com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator::execute)
+    }
 
     // Hidden control-plane tool. It is never added to ordinary model tool prompts; permission
     // review turns expose it explicitly through an isolated per-turn tool override.
@@ -397,9 +403,12 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val sessionId = tool.parameters.find { it.name == "session_id" }?.value
                 s(R.string.toolreg_execute_in_terminal_session_desc, sessionId ?: "", command)
             },
-            executor = { tool ->
-                val terminalTool = ToolGetter.getTerminalCommandExecutor(context)
-                terminalTool.executeCommandInSession(tool)
+            executor = object : ToolExecutor {
+                override fun invoke(tool: AITool): ToolResult =
+                    ToolGetter.getTerminalCommandExecutor(context).executeCommandInSession(tool)
+
+                override fun invokeAndStream(tool: AITool): kotlinx.coroutines.flow.Flow<ToolResult> =
+                    ToolGetter.getTerminalCommandExecutor(context).executeCommandInSessionResult(tool)
             }
     )
 
@@ -810,6 +819,30 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val memoryTool = ToolGetter.getMemoryQueryToolExecutor(context)
                 memoryTool.invoke(tool)
             }
+    )
+
+    handler.registerTool(
+        name = "memory_notes",
+        descriptionGenerator = { tool ->
+            s(R.string.memory_notes_tool_description, tool.parameters.find { it.name == "action" }?.value ?: "read")
+        },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
+    )
+    handler.registerTool(
+        name = "search_chat_history",
+        descriptionGenerator = { s(R.string.chat_recall_title) },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
+    )
+    handler.registerTool(name="learning_manage",
+        descriptionGenerator={ context.getString(R.string.memory_learning_run) },
+        executor={ tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) })
+    // Exposed on demand by the memory_review package; decisions use the normal permission gate.
+    handler.registerTool(
+        name = "memory_review",
+        descriptionGenerator = { tool ->
+            s(R.string.memory_review_operation, tool.parameters.find { it.name == "action" }?.value.orEmpty())
+        },
+        executor = { tool -> ToolGetter.getMemoryQueryToolExecutor(context).invoke(tool) }
     )
 
     // Register the document-level profile update. The normal tool confirmation UI is the safety
@@ -1752,6 +1785,16 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                         }
                     }
     )
+
+    handler.registerTool(
+            name = "call_chat_model",
+            descriptionGenerator = { tool ->
+                val functionType = tool.parameters.find { it.name == "function_type" }?.value ?: ""
+                s(R.string.toolreg_call_chat_model_desc, functionType)
+            },
+            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.callChatModel(tool) } }
+    )
+
 
     // 列出所有角色卡
     handler.registerTool(

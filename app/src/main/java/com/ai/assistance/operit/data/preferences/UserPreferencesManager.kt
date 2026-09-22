@@ -481,9 +481,11 @@ class UserPreferencesManager private constructor(private val context: Context) {
     
     // 保存应用语言设置
     suspend fun saveAppLanguage(languageCode: String) {
+        val changed = appLanguage.first() != languageCode
         context.userPreferencesDataStore.edit { preferences ->
             preferences[APP_LANGUAGE] = languageCode
         }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
     
     // 同步获取当前语言设置
@@ -574,11 +576,13 @@ class UserPreferencesManager private constructor(private val context: Context) {
     }
 
     suspend fun setActiveMemorySpace(memorySpaceId: String) {
+        val changed = activeMemorySpaceIdFlow.first() != memorySpaceId
         context.userPreferencesDataStore.edit { preferences ->
             val ids = decodeIdList(preferences[MEMORY_SPACE_LIST])
             require(ids.contains(memorySpaceId)) { "Unknown memory space: $memorySpaceId" }
             preferences[ACTIVE_MEMORY_SPACE_ID] = memorySpaceId
         }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun updateMemorySpace(space: MemorySpace) {
@@ -589,6 +593,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     suspend fun deleteMemorySpace(memorySpaceId: String) {
         if (memorySpaceId == DEFAULT_PROFILE_ID) return
+        val wasActive = activeMemorySpaceIdFlow.first() == memorySpaceId
         val characterCardManager = CharacterCardManager.getInstance(context)
         characterCardManager.getAllCharacterCards()
             .filter { it.memoryProfileId == memorySpaceId }
@@ -610,6 +615,10 @@ class UserPreferencesManager private constructor(private val context: Context) {
             }
         }
         ObjectBoxManager.delete(context, memorySpaceId)
+        if (wasActive) LearningPromptSnapshotRepository.markChanged(context, "settings")
+        MemoryNotesRepository(context, memorySpaceId).delete()
+        MemoryReviewRepository(context, memorySpaceId).delete()
+        MemoryExtractionLogRepository(context, memorySpaceId).delete()
     }
 
     suspend fun readLegacyUserProfiles(): LegacyUserProfileSnapshot {

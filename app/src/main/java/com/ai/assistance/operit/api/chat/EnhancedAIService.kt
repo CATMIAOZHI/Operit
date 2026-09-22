@@ -46,9 +46,11 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.forSelectedModel
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AITool
+import com.ai.assistance.operit.data.model.ConversationSummaryConfig
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ExternalHttpApiPreferences
 import com.ai.assistance.operit.data.preferences.WakeWordPreferences
+import com.ai.assistance.operit.data.stats.TokenStatCategory
 import com.ai.assistance.operit.util.stream.MutableSharedStream
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.StreamCollector
@@ -357,6 +359,12 @@ class EnhancedAIService private constructor(
         var workspacePath: String? = null,
         var workspaceEnv: String? = null,
         var functionType: FunctionType = FunctionType.CHAT,
+        /**
+         * The provider conversation this turn belongs to, when it is not the chat the turn runs in.
+         * An internal turn whose conversation outlives its chat pins it here so a provider that caches
+         * prompt prefixes keeps reusing them; null means the turn's own chat is the conversation.
+         */
+        var providerSessionId: String? = null,
         var promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
         var enableThinking: Boolean = false,
         var enableMemoryAutoUpdate: Boolean = true,
@@ -473,12 +481,15 @@ class EnhancedAIService private constructor(
         val toolTimingScopeId: String? = null,
         val workspacePath: String? = null,
         val workspaceEnv: String? = null,
+        /** The conversation identity this turn asks its provider under, resolved by the turn itself. */
+        val providerSessionId: String? = null,
         val toolsEnabled: Boolean = true,
         val isolatedToolPrompts: List<ToolPrompt>? = null,
         val terminalToolNames: Set<String> = emptySet(),
         val promptHooksEnabled: Boolean = true,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
+        val learningToolIterations: AtomicInteger = AtomicInteger(0),
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null
@@ -498,13 +509,16 @@ class EnhancedAIService private constructor(
 
     private fun registerExecutionContext(context: MessageExecutionContext) {
         activeExecutionContexts[context.executionId] = context
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(context.toolSequence.scopeId)
     }
 
     private fun unregisterExecutionContext(context: MessageExecutionContext) {
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
         activeExecutionContexts.remove(context.executionId, context)
     }
 
     private fun invalidateExecutionContext(context: MessageExecutionContext, reason: String) {
+        com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
         context.turnInputInbox?.seal()
         if (context.isConversationActive.compareAndSet(true, false)) {
             AppLogger.d(TAG, "执行上下文已失效: id=${context.executionId}, reason=$reason")
@@ -761,6 +775,32 @@ class EnhancedAIService private constructor(
      */
     internal fun getFunctionalServiceManager(): MultiServiceManager = multiServiceManager
 
+    suspend fun callFunctionModel(
+        functionType: FunctionType,
+        turns: List<PromptTurn>,
+        enableThinking: Boolean = false,
+        recordTokenUsage: Boolean = true,
+    ): String {
+        require(recordTokenUsage) { "Operit Ry records all model calls; recordTokenUsage=false is unsupported" }
+        val lease = acquireAIServiceLeaseForFunction(functionType)
+        try {
+            val output = StringBuilder()
+            lease.service.sendMessage(
+                context = context,
+                chatHistory = turns,
+                modelParameters = lease.modelParameters,
+                enableThinking = enableThinking,
+                stream = false,
+                availableTools = emptyList(),
+                preserveThinkInHistory = true,
+                statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.OTHER,
+            ).collect { output.append(it) }
+            return output.toString()
+        } finally {
+            lease.close()
+        }
+    }
+
     private suspend fun getModelParametersForFunction(
         functionType: FunctionType,
         chatModelConfigIdOverride: String? = null,
@@ -812,10 +852,10 @@ class EnhancedAIService private constructor(
         val summary = generateSummaryFromPromptTurns(
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(history),
             previousSummary = null,
-            customRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
+            summaryConfig = ConversationSummaryConfig(globalRules = "Preserve the assigned task, constraints, all agent paths and pending work, " +
                 "key findings and unresolved messages from the quoted JSON. This is a checkpoint " +
                 "for the same continuing agent. Your own summarization instructions are not part " +
-                "of its task. Never mark unfinished work complete just because you summarized it.",
+                "of its task. Never mark unfinished work complete just because you summarized it."),
         )
         check(summary.isNotBlank()) { "Agent context compaction returned an empty checkpoint" }
         val durable = com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint
@@ -834,7 +874,9 @@ class EnhancedAIService private constructor(
                     execution.eventChannel.replayCache.size,
                 ),
             )
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(execution.toolSequence.scopeId)
             execution.toolSequence.startMessage(scopeId)
+            com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(scopeId)
             // The split allocates this next segment ID under transcriptMutex. A concurrent
             // stream persistence may already insert it, so a later database MAX is unsafe.
             val cutoff = scopeId.toLong() - 1
@@ -1056,6 +1098,7 @@ class EnhancedAIService private constructor(
         val customSystemPromptTemplate = options.customSystemPromptTemplate
         val additionalSystemPrompt = options.additionalSystemPrompt
         val isSubTask = options.isSubTask
+        if (!isSubTask) com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(chatId)
         val toolsEnabled = options.toolsEnabled
         val isolatedToolPrompts = options.isolatedToolPrompts
         val terminalToolNames = options.terminalToolNames
@@ -1070,7 +1113,19 @@ class EnhancedAIService private constructor(
         val notifyReplyOverride = options.notifyReplyOverride
         val chatModelConfigIdOverride = options.chatModelConfigIdOverride
         val chatModelIndexOverride = options.chatModelIndexOverride
-        val memorySpaceIdOverride = options.memorySpaceIdOverride
+        // Resolve once for both CHAT and VOICE so prompt, tools and post-turn learning use
+        // the same space even if the user switches the global selection during generation.
+        val memorySpaceIdOverride = options.memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+            ?: if (isSubTask) null else {
+                val card = roleCardId?.takeIf { it.isNotBlank() }?.let {
+                    com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context)
+                        .getCharacterCardFlow(it).first()
+                }
+                card?.takeIf {
+                    com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
+                        com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
+                }?.memoryProfileId?.takeIf { it.isNotBlank() } ?: preferencesManager.activeMemorySpaceIdFlow.first()
+            }
         val toolTimingScopeId = options.toolTimingScopeId
         val stream = options.stream
         val disableWarning = options.disableWarning
@@ -1105,6 +1160,14 @@ class EnhancedAIService private constructor(
         currentRequestOutputTokenCount = 0
         currentRequestCachedInputTokenCount = 0
 
+        // A turn that belongs to a conversation of its own asks under that identity everywhere it
+        // reaches a provider, including the tool continuations it starts: a provider only reuses the
+        // prompt prefix a sibling turn warmed while the identity stays the same.
+        val providerConversationId =
+            options.providerSessionId?.takeIf { it.isNotBlank() }
+                ?: chatId?.takeIf { it.isNotBlank() }
+                ?: providerSessionId
+
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val wrappedStream = stream {
             val responseCollector = this
@@ -1119,6 +1182,7 @@ class EnhancedAIService private constructor(
                     toolTimingScopeId = toolTimingScopeId,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
+                    providerSessionId = providerConversationId,
                     toolsEnabled = toolsEnabled,
                     isolatedToolPrompts = isolatedToolPrompts,
                     terminalToolNames = terminalToolNames,
@@ -1353,11 +1417,10 @@ class EnhancedAIService private constructor(
                                     },
                                     onNonFatalError = onNonFatalError,
                                     statsCategory =
-                                        if (isSubTask) {
-                                            com.ai.assistance.operit.data.stats.TokenStatCategory.SUBAGENT
-                                        } else {
-                                            com.ai.assistance.operit.data.stats.TokenStatCategory.CHAT
-                                        }
+                                        tokenStatsCategoryFor(
+                                            functionType = options.functionType,
+                                            isSubTask = isSubTask,
+                                        )
                             )
                     val revisableStream = responseStream as? TextStreamEventCarrier
 
@@ -1566,7 +1629,7 @@ class EnhancedAIService private constructor(
             }
         }
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-            chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+            providerConversationId,
             workspacePath,
         )
         val sessionStream = object : Stream<String> by wrappedStream {
@@ -1976,7 +2039,7 @@ class EnhancedAIService private constructor(
             }
         }
 
-        if (enableMemoryAutoUpdate && !isSubTask && content.isNotBlank()) {
+        if (!isSubTask && content.isNotBlank()) {
             runCatching {
                 val currentChatId = chatId?.takeIf { it.isNotBlank() }
                 val profileId =
@@ -1985,11 +2048,21 @@ class EnhancedAIService private constructor(
                 if (currentChatId.isNullOrBlank()) {
                     AppLogger.w(TAG, "自动保存长期记忆入队跳过：chatId为空")
                 } else {
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.replyCompleted(
+                        this@EnhancedAIService.context,profileId,currentChatId,
+                        context.conversationHistory.filter { it.kind.name != "SYSTEM" }
+                            .map { it.kind.name to it.content },
+                        toolIterations = context.learningToolIterations.get()
+                    )
+                    val memoryPreferences = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(this@EnhancedAIService.context)
+                    if (enableMemoryAutoUpdate && memoryPreferences.enableMemoryAutoUpdateFlow.first() &&
+                        memoryPreferences.enableLegacyMemoryExtractionFlow.first()) {
                     MemoryAutoSaveCandidateRepository(this@EnhancedAIService.context, profileId)
                         .enqueue(
                             chatId = currentChatId,
                             triggerMessageTimestamp = System.currentTimeMillis()
                         )
+                    }
                 }
             }.onFailure { e ->
                 AppLogger.e(TAG, "自动保存长期记忆候选入队失败", e)
@@ -2093,6 +2166,8 @@ class EnhancedAIService private constructor(
         }
 
         if (!isSubTask && toolInvocations.isNotEmpty()) {
+            // One tool batch is one iteration, regardless of the number of parallel calls.
+            context.learningToolIterations.incrementAndGet()
             withContext(Dispatchers.Main) {
                 val toolNames = toolInvocations.joinToString(", ") { resolveToolDisplayName(it.tool) }
                 _inputProcessingState.value = InputProcessingState.ExecutingTool(toolNames)
@@ -2102,7 +2177,9 @@ class EnhancedAIService private constructor(
         // This independent scope must retain the conversation identity for tool continuations.
         val processToolJob = toolProcessingScope.async(
             context = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
-                chatId?.takeIf { it.isNotBlank() } ?: providerSessionId,
+                context.providerSessionId
+                    ?: chatId?.takeIf { it.isNotBlank() }
+                    ?: providerSessionId,
                 context.workspacePath,
             ),
             start = CoroutineStart.LAZY,
@@ -2172,6 +2249,7 @@ class EnhancedAIService private constructor(
                 callerName = characterName,
                 callerChatId = chatId,
                 callerCardId = roleCardId,
+                resolvedMemorySpaceId = memorySpaceIdOverride,
                 conversationLabel = conversationLabel,
                 parentModelConfigId = modelSnapshot.config.id,
                 parentModelIndex = modelSnapshot.lease.modelIndex,
@@ -2369,7 +2447,9 @@ class EnhancedAIService private constructor(
                 if (nextAssistantScope != null) {
                     // Tool rows are indexed within a displayed assistant message. Steering
                     // starts a new message, so both live timings and result indices move with it.
+                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
                     context.toolSequence.startMessage(nextAssistantScope)
+                    com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(nextAssistantScope)
                 }
                 turnInputs.forEach { input ->
                     val inputTurn = PromptTurn(
@@ -2503,11 +2583,10 @@ class EnhancedAIService private constructor(
                                 },
                                 onNonFatalError = onNonFatalError,
                                 statsCategory =
-                                    if (isSubTask) {
-                                        com.ai.assistance.operit.data.stats.TokenStatCategory.SUBAGENT
-                                    } else {
-                                        com.ai.assistance.operit.data.stats.TokenStatCategory.CHAT
-                                    }
+                                    tokenStatsCategoryFor(
+                                        functionType = functionType,
+                                        isSubTask = isSubTask,
+                                    )
                         )
 
                 // 更新状态为接收中
@@ -2729,19 +2808,19 @@ class EnhancedAIService private constructor(
     suspend fun generateSummary(
             messages: List<Pair<String, String>>,
             previousSummary: String?,
-            customRules: String? = null
+            summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
-        return generateSummaryFromPromptTurns(messages.toPromptTurns(), previousSummary, customRules)
+        return generateSummaryFromPromptTurns(messages.toPromptTurns(), previousSummary, summaryConfig)
     }
 
     suspend fun generateSummaryFromPromptTurns(
             messages: List<PromptTurn>,
             previousSummary: String?,
-            customRules: String? = null
+            summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         // 调用ConversationService中的方法
         return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
-            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, customRules)
+            conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, summaryConfig)
         }
     }
 
@@ -3392,4 +3471,18 @@ class EnhancedAIService private constructor(
     suspend fun analyzeVideoWithIntent(videoPath: String, userIntent: String?): String {
         return conversationService.analyzeVideoWithIntent(videoPath, userIntent, multiServiceManager)
     }
+
+    /**
+     * The automatic review's calls are sub-tasks too, and they are the ones whose prompt reuse is
+     * worth watching, so they are counted apart from the other sub-agents.
+     */
+    private fun tokenStatsCategoryFor(
+        functionType: FunctionType,
+        isSubTask: Boolean,
+    ): TokenStatCategory =
+        when {
+            functionType == FunctionType.PERMISSION_REVIEWER -> TokenStatCategory.PERMISSION_REVIEWER
+            isSubTask -> TokenStatCategory.SUBAGENT
+            else -> TokenStatCategory.CHAT
+        }
 }

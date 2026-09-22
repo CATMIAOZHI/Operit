@@ -153,7 +153,11 @@ class SkillManager private constructor(private val context: Context) {
     }
 
     private fun parseSkillMetadata(skillFile: File): Pair<String, String> {
-        val lines = skillFile.bufferedReader().use { it.readLines() }
+        return parseSkillMetadataText(skillFile.readText())
+    }
+
+    internal fun parseSkillMetadataText(text: String): Pair<String,String> {
+        val lines = text.lines()
 
         var name = ""
         var description = ""
@@ -227,10 +231,11 @@ class SkillManager private constructor(private val context: Context) {
         }
     }
 
-    fun deleteSkill(skillName: String): Boolean {
+    fun deleteSkill(skillName: String, clearLearningOwnership: Boolean = true): Boolean {
         refreshAvailableSkills()
         val skill = availableSkills[skillName] ?: return false
         return try {
+            if(clearLearningOwnership) runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(skillName) }
             val ok =
                 if (skill.storageSource.isLegacy()) {
                     // Never delete the Download original; hide it by relative path so it does
@@ -255,6 +260,8 @@ class SkillManager private constructor(private val context: Context) {
                 }
             if (ok) {
                 availableSkills.remove(skillName)
+                if (clearLearningOwnership)
+                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
             }
             ok
         } catch (e: Exception) {
@@ -335,7 +342,7 @@ class SkillManager private constructor(private val context: Context) {
         return importSkillFromZipDetailed(zipFile, subDirPathInZip).message
     }
 
-    fun importSkillFromZipDetailed(zipFile: File, subDirPathInZip: String?): SkillImportResult {
+    fun importSkillFromZipDetailed(zipFile: File, subDirPathInZip: String?, notifyPrefix: Boolean = true): SkillImportResult {
         if (!zipFile.exists() || !zipFile.canRead()) {
             return SkillImportResult(context.getString(R.string.skill_error_cannot_read_file, zipFile.absolutePath), null)
         }
@@ -456,6 +463,7 @@ class SkillManager private constructor(private val context: Context) {
             }
 
             // Copy the detected skill directory to final location
+            runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(metaName.ifBlank { finalDir.name }) }
             selectedSkillDir.copyRecursively(finalDir, overwrite = false)
             cleanupTmp()
 
@@ -463,6 +471,7 @@ class SkillManager private constructor(private val context: Context) {
             refreshAvailableSkills()
 
             val desc = metaDesc.ifBlank { "" }
+            if (notifyPrefix) com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
             return SkillImportResult(if (desc.isNotBlank()) {
                 context.getString(R.string.skill_imported_with_desc, finalDir.name, desc)
             } else {

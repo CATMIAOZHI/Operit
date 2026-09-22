@@ -1640,7 +1640,7 @@
     <string name="colorpicker_select_color">Seleccionar color</string>
     <string name="colorpicker_sample_text">Texto de ejemplo</string>
     <string name="colorpicker_high_contrast">Alto contraste</string>
-    <string name="colorpicker_low_contrast">Bajo contraste</string>
+    <string name="colorpicker_low_contrast">Contraste moderado</string>
     <string name="colorpicker_manual_input">Introducir color manualmente</string>
     <string name="colorpicker_paste">Pegar</string>
     <string name="colorpicker_apply">Aplicar</string>

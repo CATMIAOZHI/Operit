@@ -3,16 +3,40 @@
     "name": "extended_memory_tools",
 
     "display_name": {
-        "zh": "增强记忆工具",
-        "en": "Extended Memory Tools"
+        "zh": "旧记忆工具 · 记忆图谱",
+        "en": "Legacy memory · Knowledge graph"
     },
     "description": {
-        "zh": "拓展记忆工具包：提供创建/更新/删除/查询/链接记忆，以及更新用户偏好的能力（默认工具中仅保留 query/get/query_links）。",
-        "en": "Extended memory tools: create/update/delete/query/link memories and update user preferences (default tools only keep query/get/query_links)."
+        "zh": "管理原有记忆图谱和用户偏好。与新记忆工具包、后台提炼开关相互独立。",
+        "en": "Manage the existing knowledge graph and user preferences. Independent from the new memory package and background extraction."
     },
     "category": "Memory",
     "enabledByDefault": true,
     "tools": [
+        {
+            "name": "query_memory",
+            "description": {"zh": "搜索旧记忆图谱。", "en": "Search the legacy memory graph."},
+            "parameters": [
+                {"name": "query", "description": {"zh": "自然语言或关键词，| 分隔多个关键词，* 模糊匹配；单独 * 返回全部", "en": "Natural language or keywords; | separates keywords and * matches fuzzily; * alone returns all"}, "type": "string", "required": true},
+                {"name": "folder_path", "description": {"zh": "限定文件夹", "en": "Folder filter"}, "type": "string", "required": false},
+                {"name": "start_time", "description": {"zh": "创建时间下限，本地 YYYY-MM-DD 或 YYYY-MM-DD HH:mm", "en": "Created since, local YYYY-MM-DD or YYYY-MM-DD HH:mm"}, "type": "string", "required": false},
+                {"name": "end_time", "description": {"zh": "创建时间上限，同 start_time 格式", "en": "Created until, same format as start_time"}, "type": "string", "required": false},
+                {"name": "snapshot_id", "description": {"zh": "复用快照排除已返回记忆，省略则新建", "en": "Reuse a snapshot to exclude previously returned memories; omit to create one"}, "type": "string", "required": false},
+                {"name": "threshold", "description": {"zh": "最低相关度，默认0", "en": "Minimum relevance, default 0"}, "type": "number", "required": false},
+                {"name": "limit", "description": {"zh": "返回数量，默认20", "en": "Result limit, default 20"}, "type": "number", "required": false}
+            ]
+        },
+        {
+            "name": "get_memory_by_title",
+            "description": {"zh": "按标题读取旧记忆。", "en": "Read a legacy memory by title."},
+            "parameters": [
+                {"name": "title", "description": {"zh": "标题", "en": "Title"}, "type": "string", "required": true},
+                {"name": "chunk_index", "description": {"zh": "分块序号，从1开始", "en": "Chunk number starting at 1"}, "type": "number", "required": false},
+                {"name": "chunk_range", "description": {"zh": "分块范围，例如3-7", "en": "Chunk range, e.g. 3-7"}, "type": "string", "required": false},
+                {"name": "query", "description": {"zh": "可选的文档内搜索", "en": "Optional search within the document"}, "type": "string", "required": false},
+                {"name": "limit", "description": {"zh": "结果上限", "en": "Result limit"}, "type": "number", "required": false}
+            ]
+        },
         {
             "name": "create_memory",
             "description": { "zh": "创建新的记忆节点。", "en": "Create a new memory node." },
@@ -303,3 +327,9 @@ exports.update_memory_link = ExtendedMemoryTools.update_memory_link;
 exports.delete_memory_link = ExtendedMemoryTools.delete_memory_link;
 exports.update_user_preferences = ExtendedMemoryTools.update_user_preferences;
 exports.main = ExtendedMemoryTools.main;
+exports.query_memory = async (params: any) => complete(await toolCall({
+    name: "query_memory", params: {...params, caller_card_id: getCallerCardId()}
+}));
+exports.get_memory_by_title = async (params: any) => complete(await toolCall({
+    name: "get_memory_by_title", params: {...params, caller_card_id: getCallerCardId()}
+}));

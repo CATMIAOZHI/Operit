@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.core.tools.javascript
 
+import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM
+import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK
 import org.json.JSONObject
 import org.json.JSONTokener
 
@@ -14,6 +16,8 @@ data class ToolPkgMainRegistrationCapture(
     val inputMenuTogglePlugins: List<String>,
     val chatInputHooks: List<String>,
     val chatViewHooks: List<String>,
+    val chatMessageMenuItems: List<String>,
+    val chatRuntimeHooks: List<String>,
     val toolLifecycleHooks: List<String>,
     val promptInputHooks: List<String>,
     val promptHistoryHooks: List<String>,
@@ -26,7 +30,9 @@ data class ToolPkgMainRegistrationCapture(
     val aiProviders: List<String>
 )
 
-private enum class RegistrationBucket {
+private enum class RegistrationBucket(
+    val nativeRegistrationName: String? = null
+) {
     TOOLBOX_UI,
     UI_ROUTE,
     NAVIGATION_ENTRY,
@@ -37,6 +43,8 @@ private enum class RegistrationBucket {
     INPUT_MENU_TOGGLE,
     CHAT_INPUT,
     CHAT_VIEW,
+    CHAT_MESSAGE_MENU_ITEM(TOOLPKG_REGISTRATION_CHAT_MESSAGE_MENU_ITEM),
+    CHAT_RUNTIME(TOOLPKG_REGISTRATION_CHAT_RUNTIME_HOOK),
     TOOL_LIFECYCLE,
     PROMPT_INPUT,
     PROMPT_HISTORY,
@@ -52,7 +60,6 @@ private enum class RegistrationBucket {
 internal class JsToolPkgRegistrationSession {
     private val lock = Any()
     private var capture: MutableMap<RegistrationBucket, MutableList<String>>? = null
-
     fun begin() {
         synchronized(lock) {
             capture = mutableMapOf()
@@ -76,6 +83,12 @@ internal class JsToolPkgRegistrationSession {
 
     fun appendChatViewHook(specJson: String) =
         append(RegistrationBucket.CHAT_VIEW, specJson)
+
+    fun appendChatMessageMenuItem(specJson: String) =
+        append(RegistrationBucket.CHAT_MESSAGE_MENU_ITEM, specJson)
+
+    fun appendChatRuntimeHook(specJson: String) =
+        append(RegistrationBucket.CHAT_RUNTIME, specJson)
 
     fun appendToolLifecycleHook(specJson: String) =
         append(RegistrationBucket.TOOL_LIFECYCLE, specJson)
@@ -120,6 +133,8 @@ internal class JsToolPkgRegistrationSession {
                 inputMenuTogglePlugins = read(RegistrationBucket.INPUT_MENU_TOGGLE),
                 chatInputHooks = read(RegistrationBucket.CHAT_INPUT),
                 chatViewHooks = read(RegistrationBucket.CHAT_VIEW),
+                chatMessageMenuItems = read(RegistrationBucket.CHAT_MESSAGE_MENU_ITEM),
+                chatRuntimeHooks = read(RegistrationBucket.CHAT_RUNTIME),
                 toolLifecycleHooks = read(RegistrationBucket.TOOL_LIFECYCLE),
                 promptInputHooks = read(RegistrationBucket.PROMPT_INPUT),
                 promptHistoryHooks = read(RegistrationBucket.PROMPT_HISTORY),
@@ -140,7 +155,10 @@ internal class JsToolPkgRegistrationSession {
         }
     }
 
-    private fun append(bucket: RegistrationBucket, specJson: String) {
+    private fun append(
+        bucket: RegistrationBucket,
+        specJson: String
+    ) {
         val normalized = normalizeRegistrationSpec(specJson)
         synchronized(lock) {
             val target = capture ?: error("toolpkg registration session is not active")
@@ -183,6 +201,18 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                     throw new Error('NativeInterface.' + name + ' is unavailable');
                 }
                 return NativeInterface[name].bind(NativeInterface);
+            }
+
+            function requireToolPkgApiRuntime() {
+                var runtime = root.__operitToolPkgApi;
+                if (
+                    !runtime ||
+                    typeof runtime.namespace !== 'function' ||
+                    typeof runtime.method !== 'function'
+                ) {
+                    throw new Error('ToolPkg API runtime is unavailable');
+                }
+                return runtime;
             }
 
             function copyObject(source, excludedKey) {
@@ -347,6 +377,11 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                 return normalized;
             }
 
+            function normalizeDialogScreenField(dialogDefinition, label) {
+                var normalizedDialog = normalizeScreenField(dialogDefinition, label);
+                return normalizedDialog;
+            }
+
             function normalizeScreenField(definition, label) {
                 if (!definition || typeof definition !== 'object' || Array.isArray(definition)) {
                     throw new Error(label + ' expects an object');
@@ -373,10 +408,26 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                 return normalized;
             }
 
+            function normalizeChatMessageMenuItemDefinition(definition, label) {
+                var normalized = normalizeFunctionField(definition, 'function', label);
+                if (definition.dialog !== undefined && definition.dialog !== null) {
+                    if (typeof definition.dialog !== 'object' || Array.isArray(definition.dialog)) {
+                        throw new Error(label + '.dialog expects an object');
+                    }
+                    normalized.dialog = normalizeDialogScreenField(definition.dialog, label + '.dialog');
+                }
+                return normalized;
+            }
+
             function registerWithNative(definition, label, nativeMethod, fieldName) {
                 var normalized = fieldName
                     ? normalizeFunctionField(definition, fieldName, label)
                     : normalizeScreenField(definition, label);
+                requireNative(nativeMethod)(JSON.stringify(normalized));
+            }
+
+            function registerNormalizedWithNative(definition, label, nativeMethod, normalizer) {
+                var normalized = normalizer(definition, label);
                 requireNative(nativeMethod)(JSON.stringify(normalized));
             }
 
@@ -390,7 +441,7 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                 return copyObject(definition, '');
             }
 
-            function resolveCurrentToolPkgTarget() {
+            function resolveCurrentCallParams() {
                 var callId = String(root.__operitCurrentCallId || '').trim();
                 var callState =
                     callId && typeof root.__operitGetCallState === 'function'
@@ -400,6 +451,11 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                     callState && callState.params && typeof callState.params === 'object'
                         ? callState.params
                         : null;
+                return params;
+            }
+
+            function resolveCurrentToolPkgTarget() {
+                var params = resolveCurrentCallParams();
                 if (!params) {
                     return '';
                 }
@@ -417,6 +473,35 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                     }
                 }
                 return '';
+            }
+
+            function buildFunctionRegistration(apiName, nativeMethod) {
+                return function(definition) {
+                    registerWithNative(definition, apiName, nativeMethod, 'function');
+                };
+            }
+
+            function buildCustomRegistration(apiName, nativeMethod, normalizer) {
+                return function(definition) {
+                    registerNormalizedWithNative(definition, apiName, nativeMethod, normalizer);
+                };
+            }
+
+            function apiMethod(apiName, nativeMethod, normalizer) {
+                return {
+                    apiName: apiName,
+                    nativeMethod: nativeMethod,
+                    normalizer: normalizer || null
+                };
+            }
+
+            function installFunctionRegistration(entry) {
+                var apiName = entry.apiName;
+                var nativeMethod = entry.nativeMethod;
+                var registration = entry.normalizer
+                    ? buildCustomRegistration(apiName, nativeMethod, entry.normalizer)
+                    : buildFunctionRegistration(apiName, nativeMethod);
+                api[apiName] = registration;
             }
 
             function readToolPkgResource(key, outputFileName, internal) {
@@ -453,7 +538,8 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                 throw new Error('plugin config dir is unavailable for ' + target);
             }
 
-            var api = {
+            var toolPkgApi = requireToolPkgApiRuntime();
+            var api = toolPkgApi.namespace('ToolPkg', {
                 registerToolboxUiModule: function(definition) {
                     registerWithNative(
                         definition,
@@ -485,32 +571,41 @@ internal fun buildToolPkgRegistrationBridgeScript(): String {
                     );
                 },
                 readResource: readToolPkgResource,
-                getConfigDir: getToolPkgConfigDir
-            };
+                getConfigDir: getToolPkgConfigDir,
+                registerChatMessageMenuItem: toolPkgApi.method().since(
+                    '1.0.1',
+                    buildCustomRegistration(
+                        'registerChatMessageMenuItem',
+                        'registerToolPkgChatMessageMenuItem',
+                        normalizeChatMessageMenuItemDefinition
+                    )
+                ),
+                registerChatRuntimeHook: toolPkgApi.method().since(
+                    '1.0.1',
+                    buildFunctionRegistration(
+                        'registerChatRuntimeHook',
+                        'registerToolPkgChatRuntimeHook'
+                    )
+                )
+            });
 
             [
-                ['registerAppLifecycleHook', 'registerToolPkgAppLifecycleHook'],
-                ['registerMessageProcessingPlugin', 'registerToolPkgMessageProcessingPlugin'],
-                ['registerXmlRenderPlugin', 'registerToolPkgXmlRenderPlugin'],
-                ['registerInputMenuTogglePlugin', 'registerToolPkgInputMenuTogglePlugin'],
-                ['registerChatInputHook', 'registerToolPkgChatInputHook'],
-                ['registerChatViewHook', 'registerToolPkgChatViewHook'],
-                ['registerToolLifecycleHook', 'registerToolPkgToolLifecycleHook'],
-                ['registerPromptInputHook', 'registerToolPkgPromptInputHook'],
-                ['registerPromptHistoryHook', 'registerToolPkgPromptHistoryHook'],
-                ['registerPromptEstimateHistoryHook', 'registerToolPkgPromptEstimateHistoryHook'],
-                ['registerSystemPromptComposeHook', 'registerToolPkgSystemPromptComposeHook'],
-                ['registerToolPromptComposeHook', 'registerToolPkgToolPromptComposeHook'],
-                ['registerPromptFinalizeHook', 'registerToolPkgPromptFinalizeHook'],
-                ['registerPromptEstimateFinalizeHook', 'registerToolPkgPromptEstimateFinalizeHook'],
-                ['registerSummaryGenerateHook', 'registerToolPkgSummaryGenerateHook']
-            ].forEach(function(entry) {
-                var apiName = entry[0];
-                var nativeMethod = entry[1];
-                api[apiName] = function(definition) {
-                    registerWithNative(definition, apiName, nativeMethod, 'function');
-                };
-            });
+                apiMethod('registerAppLifecycleHook', 'registerToolPkgAppLifecycleHook'),
+                apiMethod('registerMessageProcessingPlugin', 'registerToolPkgMessageProcessingPlugin'),
+                apiMethod('registerXmlRenderPlugin', 'registerToolPkgXmlRenderPlugin'),
+                apiMethod('registerInputMenuTogglePlugin', 'registerToolPkgInputMenuTogglePlugin'),
+                apiMethod('registerChatInputHook', 'registerToolPkgChatInputHook'),
+                apiMethod('registerChatViewHook', 'registerToolPkgChatViewHook'),
+                apiMethod('registerToolLifecycleHook', 'registerToolPkgToolLifecycleHook'),
+                apiMethod('registerPromptInputHook', 'registerToolPkgPromptInputHook'),
+                apiMethod('registerPromptHistoryHook', 'registerToolPkgPromptHistoryHook'),
+                apiMethod('registerPromptEstimateHistoryHook', 'registerToolPkgPromptEstimateHistoryHook'),
+                apiMethod('registerSystemPromptComposeHook', 'registerToolPkgSystemPromptComposeHook'),
+                apiMethod('registerToolPromptComposeHook', 'registerToolPkgToolPromptComposeHook'),
+                apiMethod('registerPromptFinalizeHook', 'registerToolPkgPromptFinalizeHook'),
+                apiMethod('registerPromptEstimateFinalizeHook', 'registerToolPkgPromptEstimateFinalizeHook'),
+                apiMethod('registerSummaryGenerateHook', 'registerToolPkgSummaryGenerateHook')
+            ].forEach(installFunctionRegistration);
 
             api.registerAiProvider = function(definition) {
                 var normalized = normalizeAiProviderDefinition(definition, 'registerAiProvider');

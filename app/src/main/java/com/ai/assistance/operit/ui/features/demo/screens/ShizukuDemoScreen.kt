@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.demo.screens
 
+import androidx.compose.ui.res.stringResource
+
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -53,8 +55,11 @@ fun ShizukuDemoScreen(
         navigateTo: ScreenNavigationHandler? = null
 ) {
     val context = LocalContext.current
+    val updateNotify = stringResource(R.string.shizuku_demo_update_notify)
+    val operationFailedFormat = stringResource(R.string.toast_operation_failed)
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
+    var adbEnablingAccessibility by remember { mutableStateOf(false) }
 
     // Collect UI state from ViewModel
     val uiState by viewModel.uiState.collectAsState()
@@ -364,6 +369,28 @@ fun ShizukuDemoScreen(
                         scope.launch(Dispatchers.IO) {
                             UIHierarchyManager.launchProviderInstall(context)
                         }
+                    },
+                    adbAvailable = uiState.isShizukuRunning.value && uiState.hasShizukuPermission.value,
+                    adbEnabling = adbEnablingAccessibility,
+                    onEnableViaAdb = {
+                        adbEnablingAccessibility = true
+                        scope.launch {
+                            try {
+                                val message = withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.core.tools.system.AccessibilityAdbAuthorizer.enable(context)
+                                }
+                                Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+                            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                                Toast.makeText(context, context.getString(R.string.accessibility_adb_not_active), Toast.LENGTH_LONG).show()
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Toast.makeText(context, e.message ?: context.getString(R.string.accessibility_adb_not_active), Toast.LENGTH_LONG).show()
+                            } finally {
+                                adbEnablingAccessibility = false
+                                withContext(Dispatchers.IO) { viewModel.refreshStatus(context) }
+                            }
+                        }
                     }
                 )
                 Spacer(modifier = Modifier.height(12.dp))
@@ -632,9 +659,7 @@ fun ShizukuDemoScreen(
                                         context.startActivity(installIntent)
                                         Toast.makeText(
                                                         context,
-                                                        context.getString(
-                                                                R.string.shizuku_demo_update_notify
-                                                        ),
+                                                        updateNotify,
                                                         Toast.LENGTH_LONG
                                                 )
                                                 .show()
@@ -644,10 +669,7 @@ fun ShizukuDemoScreen(
                                     withContext(Dispatchers.Main) {
                                         Toast.makeText(
                                                         context,
-                                                        context.getString(
-                                                                R.string.toast_operation_failed,
-                                                                e.message ?: ""
-                                                        ),
+                                                        operationFailedFormat.format(e.message.orEmpty()),
                                                         Toast.LENGTH_SHORT
                                                 )
                                                 .show()

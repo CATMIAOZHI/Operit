@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.permissions
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Test
 
 /**
@@ -28,6 +29,7 @@ class PermissionRiskScoreRecordsTest {
         skip: PermissionRiskScoringSkip? = null,
         failedClosed: Boolean = false,
         answeredCalls: Int = 0,
+        usage: PermissionRiskScoreUsage? = null,
     ) = PermissionRiskScoreRecord(
         id = id,
         parentChatId = "chat",
@@ -38,6 +40,7 @@ class PermissionRiskScoreRecordsTest {
         skip = skip,
         failedClosed = failedClosed,
         answeredCalls = answeredCalls,
+        usage = usage,
     )
 
     @Test
@@ -168,5 +171,65 @@ class PermissionRiskScoreRecordsTest {
         assertEquals(MAX_RECORDED_BATCH_TOOLS, recorded.size)
         assertEquals("tool_1", recorded.first())
         assertEquals("tool_$MAX_RECORDED_BATCH_TOOLS", recorded.last())
+    }
+
+    @Test
+    fun theRowSaysWhatTheCallSpentAndHowMuchOfItWasCached() {
+        val usage =
+            PermissionRiskScoreUsage(
+                uncachedInputTokens = 1_000L,
+                cachedInputTokens = 3_000L,
+                outputTokens = 210L,
+            )
+
+        // The two parts the provider split the input into are the input when it stated no total.
+        assertEquals(4_000L, usage.inputTokens())
+        assertEquals(75, usage.cacheReadPercent())
+        assertEquals(210L, usage.outputTokens)
+        // A provider that stated a total is believed over the parts.
+        assertEquals(
+            4_100L,
+            usage.copy(totalInputTokens = 4_100L).inputTokens(),
+        )
+        // A call the provider served from no cache reads as no cache hit, not as unknown.
+        assertEquals(0, PermissionRiskScoreUsage(uncachedInputTokens = 500L, cachedInputTokens = 0L).cacheReadPercent())
+    }
+
+    @Test
+    fun aComponentTheProviderDidNotReportIsUnknownRatherThanZero() {
+        val partial = PermissionRiskScoreUsage(cachedInputTokens = 20L)
+
+        // A cache read is a share of an input, so on its own it is not the input and there is no
+        // share to compute from.
+        assertNull(partial.inputTokens())
+        assertNull(partial.cacheReadPercent())
+        assertNull(PermissionRiskScoreUsage(totalInputTokens = 0L, outputTokens = 0L).cacheReadPercent())
+        // And the log line says so instead of writing a zero a reader would trust.
+        assertEquals("unreported", (null as PermissionRiskScoreUsage?).summaryForLog())
+        assertEquals("in=-,cached=20,out=-", partial.summaryForLog())
+        assertEquals(
+            "in=4000,cached=3000,out=210",
+            PermissionRiskScoreUsage(
+                    uncachedInputTokens = 1_000L,
+                    cachedInputTokens = 3_000L,
+                    outputTokens = 210L,
+                )
+                .summaryForLog(),
+        )
+    }
+
+    @Test
+    fun aStoredRowFromBeforeTheUsageWasKeptStillDecodes() {
+        // Rows an earlier version wrote have none of the fields added since, and every one of them has
+        // a default, so an old row reads as a batch that reported no usage rather than being lost.
+        val stored = "[{\"id\":\"chat#1\",\"parentChatId\":\"chat\",\"step\":1,\"startedAt\":0}]"
+
+        val decoded =
+            permissionRiskScoreJson.decodeFromString<List<PermissionRiskScoreRecord>>(stored)
+
+        assertEquals(1, decoded.size)
+        assertNull(decoded.single().usage)
+        assertEquals(0, decoded.single().priorReviewCount)
+        assertEquals("", decoded.single().priorReviewHash)
     }
 }

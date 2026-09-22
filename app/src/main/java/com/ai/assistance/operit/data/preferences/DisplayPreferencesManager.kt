@@ -66,6 +66,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
         private val KEY_SCREENSHOT_QUALITY = intPreferencesKey("screenshot_quality")
         private val KEY_SCREENSHOT_SCALE_PERCENT = intPreferencesKey("screenshot_scale_percent")
         private val KEY_VISIT_WEB_WAIT_SECONDS = intPreferencesKey("visit_web_wait_seconds")
+        private val KEY_TOOLPKG_HOOK_TIMEOUT_SECONDS = intPreferencesKey("toolpkg_hook_timeout_seconds")
 
         // 虚拟屏幕相关设置的 Key
         private val KEY_VIRTUAL_DISPLAY_BITRATE_KBPS = intPreferencesKey("virtual_display_bitrate_kbps")
@@ -194,6 +195,11 @@ class DisplayPreferencesManager private constructor(private val context: Context
             preferences[KEY_VIRTUAL_DISPLAY_BITRATE_KBPS] ?: 3000
         }
 
+    val toolPkgHookTimeoutSeconds: Flow<Int> =
+        context.displayPreferencesDataStore.data.map { preferences ->
+            preferences[KEY_TOOLPKG_HOOK_TIMEOUT_SECONDS] ?: 10
+        }
+
     val collapseCompletedProcess: Flow<Boolean> =
         context.displayPreferencesDataStore.data.map { it[KEY_COLLAPSE_COMPLETED_PROCESS] ?: true }
 
@@ -229,6 +235,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
         screenshotScalePercent: Int? = null,
         visitWebWaitSeconds: Int? = null,
         virtualDisplayBitrateKbps: Int? = null,
+        toolPkgHookTimeoutSeconds: Int? = null,
         collapseCompletedProcess: Boolean? = null,
         toolCollapseMode: ToolCollapseMode? = null
     ) {
@@ -249,7 +256,11 @@ class DisplayPreferencesManager private constructor(private val context: Context
                 preferences[KEY_START_WITH_NEW_CHAT] = it
             }
             globalUserAvatarUri?.let { preferences[KEY_GLOBAL_USER_AVATAR_URI] = it }
-            globalUserName?.let { preferences[KEY_GLOBAL_USER_NAME] = it }
+            globalUserName?.let {
+                if ((preferences[KEY_GLOBAL_USER_NAME] ?: "User") != it)
+                    LearningPromptSnapshotRepository.markChanged(context, "settings")
+                preferences[KEY_GLOBAL_USER_NAME] = it
+            }
             enableBackgroundKeepAlive?.let {
                 preferences[KEY_ENABLE_BACKGROUND_KEEP_ALIVE] = it
             }
@@ -264,6 +275,9 @@ class DisplayPreferencesManager private constructor(private val context: Context
             screenshotScalePercent?.let { preferences[KEY_SCREENSHOT_SCALE_PERCENT] = it }
             visitWebWaitSeconds?.let { preferences[KEY_VISIT_WEB_WAIT_SECONDS] = it.coerceAtLeast(0) }
             virtualDisplayBitrateKbps?.let { preferences[KEY_VIRTUAL_DISPLAY_BITRATE_KBPS] = it }
+            toolPkgHookTimeoutSeconds?.let {
+                preferences[KEY_TOOLPKG_HOOK_TIMEOUT_SECONDS] = it.coerceIn(1, 60)
+            }
             collapseCompletedProcess?.let { preferences[KEY_COLLAPSE_COMPLETED_PROCESS] = it }
             toolCollapseMode?.let { preferences[KEY_TOOL_COLLAPSE_MODE] = it.value }
         }
@@ -299,6 +313,12 @@ class DisplayPreferencesManager private constructor(private val context: Context
         }
     }
 
+    fun getToolPkgHookTimeoutSeconds(): Int {
+        return runBlocking {
+            toolPkgHookTimeoutSeconds.first()
+        }
+    }
+
     fun getVirtualDisplayBitrateKbps(): Int {
         return runBlocking {
             virtualDisplayBitrateKbps.first()
@@ -310,6 +330,8 @@ class DisplayPreferencesManager private constructor(private val context: Context
      */
     suspend fun resetDisplaySettings() {
         context.displayPreferencesDataStore.edit { preferences ->
+            if ((preferences[KEY_GLOBAL_USER_NAME] ?: "User") != "User")
+                LearningPromptSnapshotRepository.markChanged(context, "settings")
             preferences[KEY_SHOW_FPS_COUNTER] = false
             preferences[KEY_ENABLE_REPLY_NOTIFICATION] = true
             preferences[KEY_ENABLE_REPLY_NOTIFICATION_SOUND] = false
@@ -326,6 +348,7 @@ class DisplayPreferencesManager private constructor(private val context: Context
             preferences.remove(KEY_SCREENSHOT_QUALITY)
             preferences.remove(KEY_SCREENSHOT_SCALE_PERCENT)
             preferences.remove(KEY_VISIT_WEB_WAIT_SECONDS)
+            preferences.remove(KEY_TOOLPKG_HOOK_TIMEOUT_SECONDS)
             preferences.remove(KEY_VIRTUAL_DISPLAY_BITRATE_KBPS)
             preferences.remove(KEY_COLLAPSE_COMPLETED_PROCESS)
             preferences.remove(KEY_TOOL_COLLAPSE_MODE)

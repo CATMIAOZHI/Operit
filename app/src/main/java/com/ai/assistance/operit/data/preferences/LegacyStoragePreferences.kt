@@ -101,11 +101,15 @@ class LegacyStoragePreferences private constructor(private val context: Context)
     suspend fun isReadLegacyWorkflows(): Boolean = readLegacyWorkflowsFlow().first()
 
     suspend fun setReadLegacySkills(value: Boolean) {
+        val changed = isReadLegacySkills() != value
         context.legacyStorageDataStore.edit { it[KEY_READ_LEGACY_SKILLS] = value }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun setReadLegacyMcp(value: Boolean) {
+        val changed = isReadLegacyMcp() != value
         context.legacyStorageDataStore.edit { it[KEY_READ_LEGACY_MCP] = value }
+        if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     suspend fun setReadLegacyWorkflows(value: Boolean) {

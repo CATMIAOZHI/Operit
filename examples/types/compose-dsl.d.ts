@@ -980,6 +980,66 @@ export interface CircularProgressIndicatorProps extends ComposeCommonProps {
 
 export interface SnackbarHostProps extends ComposeCommonProps {}
 
+/** @since ToolPkg API 1.0.1 */
+export interface DialogProperties {
+  dismissOnBackPress?: boolean;
+  dismissOnClickOutside?: boolean;
+  usePlatformDefaultWidth?: boolean;
+  decorFitsSystemWindows?: boolean;
+}
+
+/** @since ToolPkg API 1.0.1 */
+export interface AlertDialogProps extends ComposeCommonProps {
+  title?: string | ComposeChildren;
+  text?: string | ComposeChildren;
+  markdown?: string;
+  content?: ComposeChildren;
+  icon?: ComposeChildren;
+  confirmButton?: ComposeChildren;
+  dismissButton?: ComposeChildren;
+  confirmText?: string;
+  dismissText?: string;
+  onConfirm?: () => void | Promise<void>;
+  onDismiss?: () => void | Promise<void>;
+  onDismissRequest?: () => void | Promise<void>;
+  closeOnConfirm?: boolean;
+  closeOnDismiss?: boolean;
+  closeOnDismissRequest?: boolean;
+  containerColor?: ComposeColor;
+  iconContentColor?: ComposeColor;
+  titleContentColor?: ComposeColor;
+  textContentColor?: ComposeColor;
+  tonalElevation?: number;
+  shape?: ComposeShape;
+  properties?: DialogProperties;
+}
+
+/** @since ToolPkg API 1.0.1 */
+export interface DialogProps extends ComposeCommonProps {
+  content?: ComposeChildren;
+  onDismissRequest?: () => void | Promise<void>;
+  closeOnDismissRequest?: boolean;
+  containerColor?: ComposeColor;
+  contentColor?: ComposeColor;
+  tonalElevation?: number;
+  shape?: ComposeShape;
+  properties?: DialogProperties;
+}
+
+/** Embeds the host AI chat surface without its workspace panel. */
+export interface AiChatProps extends ComposeCommonProps {}
+
+/** Controls a responsive trailing panel around the supplied screen content. */
+export interface AdaptiveSidePanelProps extends ComposeCommonProps {
+  open: boolean;
+  side: ComposeChildren;
+  onOpenChanged: (open: boolean) => void;
+  defaultWidth?: number;
+  minWidth?: number;
+  minContentWidth?: number;
+  breakpoint?: number;
+}
+
 export interface CanvasProps extends ComposeCommonProps {
   commands?: ComposeCanvasCommand[];
   transform?: ComposeCanvasTransform;
@@ -1076,6 +1136,12 @@ export interface ComposeUiFactoryRegistry {
   LinearProgressIndicator: ComposeNodeFactory<LinearProgressIndicatorProps>;
   CircularProgressIndicator: ComposeNodeFactory<CircularProgressIndicatorProps>;
   SnackbarHost: ComposeNodeFactory<SnackbarHostProps>;
+  /** @since ToolPkg API 1.0.1 */
+  AlertDialog: ComposeNodeFactory<AlertDialogProps>;
+  /** @since ToolPkg API 1.0.1 */
+  Dialog: ComposeNodeFactory<DialogProps>;
+  AiChat: ComposeNodeFactory<AiChatProps>;
+  AdaptiveSidePanel: ComposeNodeFactory<AdaptiveSidePanelProps>;
   Canvas: ComposeNodeFactory<CanvasProps>;
   WebView: ComposeNodeFactory<WebViewProps>;
 }
@@ -1103,14 +1169,41 @@ export interface ComposeResolveToolNameRequest {
   preferImported?: boolean;
 }
 
+export type ComposeFilePickerMode =
+  | "document"
+  | "image"
+  | "video"
+  | "media"
+  | "directory"
+  | "camera";
+
 export interface ComposeFilePickerOptions {
+  /**
+   * Selection source. Defaults to "document".
+   */
+  picker?: ComposeFilePickerMode;
+  /**
+   * MIME filter for the document picker only.
+   */
   mimeTypes?: string[];
+  /**
+   * Enables multiple selection for document, image, video, and media pickers.
+   */
   allowMultiple?: boolean;
+  /**
+   * Retains URI access for document and directory pickers.
+   */
   persistPermission?: boolean;
 }
 
 export interface ComposePickedFile {
+  /**
+   * Selected content URI. Directory results expose this as their only location.
+   */
   uri: string;
+  /**
+   * Temporary local file for document, visual-media, and camera results.
+   */
   path?: string;
   name?: string;
   mimeType?: string;

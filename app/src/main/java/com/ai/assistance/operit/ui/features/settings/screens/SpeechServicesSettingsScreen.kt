@@ -3,10 +3,12 @@ package com.ai.assistance.operit.ui.features.settings.screens
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -16,38 +18,39 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ArrowDropDown
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
-import androidx.compose.material.icons.automirrored.filled.VolumeUp
-import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Slider
+import androidx.compose.material3.Surface
+import androidx.compose.material3.Tab
+import androidx.compose.material3.TabRow
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -63,13 +66,14 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
 import com.ai.assistance.operit.api.voice.HttpTtsResponsePipelineStep
 import com.ai.assistance.operit.api.voice.VoiceServiceFactory
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
 import com.ai.assistance.operit.data.preferences.SpeechServicesPreferences
+import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.launch
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
@@ -97,58 +101,95 @@ fun SpeechServicesSettingsScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val prefs = remember { SpeechServicesPreferences(context) }
+    val profilePrefs = remember { SpeechServiceProfilesPreferences(context) }
+    val ttsProfiles by profilePrefs.ttsProfilesFlow.collectAsState(initial = emptyList())
+    val sttProfiles by profilePrefs.sttProfilesFlow.collectAsState(initial = emptyList())
+    val currentTtsProfile by profilePrefs.currentTtsProfileOrNullFlow.collectAsState(initial = null)
+    val currentSttProfile by profilePrefs.currentSttProfileOrNullFlow.collectAsState(initial = null)
+    if (currentTtsProfile == null || currentSttProfile == null ||
+        ttsProfiles.none { it.id == currentTtsProfile?.id } ||
+        sttProfiles.none { it.id == currentSttProfile?.id }) {
+        Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator()
+        }
+        return
+    }
+    val activeTtsProfile = checkNotNull(currentTtsProfile)
+    val activeSttProfile = checkNotNull(currentSttProfile)
+    val currentTtsProfileId = activeTtsProfile.id
+    val currentSttProfileId = activeSttProfile.id
+    var showCreateTtsProfileDialog by remember { mutableStateOf(false) }
+    var showCreateSttProfileDialog by remember { mutableStateOf(false) }
+    var showRenameTtsProfileDialog by remember { mutableStateOf(false) }
+    var showRenameSttProfileDialog by remember { mutableStateOf(false) }
+    var renameTtsProfileName by remember { mutableStateOf("") }
+    var renameSttProfileName by remember { mutableStateOf("") }
+    var ttsProfilePendingDeletionId by remember { mutableStateOf<String?>(null) }
+    var sttProfilePendingDeletionId by remember { mutableStateOf<String?>(null) }
+    var ttsProfileError by remember { mutableStateOf<String?>(null) }
+    var sttProfileError by remember { mutableStateOf<String?>(null) }
+    val snackbarHostState = remember { SnackbarHostState() }
+    var selectedTabIndex by remember { mutableStateOf(0) }
+    var ttsCleanerExpanded by remember { mutableStateOf(false) }
+    var ttsHttpAdvancedExpanded by remember { mutableStateOf(false) }
+
+    LaunchedEffect(ttsProfileError, sttProfileError) {
+        val message = ttsProfileError ?: sttProfileError
+        if (message != null) {
+            snackbarHostState.showSnackbar(message)
+        }
+    }
 
     // --- State for TTS Settings ---
-    val ttsServiceType by prefs.ttsServiceTypeFlow.collectAsState(initial = VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS)
-    val httpConfig by prefs.ttsHttpConfigFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_HTTP_TTS_PRESET)
-    val vitsConfig by prefs.ttsVitsPackageConfigFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_VITS_TTS_PACKAGE_CONFIG)
-    val ttsCleanerRegexs by prefs.ttsCleanerRegexsFlow.collectAsState(initial = emptyList())
-    val ttsSpeechRate by prefs.ttsSpeechRateFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_TTS_SPEECH_RATE)
-    val ttsPitch by prefs.ttsPitchFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_TTS_PITCH)
+    val ttsServiceType = activeTtsProfile.serviceType
+    val httpConfig = activeTtsProfile.httpConfig
+    val vitsConfig = activeTtsProfile.vitsConfig
+    val ttsCleanerRegexs = activeTtsProfile.cleanerRegexs
+    val ttsSpeechRate = activeTtsProfile.speechRate
+    val ttsPitch = activeTtsProfile.pitch
 
-    var ttsServiceTypeInput by remember(ttsServiceType) { mutableStateOf(ttsServiceType) }
-    var ttsUrlTemplateInput by remember(httpConfig) { mutableStateOf(httpConfig.urlTemplate) }
-    var ttsApiKeyInput by remember(httpConfig) { mutableStateOf(httpConfig.apiKey) }
-    var ttsHeadersInput by remember(httpConfig) { mutableStateOf(Json.encodeToString(httpConfig.headers)) }
-    var ttsHttpMethodInput by remember(httpConfig) { mutableStateOf(httpConfig.httpMethod) }
-    var ttsRequestBodyInput by remember(httpConfig) { mutableStateOf(httpConfig.requestBody) }
-    var ttsContentTypeInput by remember(httpConfig) { mutableStateOf(httpConfig.contentType) }
-    var ttsLocaleTagInput by remember(httpConfig) { mutableStateOf(httpConfig.localeTag) }
-    var ttsVoiceIdInput by remember(httpConfig) { mutableStateOf(httpConfig.voiceId) }
-    var ttsModelNameInput by remember(httpConfig) { mutableStateOf(httpConfig.modelName) }
-    var ttsResponsePipelineInput by remember(httpConfig) {
+    var ttsServiceTypeInput by remember(currentTtsProfileId, ttsServiceType) { mutableStateOf(ttsServiceType) }
+    var ttsUrlTemplateInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.urlTemplate) }
+    var ttsApiKeyInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.apiKey) }
+    var ttsHeadersInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(Json.encodeToString(httpConfig.headers)) }
+    var ttsHttpMethodInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.httpMethod) }
+    var ttsRequestBodyInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.requestBody) }
+    var ttsContentTypeInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.contentType) }
+    var ttsLocaleTagInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.localeTag) }
+    var ttsVoiceIdInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.voiceId) }
+    var ttsModelNameInput by remember(currentTtsProfileId, httpConfig) { mutableStateOf(httpConfig.modelName) }
+    var ttsResponsePipelineInput by remember(currentTtsProfileId, httpConfig) {
         mutableStateOf(HttpTtsResponsePipelineStep.encodeList(httpConfig.responsePipeline))
     }
-    var vitsPackagePathInput by remember(vitsConfig) { mutableStateOf(vitsConfig.packagePath) }
-    var vitsSpeakerIdInput by remember(vitsConfig) { mutableStateOf(vitsConfig.speakerId) }
-    var vitsOptionsInput by remember(vitsConfig) { mutableStateOf(Json.encodeToString(vitsConfig.options)) }
-    var ttsSpeechRateInput by remember(ttsSpeechRate) { mutableStateOf(ttsSpeechRate) }
-    var ttsPitchInput by remember(ttsPitch) { mutableStateOf(ttsPitch) }
-    var ttsHeadersJsonError by remember { mutableStateOf<String?>(null) }
-    var ttsResponsePipelineJsonError by remember { mutableStateOf<String?>(null) }
-    var vitsOptionsJsonError by remember { mutableStateOf<String?>(null) }
-    var httpMethodDropdownExpanded by remember { mutableStateOf(false) }
-    val ttsCleanerRegexsState = remember { mutableStateListOf<String>() }
+    var vitsPackagePathInput by remember(currentTtsProfileId, vitsConfig) { mutableStateOf(vitsConfig.packagePath) }
+    var vitsSpeakerIdInput by remember(currentTtsProfileId, vitsConfig) { mutableStateOf(vitsConfig.speakerId) }
+    var vitsOptionsInput by remember(currentTtsProfileId, vitsConfig) { mutableStateOf(Json.encodeToString(vitsConfig.options)) }
+    var ttsSpeechRateInput by remember(currentTtsProfileId, ttsSpeechRate) { mutableStateOf(ttsSpeechRate) }
+    var ttsPitchInput by remember(currentTtsProfileId, ttsPitch) { mutableStateOf(ttsPitch) }
+    var ttsHeadersJsonError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
+    var ttsResponsePipelineJsonError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
+    var vitsOptionsJsonError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
+    var httpMethodDropdownExpanded by remember(currentTtsProfileId) { mutableStateOf(false) }
+    val ttsCleanerRegexsState = remember(currentTtsProfileId) { mutableStateListOf(*ttsCleanerRegexs.toTypedArray()) }
     val hasHttpTtsJsonError = ttsHeadersJsonError != null || ttsResponsePipelineJsonError != null
     val hasVitsTtsJsonError = vitsOptionsJsonError != null
-    var simpleTtsVoices by remember { mutableStateOf<List<VoiceService.Voice>>(emptyList()) }
-    var simpleTtsVoicesLoading by remember { mutableStateOf(false) }
-    var simpleTtsVoicesError by remember { mutableStateOf<String?>(null) }
-    var simpleTtsLocaleExpanded by remember { mutableStateOf(false) }
-    var simpleTtsShowVoiceDialog by remember { mutableStateOf(false) }
+    var simpleTtsVoices by remember(currentTtsProfileId) { mutableStateOf<List<VoiceService.Voice>>(emptyList()) }
+    var simpleTtsVoicesLoading by remember(currentTtsProfileId) { mutableStateOf(false) }
+    var simpleTtsVoicesError by remember(currentTtsProfileId) { mutableStateOf<String?>(null) }
+    var simpleTtsLocaleExpanded by remember(currentTtsProfileId) { mutableStateOf(false) }
+    var simpleTtsShowVoiceDialog by remember(currentTtsProfileId) { mutableStateOf(false) }
 
     // --- State for STT Settings ---
-    val sttServiceType by prefs.sttServiceTypeFlow.collectAsState(initial = SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN)
-    val sttHttpConfig by prefs.sttHttpConfigFlow.collectAsState(initial = SpeechServicesPreferences.DEFAULT_STT_HTTP_PRESET)
-    var sttServiceTypeInput by remember(sttServiceType) { mutableStateOf(sttServiceType) }
+    val sttServiceType = activeSttProfile.serviceType
+    val sttHttpConfig = activeSttProfile.httpConfig
+    var sttServiceTypeInput by remember(currentSttProfileId, sttServiceType) { mutableStateOf(sttServiceType) }
 
-    var sttEndpointUrlInput by remember(sttHttpConfig) { mutableStateOf(sttHttpConfig.endpointUrl) }
-    var sttApiKeyInput by remember(sttHttpConfig) { mutableStateOf(sttHttpConfig.apiKey) }
-    var sttModelNameInput by remember(sttHttpConfig) { mutableStateOf(sttHttpConfig.modelName) }
+    var sttEndpointUrlInput by remember(currentSttProfileId, sttHttpConfig) { mutableStateOf(sttHttpConfig.endpointUrl) }
+    var sttApiKeyInput by remember(currentSttProfileId, sttHttpConfig) { mutableStateOf(sttHttpConfig.apiKey) }
+    var sttModelNameInput by remember(currentSttProfileId, sttHttpConfig) { mutableStateOf(sttHttpConfig.modelName) }
 
     // 同步 DataStore 的数据到 State
-    LaunchedEffect(ttsCleanerRegexs) {
+    LaunchedEffect(currentTtsProfileId, ttsCleanerRegexs) {
         if (ttsCleanerRegexs != ttsCleanerRegexsState.toList()) {
             ttsCleanerRegexsState.clear()
             ttsCleanerRegexsState.addAll(ttsCleanerRegexs)
@@ -199,7 +240,9 @@ fun SpeechServicesSettingsScreen(
         sttServiceTypeInput,
         sttEndpointUrlInput,
         sttApiKeyInput,
-        sttModelNameInput
+        sttModelNameInput,
+        currentTtsProfileId,
+        currentSttProfileId,
     ) {
         if (!hasPendingChanges) return@LaunchedEffect
         if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.HTTP_TTS && hasHttpTtsJsonError) return@LaunchedEffect
@@ -277,28 +320,35 @@ fun SpeechServicesSettingsScreen(
         )
 
         try {
-            prefs.saveTtsSettings(
-                serviceType = ttsServiceTypeInput,
-                httpConfig = httpConfigData,
-                vitsConfig = vitsConfigData,
-                cleanerRegexs = ttsCleanerRegexsState.toList(),
-                speechRate = ttsSpeechRateInput,
-                pitch = ttsPitchInput
+            profilePrefs.updateTtsProfile(
+                activeTtsProfile.copy(
+                    serviceType = ttsServiceTypeInput,
+                    httpConfig = httpConfigData,
+                    vitsConfig = vitsConfigData,
+                    cleanerRegexs = ttsCleanerRegexsState.toList(),
+                    speechRate = ttsSpeechRateInput,
+                    pitch = ttsPitchInput,
+                ),
             )
 
-            prefs.saveSttSettings(
-                serviceType = sttServiceTypeInput,
-                httpConfig = sttHttpConfigData,
+            profilePrefs.updateSttProfile(
+                activeSttProfile.copy(
+                    serviceType = sttServiceTypeInput,
+                    httpConfig = sttHttpConfigData,
+                ),
             )
 
             VoiceServiceFactory.resetInstance()
             SpeechServiceFactory.resetInstance()
-        } catch (_: Exception) {
-            // Keep UI editable; auto-save retries on next change.
+        } catch (error: Exception) {
+            AppLogger.e("SpeechServicesSettings", "Failed to save speech service profile", error)
+            val message = error.message ?: "Failed to save speech service profile"
+            ttsProfileError = message
+            sttProfileError = message
         }
     }
 
-    LaunchedEffect(ttsServiceTypeInput) {
+    LaunchedEffect(currentTtsProfileId, ttsServiceTypeInput) {
         if (ttsServiceTypeInput != VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) return@LaunchedEffect
         simpleTtsVoicesLoading = true
         simpleTtsVoicesError = null
@@ -339,54 +389,86 @@ fun SpeechServicesSettingsScreen(
     }
 
 
-    CustomScaffold { paddingValues ->
+    CustomScaffold(
+        snackbarHost = { SnackbarHost(snackbarHostState) },
+    ) { paddingValues ->
         Box(modifier = Modifier
             .padding(paddingValues)
             .fillMaxSize()) {
-            Column(
+            LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-                    .verticalScroll(rememberScrollState())
+                    .padding(horizontal = 16.dp, vertical = 8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(bottom = 24.dp),
             ) {
+                item {
+                    SpeechServicesModeTabs(
+                        selectedTabIndex = selectedTabIndex,
+                        onTabSelected = { selectedTabIndex = it },
+                    )
+                }
+
+                item {
+                    SpeechProfileManagementBar(
+                        selectedTabIndex = selectedTabIndex,
+                        ttsProfiles = ttsProfiles.map { SpeechProfileOption(it.id, it.name) },
+                        sttProfiles = sttProfiles.map { SpeechProfileOption(it.id, it.name) },
+                        currentTtsProfileId = currentTtsProfileId,
+                        currentSttProfileId = currentSttProfileId,
+                        ttsProfileError = ttsProfileError,
+                        sttProfileError = sttProfileError,
+                        onCreateTts = { showCreateTtsProfileDialog = true },
+                        onCreateStt = { showCreateSttProfileDialog = true },
+                        onRenameTts = {
+                            renameTtsProfileName = activeTtsProfile.name
+                            showRenameTtsProfileDialog = true
+                        },
+                        onRenameStt = {
+                            renameSttProfileName = activeSttProfile.name
+                            showRenameSttProfileDialog = true
+                        },
+                        onSelectTts = { id ->
+                            scope.launch {
+                                try {
+                                    profilePrefs.selectTtsProfile(id)
+                                    VoiceServiceFactory.resetInstance()
+                                    ttsProfileError = null
+                                } catch (error: Exception) {
+                                    AppLogger.e("SpeechServicesSettings", "Failed to select TTS profile", error)
+                                    ttsProfileError = error.message
+                                }
+                            }
+                        },
+                        onSelectStt = { id ->
+                            scope.launch {
+                                try {
+                                    profilePrefs.selectSttProfile(id)
+                                    SpeechServiceFactory.resetInstance()
+                                    sttProfileError = null
+                                } catch (error: Exception) {
+                                    AppLogger.e("SpeechServicesSettings", "Failed to select STT profile", error)
+                                    sttProfileError = error.message
+                                }
+                            }
+                        },
+                        onDeleteTts = { id -> ttsProfilePendingDeletionId = id },
+                        onDeleteStt = { id -> sttProfilePendingDeletionId = id },
+                    )
+                }
+
+                if (selectedTabIndex == 0) item(key = "tts-settings") {
                 // --- TTS Section ---
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     ),
                     border = BorderStroke(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp),
-                            horizontalArrangement = Arrangement.SpaceBetween
-                        ) {
-                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.VolumeUp,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                    text = stringResource(R.string.speech_services_tts_title),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    fontWeight = FontWeight.Bold
-                                )
-                            }
-                        }
-                        
-                        Text(
-                            text = stringResource(R.string.speech_services_tts_desc),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
+                    Column(modifier = Modifier.padding(12.dp)) {
 
                         Text(
                             text = stringResource(R.string.speech_services_service_type),
@@ -457,39 +539,41 @@ fun SpeechServicesSettingsScreen(
                             }
                         }
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        Text(
-                            text = stringResource(R.string.speech_services_tts_speech_rate_value, ttsSpeechRateInput),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
-
-                        Slider(
-                            value = ttsSpeechRateInput,
-                            onValueChange = { ttsSpeechRateInput = it },
-                            valueRange = 0.5f..2.0f,
-                            steps = 5,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        )
-
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        Text(
-                            text = stringResource(R.string.speech_services_tts_pitch_value, ttsPitchInput),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurface
-                        )
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.speech_services_tts_speech_rate_value, ttsSpeechRateInput),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Slider(
+                                    value = ttsSpeechRateInput,
+                                    onValueChange = { ttsSpeechRateInput = it },
+                                    valueRange = 0.5f..2.0f,
+                                    steps = 5,
+                                )
+                            }
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = stringResource(R.string.speech_services_tts_pitch_value, ttsPitchInput),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurface,
+                                )
+                                Slider(
+                                    value = ttsPitchInput,
+                                    onValueChange = { ttsPitchInput = it },
+                                    valueRange = 0.5f..2.0f,
+                                    steps = 5,
+                                )
+                            }
+                        }
 
-                        Slider(
-                            value = ttsPitchInput,
-                            onValueChange = { ttsPitchInput = it },
-                            valueRange = 0.5f..2.0f,
-                            steps = 5,
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp)
-                        )
-
-                        Spacer(modifier = Modifier.height(16.dp))
+                        Spacer(modifier = Modifier.height(12.dp))
 
                         AnimatedVisibility(visible = ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) {
                             Column {
@@ -612,102 +696,124 @@ fun SpeechServicesSettingsScreen(
                             }
                         }
 
-                        // TTS Cleaner Regex List
-                        Text(
-                            text = stringResource(R.string.speech_services_tts_cleaner_title),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.padding(bottom = 4.dp)
-                        )
-                        
-                        Text(
-                            text = stringResource(R.string.speech_services_tts_cleaner_desc),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                        
-                        Column {
-                            ttsCleanerRegexsState.forEachIndexed { index, regex ->
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clickable { ttsCleanerExpanded = !ttsCleanerExpanded }
+                                .padding(vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                    text = "${stringResource(R.string.speech_services_tts_cleaner_title)} (${ttsCleanerRegexsState.size})",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    fontWeight = FontWeight.Medium,
+                                )
+                                Text(
+                                    text = stringResource(R.string.speech_services_tts_cleaner_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            Icon(
+                                imageVector = if (ttsCleanerExpanded) {
+                                    Icons.Default.KeyboardArrowUp
+                                } else {
+                                    Icons.Default.KeyboardArrowDown
+                                },
+                                contentDescription = stringResource(
+                                    if (ttsCleanerExpanded) R.string.collapse else R.string.expand,
+                                ),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+
+                        AnimatedVisibility(visible = ttsCleanerExpanded) {
+                            Column {
+                                ttsCleanerRegexsState.forEachIndexed { index, regex ->
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        verticalAlignment = Alignment.CenterVertically,
+                                    ) {
+                                        OutlinedTextField(
+                                            value = regex,
+                                            onValueChange = { ttsCleanerRegexsState[index] = it },
+                                            placeholder = { Text(stringResource(R.string.speech_services_tts_cleaner_placeholder)) },
+                                            modifier = Modifier.weight(1f),
+                                            singleLine = true,
+                                        )
+                                        IconButton(onClick = { ttsCleanerRegexsState.removeAt(index) }) {
+                                            Icon(
+                                                Icons.Default.Delete,
+                                                contentDescription = stringResource(R.string.speech_services_tts_cleaner_delete),
+                                            )
+                                        }
+                                    }
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+
                                 Row(
                                     modifier = Modifier.fillMaxWidth(),
-                                    verticalAlignment = Alignment.CenterVertically
+                                    horizontalArrangement = Arrangement.spacedBy(8.dp),
                                 ) {
-                                    OutlinedTextField(
-                                        value = regex,
-                                        onValueChange = { ttsCleanerRegexsState[index] = it },
-                                        placeholder = { Text(stringResource(R.string.speech_services_tts_cleaner_placeholder)) },
+                                    TextButton(
+                                        onClick = { ttsCleanerRegexsState.add("") },
                                         modifier = Modifier.weight(1f),
-                                        singleLine = true,
-                                    )
-                                    IconButton(onClick = { ttsCleanerRegexsState.removeAt(index) }) {
-                                        Icon(Icons.Default.Delete, contentDescription = stringResource(R.string.speech_services_tts_cleaner_delete))
+                                    ) {
+                                        Icon(Icons.Default.Add, contentDescription = null)
+                                        Spacer(modifier = Modifier.width(4.dp))
+                                        Text(stringResource(R.string.speech_services_tts_cleaner_add))
                                     }
-                                }
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-                            
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                horizontalArrangement = Arrangement.spacedBy(8.dp)
-                            ) {
-                                Button(
-                                    onClick = { ttsCleanerRegexsState.add("") },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Icon(Icons.Default.Add, contentDescription = null)
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(stringResource(R.string.speech_services_tts_cleaner_add))
-                                }
-                                
-                                var showTemplateMenu by remember { mutableStateOf(false) }
-                                OutlinedButton(
-                                    onClick = { showTemplateMenu = true },
-                                    modifier = Modifier.weight(1f)
-                                ) {
-                                    Text(stringResource(R.string.speech_services_tts_cleaner_template))
-                                    Icon(Icons.Default.ArrowDropDown, contentDescription = null)
-                                }
-                                
-                                DropdownMenu(
-                                    expanded = showTemplateMenu,
-                                    onDismissRequest = { showTemplateMenu = false }
-                                ) {
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_asterisk)) },
-                                        onClick = {
-                                            ttsCleanerRegexsState.add("\\*[^*]+\\*")
-                                            showTemplateMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_double_asterisk)) },
-                                        onClick = {
-                                            ttsCleanerRegexsState.add("\\*\\*[^*]+\\*\\*")
-                                            showTemplateMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_parenthesis)) },
-                                        onClick = {
-                                            ttsCleanerRegexsState.add("\\([^)]+\\)")
-                                            showTemplateMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_chinese_parenthesis)) },
-                                        onClick = {
-                                            ttsCleanerRegexsState.add("（[^）]+）")
-                                            showTemplateMenu = false
-                                        }
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_xml)) },
-                                        onClick = {
-                                            ttsCleanerRegexsState.add("<[^>]+>")
-                                            showTemplateMenu = false
-                                        }
-                                    )
+
+                                    var showTemplateMenu by remember { mutableStateOf(false) }
+                                    TextButton(
+                                        onClick = { showTemplateMenu = true },
+                                        modifier = Modifier.weight(1f),
+                                    ) {
+                                        Text(stringResource(R.string.speech_services_tts_cleaner_template))
+                                        Icon(Icons.Default.ArrowDropDown, contentDescription = null)
+                                    }
+
+                                    DropdownMenu(
+                                        expanded = showTemplateMenu,
+                                        onDismissRequest = { showTemplateMenu = false },
+                                    ) {
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_asterisk)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\*[^*]+\\*")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_double_asterisk)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\*\\*[^*]+\\*\\*")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_parenthesis)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("\\([^)]+\\)")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_chinese_parenthesis)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("（[^）]+）")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                        DropdownMenuItem(
+                                            text = { Text(stringResource(R.string.speech_services_tts_cleaner_template_xml)) },
+                                            onClick = {
+                                                ttsCleanerRegexsState.add("<[^>]+>")
+                                                showTemplateMenu = false
+                                            },
+                                        )
+                                    }
                                 }
                             }
                         }
@@ -1853,44 +1959,20 @@ fun SpeechServicesSettingsScreen(
                         }
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(16.dp))
+                }
 
+                if (selectedTabIndex == 1) item(key = "stt-settings") {
                 // --- STT Section ---
                 Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp),
                     colors = CardDefaults.cardColors(
                         containerColor = MaterialTheme.colorScheme.surface
                     ),
                     border = BorderStroke(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
                     elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
                 ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Mic,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.speech_services_stt_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        
-                        Text(
-                            text = stringResource(R.string.speech_services_stt_desc),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(bottom = 16.dp)
-                        )
+                    Column(modifier = Modifier.padding(12.dp)) {
 
                         Text(
                             text = stringResource(R.string.speech_services_service_type),
@@ -2045,111 +2127,54 @@ fun SpeechServicesSettingsScreen(
                             }
                         }
                         
-                        Spacer(modifier = Modifier.height(8.dp))
-                        
-                        Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(top = 4.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.speech_services_stt_info),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
                     }
                 }
-                
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                // 信息卡片
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.7f)
-                    )
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.padding(bottom = 12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Info,
-                                contentDescription = null,
-                                tint = MaterialTheme.colorScheme.primary,
-                                modifier = Modifier.size(24.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(
-                                text = stringResource(R.string.speech_services_info_title),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.Bold
-                            )
-                        }
-                        
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            SettingsInfoRow(
-                                title = stringResource(R.string.speech_services_info_tts_title),
-                                description = stringResource(R.string.speech_services_info_tts_desc)
-                            )
-                            
-                            HorizontalDivider(
-                                modifier = Modifier.padding(vertical = 8.dp),
-                                color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                            )
-                            
-                            SettingsInfoRow(
-                                title = stringResource(R.string.speech_services_info_stt_title),
-                                description = stringResource(R.string.speech_services_info_stt_desc)
-                            )
-                        }
-                    }
                 }
-                
-                // 底部区域
-                Spacer(modifier = Modifier.height(16.dp))
-                
-                Card(
-                    modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.3f)
-                    )
-                ) {
-                    Column(
+
+                item {
+                    Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(16.dp),
-                        horizontalAlignment = Alignment.CenterHorizontally
+                            .padding(horizontal = 4.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.Top,
                     ) {
-                        OutlinedButton(
-                            onClick = onNavigateToTextToSpeech,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.VolumeUp,
-                                contentDescription = null,
-                                modifier = Modifier.size(20.dp)
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.speech_services_test_tts))
-                        }
+                        Icon(
+                            imageVector = Icons.Default.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (selectedTabIndex == 0) {
+                                stringResource(R.string.speech_services_info_tts_desc)
+                            } else {
+                                stringResource(R.string.speech_services_info_stt_desc)
+                            },
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                 }
-                
-                // 底部空间
-                Spacer(modifier = Modifier.height(32.dp))
+
+                if (selectedTabIndex == 0) item {
+                    OutlinedButton(
+                        onClick = onNavigateToTextToSpeech,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.VolumeUp,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(stringResource(R.string.speech_services_test_tts))
+                    }
+                }
+
+                item {
+                    Spacer(modifier = Modifier.height(16.dp))
+                }
             }
         }
     }
@@ -2198,24 +2223,377 @@ fun SpeechServicesSettingsScreen(
             }
         )
     }
+
+    if (showCreateTtsProfileDialog) {
+        SpeechProfileNameDialog(
+            title = stringResource(R.string.speech_services_profile_create),
+            onDismiss = { showCreateTtsProfileDialog = false },
+            onConfirm = { name ->
+                scope.launch {
+                    try {
+                        profilePrefs.createTtsProfile(name, activeTtsProfile)
+                        VoiceServiceFactory.resetInstance()
+                        ttsProfileError = null
+                        showCreateTtsProfileDialog = false
+                        snackbarHostState.showSnackbar(context.getString(R.string.speech_services_profile_created))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to create TTS profile", error)
+                        ttsProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
+
+    if (showCreateSttProfileDialog) {
+        SpeechProfileNameDialog(
+            title = stringResource(R.string.speech_services_profile_create),
+            onDismiss = { showCreateSttProfileDialog = false },
+            onConfirm = { name ->
+                scope.launch {
+                    try {
+                        profilePrefs.createSttProfile(name, activeSttProfile)
+                        SpeechServiceFactory.resetInstance()
+                        sttProfileError = null
+                        showCreateSttProfileDialog = false
+                        snackbarHostState.showSnackbar(context.getString(R.string.speech_services_profile_created))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to create STT profile", error)
+                        sttProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
+
+    if (showRenameTtsProfileDialog) {
+        SpeechProfileNameDialog(
+            title = stringResource(R.string.rename_action),
+            initialName = renameTtsProfileName,
+            onDismiss = {
+                showRenameTtsProfileDialog = false
+                renameTtsProfileName = ""
+            },
+            onConfirm = { name ->
+                scope.launch {
+                    try {
+                        profilePrefs.updateTtsProfile(activeTtsProfile.copy(name = name))
+                        ttsProfileError = null
+                        showRenameTtsProfileDialog = false
+                        renameTtsProfileName = ""
+                        snackbarHostState.showSnackbar(context.getString(R.string.config_renamed))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to rename TTS profile", error)
+                        ttsProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
+
+    if (showRenameSttProfileDialog) {
+        SpeechProfileNameDialog(
+            title = stringResource(R.string.rename_action),
+            initialName = renameSttProfileName,
+            onDismiss = {
+                showRenameSttProfileDialog = false
+                renameSttProfileName = ""
+            },
+            onConfirm = { name ->
+                scope.launch {
+                    try {
+                        profilePrefs.updateSttProfile(activeSttProfile.copy(name = name))
+                        sttProfileError = null
+                        showRenameSttProfileDialog = false
+                        renameSttProfileName = ""
+                        snackbarHostState.showSnackbar(context.getString(R.string.config_renamed))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to rename STT profile", error)
+                        sttProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
+
+    val ttsProfilePendingDeletion = ttsProfiles.firstOrNull { it.id == ttsProfilePendingDeletionId }
+    if (ttsProfilePendingDeletion != null) {
+        SpeechProfileDeleteDialog(
+            profileName = ttsProfilePendingDeletion.name,
+            onDismiss = { ttsProfilePendingDeletionId = null },
+            onConfirm = {
+                scope.launch {
+                    try {
+                        profilePrefs.deleteTtsProfile(ttsProfilePendingDeletion.id)
+                        ttsProfileError = null
+                        ttsProfilePendingDeletionId = null
+                        snackbarHostState.showSnackbar(context.getString(R.string.config_deleted))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to delete TTS profile", error)
+                        ttsProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
+
+    val sttProfilePendingDeletion = sttProfiles.firstOrNull { it.id == sttProfilePendingDeletionId }
+    if (sttProfilePendingDeletion != null) {
+        SpeechProfileDeleteDialog(
+            profileName = sttProfilePendingDeletion.name,
+            onDismiss = { sttProfilePendingDeletionId = null },
+            onConfirm = {
+                scope.launch {
+                    try {
+                        profilePrefs.deleteSttProfile(sttProfilePendingDeletion.id)
+                        sttProfileError = null
+                        sttProfilePendingDeletionId = null
+                        snackbarHostState.showSnackbar(context.getString(R.string.config_deleted))
+                    } catch (error: Exception) {
+                        AppLogger.e("SpeechServicesSettings", "Failed to delete STT profile", error)
+                        sttProfileError = error.message
+                    }
+                }
+            },
+        )
+    }
 }
 
 @Composable
-fun SettingsInfoRow(title: String, description: String) {
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+private fun SpeechServicesModeTabs(
+    selectedTabIndex: Int,
+    onTabSelected: (Int) -> Unit,
+) {
+    TabRow(selectedTabIndex = selectedTabIndex) {
+        Tab(
+            selected = selectedTabIndex == 0,
+            onClick = { onTabSelected(0) },
+            text = { Text(stringResource(R.string.speech_services_info_tts_title)) },
+        )
+        Tab(
+            selected = selectedTabIndex == 1,
+            onClick = { onTabSelected(1) },
+            text = { Text(stringResource(R.string.speech_services_info_stt_title)) },
+        )
+    }
+}
+
+private data class SpeechProfileOption(
+    val id: String,
+    val name: String,
+)
+
+@Composable
+private fun SpeechProfileManagementBar(
+    selectedTabIndex: Int,
+    ttsProfiles: List<SpeechProfileOption>,
+    sttProfiles: List<SpeechProfileOption>,
+    currentTtsProfileId: String,
+    currentSttProfileId: String,
+    ttsProfileError: String?,
+    sttProfileError: String?,
+    onCreateTts: () -> Unit,
+    onCreateStt: () -> Unit,
+    onRenameTts: () -> Unit,
+    onRenameStt: () -> Unit,
+    onSelectTts: (String) -> Unit,
+    onSelectStt: (String) -> Unit,
+    onDeleteTts: (String) -> Unit,
+    onDeleteStt: (String) -> Unit,
+) {
+    if (selectedTabIndex == 0) {
+        SpeechProfileSelector(
+            title = stringResource(R.string.speech_services_tts_profiles),
+            profiles = ttsProfiles,
+            activeProfileId = currentTtsProfileId,
+            errorMessage = ttsProfileError,
+            onCreate = onCreateTts,
+            onRename = onRenameTts,
+            onSelect = onSelectTts,
+            onDelete = onDeleteTts,
+        )
+    } else {
+        SpeechProfileSelector(
+            title = stringResource(R.string.speech_services_stt_profiles),
+            profiles = sttProfiles,
+            activeProfileId = currentSttProfileId,
+            errorMessage = sttProfileError,
+            onCreate = onCreateStt,
+            onRename = onRenameStt,
+            onSelect = onSelectStt,
+            onDelete = onDeleteStt,
+        )
+    }
+}
+
+/** Renders the active speech profile and the independent profile actions. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpeechProfileSelector(
+    title: String,
+    profiles: List<SpeechProfileOption>,
+    activeProfileId: String,
+    errorMessage: String?,
+    onCreate: () -> Unit,
+    onRename: () -> Unit,
+    onSelect: (String) -> Unit,
+    onDelete: (String) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    val activeProfileName = profiles.first { it.id == activeProfileId }.name
+
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             text = title,
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.onSurface
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Medium,
+            modifier = Modifier.weight(1f),
         )
-        
-        Text(
-            text = description,
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        
-        Spacer(modifier = Modifier.height(4.dp))
+        IconButton(onClick = onCreate) {
+            Icon(
+                imageVector = Icons.Default.Add,
+                contentDescription = stringResource(R.string.new_action),
+            )
+        }
+        IconButton(
+            onClick = onRename,
+            enabled = profiles.any { it.id == activeProfileId },
+        ) {
+            Icon(
+                imageVector = Icons.Default.Edit,
+                contentDescription = stringResource(R.string.rename_action),
+            )
+        }
     }
-} 
+    Box(modifier = Modifier.fillMaxWidth()) {
+        Surface(
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = true },
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            tonalElevation = 0.5.dp,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.speech_services_profile_current),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = activeProfileName,
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.Medium,
+                    )
+                }
+                Icon(
+                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    contentDescription = stringResource(R.string.speech_services_dropdown_expand),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        DropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false },
+        ) {
+            profiles.forEach { profile ->
+                DropdownMenuItem(
+                    text = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(profile.name, modifier = Modifier.weight(1f))
+                            if (profile.id != activeProfileId) {
+                                IconButton(onClick = {
+                                    expanded = false
+                                    onDelete(profile.id)
+                                }) {
+                                    Icon(
+                                        imageVector = Icons.Default.Delete,
+                                        contentDescription = stringResource(R.string.speech_services_profile_delete),
+                                    )
+                                }
+                            }
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelect(profile.id)
+                    },
+                )
+            }
+        }
+    }
+    if (errorMessage != null) {
+        Text(
+            text = errorMessage,
+            color = MaterialTheme.colorScheme.error,
+            style = MaterialTheme.typography.bodySmall,
+            modifier = Modifier.padding(top = 4.dp),
+        )
+    }
+}
+
+/** Collects a profile name before creating a copied independent profile. */
+@Composable
+private fun SpeechProfileNameDialog(
+    title: String,
+    initialName: String = "",
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit,
+) {
+    var name by remember(initialName) { mutableStateOf(initialName) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(title) },
+        text = {
+            OutlinedTextField(
+                value = name,
+                onValueChange = { name = it },
+                singleLine = true,
+                label = { Text(stringResource(R.string.profile_name)) },
+                placeholder = { Text(stringResource(R.string.profile_name_placeholder)) },
+            )
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { onConfirm(name) },
+                enabled = name.isNotBlank(),
+            ) { Text(stringResource(android.R.string.ok)) }
+        },
+    )
+}
+
+/** Confirms deletion of an inactive speech profile. */
+@Composable
+private fun SpeechProfileDeleteDialog(
+    profileName: String,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.speech_services_profile_delete)) },
+        text = {
+            Text(stringResource(R.string.speech_services_profile_delete_message, profileName))
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) }
+        },
+        confirmButton = {
+            TextButton(onClick = onConfirm) { Text(stringResource(android.R.string.ok)) }
+        },
+    )
+}

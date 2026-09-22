@@ -94,8 +94,10 @@ internal fun ToolErrorPanel(modifier: Modifier = Modifier) {
         if (recordingFailed) {
             Text(stringResource(R.string.tool_errors_recording_failed), color = MaterialTheme.colorScheme.error)
         }
-        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            listOf(0 to R.string.tool_errors_all_time, 1 to R.string.tool_errors_day, 7 to R.string.tool_errors_week).forEach { (value, label) ->
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            items(listOf(0 to R.string.tool_errors_all_time, 1 to R.string.tool_errors_day,
+                7 to R.string.tool_errors_week, 14 to R.string.tool_errors_fortnight,
+                30 to R.string.tool_errors_month)) { (value, label) ->
                 FilterChip(selected = days == value, onClick = {
                     days = value; tool = null; page = 0; exportMessage = null
                 }, label = { Text(stringResource(label)) })

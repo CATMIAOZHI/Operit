@@ -20,6 +20,10 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.CoroutineStart
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -45,6 +49,8 @@ class MemoryAutoSaveScheduler(
     private val isRunning = AtomicBoolean(false)
     @Volatile
     private var loopJob: Job? = null
+    @Volatile private var automaticJob: Job? = null
+    fun cancelAutomaticExtraction() { automaticJob?.cancel() }
     private val nextRunAtMsByProfileId = ConcurrentHashMap<String, Long>()
 
     fun start() {
@@ -152,6 +158,8 @@ class MemoryAutoSaveScheduler(
                     )
                 }
                 if (automaticCandidates.isNotEmpty()) {
+                    coroutineScope {
+                    val job = launch(start = CoroutineStart.LAZY) {
                     processChatCandidateGroup(
                         profileId = profileId,
                         chatId = chatId,
@@ -161,6 +169,11 @@ class MemoryAutoSaveScheduler(
                         toolHandler = toolHandler,
                         memoryService = memoryService
                     )
+                    }
+                    automaticJob = job
+                    job.start()
+                    try { job.join() } finally { automaticJob = null }
+                    }
                 }
             }
             scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
@@ -206,6 +219,10 @@ class MemoryAutoSaveScheduler(
                 MemoryAutoSaveCandidate.isSelectedUserMessageSource(it.sourceType)
             }
         val candidateIds = candidates.map { it.id }
+        val api = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(context)
+        val extractGraph = isSelectedUserBatch ||
+            (api.enableMemoryAutoUpdateFlow.first() && api.enableLegacyMemoryExtractionFlow.first())
+        if (!extractGraph) return
         repository.markProcessing(candidateIds)
 
         try {
@@ -284,13 +301,21 @@ class MemoryAutoSaveScheduler(
                 conversationHistory = conversationHistory,
                 content = memoryContent,
                 aiService = memoryService,
-                profileIdOverride = profileId
+                profileIdOverride = profileId,
+                includeGraph = extractGraph,
+                includeNotes = false,
+                includeSkills = false,
+                sourceChatId = chatId,
+                propagateFailure = true
             )
             repository.deleteCandidates(candidateIds)
             AppLogger.d(
                 TAG,
                 "长期记忆候选处理成功: profileId=$profileId, chatId=$chatId, candidates=${candidateIds.size}"
             )
+        } catch (e: CancellationException) {
+            withContext(NonCancellable) { repository.markFailed(candidateIds, "Automatic extraction cancelled") }
+            throw e
         } catch (e: Exception) {
             AppLogger.e(TAG, "长期记忆候选处理失败: profileId=$profileId, chatId=$chatId", e)
             repository.markFailed(candidateIds, e.message ?: e.javaClass.simpleName)

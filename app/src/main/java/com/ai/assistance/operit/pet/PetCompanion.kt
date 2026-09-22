@@ -53,6 +53,8 @@ import kotlin.math.roundToInt
 internal const val PET_BUBBLE_WIDTH_DP = 232
 internal const val PET_BUBBLE_FADE_IN_MS = 220
 internal const val PET_BUBBLE_FADE_OUT_MS = 160
+/** How long the pet takes to settle into a new transparency of its own. */
+internal const val PET_OPACITY_FADE_MS = 180
 
 /**
  * Keeps the bubble's layout space while its exit animation is still running.
@@ -73,6 +75,17 @@ internal fun bubbleOccupiesSpace(showBubble: Boolean): Boolean {
     return occupies
 }
 
+/**
+ * The alpha the pet itself is drawn with: full while the task bubble is open, and the configured
+ * transparency once it is closed. The bubble is never drawn with this value. The settings preview is
+ * the exception - there the transparency slider has to keep showing what it does to the pet.
+ */
+internal fun petTaskOpacity(
+    preview: Boolean,
+    bubbleOnScreen: Boolean,
+    configuredOpacity: Float,
+): Float = if (!preview && bubbleOnScreen) 1f else configuredOpacity
+
 @Composable
 internal fun PetCompanion(
     settings: PetSettings,
@@ -87,6 +100,7 @@ internal fun PetCompanion(
     anchorY: Float = settings.y,
     dragPetOffset: IntOffset? = null,
     bubbleOnly: Boolean = false,
+    bubbleOnScreen: Boolean = settings.showBubble,
     previewAnimation: PetAnimation = PetAnimation.THINKING,
 ) {
     val context = LocalContext.current
@@ -149,8 +163,16 @@ internal fun PetCompanion(
             dragCallback(Offset(amount, 0f))
         }
     }
+    val petOpacity by animateFloatAsState(
+        // The transparency setting is about the pet: while the task bubble is open it is drawn at
+        // full opacity, and closing the bubble hands it back to the setting. The bubble itself is
+        // never drawn with this value, here or in the detached bubble window.
+        targetValue = petTaskOpacity(preview, bubbleOnScreen, settings.opacity),
+        animationSpec = tween(PET_OPACITY_FADE_MS, easing = FastOutSlowInEasing),
+        label = "petTaskOpacity",
+    )
     Layout(
-        modifier = modifier.graphicsLayer { alpha = settings.opacity },
+        modifier = modifier,
         content = {
             if (!bubbleOnly) PetSprite(
                 if (dizzy) PetActivity.ERROR else task?.activity ?: PetActivity.IDLE, settings, interaction,
@@ -179,6 +201,7 @@ internal fun PetCompanion(
                     // Pointer deltas must stay in screen-aligned coordinates; rotating
                     // the gesture layer turns a horizontal drag into diagonal movement.
                     .graphicsLayer {
+                        alpha = petOpacity
                         scaleX = 1f - 0.08f * lift
                         scaleY = 1f - 0.03f * lift
                         rotationZ = -7f * lift

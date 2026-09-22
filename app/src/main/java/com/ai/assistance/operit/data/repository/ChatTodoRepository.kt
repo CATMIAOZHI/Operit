@@ -26,14 +26,7 @@ internal fun Flow<String?>.observeChatTodos(
 internal fun validateChatTodoSnapshot(todos: List<ChatTodo>) {
     require(todos.all { it.content.isNotBlank() }) { "Todo content cannot be blank" }
     val inProgressCount = todos.count { it.status == ChatTodoStatus.IN_PROGRESS }
-    val hasUnfinished =
-        todos.any {
-            it.status == ChatTodoStatus.PENDING || it.status == ChatTodoStatus.IN_PROGRESS
-        }
     require(inProgressCount <= 1) { "Only one todo may be in progress" }
-    require(!hasUnfinished || inProgressCount == 1) {
-        "Exactly one todo must be in progress while unfinished todos remain"
-    }
 }
 
 class ChatTodoRepository private constructor(context: Context) {

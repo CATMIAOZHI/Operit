@@ -44,9 +44,6 @@ import androidx.lifecycle.LifecycleEventObserver
 import coil.compose.AsyncImagePainter
 import coil.compose.rememberAsyncImagePainter
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_AUTO
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_DARK
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager.Companion.ON_COLOR_MODE_LIGHT
 import com.google.android.exoplayer2.DefaultLoadControl
 import com.google.android.exoplayer2.ExoPlayer
 import com.google.android.exoplayer2.MediaItem
@@ -140,7 +137,15 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
                 // 根据状态栏背景色动态设置状态栏图标颜色
                 // isAppearanceLightStatusBars = true 表示图标为深色（适用于浅色背景）
                 // isAppearanceLightStatusBars = false 表示图标为浅色（适用于深色背景）
-                insetsController?.isAppearanceLightStatusBars = !isColorLight(Color(statusBarColor))
+                // The theme's own bar keeps the tone it has always drawn; a custom bar colour is
+                // the user's own, so the tone is answered for that colour (see the helper).
+                val customStatusBarFill =
+                        !statusBarTransparent &&
+                                !(useBackgroundImage && backgroundImageUri != null) &&
+                                useCustomStatusBarColor &&
+                                customStatusBarColorValue != null
+                insetsController?.isAppearanceLightStatusBars =
+                        resolveStatusBarDarkIcons(Color(statusBarColor), customStatusBarFill)
             }
             
             // 设置导航栏颜色（底部小白条所在的区域）
@@ -455,29 +460,26 @@ internal fun generateLightColorScheme(
     secondaryColor: Color,
     onColorMode: String
 ): ColorScheme {
-    val onPrimary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(primaryColor)
-    }
-    val onSecondary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(secondaryColor)
-    }
+    // A custom color is used verbatim and then drawn as accent *text* all over the UI, so a pale
+    // pick has to be strengthened before it is readable on the light surfaces.
+    val accent = ensureResolvedLightAccentContrast(primaryColor)
+    val accentSecondary = ensureResolvedLightAccentContrast(secondaryColor)
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
+    // Tints keep the value the user picked; only the accent itself is strengthened.
     val primaryContainer = lightenColor(primaryColor, 0.7f)
-    val onPrimaryContainer = getContrastingTextColor(primaryContainer)
+    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
     val secondaryContainer = lightenColor(secondaryColor, 0.7f)
-    val onSecondaryContainer = getContrastingTextColor(secondaryContainer)
+    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = false).copy(
-            primary = primaryColor,
+            primary = accent,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,
             onPrimaryContainer = onPrimaryContainer,
-            secondary = secondaryColor,
+            secondary = accentSecondary,
             onSecondary = onSecondary,
             secondaryContainer = secondaryContainer,
             onSecondaryContainer = onSecondaryContainer,
@@ -496,30 +498,28 @@ internal fun generateDarkColorScheme(
 ): ColorScheme {
     val adjustedPrimaryColor = lightenColor(primaryColor, 0.2f)
     val adjustedSecondaryColor = lightenColor(secondaryColor, 0.2f)
+    // The fixed 0.2 is not enough for a very dark pick, so a dark custom color still needs the
+    // contrast guard on the dark surfaces.
+    val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
+    val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
 
-    val onPrimary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(adjustedPrimaryColor)
-    }
-    val onSecondary = when (onColorMode) {
-        ON_COLOR_MODE_LIGHT -> Color.White
-        ON_COLOR_MODE_DARK -> Color.Black
-        else -> getContrastingTextColor(adjustedSecondaryColor)
-    }
+    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
+    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
 
     val primaryContainer = darkenColor(primaryColor, 0.3f)
-    val onPrimaryContainer = getContrastingTextColor(primaryContainer, forceLight = true)
+    // Measured like every other label: a light pick leaves this container light enough that a
+    // forced white label would sit at 2.1:1 on it.
+    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
     val secondaryContainer = darkenColor(secondaryColor, 0.3f)
-    val onSecondaryContainer = getContrastingTextColor(secondaryContainer, forceLight = true)
+    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
 
     // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
     return rainyBaseColorScheme(darkTheme = true).copy(
-            primary = adjustedPrimaryColor,
+            primary = accent,
             onPrimary = onPrimary,
             primaryContainer = primaryContainer,
             onPrimaryContainer = onPrimaryContainer,
-            secondary = adjustedSecondaryColor,
+            secondary = accentSecondary,
             onSecondary = onSecondary,
             secondaryContainer = secondaryContainer,
             onSecondaryContainer = onSecondaryContainer,
@@ -528,28 +528,6 @@ internal fun generateDarkColorScheme(
         onSurfaceVariant = Color.White.copy(alpha = 0.7f),
         onBackground = Color.White
     )
-}
-
-/** Add a new helper function to determine appropriate text color based on background color */
-private fun getContrastingTextColor(
-        backgroundColor: Color,
-        forceDark: Boolean = false,
-        forceLight: Boolean = false
-): Color {
-    // If forced, return the specified color
-    if (forceDark) return Color.Black
-    if (forceLight) return Color.White
-
-    // Calculate color contrast and return appropriate color
-    // Using luminance formula from Web Content Accessibility Guidelines (WCAG)
-    val luminance =
-            0.299 * backgroundColor.red +
-                    0.587 * backgroundColor.green +
-                    0.114 * backgroundColor.blue
-
-    // Use a threshold of 0.5 for deciding between white and black text
-    // Higher threshold (e.g., 0.6) would use white text more often
-    return if (luminance > 0.5) Color.Black else Color.White
 }
 
 /** 使颜色变亮 */
@@ -582,6 +560,17 @@ private fun isColorLight(color: Color): Boolean {
     val luminance = 0.299 * color.red + 0.587 * color.green + 0.114 * color.blue
     return luminance > 0.5
 }
+
+/**
+ * Whether the system should draw the status bar icons in their dark appearance. The theme has always
+ * flipped the lightness of its own bar, which is the look it ships (a light bar gets light icons);
+ * that stays. A custom bar colour is the user's own, and the flip lands on the unreadable side
+ * there - a near-black bar drew dark icons at 1.27:1, a white one light icons at 1:1 - so that case
+ * is answered for the colour instead.
+ */
+internal fun resolveStatusBarDarkIcons(barColor: Color, customBarColor: Boolean): Boolean =
+        if (customBarColor) getResolvedContrastingTextColor(barColor) == Color.Black
+        else !isColorLight(barColor)
 
 /** 判断颜色是否较深 */
 private fun isColorDark(color: Color): Boolean {

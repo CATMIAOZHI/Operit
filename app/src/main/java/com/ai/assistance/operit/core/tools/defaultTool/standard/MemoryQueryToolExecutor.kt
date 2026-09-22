@@ -16,6 +16,8 @@ import com.ai.assistance.operit.data.model.ToolValidationResult
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
+import com.ai.assistance.operit.data.preferences.MemoryNotesRepository
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.repository.MemoryRepository
 import kotlinx.coroutines.flow.first
 import java.text.ParsePosition
@@ -87,7 +89,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun resolveActiveProfileId(tool: AITool): String {
-        return resolveRoleCardProfileId(resolveCallerCardId(tool))
+        return ToolExecutionManager.currentToolRuntimeContext()?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
+            ?: resolveRoleCardProfileId(resolveCallerCardId(tool))
             ?: resolveGlobalActiveProfileId()
     }
 
@@ -195,6 +198,10 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 "delete_memory" -> executeDeleteMemory(tool)
                 "move_memory" -> executeMoveMemory(tool)
                 "update_user_profile" -> executeUpdateUserProfile(tool)
+                "memory_notes" -> executeMemoryNotes(tool)
+                "search_chat_history" -> executeChatRecall(tool)
+                "memory_review" -> executeMemoryReview(tool)
+                "learning_manage" -> executeLearningManage(tool)
                 "update_user_preferences" -> executeLegacyUserPreferencesUpdate(tool)
                 "link_memories" -> executeLinkMemories(tool)
                 "query_memory_links" -> executeQueryMemoryLinks(tool)
@@ -282,7 +289,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         val finalLimit = limit ?: defaultLimit
 
         if (query.isBlank()) {
-            return ToolResult(toolName = tool.name, success = false, result = StringResultData(""), error = "Query parameter cannot be empty.")
+            return ToolResult(toolName = tool.name, success = false, result = StringResultData(""), error = "Missing nonempty query parameter. Call query_memory with query set to your search keywords; use query=\"*\" only when you intend to list all memories.")
         }
 
         // limit 无上限，但至少为 1
@@ -707,6 +714,118 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         }
     }
 
+    private suspend fun executeChatRecall(tool: AITool): ToolResult {
+        return try {
+            val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(context)
+            val json = repository.execute(tool.parameters.associate { it.name to it.value })
+            ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_error))
+        }
+    }
+
+    private suspend fun executeLearningManage(tool: AITool): ToolResult = try {
+        val args = tool.parameters.associate { it.name to it.value }
+        val json = org.json.JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
+        val params = json.keys().asSequence().associateWith { json.get(it).toString() }
+        val actions = com.ai.assistance.operit.api.chat.library.MemoryLearningActions(
+            context,resolveActiveProfileId(tool),
+            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty(),
+            notesEnabled=true,skillsEnabled=true,background=false)
+        val result = actions.execute(args["action"].orEmpty(),params)
+        ToolResult(toolName=tool.name,success=true,result=StringResultData(result.toString()))
+    } catch(e: kotlinx.coroutines.CancellationException) { throw e }
+    catch(e: Exception) {
+        ToolResult(toolName=tool.name,success=false,result=StringResultData(""),
+            error=context.getString(R.string.memory_review_error,e.message.orEmpty()))
+    }
+
+    private suspend fun executeMemoryNotes(tool: AITool): ToolResult {
+        val profileId = resolveActiveProfileId(tool)
+        val repository = MemoryNotesRepository(context, profileId)
+        return try {
+            val action = tool.parameters.find { it.name == "action" }?.value ?: "read"
+            if (action != "read") {
+                val content = tool.parameters.find { it.name == "content" }?.value.orEmpty()
+                val proposal = repository.preview(action, content,
+                    tool.parameters.find { it.name == "old_text" }?.value.orEmpty())
+                val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
+                val change = review.applyAutomaticDecision(context,
+                    review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
+                        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty())
+                )
+                return ToolResult(toolName = tool.name, success = true,
+                    result = StringResultData(org.json.JSONObject().put("change_id", change.id)
+                        .put("status", change.status).put("message", context.getString(
+                            if (change.status == "approved") R.string.memory_review_auto_applied
+                            else R.string.memory_review_staged)).toString()))
+            }
+            val snapshot = repository.load()
+            ToolResult(
+                toolName = tool.name, success = true,
+                result = StringResultData(
+                    context.getString(R.string.memory_notes_tool_result, snapshot.markdown.length, MemoryNotesRepository.MAX_CHARS) +
+                        "\n\n" + snapshot.markdown
+                )
+            )
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: MemoryNotesRepository.NotesException) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(when (e.reason) {
+                    MemoryNotesRepository.Failure.FULL -> R.string.memory_notes_full
+                    MemoryNotesRepository.Failure.CONFLICT -> R.string.memory_notes_conflict
+                    MemoryNotesRepository.Failure.NOT_UNIQUE -> R.string.memory_notes_not_unique
+                    else -> R.string.memory_notes_invalid
+                }))
+        } catch (e: Exception) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.memory_notes_io_error))
+        }
+    }
+
+    private suspend fun executeMemoryReview(tool: AITool): ToolResult {
+        return try {
+            val repo = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
+            fun arg(name: String) = tool.parameters.find { it.name == name }?.value.orEmpty()
+            val action = arg("action")
+            val result = when (action) {
+                "list" -> {
+                    val status = arg("status").ifBlank { "pending" }
+                    val offset = arg("offset").toIntOrNull()?.coerceAtLeast(0) ?: 0
+                    val all = repo.list().filter {
+                        if (status == "history") it.status !in setOf("pending", "applying")
+                        else it.status in setOf("pending", "applying")
+                    }
+                    org.json.JSONObject().put("changes", org.json.JSONArray().apply {
+                        all.drop(offset).take(20).forEach { change ->
+                            put(org.json.JSONObject().put("id", change.id).put("kind", change.kind)
+                                .put("title", change.title).put("status", change.status)
+                                .put("created_at", change.createdAt).put("reviewed_at", change.reviewedAt))
+                        }
+                    }).put("total", all.size)
+                }
+                "get" -> repo.toJson(repo.list().first { it.id == arg("id") })
+                "audit" -> repo.toJson(repo.audit(arg("id"), arg("reason"), "ai"))
+                "approve", "reject" -> {
+                    check(com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, repo.profileId)
+                        .mayAiReviewChanges()) { context.getString(R.string.memory_review_ai_denied) }
+                    require(arg("reason").isNotBlank())
+                    repo.toJson(repo.decide(context, arg("id"), action == "approve", "ai", arg("reason")))
+                }
+                else -> error("Invalid review action")
+            }
+            ToolResult(toolName = tool.name, success = true, result = StringResultData(result.toString()))
+        } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+        catch (e: Exception) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.memory_review_error, e.message.orEmpty()))
+        }
+    }
+
     private suspend fun executeUpdateUserProfile(tool: AITool): ToolResult {
         AppLogger.d(TAG, "Executing user.md update")
 
@@ -721,11 +840,14 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            withContext(Dispatchers.IO) {
-                UserProfileDocumentRepository.getInstance(context).save(markdown)
+            require(markdown.length <= UserProfileDocumentRepository.MAX_CONTENT_CHARS) {
+                "user.md exceeds the character limit"
             }
-
-            val message = "Successfully updated user.md"
+            val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
+            val before = UserProfileDocumentRepository.getInstance(context).load()
+            val change = review.applyAutomaticDecision(context, review.proposeUser(before, markdown,
+                ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+            val message = "user.md change ${change.id}: ${change.status}"
             AppLogger.d(TAG, message)
             
             ToolResult(
@@ -774,20 +896,24 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
         return try {
             val repository = UserProfileDocumentRepository.getInstance(context)
-            withContext(Dispatchers.IO) {
-                val current = repository.load().trimEnd()
+            val change = withContext(Dispatchers.IO) {
+                val current = repository.load()
                 val importedSection =
                     buildString {
                         appendLine("## Imported profile update")
                         appendLine()
                         updates.forEach { (label, value) -> appendLine("- $label: $value") }
                     }.trimEnd()
-                repository.save("$current\n\n$importedSection\n")
+                val sections = com.ai.assistance.operit.data.preferences.UserProfileSections.parse(current)
+                val after = sections.copy(profile = sections.profile.trimEnd() + "\n\n" + importedSection).markdown()
+                val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
+                review.applyAutomaticDecision(context, review.proposeUser(current, after,
+                    ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
             }
             ToolResult(
                 toolName = tool.name,
                 success = true,
-                result = StringResultData("Successfully preserved the preference update in user.md")
+                result = StringResultData("user.md change ${change.id}: ${change.status}")
             )
         } catch (error: Exception) {
             AppLogger.e(TAG, "Failed to preserve legacy preference update in user.md", error)

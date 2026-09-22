@@ -34,6 +34,7 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -734,6 +735,7 @@ class MessageProcessingDelegate(
             attachments: List<AttachmentInfo> = emptyList(),
             chatId: String,
             messageTextOverride: String? = null,
+            prebuiltUserMessage: ChatMessage? = null,
             proxySenderNameOverride: String? = null,
             workspacePath: String? = null,
             workspaceEnv: String? = null,
@@ -806,7 +808,7 @@ class MessageProcessingDelegate(
         setChatInputProcessingState(chatId, EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
 
         val sendJob =
-            coroutineScope.launch(Dispatchers.IO) {
+            coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
             val sendUserMessageStartTime = messageTimingNow()
             val effectivePersistTurn = turnOptions.persistTurn
             val effectiveHideUserMessage = effectivePersistTurn && turnOptions.hideUserMessage
@@ -855,7 +857,7 @@ class MessageProcessingDelegate(
 
             // 1. 使用 AIMessageManager 构建最终消息
             val buildUserMessageStartTime = messageTimingNow()
-            val finalMessageContent = AIMessageManager.buildUserMessageContent(
+            val finalMessageContent = prebuiltUserMessage?.content ?: AIMessageManager.buildUserMessageContent(
                 context = context,
                 messageText = messageText,
                 proxySenderName = proxySenderNameOverride,
@@ -896,14 +898,7 @@ class MessageProcessingDelegate(
                         override = turnOptions.userRoleNameOverride,
                         fallback = context.getString(R.string.message_role_user),
                     ),
-                displayMode =
-                    if (effectiveHideUserMessage) {
-                        ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
-                    } else if (turnOptions.isCollaborationAgent) {
-                        ChatMessageDisplayMode.COLLABORATION_TASK
-                    } else {
-                        ChatMessageDisplayMode.NORMAL
-                    }
+                displayMode = turnOptions.userTurnDisplayMode(hidden = effectiveHideUserMessage)
             )
 
             if (shouldAddUserMessageToChat && chatId != null) {
@@ -1121,8 +1116,11 @@ class MessageProcessingDelegate(
                     chatId = activeChatId,
                     messageContent = requestMessageContent,
                     // 仅在群组编排中去掉当前用户消息，避免重复拼接。
-                    chatHistory = if (isGroupOrchestrationTurn && userMessageAdded && chatHistory.isNotEmpty()) {
-                        chatHistory.subList(0, chatHistory.size - 1)
+                    chatHistory = if (isGroupOrchestrationTurn && (userMessageAdded || prebuiltUserMessage != null)) {
+                        // The orchestrator already persisted this turn. Remove only that message;
+                        // concurrent history updates may have appended other messages after it.
+                        val sentTimestamp = prebuiltUserMessage?.timestamp ?: userMessage.timestamp
+                        chatHistory.filterNot { it.sender == "user" && it.timestamp == sentTimestamp }
                     } else {
                         turnOptions.collaborationHistoryCutoff?.let { cutoff ->
                             chatHistory.filter { it.timestamp > cutoff }
@@ -1132,6 +1130,7 @@ class MessageProcessingDelegate(
                     workspaceEnv = workspaceEnv,
                     promptFunctionType = promptFunctionType,
                     functionType = turnOptions.functionType,
+                    providerSessionId = turnOptions.providerSessionId,
                     enableThinking = enableThinking,
                     enableMemoryAutoUpdate = enableMemoryAutoUpdate,
                     maxTokens = effectiveMaxTokens,
@@ -1356,7 +1355,7 @@ class MessageProcessingDelegate(
                 // 启动一个独立的协程来收集流内容并持续更新数据库
                 val streamCollectionResult = CompletableDeferred<Throwable?>()
                 chatRuntime.streamCollectionJob =
-                    coroutineScope.launch(Dispatchers.IO) {
+                    coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatStreamPersistence")) {
                         try {
                             var hasLoggedFirstChunk = false
                             var lastStreamingPersistAt = 0L

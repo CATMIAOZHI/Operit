@@ -654,6 +654,7 @@ class AvatarRepository(
         if (currentSettings.currentAvatarId != avatarId) {
             saveSettingsToPrefs(currentSettings.copy(currentAvatarId = avatarId))
             updateCurrentAvatar(avatarId)
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
         }
     }
 
@@ -664,6 +665,7 @@ class AvatarRepository(
         }
 
         saveSettingsToPrefs(currentSettings.copy(isVoiceCallAvatarEnabled = enabled))
+        com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     private fun updateCurrentAvatar(targetId: String?) {
@@ -806,6 +808,10 @@ class AvatarRepository(
         avatarId: String,
         transform: (AvatarConfig) -> AvatarConfig
     ) {
+        fun prompt(config: AvatarConfig?) = config?.getCustomMoodDefinitions()
+            ?.filter { config.getMoodAnimationMapping()[it.key]?.isNotBlank() == true }
+        val currentId = loadSettingsFromPrefs().currentAvatarId
+        val before = prompt(_configs.value.find { it.id == currentId })
         val updatedConfigs = _configs.value.map { config ->
             if (config.id == avatarId) {
                 transform(config)
@@ -816,6 +822,8 @@ class AvatarRepository(
 
         _configs.value = updatedConfigs
         saveConfigsToPrefs(updatedConfigs)
+        if (before != prompt(updatedConfigs.find { it.id == currentId }))
+            com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
     }
 
     private enum class AvatarImportKind {

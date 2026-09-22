@@ -38,6 +38,89 @@ class ChatContentDaoTest {
     }
 
     @Test
+    fun `FTS tracks edits and deletion with bounded snippets and visible filtered sessions`() = runBlocking {
+        val dao = database.chatContentDao()
+        database.chatDao().insertChat(ChatEntity(id="fts",title="FTS",characterCardName="work"))
+        database.chatDao().insertChat(ChatEntity(id="secret",title="Hidden",isHidden=true))
+        val id=database.messageDao().insertMessage(MessageEntity(chatId="fts",sender="user",
+            content="needle "+"x".repeat(2_500_000),timestamp=10,orderIndex=0))
+        database.messageDao().insertMessage(MessageEntity(chatId="secret",sender="user",
+            content="needle secret",timestamp=10,orderIndex=0))
+        val hit=dao.searchRecallIndex("\"needle\"","user","work","",0,20,20,0).single()
+        assertEquals(id,hit.messageId)
+        assertEquals(true,hit.excerpt.length<=2000)
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"needle\"","ai","","",0,20,20,0))
+        database.messageDao().updateMessageContent(id,"replacement")
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"needle\"","","","",0,20,20,0))
+        assertEquals(1,dao.searchRecallIndex("\"replacement\"","","","",0,20,20,0).size)
+        database.messageDao().deleteAllMessagesForChat("fts")
+        assertEquals(emptyList<ChatRecallHit>(),dao.searchRecallIndex("\"replacement\"","","","",0,20,20,0))
+        assertEquals(listOf("fts"),dao.browseRecallSessions("work",0,Long.MAX_VALUE,20,0).map { it.chatId })
+    }
+
+    @Test
+    fun `long messages with emoji can be read in complete codepoint pages`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id="pages",title="Pages"))
+        val text="😀".repeat(5000)+"终点\u0000"+"word ".repeat(3000)
+        val id=database.messageDao().insertMessage(MessageEntity(chatId="pages",sender="ai",content=text,orderIndex=0))
+        val repo=com.ai.assistance.operit.data.repository.ChatRecallRepository(database.chatContentDao())
+        var offset=0
+        val collected=StringBuilder()
+        while(true) {
+            val page=repo.execute(mapOf("mode" to "message","message_id" to id.toString(),"char_offset" to offset.toString()))
+                .getJSONObject("message")
+            collected.append(page.getString("content"))
+            if(page.isNull("next_char_offset")) break
+            val next=page.getInt("next_char_offset")
+            org.junit.Assert.assertTrue(next>offset)
+            offset=next
+        }
+        assertEquals(text,collected.toString())
+        assertEquals(listOf(id),repo.search("终点").map { it.messageId })
+    }
+
+    @Test
+    fun `recall search excludes hidden and child chats and matches wildcard text literally`() = runBlocking {
+        val chats = listOf(
+            ChatEntity(id = "visible", title = "Visible"),
+            ChatEntity(id = "hidden", title = "Hidden", isHidden = true),
+            ChatEntity(id = "child", title = "Child", parentChatId = "visible")
+        )
+        chats.forEach { chat ->
+            database.chatDao().insertChat(chat)
+            database.messageDao().insertMessage(MessageEntity(chatId = chat.id, sender = "user",
+                content = "prefix %_needle suffix", timestamp = 10L, orderIndex = 0))
+        }
+        database.messageDao().insertMessage(MessageEntity(chatId = "visible", sender = "tool",
+            content = "%_needle", timestamp = 11L, orderIndex = 1))
+        val dao = database.chatContentDao()
+        val hits = dao.searchRecallMessages("%_NEEDLE", 20, 0)
+        assertEquals(listOf("visible"), hits.map { it.chatId })
+        assertEquals(listOf("visible"), dao.readRecallContext(hits.single().messageId).map { it.chatId })
+        assertEquals(emptyList<ChatRecallHit>(), dao.searchRecallMessages("", 20, 0))
+        assertEquals(emptyList<ChatRecallHit>(), dao.searchRecallMessages("%_needle", 20, 1))
+    }
+
+    @Test
+    fun `variant lookup handles large sparse duplicate timestamp sets in query order`() = runBlocking {
+        val chatId = "many-variants"
+        database.chatDao().insertChat(ChatEntity(id = chatId, title = "Variants"))
+        val timestamps = (1L..1100L).map { it * 10 }
+        for (timestamp in timestamps + 15L) {
+            database.messageVariantDao().insertVariant(MessageVariantEntity(
+                chatId = chatId, messageTimestamp = timestamp, variantIndex = 1,
+                content = "variant-$timestamp",
+            ))
+        }
+        val result = database.chatContentDao().getVariantsForMessages(
+            chatId, timestamps.reversed() + timestamps.take(5),
+        )
+        assertEquals(timestamps, result.map { it.messageTimestamp })
+        assertEquals(emptyList<MessageVariantEntity>(),
+            database.chatContentDao().getVariantsForMessages(chatId, emptyList()))
+    }
+
+    @Test
     fun `process metadata follows the selected variant without loading its body`() = runBlocking {
         val chatId = "process-variant"
         database.chatDao().insertChat(ChatEntity(id = chatId, title = "Process"))

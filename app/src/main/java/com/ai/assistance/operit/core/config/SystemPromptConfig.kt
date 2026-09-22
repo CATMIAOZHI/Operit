@@ -292,15 +292,18 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     val mcpServers = packageManager.getAvailableServerPackages().filterKeys { serverName ->
         allowedMcpServerNames?.contains(serverName) ?: true
     }
-    val skillPackages = try {
+    suspend fun loadSkillCatalog(): String = org.json.JSONObject(try {
         SkillRepository.getInstance(
             com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
-        ).getAiVisibleSkillPackages().filterKeys { skillName ->
-            allowedSkillNames?.contains(skillName) ?: true
-        }
+        ).getAiVisibleSkillPackages().mapValues { it.value.description }
     } catch (_: Exception) {
-        emptyMap()
-    }
+        emptyMap<String,String>()
+    }).toString()
+    val catalog = org.json.JSONObject(if(chatId.isNullOrBlank()) loadSkillCatalog()
+        else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId)
+            .getOrPut("skill_catalog") { loadSkillCatalog() })
+    val skillPackages = catalog.keys().asSequence()
+        .filter { allowedSkillNames?.contains(it) ?: true }.sorted().associateWith { catalog.getString(it) }
 
     // Build the available packages section
     val packagesSection = StringBuilder()
@@ -339,9 +342,9 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
       }
 
       // List available Skills as regular packages
-      for ((skillName, skill) in skillPackages) {
-        if (skill.description.isNotBlank()) {
-          packagesSection.appendLine("- $skillName : ${skill.description}")
+      for ((skillName, description) in skillPackages) {
+        if (description.isNotBlank()) {
+          packagesSection.appendLine("- $skillName : $description")
         } else {
           packagesSection.appendLine("- $skillName")
         }
@@ -365,12 +368,21 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     } else {
         if (useEnglish) SYSTEM_PROMPT_TEMPLATE else SYSTEM_PROMPT_TEMPLATE_CN
     }
-    val workspaceRuleFile =
-        WorkspaceRuleFileReader.readWorkspaceRootRuleFile(
+    val workspaceRuleRead =
+        WorkspaceRuleFileReader.readWorkspaceRootRuleFileWithStatus(
             context = context,
             workspacePath = workspacePath,
             workspaceEnv = workspaceEnv
         )
+    val workspaceRuleFile = workspaceRuleRead.file
+    if (!chatId.isNullOrBlank()) {
+        val snapshot = com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context, chatId)
+        snapshot.trackConfiguration("language", useEnglish.toString())
+        // Failed remote reads are not proof that the file was deleted.
+        if (workspaceRuleRead.reliable) snapshot.trackConfiguration(
+            "workspace-rules:${workspaceEnv.orEmpty()}:${workspacePath.orEmpty()}",
+            workspaceRuleFile?.let { it.name + "\n" + it.content }.orEmpty())
+    }
 
     // Generate workspace guidelines
     val workspaceGuidelines = getWorkspaceGuidelines(

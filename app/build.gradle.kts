@@ -2,6 +2,26 @@ import java.io.File
 import java.io.FileInputStream
 import java.util.Properties
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.gradle.api.file.DirectoryProperty
+import org.gradle.api.file.RegularFileProperty
+
+abstract class BundleAccessibilityProvider : DefaultTask() {
+    @get:InputFile
+    @get:PathSensitive(PathSensitivity.NONE)
+    abstract val providerApk: RegularFileProperty
+
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+
+    @TaskAction
+    fun bundle() {
+        val source = providerApk.get().asFile
+        check(source.isFile) { "A signed accessibility provider APK is required." }
+        val output = outputDirectory.get().asFile
+        output.mkdirs()
+        source.copyTo(File(output, "operit-ry-accessibility.apk"), overwrite = true)
+    }
+}
 
 plugins {
     alias(libs.plugins.android.application)
@@ -110,6 +130,19 @@ val localPropertiesFile = rootProject.file("local.properties")
 if (localPropertiesFile.exists()) {
     localProperties.load(FileInputStream(localPropertiesFile))
 }
+androidComponents.onVariants { variant ->
+    val providerType = if (variant.buildType in setOf("release", "nightly")) "release" else "debug"
+    val providerTask = providerType.replaceFirstChar(Char::uppercase)
+    val suffix = variant.name.replaceFirstChar(Char::uppercase)
+    val bundle = tasks.register<BundleAccessibilityProvider>("bundle${suffix}AccessibilityProvider") {
+        dependsOn(":accessibility-provider:assemble$providerTask")
+        providerApk.set(project(":accessibility-provider").layout.buildDirectory.file(
+            "outputs/apk/$providerType/accessibility-provider-$providerType.apk"))
+        outputDirectory.set(layout.buildDirectory.dir("generated/accessibilityAssets/${variant.name}"))
+    }
+    variant.sources.assets?.addGeneratedSourceDirectory(bundle, BundleAccessibilityProvider::outputDirectory)
+}
+
 android {
     namespace = "com.ai.assistance.operit"
     compileSdk = 36
@@ -146,8 +179,8 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        versionCode = 50
-        versionName = "1.12.1-ry.8"
+        versionCode = 51
+        versionName = "1.12.2-ry.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {

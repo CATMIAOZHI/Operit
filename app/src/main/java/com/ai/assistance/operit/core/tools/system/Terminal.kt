@@ -20,6 +20,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.transformWhile
 import kotlinx.coroutines.flow.onStart
+import kotlinx.coroutines.flow.onSubscription
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.channelFlow
 import kotlinx.coroutines.flow.collect
@@ -30,7 +31,7 @@ import java.util.UUID
  * 提供应用程序级别的终端服务管理和访问
  */
 @RequiresApi(Build.VERSION_CODES.O)
-class Terminal private constructor(private val context: Context) {
+class Terminal internal constructor(private val terminalManager: TerminalManager) {
 
     companion object {
         @Volatile
@@ -38,14 +39,13 @@ class Terminal private constructor(private val context: Context) {
 
         fun getInstance(context: Context): Terminal {
             return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: Terminal(context.applicationContext).also { INSTANCE = it }
+                INSTANCE ?: Terminal(TerminalManager.getInstance(context.applicationContext)).also { INSTANCE = it }
             }
         }
 
         private const val TAG = "Terminal"
     }
 
-    private val terminalManager = TerminalManager.getInstance(context)
     private val scope = CoroutineScope(Dispatchers.Main)
 
     // 从 TerminalManager 暴露状态和事件流
@@ -76,9 +76,9 @@ class Terminal private constructor(private val context: Context) {
     /**
      * 创建新的终端会话 - 同步等待初始化完成
      */
-    suspend fun createSession(title: String? = null): String {
+    suspend fun createSession(title: String? = null, automation: Boolean = false): String {
         AppLogger.d(TAG, "Creating new terminal session and waiting for initialization")
-        val newSession = terminalManager.createNewSession(title)
+        val newSession = terminalManager.createNewSession(title, automation = automation)
         AppLogger.d(TAG, "Session ${newSession.id} initialized successfully")
         return newSession.id
     }
@@ -182,28 +182,38 @@ class Terminal private constructor(private val context: Context) {
      * 执行命令 - Flow版本
      * 返回命令执行过程中的所有事件，直到命令完成
      */
-    fun executeCommandFlow(sessionId: String, command: String): Flow<CommandExecutionEvent> {
+    fun executeCommandFlow(
+        sessionId: String,
+        command: String,
+        commandId: String = UUID.randomUUID().toString()
+    ): Flow<CommandExecutionEvent> {
         return channelFlow {
-            val commandId = UUID.randomUUID().toString()
             val collectorReady = CompletableDeferred<Unit>()
+            var completed = false
 
             val collectorJob = launch {
                 commandEvents
+                    .onSubscription { collectorReady.complete(Unit) }
                     .filter { it.sessionId == sessionId && it.commandId == commandId }
-                    .onStart { collectorReady.complete(Unit) }
                     .transformWhile { event ->
                         emit(event)
                         !event.isCompleted
                     }
                     .collect { sentEvent ->
+                        if (sentEvent.isCompleted) completed = true
                         send(sentEvent)
                     }
             }
 
             // 先确保事件收集器就绪，再发送命令，避免快命令输出在订阅前丢失。
-            collectorReady.await()
-            terminalManager.sendCommandToSession(sessionId, command, commandId)
-            collectorJob.join()
+            try {
+                collectorReady.await()
+                terminalManager.sendCommandToSession(sessionId, command, commandId)
+                collectorJob.join()
+            } finally {
+                collectorJob.cancel()
+                if (!completed) terminalManager.cancelCommand(sessionId, commandId)
+            }
         }
     }
     
@@ -211,17 +221,18 @@ class Terminal private constructor(private val context: Context) {
      * 发送输入到当前会话
      */
     fun sendInput(sessionId: String, input: String) {
-        terminalManager.switchToSession(sessionId)
-        terminalManager.sendInput(input)
+        terminalManager.sendInput(input, sessionId)
     }
 
     /**
      * 发送中断信号 (Ctrl+C)
      */
     fun sendInterruptSignal(sessionId: String) {
-        terminalManager.switchToSession(sessionId)
-        terminalManager.sendInterruptSignal()
+        terminalManager.sendInterruptSignal(sessionId)
     }
+
+    suspend fun cancelCommand(sessionId: String, commandId: String) =
+        terminalManager.cancelCommand(sessionId, commandId)
 
     /**
      * 检查服务是否已连接 (现在总是返回 true)

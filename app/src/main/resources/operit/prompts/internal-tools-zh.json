@@ -1295,7 +1295,7 @@
       },
       {
         "name": "update_user_profile",
-        "description": "在用户批准工具调用后替换私有 user.md。保留仍然有用的现有内容，并写入完整的 Markdown 文档。",
+        "description": "提交私有 user.md 完整改动，按当前记忆空间自动通过开关直接生效或进入待审，保留历史。保留有用内容及分区标记，按 Profile（个人事实）、Preferences（长期偏好）、Interaction Rules（用户明确的交互规则）组织。",
         "parameters": "",
         "parametersStructured": [
           {
@@ -2717,43 +2717,6 @@
         "description": "截取屏幕截图并返回文件路径。",
         "parameters": "",
         "parametersStructured": [],
-        "details": "",
-        "notes": ""
-      },
-      {
-        "name": "run_ui_subagent",
-        "description": "运行轻量 UI 自动化子代理。",
-        "parameters": "",
-        "parametersStructured": [
-          {
-            "name": "intent",
-            "type": "string",
-            "description": "任务描述",
-            "required": true,
-            "default": null
-          },
-          {
-            "name": "max_steps",
-            "type": "integer",
-            "description": "可选",
-            "required": false,
-            "default": "20"
-          },
-          {
-            "name": "agent_id",
-            "type": "string",
-            "description": "可选，可复用的 agent 会话 ID。不传或传 'default' 时使用主屏幕；传入且不为 'default' 时表示请求使用对应的虚拟屏幕会话，虚拟屏幕必须处于可用状态，否则本次运行将失败。",
-            "required": false,
-            "default": null
-          },
-          {
-            "name": "target_app",
-            "type": "string",
-            "description": "可选，目标应用包名",
-            "required": false,
-            "default": null
-          }
-        ],
         "details": "",
         "notes": ""
       }

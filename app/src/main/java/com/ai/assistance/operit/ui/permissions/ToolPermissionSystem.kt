@@ -141,6 +141,15 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     
     // 工具权限存储：使用 "tool_permission_<tool_name>" 作为key
     private fun toolPermissionKey(toolName: String) = stringPreferencesKey("tool_permission_$toolName")
+
+    val toolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
+        context.toolPermissionsDataStore.data.map { preferences ->
+            preferences.asMap().entries.mapNotNull { (key, value) ->
+                if (key.name.startsWith("tool_permission_") && value is String)
+                    key.name.removePrefix("tool_permission_") to PermissionLevel.fromString(value)
+                else null
+            }.toMap()
+        }
     
     // Permission request management
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -196,7 +205,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
     
     // Registry of operation descriptions by tool name
-    private val operationDescriptionRegistry = mutableMapOf<String, (AITool) -> String>()
+    private val operationDescriptionRegistry =
+        java.util.concurrent.ConcurrentHashMap<String, (AITool) -> String>()
     
     /**
      * Register a description generator for a tool
@@ -1012,7 +1022,8 @@ internal fun resolveEffectivePermissionLevel(
  *
  * The agent's own collaboration tools are how one agent hands work to another. They touch no user
  * data themselves, and the work they start is reviewed as each of its own tool calls runs, so asking
- * about the hand-off as well only adds friction. A level the user stored for one of these tools still
+ * about the hand-off as well only adds friction. Updating the current chat's todo list also needs no
+ * separate review. A level the user stored for one of these tools still
  * wins, which is why this is a default rather than an exemption from the permission system. A global
  * "forbid" also wins: that setting is a deliberate whitelist, not a gap for a default to fill.
  */
@@ -1020,7 +1031,8 @@ internal fun defaultPermissionLevelFor(
     toolName: String,
     masterLevel: PermissionLevel,
 ): PermissionLevel? =
-    if (masterLevel != PermissionLevel.FORBID && CollaborationTools.isCollaborationTool(toolName)) {
+    if (masterLevel != PermissionLevel.FORBID &&
+        (CollaborationTools.isCollaborationTool(toolName) || toolName == "todowrite")) {
         PermissionLevel.ALLOW
     } else {
         null
