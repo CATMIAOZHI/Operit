@@ -198,6 +198,17 @@ open class OpenAIProvider(
         cause: Throwable? = null
     ) : IOException(message, cause), HttpStatusCodeException
 
+    internal class RepetitionTruncationException(message: String) : IOException(message)
+
+    private fun rejectRepetitionTruncation(context: Context, response: JSONObject) {
+        val choices = response.optJSONArray("choices") ?: return
+        for (index in 0 until choices.length()) {
+            if (choices.optJSONObject(index)?.optString("finish_reason") == "repetition_truncation") {
+                throw RepetitionTruncationException(context.getString(R.string.openai_error_repetition_truncation))
+            }
+        }
+    }
+
     // Token缓存管理器
     val tokenCacheManager = TokenCacheManager()
 
@@ -1495,6 +1506,8 @@ open class OpenAIProvider(
         return Pair(messagesArray, tokenCount)
     }
 
+    protected open val preserveReasoningForTokenEstimate: Boolean = false
+
     override suspend fun calculateInputTokens(
         chatHistory: List<PromptTurn>,
         availableTools: List<ToolPrompt>?
@@ -1509,7 +1522,10 @@ open class OpenAIProvider(
         }
         // 使用TokenCacheManager计算token数量
         return tokenCacheManager.calculateInputTokens(
-            buildComparableHistory(chatHistory, preserveThinkInHistory = false),
+            buildComparableHistory(
+                prepareHistoryForProvider(chatHistory, enableToolCall && !availableTools.isNullOrEmpty()),
+                preserveThinkInHistory = preserveReasoningForTokenEstimate
+            ),
             toolsJson,
             updateState = false
         )
@@ -1859,7 +1875,7 @@ open class OpenAIProvider(
         }
         checkCancellation(context, exception)
 
-        if (exception is CommandCodeProtocolException) throw exception
+        if (exception is CommandCodeProtocolException || exception is RepetitionTruncationException) throw exception
 
         val errorText = resolveRetryErrorText(context, exception)
 
@@ -2922,6 +2938,7 @@ open class OpenAIProvider(
                 try {
                     val jsonResponse = JSONObject(data)
                     throwIfOpenAiErrorPayload(context, jsonResponse)
+                    rejectRepetitionTruncation(context, jsonResponse)
 
                     if (useResponsesApi) {
                         processResponsesStreamingEvent(context, jsonResponse, state, emitter, onTokensUpdated, onUsageReported, attemptNumber)
@@ -3021,6 +3038,7 @@ open class OpenAIProvider(
 
             val maxRetries = LlmRetryPolicy.MAX_RETRY_ATTEMPTS
             var retryCount = 0
+            var repetitionRetryCount = 0
             var lastException: Exception? = null
 
             // 用于保存当前 attempt 已接收到的内容；一旦需要重试，会整体回滚到请求起点
@@ -3179,6 +3197,7 @@ open class OpenAIProvider(
 
                                     if (choices.length() > 0) {
                                         val choice = choices.getJSONObject(0)
+                                        rejectRepetitionTruncation(context, jsonResponse)
                                         val messageObj = choice.optJSONObject("message")
 
                                         if (messageObj != null) {
@@ -3244,6 +3263,14 @@ open class OpenAIProvider(
             } catch (e: Exception) {
                 lastException = e
                 emitter.emitRollback(requestSavepointId)
+                if (e is RepetitionTruncationException) {
+                    if (!enableRetry || repetitionRetryCount >= 1 || retryCount >= maxRetries) throw e
+                    repetitionRetryCount++
+                    retryCount++
+                    AppLogger.w("AIService", "Repetition truncation: discarded response; retrying once")
+                    onNonFatalError(context.getString(R.string.openai_retry_repetition_truncation))
+                    continue
+                }
                 // 停滞单独限次：每次停滞都要等满超时，全量重试会把用户晾十几分钟
                 // 取消类异常与手动取消优先：看门狗恰好与用户取消重合时，不能把取消改写成停滞错误
                 val cancelled =

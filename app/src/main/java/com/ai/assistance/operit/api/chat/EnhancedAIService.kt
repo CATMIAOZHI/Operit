@@ -819,17 +819,46 @@ class EnhancedAIService private constructor(
         _requestWindowEstimate.value = windowSize
     }
 
+    private val requestInputUsages =
+        java.util.Collections.synchronizedMap(java.util.WeakHashMap<AIService, RequestInputUsage>())
+
+    private fun beginInputUsage(
+        service: AIService, history: List<PromptTurn>, tools: List<ToolPrompt>?
+    ): RequestInputUsage = RequestInputUsage(history.toList(), tools?.toList()).also {
+        requestInputUsages[service] = it
+    }
+
+    private fun reportInputUsage(
+        tracker: RequestInputUsage,
+        usage: com.ai.assistance.operit.data.stats.ProviderUsageSnapshot,
+        attempt: Int,
+    ) {
+        tracker.report(usage, attempt)
+        tracker.actualInput()?.let {
+            // Both the header indicator and compaction consume this window flow.
+            publishRequestWindowEstimate(it.coerceAtMost(Int.MAX_VALUE.toLong()).toInt())
+        }
+    }
+
     private suspend fun estimatePreparedRequestWindow(
         serviceForFunction: AIService,
         preparedHistory: List<PromptTurn>,
         availableTools: List<ToolPrompt>?,
         publishEstimate: Boolean
     ): Int {
-        val windowSize =
+        val baseline = requestInputUsages[serviceForFunction]?.baseline(preparedHistory, availableTools)
+        val windowSize = if (baseline != null) {
+            val addedHistory = preparedHistory.drop(baseline.second)
+            val addedTokens = if (addedHistory.isEmpty()) 0 else
+                serviceForFunction.calculateInputTokens(addedHistory, null)
+            (baseline.first + addedTokens.toLong()).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        } else {
             serviceForFunction.calculateInputTokens(
                 chatHistory = preparedHistory,
                 availableTools = availableTools
             )
+        }
+        AppLogger.d(TAG, "Context window: source=${if (baseline != null) "server_usage+new_content" else "estimate"}, tokens=$windowSize")
         if (publishEstimate) {
             publishRequestWindowEstimate(windowSize)
         }
@@ -1401,6 +1430,7 @@ class EnhancedAIService private constructor(
                     AppLogger.d(TAG, "sendMessage请求前准备耗时: ${tAfterGetTools - startTime}ms, 流式输出: $stream")
                     val requestStartTime = messageTimingNow()
                     notifyModelRequestStarted(chatId, isSubTask)
+                    val inputUsage = beginInputUsage(serviceForFunction, requestHistory, availableTools)
                     val responseStream =
                             serviceForFunction.sendMessage(
                                     context = this@EnhancedAIService.context,
@@ -1409,6 +1439,7 @@ class EnhancedAIService private constructor(
                                     enableThinking = enableThinking,
                                     stream = stream,
                                     availableTools = availableTools,
+                                    onUsageReported = { usage, attempt -> reportInputUsage(inputUsage, usage, attempt) },
                                     onTokensUpdated = { input, cachedInput, output ->
                                         currentRequestInputTokenCount = input.coerceAtLeast(0)
                                         currentRequestOutputTokenCount = output.coerceAtLeast(0)
@@ -1459,6 +1490,7 @@ class EnhancedAIService private constructor(
                     var totalChars = 0
                     var lastLogTime = messageTimingNow()
 
+                    try {
                     responseStream.collect { content ->
                                 // Providers publish revision events before the text they govern.
                                 // Drain that replay log in this collector so rollback and content
@@ -1502,7 +1534,9 @@ class EnhancedAIService private constructor(
                                 emit(content)
                                 execContext.emittedReplayCharCount.addAndGet(content.length)
                     }
-                    drainRevisionEvents()
+                    } finally {
+                        drainRevisionEvents()
+                    }
 
                     // Update accumulated token counts and persist them
                     val inputTokens = serviceForFunction.inputTokenCount
@@ -2567,6 +2601,7 @@ class EnhancedAIService private constructor(
                 // 发送消息并获取响应流
                 val aiStartTime = messageTimingNow()
                 notifyModelRequestStarted(chatId, isSubTask)
+                val inputUsage = beginInputUsage(serviceForFunction, currentChatHistory, availableTools)
                 val responseStream =
                         serviceForFunction.sendMessage(
                                 context = this@EnhancedAIService.context,
@@ -2575,6 +2610,7 @@ class EnhancedAIService private constructor(
                                 enableThinking = enableThinking,
                                 stream = stream,
                                 availableTools = availableTools,
+                                onUsageReported = { usage, attempt -> reportInputUsage(inputUsage, usage, attempt) },
                                 onTokensUpdated = { input, cachedInput, output ->
                                     currentRequestInputTokenCount = input.coerceAtLeast(0)
                                     currentRequestOutputTokenCount = output.coerceAtLeast(0)
@@ -2628,6 +2664,7 @@ class EnhancedAIService private constructor(
                     }
                 }
 
+                try {
                 responseStream.collect { content ->
                             drainRevisionEvents()
                             if (isFirstChunk) {
@@ -2659,7 +2696,9 @@ class EnhancedAIService private constructor(
                             collector.emit(content)
                             context.emittedReplayCharCount.addAndGet(content.length)
                 }
-                drainRevisionEvents()
+                } finally {
+                    drainRevisionEvents()
+                }
 
                 // Update accumulated token counts and persist them
                 val inputTokens = serviceForFunction.inputTokenCount

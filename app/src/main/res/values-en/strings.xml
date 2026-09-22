@@ -1,4 +1,6 @@
 <resources>
+    <string name="openai_error_repetition_truncation">The server stopped repetitive model output. The response was discarded and its tools will not run.</string>
+    <string name="openai_retry_repetition_truncation">Repetitive output was discarded. Retrying the request once.</string>
     <string name="memory_include_thinking">Include thinking in extraction</string>
     <string name="memory_include_thinking_desc">Graph, note and skill extraction in this memory space can use model thinking, including history read during extraction. On by default. Turn off to use only visible replies and tool records. Chat display and context caching are unchanged.</string>
     <string name="permission_review_always_allow">Always allow this tool</string>
