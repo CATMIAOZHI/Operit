@@ -23,9 +23,10 @@ internal class PendingMessageQueueStore {
     private val _states = MutableStateFlow<Map<String, PendingMessageQueueState>>(emptyMap())
     val states: StateFlow<Map<String, PendingMessageQueueState>> = _states.asStateFlow()
 
-    fun enqueue(chatId: String, text: String, isQueueBlocked: Boolean) {
+    fun enqueue(chatId: String, text: String, isQueueBlocked: Boolean,
+                attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList()): Boolean {
         synchronized(lock) {
-            if (chatId in inactiveChatIds) return
+            if (chatId in inactiveChatIds) return false
             val generation = chatGenerations[chatId] ?: 0L
             updateState(chatId) { state ->
                 state.copy(
@@ -35,11 +36,13 @@ internal class PendingMessageQueueStore {
                                 id = nextMessageId.getAndIncrement(),
                                 text = text,
                                 chatGeneration = generation,
+                                attachments = attachments.toList(),
                             ),
                     isExpanded = true,
                     wasBlocked = isQueueBlocked,
                 )
             }
+            return true
         }
     }
 

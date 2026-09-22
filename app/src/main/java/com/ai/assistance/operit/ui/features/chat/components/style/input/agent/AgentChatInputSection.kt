@@ -483,7 +483,7 @@ fun AgentChatInputSection(
 
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
-    val showQueueAction = isProcessing && hasDraftText
+    val showQueueAction = isProcessing && canSendMessage
     val showCancelAction = isProcessing && !showQueueAction
     val sendButtonEnabled = true
     val tokenLimitWarning: @Composable () -> Unit = {

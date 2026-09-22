@@ -4,7 +4,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.BoxWithConstraints
-import androidx.compose.foundation.layout.heightIn
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -51,9 +50,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.layout
 import androidx.compose.foundation.clickable
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.material3.HorizontalDivider
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.platform.LocalContext
@@ -146,10 +143,53 @@ fun MemorySearchBar(
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun MemoryScreen() {
+    val activeProfileId by preferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
+    val profileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
+    val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
+    val scope = rememberCoroutineScope()
+    var menuExpanded by remember { mutableStateOf(false) }
+    var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
+    var pageProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
+    val destination = page
+    if (destination == "graph") {
+        MemoryLibraryPage(stringResource(R.string.memory_graph_title), activeProfileId, { page = null }) {
+            MemoryGraphPage(activeProfileId)
+        }
+    } else if (destination != null) {
+        androidx.compose.runtime.key(pageProfileId, destination) {
+            MemoryLibraryDestination(destination, pageProfileId) { page = null }
+        }
+    } else {
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
+                OutlinedButton(onClick = { menuExpanded = true }) {
+                    Text(profileNames[activeProfileId] ?: activeProfileId)
+                }
+                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
+                    profileList.forEach { id ->
+                        DropdownMenuItem(
+                            text = { Text(profileNames[id] ?: id) },
+                            onClick = {
+                                menuExpanded = false
+                                scope.launch { preferencesManager.setActiveMemorySpace(id) }
+                            }
+                        )
+                    }
+                }
+            }
+            MemoryLibraryNavigation {
+                pageProfileId = activeProfileId
+                page = it
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@Composable
+private fun MemoryGraphPage(activeProfileId: String) {
     val context = LocalContext.current
     val profileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
-    val activeProfileId by
-    preferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
 
     // 获取所有配置文件的名称映射(id -> name)
     val profileNameMap = remember { mutableStateMapOf<String, String>() }
@@ -163,8 +203,6 @@ fun MemoryScreen() {
     }
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
-    var memoryPanel by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
-    var panelProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     var showFolderNavigator by remember { mutableStateOf(false) }
 
 
@@ -177,7 +215,6 @@ fun MemoryScreen() {
         )
     val uiState by viewModel.uiState.collectAsState()
     val keyboardController = LocalSoftwareKeyboardController.current
-    val memoryFocusManager = LocalFocusManager.current
     val scope = rememberCoroutineScope()
     val isCurrentScreen = LocalIsCurrentScreen.current
 
@@ -272,14 +309,6 @@ fun MemoryScreen() {
         }
     )
 
-    Box(Modifier.fillMaxSize()) {
-    // Keep graph position and selection alive; an unplaced destination cannot receive input.
-    Box(Modifier.fillMaxSize().layout { measurable, constraints ->
-        val placeable = measurable.measure(constraints)
-        layout(placeable.width, placeable.height) {
-            if (memoryPanel == null) placeable.place(0, 0)
-        }
-    }) {
     CustomScaffold(
         floatingActionButton = {
             Column(
@@ -356,17 +385,10 @@ fun MemoryScreen() {
                 .fillMaxSize()
         ) {
 
-            val navigationMaxHeight = maxHeight * 0.35f
             Column(
                 modifier = Modifier
                     .fillMaxSize()
             ) {
-                MemoryLibraryNavigation(Modifier.heightIn(max = navigationMaxHeight)) { panel ->
-                    keyboardController?.hide()
-                    memoryFocusManager.clearFocus()
-                    panelProfileId = selectedProfileId
-                    memoryPanel = panel
-                }
                 MemorySearchBar(
                     query = uiState.searchQuery,
                     onQueryChange = { viewModel.onSearchQueryChange(it) },
@@ -633,18 +655,12 @@ fun MemoryScreen() {
             }
         }
     }
-    }
-    memoryPanel?.let { page ->
-        androidx.compose.runtime.key(panelProfileId, page) {
-            MemoryLibraryDestination(page, panelProfileId) { memoryPanel = null }
-        }
-    }
-    }
 }
 
 @Composable
 private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
     val entries = listOf(
+        Triple("graph", R.string.memory_graph_title, R.string.memory_nav_graph),
         Triple("notes", R.string.memory_notes_title, R.string.memory_nav_notes),
         Triple("review", R.string.memory_review_title, R.string.memory_nav_review),
         Triple("learned", R.string.memory_learned_skills, R.string.memory_nav_learned),

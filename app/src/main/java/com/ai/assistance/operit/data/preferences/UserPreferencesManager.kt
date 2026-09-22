@@ -537,6 +537,15 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 .orEmpty()
         }
 
+    val memorySpaceNamesFlow: Flow<Map<String, String>> =
+        context.userPreferencesDataStore.data.map { preferences ->
+            decodeIdList(preferences[MEMORY_SPACE_LIST]).mapNotNull { id ->
+                preferences[stringPreferencesKey("memory_space_$id")]?.let { encoded ->
+                    id to Json.decodeFromString<MemorySpace>(encoded).name
+                }
+            }.toMap()
+        }
+
     fun getMemorySpaceFlow(memorySpaceId: String = ""): Flow<MemorySpace> {
         return context.userPreferencesDataStore.data.map { preferences ->
             val targetId =

@@ -1579,6 +1579,7 @@ private fun ChatInputBottomBar(
         source: String = inputStyle,
         submitSource: String = "",
         chatId: String? = currentChatId,
+        attachmentCount: Int = attachments.size,
     ): ChatInputHookContext {
         val normalizedSelectionStart = selectionStart.coerceIn(0, text.length)
         val normalizedSelectionEnd = selectionEnd.coerceIn(0, text.length)
@@ -1589,8 +1590,8 @@ private fun ChatInputBottomBar(
             text = text,
             selectionStart = normalizedSelectionStart,
             selectionEnd = normalizedSelectionEnd,
-            hasAttachments = attachments.isNotEmpty(),
-            attachmentCount = attachments.size,
+            hasAttachments = attachmentCount > 0,
+            attachmentCount = attachmentCount,
             isProcessing = isMessageProcessing,
             inputStyle = inputStyle,
             source = source,
@@ -1697,6 +1698,7 @@ private fun ChatInputBottomBar(
                                 source = "queue",
                                 submitSource = "queue",
                                 chatId = queueChatId,
+                                attachmentCount = item.attachments.size,
                             )
                         )
                     if (!actualViewModel.isPendingQueueItemCurrent(queueChatId, item)) {
@@ -1725,6 +1727,7 @@ private fun ChatInputBottomBar(
                             finalText,
                             chatId = queueChatId,
                             chatGeneration = item.chatGeneration,
+                            attachments = item.attachments,
                         )
                     ) {
                         restorePendingQueueItem(queueChatId, item)
@@ -1745,6 +1748,7 @@ private fun ChatInputBottomBar(
                             source = "queue",
                             submitSource = "queue",
                             chatId = queueChatId,
+                            attachmentCount = item.attachments.size,
                         )
                     )
                 } finally {
@@ -1772,6 +1776,7 @@ private fun ChatInputBottomBar(
                         text = item.text, selectionStart = item.text.length,
                         selectionEnd = item.text.length, source = "queue",
                         submitSource = "steer", chatId = chatId,
+                        attachmentCount = item.attachments.size,
                     )
                 )
                 when (decision.action) {
@@ -1796,6 +1801,7 @@ private fun ChatInputBottomBar(
                             eventName = ChatInputEvents.SUBMITTED, text = finalItem.text,
                             selectionStart = finalItem.text.length, selectionEnd = finalItem.text.length,
                             source = "queue", submitSource = "steer", chatId = chatId,
+                            attachmentCount = finalItem.attachments.size,
                         )
                     )
                 }
@@ -1820,14 +1826,14 @@ private fun ChatInputBottomBar(
     val queueAddedMessage = stringResource(R.string.chat_queue_added)
     fun enqueueDraftToPendingQueue() {
         val draftText = userMessage.text.trim()
-        if (draftText.isBlank()) return
+        if (draftText.isBlank() && attachments.isEmpty()) return
         val chatId = currentChatId ?: return
 
-        actualViewModel.enqueuePendingQueueMessage(
+        if (!actualViewModel.enqueuePendingQueueMessage(
             chatId = chatId,
             text = draftText,
             isQueueBlocked = isQueueBlocked,
-        )
+        )) return
         actualViewModel.updateUserMessage(TextFieldValue(""))
         actualViewModel.showToast(queueAddedMessage)
     }
@@ -1991,6 +1997,7 @@ private fun ChatInputBottomBar(
                 onEditPendingQueueMessage = { id ->
                     removePendingQueueMessageById(id)?.let { queueItem ->
                         val text = queueItem.text
+                        actualViewModel.restoreQueuedAttachments(queueItem)
                         actualViewModel.updateUserMessage(
                             TextFieldValue(
                                 text = text,
@@ -2047,6 +2054,7 @@ private fun ChatInputBottomBar(
                 onEditPendingQueueMessage = { id ->
                     removePendingQueueMessageById(id)?.let { queueItem ->
                         val text = queueItem.text
+                        actualViewModel.restoreQueuedAttachments(queueItem)
                         actualViewModel.updateUserMessage(
                             TextFieldValue(
                                 text = text,

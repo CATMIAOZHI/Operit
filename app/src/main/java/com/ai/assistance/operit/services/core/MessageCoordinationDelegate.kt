@@ -391,12 +391,14 @@ class MessageCoordinationDelegate(
         promptFunctionType: PromptFunctionType,
         chatId: String,
         messageText: String,
+        attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
     ): Boolean {
         if (chatId.isBlank()) return false
         return sendMessageInternal(
             promptFunctionType = promptFunctionType,
             chatIdOverride = chatId,
             messageTextOverride = messageText,
+            attachmentsOverride = attachments,
         )
     }
 
@@ -535,6 +537,7 @@ class MessageCoordinationDelegate(
         roleCardIdOverride: String? = null,
         chatIdOverride: String? = null,
         messageTextOverride: String? = null,
+        attachmentsOverride: List<com.ai.assistance.operit.data.model.AttachmentInfo>? = null,
         prebuiltUserMessage: ChatMessage? = null,
         proxySenderNameOverride: String? = null,
         chatModelConfigIdOverride: String? = null,
@@ -627,7 +630,7 @@ class MessageCoordinationDelegate(
 
         // 获取当前附件列表
         val currentAttachments =
-            if (shouldReadComposerState) attachmentDelegate.attachments.value else emptyList()
+            attachmentsOverride ?: if (shouldReadComposerState) attachmentDelegate.attachments.value else emptyList()
         // Subagent owns an independent AgentProfile and must never inherit the active role card.
         val roleCardId =
             roleCardIdOverride?.takeIf { it.isNotBlank() }
@@ -735,7 +738,7 @@ class MessageCoordinationDelegate(
 
             // 只有在非续写（即用户主动发送）时才清空附件和UI状态
             if (accepted && !isBackgroundSend && !isContinuation) {
-                if (!afterSummary || attachmentDelegate.attachments.value == currentAttachments) {
+                if (attachmentsOverride == null && (!afterSummary || attachmentDelegate.attachments.value == currentAttachments)) {
                     if (currentAttachments.isNotEmpty()) {
                         attachmentDelegate.clearAttachments()
                     }
