@@ -37,3 +37,5 @@ worldbook
 thinking_guidance
 plan_mode
 reading_companion
+memory_review.js
+phone_control.js
