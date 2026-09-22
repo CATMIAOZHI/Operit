@@ -19,6 +19,38 @@ import org.mockito.Mockito
 
 class GenericReasoningProtocolTest {
     @Test
+    fun contextEstimateIncludesReplayedReasoningAndMatchesRequestEstimate() = runBlocking {
+        withContext(Dispatchers.IO) {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                val provider = object : KimiProvider(
+                    "https://example.test/v1/chat/completions",
+                    SingleApiKeyProvider("test-key"), "mimo-v2.6-flash", OkHttpClient(),
+                    providerType = ApiProviderType.OPENAI_GENERIC, configureThinking = false,
+                ) {
+                    override fun resolveOpenAiChatReasoningEffort(context: Context) = "high"
+                    fun prepare(history: List<PromptTurn>) {
+                        createRequestBody(Mockito.mock(Context::class.java), history, emptyList(), true, true, null, false)
+                    }
+                }
+                val history = listOf(
+                    PromptTurn(PromptTurnKind.USER, "question"),
+                    PromptTurn(PromptTurnKind.ASSISTANT,
+                        ChatUtils.PROVIDER_REASONING_OPEN_TAG + "long reasoning ".repeat(4000) + "</think>answer"),
+                    PromptTurn(PromptTurnKind.USER, "continue"),
+                )
+                val shortHistory = history.map {
+                    if (it.kind == PromptTurnKind.ASSISTANT) it.copy(content = "answer") else it
+                }
+                val estimate = provider.calculateInputTokens(history, null)
+                assertTrue(estimate > provider.calculateInputTokens(shortHistory, null) + 1000)
+                provider.prepare(history)
+                assertEquals(provider.tokenCacheManager.totalInputTokenCount, estimate)
+                assertEquals(estimate, provider.calculateInputTokens(history, null))
+            }
+        }
+    }
+
+    @Test
     fun declaredEffortIsSentWithoutKimiThinkingFieldsAndCanBeSuppressed() = runBlocking {
         withContext(Dispatchers.IO) {
             Mockito.mockStatic(AppLogger::class.java).use {

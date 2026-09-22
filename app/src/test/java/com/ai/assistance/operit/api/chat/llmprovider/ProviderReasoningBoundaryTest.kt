@@ -29,6 +29,99 @@ import org.mockito.Mockito
 
 class ProviderReasoningBoundaryTest {
     @Test
+    fun repetitionRetryRollsBackOldContentAndCanSucceed() = runBlocking {
+        var requests = 0
+        val client = OkHttpClient.Builder().addInterceptor { chain ->
+            requests++
+            val body = if (requests == 1) {
+                "data: {\"choices\":[{\"delta\":{\"content\":\"discard me\"}}]}\n\n" +
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"repetition_truncation\"}]}\n\n"
+            } else {
+                "data: {\"choices\":[{\"delta\":{\"content\":\"success\"},\"finish_reason\":\"stop\"}]}\n\n" +
+                    "data: [DONE]\n\n"
+            }
+            Response.Builder().request(chain.request()).protocol(Protocol.HTTP_1_1)
+                .code(200).message("OK").body(body.toResponseBody("text/event-stream".toMediaType())).build()
+        }.build()
+        val provider = OpenAIProvider(
+            "https://example.test/v1/chat/completions", SingleApiKeyProvider("test-key"),
+            "test", client,
+        )
+        withoutAndroidLogging {
+            val context = Mockito.mock(Context::class.java)
+            Mockito.`when`(context.getString(com.ai.assistance.operit.R.string.openai_error_repetition_truncation))
+                .thenReturn("Repeated output stopped")
+            Mockito.`when`(context.getString(com.ai.assistance.operit.R.string.openai_retry_repetition_truncation))
+                .thenReturn("Retrying repeated output")
+            val response = provider.sendMessage(
+                context = context, chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                modelParameters = emptyList(), enableThinking = false, stream = true, enableRetry = true,
+            )
+            val tracker = com.ai.assistance.operit.util.stream.TextStreamRevisionTracker()
+            var processed = 0
+            fun drain() {
+                val events = (response as com.ai.assistance.operit.util.stream.TextStreamEventCarrier).eventChannel.replayCache
+                while (processed < events.size) {
+                    val event = events[processed++]
+                    when (event.eventType) {
+                        com.ai.assistance.operit.util.stream.TextStreamEventType.SAVEPOINT -> tracker.savepoint(event.id)
+                        com.ai.assistance.operit.util.stream.TextStreamEventType.ROLLBACK -> tracker.rollback(event.id)
+                    }
+                }
+            }
+            try {
+                response.collect { drain(); tracker.append(it) }
+            } finally {
+                drain()
+            }
+            assertEquals("success", tracker.currentContent().toString())
+            assertEquals(2, requests)
+        }
+    }
+
+    @Test
+    fun repetitionTruncationRetriesOnlyOnceWithoutSuccessfulCompletion() = runBlocking {
+        for (streaming in listOf(true, false)) {
+            val calls = """[{"index":0,"id":"call-a","type":"function","function":{"name":"use_package","arguments":"{\"package_name\":\"super_admin\"}"}}]"""
+            val body = if (streaming) {
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":$calls}}]}\n\n" +
+                    "data: {\"choices\":[{\"delta\":{},\"finish_reason\":\"repetition_truncation\"}]}\n\n" +
+                    "data: [DONE]\n\n"
+            } else {
+                """{"choices":[{"message":{"tool_calls":$calls},"finish_reason":"repetition_truncation"}]}"""
+            }
+            var requests = 0
+            val provider = OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "test",
+                client = clientForBody(body, if (streaming) "text/event-stream" else "application/json") { requests++ },
+                enableToolCall = true,
+            )
+            withoutAndroidLogging {
+                val context = Mockito.mock(Context::class.java)
+                Mockito.`when`(context.getString(com.ai.assistance.operit.R.string.openai_error_repetition_truncation))
+                    .thenReturn("Repeated output stopped")
+                Mockito.`when`(context.getString(com.ai.assistance.operit.R.string.openai_retry_repetition_truncation))
+                    .thenReturn("Retrying repeated output")
+                var completed = false
+                val failure = runCatching {
+                    provider.sendMessage(
+                        context = context,
+                        chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "continue")),
+                        modelParameters = emptyList(), enableThinking = true,
+                        stream = streaming, enableRetry = true,
+                    ).collect {}
+                    completed = true
+                }.exceptionOrNull()
+                assertTrue(failure is OpenAIProvider.RepetitionTruncationException)
+                assertFalse(completed)
+                assertEquals(2, requests)
+            }
+        }
+    }
+
+    @Test
     fun deepseekStreamingNativeCallsSurviveReasoningWithQuotedMarkdownFences() = runBlocking {
         val reasoning = "读取结果含行号：14| ```\n行 14 是 ``` 正常收尾。"
         val sseBody = listOf(

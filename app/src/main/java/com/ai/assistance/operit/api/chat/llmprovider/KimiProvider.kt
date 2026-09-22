@@ -44,6 +44,8 @@ open class KimiProvider(
     supportsVideo = supportsVideo,
     enableToolCall = enableToolCall
 ) {
+    // Reasoning is replayed on the wire, so it also occupies the context window.
+    override val preserveReasoningForTokenEstimate: Boolean = !configureThinking
     private val requestProviderType = providerType
     private val requestEndpointHost = runCatching { java.net.URI(apiEndpoint).host }.getOrNull().orEmpty()
 
