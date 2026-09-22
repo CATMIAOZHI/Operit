@@ -44,6 +44,32 @@ internal object StructuredToolCallBridge {
     fun toolCallName(toolCall: JSONObject): String {
         val function = toolCall.optJSONObject("function") ?: toolCall
         val name = function.optProviderToolName().orEmpty().trim()
+        // History retains the model's original call. Match the executable name using the same
+        // deterministic routing rules as execution, without changing its provider call ID.
+        val arguments = runCatching {
+            val raw = when {
+                function.has("arguments") -> function.opt("arguments")
+                function.has("args") -> function.opt("args")
+                else -> function.opt("input")
+            }
+            when (raw) {
+                is JSONObject -> raw
+                is String -> JSONObject(raw)
+                else -> JSONObject()
+            }
+        }.getOrNull()
+        if (arguments != null) {
+            val invocation = com.ai.assistance.operit.data.model.ToolInvocation(
+                tool = com.ai.assistance.operit.data.model.AITool(name, arguments.keys().asSequence().map { key ->
+                    com.ai.assistance.operit.data.model.ToolParameter(key, arguments.get(key).toString())
+                }.toList()),
+                rawText = "",
+                responseLocation = 0..0,
+            )
+            com.ai.assistance.operit.core.tools.ToolCallRepairRouter.route(invocation)?.let {
+                return it.targetToolName
+            }
+        }
         if (name != PACKAGE_PROXY_TOOL_NAME && name != CLI_PROXY_TOOL_NAME) {
             return name
         }
@@ -92,7 +118,14 @@ internal object StructuredToolCallBridge {
 
             val callIndex = openToolCalls.indexOfFirst { it.matchingName == normalizedResultName }
             if (callIndex >= 0) {
-                matched.add(MatchedToolCall(resultIndex, openToolCalls.removeAt(callIndex)))
+                val call = openToolCalls.removeAt(callIndex)
+                matched.add(MatchedToolCall(resultIndex, call))
+                AppLogger.d("ToolResultCorrelation",
+                    "Matched: callId=${call.id}, resultIndex=$resultIndex, executed=$normalizedResultName")
+            } else {
+                AppLogger.w("ToolResultCorrelation",
+                    "No matching call: resultIndex=$resultIndex, resultTool=$normalizedResultName, " +
+                        "pending=${openToolCalls.joinToString { "${it.id}:${it.matchingName}" }}")
             }
         }
         return matched

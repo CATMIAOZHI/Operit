@@ -44,6 +44,8 @@ open class KimiProvider(
     supportsVideo = supportsVideo,
     enableToolCall = enableToolCall
 ) {
+    private val requestProviderType = providerType
+    private val requestEndpointHost = runCatching { java.net.URI(apiEndpoint).host }.getOrNull().orEmpty()
 
     override fun createRequestBody(
         context: Context,
@@ -100,7 +102,7 @@ open class KimiProvider(
                                 else -> null
                             }
                         } catch (e: Exception) {
-                            AppLogger.w("KimiProvider", "OBJECT参数解析失败: ${param.apiName}", e)
+                            AppLogger.w("ReasoningChatProvider", "OBJECT参数解析失败: ${param.apiName}", e)
                             null
                         }
                         if (parsed != null) {
@@ -122,7 +124,7 @@ open class KimiProvider(
             }
             if (effort != null) {
                 jsonObject.put("reasoning_effort", effort)
-                AppLogger.d("KimiProvider", "Generic reasoning_content request reasoning_effort=$effort")
+                AppLogger.d("ReasoningChatProvider", "Generic reasoning_content request reasoning_effort=$effort")
             }
         }
 
@@ -152,7 +154,8 @@ open class KimiProvider(
             )
         jsonObject.put("messages", messagesArray)
 
-        logRequestBodyForDebugging("KimiProvider", "Final Kimi K2.5 request body: ") {
+        logRequestBodyForDebugging("ReasoningChatProvider",
+            "Request body [provider=$requestProviderType, model=$modelName, host=$requestEndpointHost]: ") {
             requestBodyForLogging(jsonObject)
         }
 
@@ -245,7 +248,7 @@ open class KimiProvider(
             }
 
             AppLogger.w(
-                "KimiProvider",
+                "ReasoningChatProvider",
                 "发现未匹配的tool_calls，按工具结果未匹配处理: count=${openToolCalls.size}, reason=$reason"
             )
             for (openToolCall in openToolCalls) {
@@ -383,7 +386,7 @@ open class KimiProvider(
 
                                 if (matchedCalls.size < resultsList.size) {
                                     AppLogger.w(
-                                        "KimiProvider",
+                                        "ReasoningChatProvider",
                                         "发现未匹配的tool_result: ${resultsList.size - matchedCalls.size}"
                                     )
                                 }
