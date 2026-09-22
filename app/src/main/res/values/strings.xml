@@ -4161,6 +4161,12 @@
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (多模型聚合)</string>
     <string name="provider_opencode_go">OpenCode Go</string>
+    <string name="provider_opencode_zen_free">OpenCode Zen 免费（数据可能用于训练）</string>
+    <string name="provider_opencode_zen_free_warning">免费模型的提问、附件和回复可能被用于训练或改进模型，请勿发送敏感信息。Zen API Key 可以留空，但免登录请求可能被服务端拒绝；填写自己的 Key 更可靠。此提供商只允许使用免费模型。</string>
+    <string name="provider_opencode_zen_free_endpoint_fixed">固定使用 OpenCode Zen 官方地址</string>
+    <string name="provider_opencode_zen_free_key_optional">可选：留空尝试匿名免费额度，也可填写自己的 Zen API Key</string>
+    <string name="provider_opencode_zen_free_model_required">此提供商只允许使用 OpenCode Zen 免费模型，请从模型列表中选择。</string>
+    <string name="provider_opencode_zen_free_anonymous_denied">Zen 匿名访问被服务端拒绝。请填写自己的 Zen API Key 后重试。</string>
     <string name="provider_opencode_go_protocol_hint">OpenCode Go 的模型使用不同接口。“自动配置协议”使用本地目录，需要更新时请手动刷新目录，也可逐个手动设置。</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>

@@ -56,9 +56,10 @@ fun AdvancedSettingsSection(
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
-    val isCodexProvider =
+    val hideApiKeyPool =
         ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) in setOf(
-            ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY)
+            ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE,
+            ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.OPENCODE_ZEN_FREE)
 
     var useApiKeyPool by remember(config.id) { mutableStateOf(config.useMultipleApiKeys) }
     var apiKeyPool by remember(config.id) { mutableStateOf(config.apiKeyPool) }
@@ -338,7 +339,7 @@ fun AdvancedSettingsSection(
                 }
             }
 
-            if (!isCodexProvider) {
+            if (!hideApiKeyPool) {
                 // API Key Pool Toggle
                 Row(
                 modifier = Modifier

@@ -8,7 +8,11 @@ class ModelProtocolCatalogTest {
         {
           "opencode": {
             "api":"https://opencode.ai/zen/v1", "npm":"@ai-sdk/openai-compatible",
-            "models":{"same":{"provider":{"npm":"@ai-sdk/openai"}}}
+            "models":{
+              "same":{"provider":{"npm":"@ai-sdk/openai"}},
+              "muse-spark-1.3-contributor-free":{"provider":{"npm":"@ai-sdk/openai"}},
+              "mimo-v2.5-free":{}
+            }
           },
           "opencode-go": {
             "api":"https://opencode.ai/zen/go/v1", "npm":"@ai-sdk/openai-compatible",
@@ -59,5 +63,15 @@ class ModelProtocolCatalogTest {
         assertTrue(catalog.matchAll("https://unknown.example/v1", listOf("same")).isEmpty())
         assertTrue(catalog.matchAll("https://opencode.ai/zen/go/v10", listOf("same")).isEmpty())
         assertTrue(catalog.matchAll("https://opencode.ai.example/zen/go/v1", listOf("same")).isEmpty())
+    }
+
+    @Test
+    fun zenFreeModelsUseTheirOwnDirectoryProtocol() {
+        val matched = catalog.matchAll(
+            "https://opencode.ai/zen/v1/chat/completions",
+            listOf("muse-spark-1.3-contributor-free", "mimo-v2.5-free"),
+        )
+        assertEquals(ModelProtocol.RESPONSES, matched["muse-spark-1.3-contributor-free"]?.protocol)
+        assertEquals(ModelProtocol.CHAT_COMPLETIONS, matched["mimo-v2.5-free"]?.protocol)
     }
 }
