@@ -602,6 +602,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     suspend fun deleteMemorySpace(memorySpaceId: String) {
         if (memorySpaceId == DEFAULT_PROFILE_ID) return
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.deleteSpace(context,memorySpaceId)
         val wasActive = activeMemorySpaceIdFlow.first() == memorySpaceId
         val characterCardManager = CharacterCardManager.getInstance(context)
         characterCardManager.getAllCharacterCards()

@@ -315,6 +315,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         memoryAutoSaveScheduler = MemoryAutoSaveScheduler(applicationContext, applicationScope)
             .also { it.start() }
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.resumePending(applicationContext)
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
 
         // 初始化功能提示词管理器

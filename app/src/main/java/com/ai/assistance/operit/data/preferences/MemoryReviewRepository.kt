@@ -64,10 +64,12 @@ data class MemoryReviewChange(
 
 class MemoryReviewRepository internal constructor(
     private val root: File, val profileId: String,
-    private val autoApprovalEnabled: () -> Boolean = { false }
+    private val autoApprovalEnabled: () -> Boolean = { false },
+    private val staged: MutableList<MemoryReviewChange>? = null
 ) {
-    constructor(context: Context, profileId: String) : this(File(context.filesDir, "memory_reviews"), profileId,
-        { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() })
+    constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null) :
+        this(File(context.filesDir, "memory_reviews"), profileId,
+        { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged)
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
@@ -112,10 +114,17 @@ class MemoryReviewRepository internal constructor(
     }
     /** Only AI proposal call sites use this; manual edits and old pending items are not swept. */
     suspend fun applyAutomaticDecision(context: Context, change: MemoryReviewChange): MemoryReviewChange {
+        if (staged != null) return change.copy(status = "staged")
         if (!MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges()) return change
         return decide(context, change.id, true, "automatic", "Auto-approval enabled for this memory space")
     }
     suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
+        staged?.let { pending ->
+            require(pending.none { it.kind == change.kind && it.title == change.title && it.path == change.path }) {
+                "This batch already has a final proposal for this target. Finish the batch before further changes."
+            }
+            return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
+        }
         mutex.withLock {
             val items = read().toMutableList()
             items.find { it.status in setOf("pending", "applying") &&
@@ -134,6 +143,28 @@ class MemoryReviewRepository internal constructor(
             created
         }
     }
+
+    /** Replay of an atomically completed learning batch preserves IDs, including decided items. */
+    internal suspend fun importCompletedBatch(changes: List<MemoryReviewChange>) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val items = read().toMutableList()
+            val ids = items.mapTo(mutableSetOf()) { it.id }
+            val additions = changes.filter { ids.add(it.id) }
+            require(items.count { it.status in setOf("pending","applying") } + additions.size <= 30 ||
+                autoApprovalEnabled()) { "Pending review limit reached; review existing proposals before continuing" }
+            items.addAll(additions)
+            write(items)
+        }
+    }
+
+    internal fun fromJson(obj: JSONObject) = MemoryReviewChange(
+        id=obj.getString("id"), kind=obj.getString("kind"), title=obj.getString("title"),
+        body=obj.getString("body"), description=obj.optString("description"), before=obj.optString("before"),
+        baseVersion=obj.optString("baseVersion"), addition=obj.optString("addition"),
+        sourceChatId=obj.optString("sourceChatId"), createdAt=obj.getLong("createdAt"),
+        path=obj.optString("path","SKILL.md"), operation=obj.optString("operation","write"),
+        automatic=obj.optBoolean("automatic")
+    )
 
     suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {}): MemoryReviewChange = propose(MemoryReviewChange(
         id = hash("skill:${draft.name}:${draft.description}:${draft.body}"),

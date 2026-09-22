@@ -107,6 +107,7 @@
     <string name="memory_extraction_graph">旧记忆图谱</string>
     <string name="memory_extraction_skills">技能库</string>
     <string name="memory_extraction_success">提取完成</string>
+    <string name="memory_extraction_batch_complete">本段已提取，还有内容待处理</string>
     <string name="memory_extraction_failed">提取失败</string>
     <string name="memory_extraction_cancelled">提取已取消</string>
     <string name="memory_extraction_running">已开始，尚无结束记录</string>
