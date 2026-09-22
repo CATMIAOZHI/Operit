@@ -2543,7 +2543,7 @@ private fun UnboundWorkspaceCard(
             },
             title = { Text(confirmDeleteText) },
             text = { 
-                Text(stringResource(R.string.delete_workspaces_confirmation, selectedWorkspaces.size)) 
+                Text(stringResource(R.string.delete_workspaces_confirmation, selectedWorkspaces.size))
             },
             confirmButton = {
                 TextButton(

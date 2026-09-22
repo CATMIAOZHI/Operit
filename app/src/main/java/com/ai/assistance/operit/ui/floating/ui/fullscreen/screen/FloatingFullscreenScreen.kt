@@ -166,7 +166,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
     val speechServiceProfiles = remember { SpeechServiceProfilesPreferences(context) }
     val currentTtsProfile by speechServiceProfiles.currentTtsProfileOrNullFlow.collectAsState(initial = null)
     val ttsCleanerRegexs = currentTtsProfile?.cleanerRegexs
-    
+
     val wakePrefs = remember { WakeWordPreferences(context.applicationContext) }
     val autoNewChatGroup by wakePrefs.autoNewChatGroupFlow.collectAsState(
         initial = WakeWordPreferences.DEFAULT_AUTO_NEW_CHAT_GROUP
