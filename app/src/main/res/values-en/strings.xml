@@ -8892,7 +8892,8 @@
     <string name="codex_auth_not_logged_in">Sign in with ChatGPT to use Codex subscription access</string>
     <string name="codex_auth_account">Account: %1$s</string>
     <string name="codex_endpoint_fixed">The Codex endpoint is fixed by the system</string>
-    <string name="codex_model_directory_hint">Models come from the local directory, or the bundled Codex list when OpenAI is absent. Availability depends on the signed-in account.</string>
+    <string name="codex_model_directory_hint">Shows models available to the signed-in account. If loading fails, open the model list to retry.</string>
+    <string name="codex_model_catalog_refresh_failed">Signed in, but failed to load models: %1$s</string>
     <string name="codex_plan">Plan: %1$s</string>
     <string name="codex_direct_media_processing">Direct image/PDF input</string>
     <string name="codex_direct_media_processing_desc">Send images and PDFs directly to Codex</string>

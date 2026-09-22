@@ -154,6 +154,7 @@ fun ModelApiSettingsSection(
     var previousProviderTypeId by remember(config.id) { mutableStateOf(config.apiProviderTypeId) }
     val selectedApiProvider = ApiProviderType.fromProviderTypeId(selectedProviderTypeId)
     val isCodexProvider = selectedApiProvider == ApiProviderType.OPENAI_CODEX
+    val currentModelSelection by rememberUpdatedState(config.id to selectedProviderTypeId)
     val browserAccountType = AccountProvider.from(selectedApiProvider)
     val browserAccountManager = remember(browserAccountType) {
         browserAccountType?.let { ProviderAccountManager.get(context, it) }
@@ -522,11 +523,26 @@ fun ModelApiSettingsSection(
     }
 
     // 模型列表状态
-    var isLoadingModels by remember { mutableStateOf(false) }
-    var showModelsDialog by remember { mutableStateOf(false) }
-    var modelsList by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
-    var modelLoadError by remember { mutableStateOf<String?>(null) }
+    var isLoadingModels by remember(config.id, selectedProviderTypeId) { mutableStateOf(false) }
+    var showModelsDialog by remember(config.id, selectedProviderTypeId) { mutableStateOf(false) }
+    var modelsList by remember(config.id, selectedProviderTypeId) {
+        mutableStateOf<List<ModelOption>>(emptyList())
+    }
+    var modelLoadError by remember(config.id, selectedProviderTypeId) { mutableStateOf<String?>(null) }
+    var modelFetchGeneration by remember(config.id) { mutableIntStateOf(0) }
     var showEndpointDialog by remember(config.id) { mutableStateOf(false) }
+    LaunchedEffect(config.id, selectedProviderTypeId) {
+        modelFetchGeneration++
+    }
+    fun isCurrentModelRequest(
+        selection: Pair<String, String>,
+        generation: Int,
+        codexAccountId: String?,
+        wasCodexProvider: Boolean,
+    ): Boolean =
+        selection == currentModelSelection &&
+            generation == modelFetchGeneration &&
+            (!wasCodexProvider || codexAccountId == codexAuthManager.currentAccountId())
 
     // 检查是否未填写API密钥（仅用于UI显示）
     val isUsingDefaultApiKey = apiKeyInput.isBlank()
@@ -824,10 +840,15 @@ fun ModelApiSettingsSection(
                      usageError = codexUsageError,
                      usageNowEpochSeconds = codexUsageNow,
                      onLogin = { showCodexLoginDialog = true },
-                     onRefreshUsage = ::refreshCodexUsage,
-                     onLogout = {
-                         scope.launch {
-                             codexAuthManager.logout()
+                      onRefreshUsage = ::refreshCodexUsage,
+                      onLogout = {
+                          scope.launch {
+                              modelFetchGeneration++
+                              isLoadingModels = false
+                              codexAuthManager.logout()
+                             modelsList = emptyList()
+                             showModelsDialog = false
+                             modelLoadError = null
                              codexUsageError = false
                              EnhancedAIService.refreshAllServices(configManager.appContext)
                              showNotification(codexLogoutSuccessText)
@@ -1001,6 +1022,11 @@ fun ModelApiSettingsSection(
                             
                             showNotification(gettingModelsText)
 
+                            val requestSelection = config.id to selectedProviderTypeId
+                            val requestGeneration = ++modelFetchGeneration
+                            val wasCodexProvider = isCodexProvider
+                            val requestAccountId =
+                                if (wasCodexProvider) codexAuthManager.currentAccountId() else null
                             scope.launch {
                                 if (canRequestModelList) {
                                     isLoadingModels = true
@@ -1012,6 +1038,13 @@ fun ModelApiSettingsSection(
 
                                     try {
                                         val result = fetchAvailableModels()
+                                        if (!isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) return@launch
                                         if (result.isSuccess) {
                                             val models = result.getOrThrow()
                                             AppLogger.d(TAG, "模型列表获取成功，共 ${models.size} 个模型")
@@ -1026,11 +1059,24 @@ fun ModelApiSettingsSection(
                                             showNotification(modelLoadError ?: getModelsFailedText.format(""))
                                         }
                                     } catch (e: Exception) {
+                                        if (!isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) return@launch
                                         AppLogger.e(TAG, "获取模型列表发生异常", e)
                                         modelLoadError = getModelsFailedText.format(e.message ?: "")
                                         showNotification(modelLoadError ?: getModelsFailedText.format(""))
                                     } finally {
-                                        isLoadingModels = false
+                                        if (isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) isLoadingModels = false
                                         AppLogger.d(TAG, "模型列表获取流程完成")
                                     }
                                 } else if (!isToolPkgProvider && isUsingDefaultApiKey && providerRequiresApiKey) {
@@ -1447,11 +1493,47 @@ fun ModelApiSettingsSection(
     if (showCodexLoginDialog) {
         CodexLoginDialog(
             onDismissRequest = { showCodexLoginDialog = false },
-            onLoginSuccess = {
+            onLoginSuccess = { state ->
                 showCodexLoginDialog = false
+                val requestSelection = config.id to selectedProviderTypeId
+                val requestGeneration = ++modelFetchGeneration
                 scope.launch {
                     EnhancedAIService.refreshAllServices(configManager.appContext)
                     showNotification(codexLoginSuccessText)
+                    isLoadingModels = true
+                    modelLoadError = null
+                    try {
+                        val result = CodexModelListFetcher.getModelsList(context)
+                        if (isCurrentModelRequest(
+                                requestSelection,
+                                requestGeneration,
+                                state.accountId,
+                                wasCodexProvider = true,
+                            )
+                        ) {
+                            result.fold(
+                                onSuccess = {
+                                    modelsList = it
+                                    showModelsDialog = true
+                                },
+                                onFailure = {
+                                    modelLoadError = context.getString(
+                                        R.string.codex_model_catalog_refresh_failed,
+                                        it.message.orEmpty(),
+                                    )
+                                    showNotification(requireNotNull(modelLoadError))
+                                },
+                            )
+                        }
+                    } finally {
+                        if (isCurrentModelRequest(
+                                requestSelection,
+                                requestGeneration,
+                                state.accountId,
+                                wasCodexProvider = true,
+                            )
+                        ) isLoadingModels = false
+                    }
                 }
             },
         )
@@ -1500,11 +1582,23 @@ fun ModelApiSettingsSection(
 
                         FilledIconButton(
                                 onClick = {
+                                    val requestSelection = config.id to selectedProviderTypeId
+                                    val requestGeneration = ++modelFetchGeneration
+                                    val wasCodexProvider = isCodexProvider
+                                    val requestAccountId =
+                                        if (wasCodexProvider) codexAuthManager.currentAccountId() else null
                                     scope.launch {
                                         if (canRequestModelList) {
                                             isLoadingModels = true
                                             try {
                                                 val result = fetchAvailableModels()
+                                                if (!isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) return@launch
                                                 if (result.isSuccess) {
                                                     modelsList = result.getOrThrow()
                                                 } else {
@@ -1513,11 +1607,24 @@ fun ModelApiSettingsSection(
                                                     showNotification(modelLoadError ?: refreshModelsFailedText)
                                                 }
                                             } catch (e: Exception) {
+                                                if (!isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) return@launch
                                                 val errorMsg = e.message ?: refreshUnknownErrorText
                                                 modelLoadError = refreshModelsListFailedText.format(errorMsg)
                                                 showNotification(modelLoadError ?: refreshModelsFailedText)
                                             } finally {
-                                                isLoadingModels = false
+                                                if (isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) isLoadingModels = false
                                             }
                                         }
                                     }

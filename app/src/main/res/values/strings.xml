@@ -8867,7 +8867,8 @@
     <string name="codex_auth_not_logged_in">登录 ChatGPT 后使用 Codex 订阅额度</string>
     <string name="codex_auth_account">账号：%1$s</string>
     <string name="codex_endpoint_fixed">Codex endpoint 由系统固定</string>
-    <string name="codex_model_directory_hint">模型列表使用本地目录；目录未包含 OpenAI 时使用内置 Codex 列表。实际可用模型以登录账号为准。</string>
+    <string name="codex_model_directory_hint">登录后显示当前账号可用的模型；获取失败时可点模型列表重试。</string>
+    <string name="codex_model_catalog_refresh_failed">登录成功，但获取模型列表失败：%1$s</string>
     <string name="codex_plan">套餐：%1$s</string>
     <string name="codex_direct_media_processing">图片/PDF 直传</string>
     <string name="codex_direct_media_processing_desc">将图片和 PDF 直接发送给 Codex 处理</string>
