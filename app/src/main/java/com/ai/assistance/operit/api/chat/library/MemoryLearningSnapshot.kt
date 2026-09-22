@@ -8,7 +8,7 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 /** Detached, bounded evidence: never rewrites the foreground transcript or its cached prefix. */
 internal object MemoryLearningSnapshot {
     data class Snapshot(val text: String, val contextWindow: Int)
-    suspend fun build(context: Context, messages: List<Pair<String, String>>, instructionBytes: Int): Snapshot {
+    suspend fun build(context: Context, messages: List<Pair<String, String>>, instructionBytes: Int, includeThinking: Boolean = false): Snapshot {
         val config = EnhancedAIService.getModelConfigForFunction(context, FunctionType.MEMORY)
         val length = if (config.enableMaxContextMode) config.maxContextLength else config.contextLength
         var window = if (length.isFinite() && length > 0) (length.toDouble() * 1000).coerceAtMost(2_000_000.0).toInt() else 8192
@@ -20,17 +20,17 @@ internal object MemoryLearningSnapshot {
         // tools and responses. A character limit alone badly underestimates Chinese and code.
         val sourceBudget = sourceBudget(window, instructionBytes)
         require(sourceBudget >= 256) { "Memory review instructions leave insufficient context for source evidence" }
-        return Snapshot(digest(messages, sourceBudget), window)
+        return Snapshot(digest(messages, sourceBudget, includeThinking), window)
     }
 
     internal fun sourceBudget(window: Int, instructionBytes: Int): Int =
         minOf(24_000, window / 3, (window * 0.75).toInt() - instructionBytes).coerceAtLeast(0)
 
-    fun digest(messages: List<Pair<String, String>>, byteBudget: Int): String {
+    fun digest(messages: List<Pair<String, String>>, byteBudget: Int, includeThinking: Boolean = false): String {
         val header = "[Bounded evidence excerpts; omissions are not evidence of absence. Use history for details.]\n"
         val available = (byteBudget - header.toByteArray(Charsets.UTF_8).size).coerceAtLeast(0)
         // Strip before truncation: a page/excerpt starting inside a think block has no opening tag.
-        val visible = messages.map { (role, text) -> role to memoryEvidenceText(role, text) }
+        val visible = messages.map { (role, text) -> role to memoryEvidenceText(role, text, includeThinking) }
             .filter { it.second.isNotBlank() }
         val summaries = visible.filter { it.first == "SUMMARY" }
         val other = visible.filter { it.first != "SUMMARY" }

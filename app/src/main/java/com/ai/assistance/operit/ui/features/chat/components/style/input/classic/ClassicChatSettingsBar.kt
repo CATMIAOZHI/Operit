@@ -563,20 +563,6 @@ fun ClassicChatSettingsBar(
                                     showMenu = false
                                 }
                             )
-                            ActionSettingItem(
-                                title = stringResource(R.string.manual_memory_update),
-                                icon = Icons.Outlined.Save,
-                                iconTint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                onClick = {
-                                    onManualMemoryUpdate()
-                                    showMenu = false
-                                },
-                                onInfoClick = {
-                                    infoPopupContent =
-                                        context.getString(R.string.manual_memory_update) to context.getString(R.string.manual_memory_update_desc)
-                                    showMenu = false
-                                }
-                            )
                             SettingItem(
                                 title = stringResource(R.string.disable_user_preference_description),
                                 icon =
