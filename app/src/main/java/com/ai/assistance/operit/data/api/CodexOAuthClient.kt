@@ -45,6 +45,7 @@ object CodexOAuthProtocol {
     const val CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
     const val ISSUER = "https://auth.openai.com"
     const val CODEX_RESPONSES_ENDPOINT = "https://chatgpt.com/backend-api/codex/responses"
+    const val CODEX_MODELS_ENDPOINT = "https://chatgpt.com/backend-api/codex/models"
     const val CODEX_USAGE_ENDPOINT = "https://chatgpt.com/backend-api/wham/usage"
     const val MODEL_CATALOG_ENDPOINT = "https://models.opencode.ai/api.json"
     const val PRIMARY_CALLBACK_PORT = 1455
