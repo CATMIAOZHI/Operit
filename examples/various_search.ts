@@ -582,174 +582,21 @@ const various_search = (function () {
     return candidates[0] || "";
   }
 
-  function scoreStructuralCandidate(text: string, url: string, sourceUrl: string, relativeIndex: number): number {
-    let score = 0;
-    if (!text || looksLikeUiText(text)) {
-      score -= 6;
-    } else {
-      score += 2;
-    }
-    const type = classifyLinkTarget(url, sourceUrl);
-    if (type === "external") {
-      score += 5;
-    } else if (type === "wrapper") {
-      score += 4;
-    } else if (type === "landing" || type === "internal") {
-      score -= 8;
-    } else {
-      score -= 4;
-    }
-    score -= relativeIndex * 0.15;
-    return score;
-  }
-
-  function findResultBlockStart(links: any[], sourceUrl: string, scanLimit: number = 48, windowSize: number = 6, minCandidates: number = 3): number {
-    const upperBound = Math.min(links.length, scanLimit);
-    for (let start = 0; start < upperBound; start++) {
-      let candidateCount = 0;
-      const hosts: string[] = [];
-      for (let offset = 0; offset < windowSize && start + offset < upperBound; offset++) {
-        const link = links[start + offset];
-        const text = getLinkText(link);
-        const url = pickBestLinkUrl(link, sourceUrl);
-        if (!text || looksLikeUiText(text)) {
-          continue;
-        }
-        const type = classifyLinkTarget(url, sourceUrl);
-        if (type !== "external" && type !== "wrapper") {
-          continue;
-        }
-        candidateCount++;
-        const parsed = parseUrlParts(url, sourceUrl);
-        const host = parsed ? parsed.hostname : "";
-        if (host && !hosts.includes(host)) {
-          hosts.push(host);
-        }
-      }
-      if (candidateCount >= minCandidates && hosts.length >= 2) {
-        return start;
-      }
-    }
-    return 0;
-  }
-
-  function isClusteredResultLink(links: any[], sourceUrl: string, targetIndex: number, radius: number = 3, minCandidates: number = 3): boolean {
-    let candidateCount = 0;
-    const hosts: string[] = [];
-    const start = Math.max(0, targetIndex - radius);
-    const end = Math.min(links.length - 1, targetIndex + radius);
-    for (let index = start; index <= end; index++) {
-      const link = links[index];
-      const text = getLinkText(link);
-      const url = pickBestLinkUrl(link, sourceUrl);
-      if (!text || looksLikeUiText(text)) {
-        continue;
-      }
-      const type = classifyLinkTarget(url, sourceUrl);
-      if (type !== "external" && type !== "wrapper") {
-        continue;
-      }
-      candidateCount++;
-      const parsed = parseUrlParts(url, sourceUrl);
-      const host = parsed ? parsed.hostname : "";
-      if (host && !hosts.includes(host)) {
-        hosts.push(host);
-      }
-    }
-    return candidateCount >= minCandidates && hosts.length >= 2;
-  }
-
-  function buildProbeIndexes(links: any[], sourceUrl: string, maxCount: number = 8, probeWindow: number = 24): number[] {
-    const resultStart = findResultBlockStart(links, sourceUrl);
-    return links
-      .slice(resultStart, resultStart + probeWindow)
-      .map((link, relativeIndex) => {
-        const index = resultStart + relativeIndex;
-        const text = getLinkText(link);
-        const url = pickBestLinkUrl(link, sourceUrl);
-        return {
-          index,
-          score: scoreStructuralCandidate(text, url, sourceUrl, relativeIndex)
-        };
-      })
-      .filter((item) => item.score > -4 && isClusteredResultLink(links, sourceUrl, item.index))
-      .slice(0, maxCount)
-      .map((item) => item.index);
-  }
-
-  async function resolveLinkUrlsByVisitKey(
-    response: any,
-    sourceUrl: string,
-    maxCount: number = 8
-  ): Promise<Record<number, { url: string }>> {
-    if (!response || !response.visitKey || !response.links || !Array.isArray(response.links)) {
-      return {};
-    }
-    const resolved: Record<number, { url: string }> = {};
-    const indexes = buildProbeIndexes(response.links, sourceUrl, maxCount);
-    const tasks = indexes.map(async (index) => {
-      try {
-        const follow = await Tools.Net.visit({
-          visit_key: response.visitKey,
-          link_number: index + 1
-        });
-        const followUrl = follow && follow.url ? normalizeUrl(String(follow.url), sourceUrl) : "";
-        const followContent = follow && follow.content ? String(follow.content) : "";
-        const contentUrl = extractBestUrlFromText(followContent, sourceUrl);
-        resolved[index] = {
-          url: chooseBestUrl("", followUrl, sourceUrl) || chooseBestUrl("", contentUrl, sourceUrl)
-        };
-      } catch (error: any) {
-        console.error(`[resolveLinkUrlsByVisitKey] link ${index + 1} failed: ${error.message}`);
-        resolved[index] = { url: "" };
-      }
-    });
-    await Promise.all(tasks);
-    return resolved;
-  }
-
-  function chooseBestUrl(directUrl: string, resolvedUrl: string, sourceUrl: string): string {
-    const candidates = [resolvedUrl, directUrl].filter(Boolean);
-    for (const candidate of candidates) {
-      if (classifyLinkTarget(candidate, sourceUrl) === "external") {
-        return normalizeUrl(candidate, sourceUrl);
-      }
-    }
-    return "";
-  }
-
-  function shouldKeepLink(links: any[], index: number, text: string, url: string, sourceUrl: string): boolean {
-    if (!url) return false;
-    if (!text || looksLikeUiText(text)) return false;
-    if (classifyLinkTarget(url, sourceUrl) !== "external") {
-      return false;
-    }
-    return isClusteredResultLink(links, sourceUrl, index);
-  }
-
-  async function buildLinkLines(response: any, sourceUrl: string, maxItems: number = 20): Promise<string[]> {
-    const resultStart = findResultBlockStart(response.links, sourceUrl);
-    const resolvedByIndex = await resolveLinkUrlsByVisitKey(response, sourceUrl);
+  function buildLinkLines(response: any, sourceUrl: string, maxItems: number = 20): string[] {
     const lines: string[] = [];
     const seen = new Set<string>();
-    for (let index = resultStart; index < response.links.length; index++) {
+    for (let index = 0; index < response.links.length; index++) {
       const link = response.links[index];
       const text = getLinkText(link);
-      const directUrl = pickBestLinkUrl(link, sourceUrl);
-      const resolved = resolvedByIndex[index];
-      const bestUrl = chooseBestUrl(directUrl, resolved && resolved.url ? resolved.url : "", sourceUrl);
-      if (!shouldKeepLink(response.links, index, text, bestUrl, sourceUrl)) {
-        continue;
-      }
-      const key = toComparableUrl(bestUrl);
-      if (!key || seen.has(key)) {
-        continue;
-      }
+      const url = pickBestLinkUrl(link, sourceUrl);
+      const type = classifyLinkTarget(url, sourceUrl);
+      if (!text || looksLikeUiText(text) || (type !== "external" && type !== "wrapper")) continue;
+      const key = toComparableUrl(url);
+      if (!key || seen.has(key)) continue;
       seen.add(key);
-      lines.push(`[${index + 1}] ${text} - ${bestUrl}`);
-      if (lines.length >= maxItems) {
-        break;
-      }
+      // Keep the original cached index. Redirect wrappers can be followed on demand.
+      lines.push(`[${index + 1}] ${text} - ${url}`);
+      if (lines.length >= maxItems) break;
     }
     return lines;
   }
@@ -762,15 +609,13 @@ const various_search = (function () {
       }
 
       let parts: string[] = [];
-      let hasFilteredLinks = false;
       if (response.visitKey !== undefined) {
         parts.push(String(response.visitKey));
       }
       if (includeLinks && response.links && Array.isArray(response.links) && response.links.length > 0) {
-        const linksLines = await buildLinkLines(response, url);
+        const linksLines = buildLinkLines(response, url);
         if (linksLines.length > 0) {
           parts.push(linksLines.join('\n'));
-          hasFilteredLinks = true;
         }
       } else if (includeLinks && response.content) {
         const extractedUrls = extractUrlsFromText(response.content);
@@ -779,7 +624,7 @@ const various_search = (function () {
           parts.push(lines.join('\n'));
         }
       }
-      if (response.content !== undefined && (!includeLinks || !hasFilteredLinks)) {
+      if (response.content !== undefined) {
         const contentText = includeLinks && response.links && Array.isArray(response.links)
           ? stripLeadingLinkDump(response.content)
           : String(response.content);
@@ -918,7 +763,7 @@ const various_search = (function () {
     quark: search_quark
   };
 
-  async function combined_search(query: string, platforms: string, includeLinks: boolean = true) {
+  async function combined_search(query: string, platforms: string, includeLinks: boolean = false) {
     const platformKeysRaw = platforms.split(',');
     const platformKeys: string[] = [];
     for (const platform of platformKeysRaw) {
