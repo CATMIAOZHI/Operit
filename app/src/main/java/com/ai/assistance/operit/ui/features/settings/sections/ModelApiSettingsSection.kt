@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.input.VisualTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.EndpointCompleter
@@ -116,6 +117,7 @@ fun ModelApiSettingsSection(
         navigateToMnnModelDownload: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val codexLogoutSuccessText = stringResource(R.string.codex_logout_success)
     val codexLoginSuccessText = stringResource(R.string.codex_login_success)
@@ -1581,7 +1583,7 @@ fun ModelApiSettingsSection(
                                     showModelsDialog = true
                                 },
                                 onFailure = {
-                                    modelLoadError = context.getString(
+                                    modelLoadError = resources.getString(
                                         R.string.codex_model_catalog_refresh_failed,
                                         it.message.orEmpty(),
                                     )

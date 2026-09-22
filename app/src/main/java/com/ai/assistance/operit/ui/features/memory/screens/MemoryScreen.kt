@@ -3,7 +3,6 @@ package com.ai.assistance.operit.ui.features.memory.screens
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.layout.BoxWithConstraints
 
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -379,7 +378,7 @@ private fun MemoryGraphPage(activeProfileId: String) {
             }
         }
     ) { padding ->
-        BoxWithConstraints(
+        Box(
             modifier = Modifier
                 .padding(padding)
                 .fillMaxSize()
