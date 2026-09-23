@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.library
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
 import com.ai.assistance.operit.core.agent.*
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.data.db.AppDatabase
@@ -68,12 +69,19 @@ object MemoryLearningCoordinator {
                 failures.add(reason)
                 error(reason)
             }
-            check(requests.incrementAndGet()<=12) { "Learning round limit reached" }
+            if (requests.incrementAndGet()>LEARNING_ROUND_LIMIT) {
+                // Recorded like the context-budget stop so the extraction log says why the batch ended
+                // instead of only reporting a bare limit message. The source range stays pending.
+                val reason = "Learning round limit reached; the batch was discarded and its source will be reviewed again"
+                failures.add(reason)
+                error(reason)
+            }
             recordModelRound()
         }
         override suspend fun beforeToolBatch(tools: List<AITool>) {
             check(tools.all { it.name in capabilityTools })
         }
+        fun roundNotice(): String? = learningRoundNotice(LEARNING_ROUND_LIMIT - requests.get())
     }
     fun foregroundStarted(chatId: String?) {
         chatId?.let { id ->
@@ -262,7 +270,7 @@ object MemoryLearningCoordinator {
                 val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH)
                 // Conservative byte accounting bounds repeated history/skill reads as well as SOURCE.
                 // Leave room for the scoped tool schema, model output and protocol overhead.
-                session.evidenceBudget = (contextWindow * 0.75).toLong()
+                session.evidenceBudget = MemoryLearningSnapshot.evidenceBudget(contextWindow).toLong()
                 session.evidenceBytes.set((batch.text + instructions).toByteArray(Charsets.UTF_8).size.toLong())
                 val result = SubagentCoordinator.getInstance(context).runTask(SubagentTaskRequest(
                     parentChatId=chatId,parentToolCallId=null,parentAgentName=null,
@@ -270,6 +278,10 @@ object MemoryLearningCoordinator {
                     subagentType="memory-learning",functionType=FunctionType.MEMORY,
                     profileOverride=AgentProfile("memory-learning","Memory learning","",AgentMode.SUBAGENT,instructions,hidden=true),
                     isolatedToolPrompts=prompts(notes, skills),terminalToolNames=setOf(FINISH),
+                    // Every batch of one conversation asks under one identity so a provider that caches
+                    // prompt prefixes reuses what a sibling batch already warmed instead of paying a cold
+                    // prefix on each of them.
+                    providerSessionId=providerSessionIdForScope("memory_learning:$chatId"),
                     promptHooksEnabled=false,disableSummary=false,childHidden=true,
                     childHiddenReason="MEMORY_LEARNING",externalOwnerType="memory-learning",externalOwnerId=log.id,
                     onRunCreated={ run ->
@@ -316,7 +328,12 @@ object MemoryLearningCoordinator {
         return runBlocking(Dispatchers.IO + session.job + ToolExecutionManager.toolRuntimeContextElement(runtime)) {
         session.lock.withLock {
             currentCoroutineContext().ensureActive()
-            check(!session.finished && session.calls.incrementAndGet()<=40)
+            check(!session.finished) { "This review is already finished" }
+            if (session.calls.incrementAndGet()>LEARNING_TOOL_CALL_LIMIT) {
+                val reason = "Learning tool-call limit reached; the batch was discarded and its source will be reviewed again"
+                session.failures.add(reason)
+                error(reason)
+            }
             session.evidenceBytes.addAndGet(tool.parameters.sumOf {
                 it.value.toByteArray(Charsets.UTF_8).size.toLong()
             })
@@ -329,6 +346,7 @@ object MemoryLearningCoordinator {
                     val json = JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
                     val params = json.keys().asSequence().associateWith { json.get(it).toString() }
                     val result = session.actions.execute(args["action"].orEmpty(),params)
+                    session.roundNotice()?.let { result.put("notice",it) }
                     val resultText = result.toString()
                     session.evidenceBytes.addAndGet(resultText.toByteArray(Charsets.UTF_8).size.toLong())
                     ToolResult(toolName=tool.name,success=true,result=StringResultData(resultText))
@@ -336,7 +354,12 @@ object MemoryLearningCoordinator {
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) {
                 session.failures.add(learningFailureDetail(tool.parameters.find { it.name=="action" }?.value.orEmpty(),e))
-                ToolResult(toolName=tool.name,success=false,result=StringResultData(""),error=e.message.orEmpty())
+                // A run of rejected tool calls is exactly when the reviewer needs to know the budget is
+                // nearly gone, so the pacing hint rides on the error too.
+                val errorText = e.message.orEmpty().let { message ->
+                    session.roundNotice()?.let { message+" $it" } ?: message
+                }
+                ToolResult(toolName=tool.name,success=false,result=StringResultData(""),error=errorText)
             } finally { session.persistProgress() }
         }
         }
@@ -360,3 +383,15 @@ internal fun memoryLearningFinalStatus(error: Throwable?, proposals: Int, toolEr
 
 internal fun learningFailureDetail(action: String, error: Throwable): String =
     "$action: ${error.javaClass.simpleName}: ${error.message.orEmpty().take(500)}"
+
+/**
+ * Pacing hint attached to a tool result while a batch approaches its round limit. The batch is
+ * discarded when the limit is hit, so the reviewer is told to reserve a round to submit and confirm.
+ */
+internal fun learningRoundNotice(remainingRounds: Int, finish: String = MemoryLearningCoordinator.FINISH): String? = when {
+    // No rounds left means the next model request is refused, so finish is no longer reachable.
+    remainingRounds<=0 -> "No model rounds left; this batch is discarded and its source reviewed again."
+    remainingRounds<=2 -> "$remainingRounds model round${if (remainingRounds==1) "" else "s"} left: stop exploring, " +
+        "submit the best complete change you already have and call $finish; an unfinished batch is discarded."
+    else -> null
+}

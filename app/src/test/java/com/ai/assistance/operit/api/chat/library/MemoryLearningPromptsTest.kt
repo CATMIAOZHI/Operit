@@ -37,4 +37,11 @@ class MemoryLearningPromptsTest {
         assertTrue(tools.contains("skill_create"))
         assertTrue(tools.contains("history"))
     }
+
+    @Test fun `prompt states the batch budget and the wrap-up rule`() {
+        val instructions = buildMemoryLearningInstructions("chat", true, true, "finish")
+        assertTrue(instructions.contains("At most $LEARNING_ROUND_LIMIT model rounds and $LEARNING_TOOL_CALL_LIMIT tool calls."))
+        assertTrue(instructions.contains("Once within two rounds of that limit"))
+        assertTrue(instructions.contains("an unfinished batch is discarded and reviewed again later"))
+    }
 }

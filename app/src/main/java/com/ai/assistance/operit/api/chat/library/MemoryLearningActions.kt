@@ -28,11 +28,14 @@ class MemoryLearningActions(
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
-                val content = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
-                val version = LearnedSkillRepository.version(content)
+                val staged = stagedDocument(stagedChanges, user)
+                val content = staged?.body ?: disk
+                // The version stays the on-disk one so a revision inside the batch keeps passing its check.
+                val version = LearnedSkillRepository.version(disk)
                 readVersions[if(user) "user" else "memory"] = version
-                JSONObject().put("content",content).put("version",version).apply {
+                JSONObject().put("content",content).put("version",version).put("staged",staged!=null).apply {
                     if (user) {
                         val sections = UserProfileSections.parse(content)
                         put("sections", JSONObject().put("profile", sections.profile)
@@ -44,30 +47,31 @@ class MemoryLearningActions(
             "memory_change" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
-                val current = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val key = if(user) "user" else "memory"
                 val expected = if(background) readVersions[key] else arg("version")
-                check(expected==LearnedSkillRepository.version(current)) { "Read the current document before changing it" }
+                check(expected==LearnedSkillRepository.version(disk)) { "Read the current document before changing it" }
                 val operation = arg("operation")
                 val section = arg("section")
+                val base = stagedDocument(stagedChanges, user)?.body ?: disk
                 val after = if (user && section.isNotBlank()) {
-                    val sections = UserProfileSections.parse(current)
+                    val sections = UserProfileSections.parse(base)
                     sections.with(section, editText(sections.get(section), operation,
                         arg("content"), arg("old_text"))).markdown()
-                } else editText(current,operation,arg("content"),arg("old_text"))
+                } else editText(base,operation,arg("content"),arg("old_text"))
                 val change = if(user) {
                     require(after.length<=12_000)
-                    reviews.proposeUser(current,after,sourceChatId,onCreated)
+                    reviews.proposeUser(disk,after,sourceChatId,onCreated)
                 } else {
                     val repo = MemoryNotesRepository(context,profileId)
                     val before = repo.load()
-                    check(before.markdown==current)
+                    check(before.markdown==disk)
                     require(after.length<=MemoryNotesRepository.MAX_CHARS)
                     reviews.proposeNotes(before,after,if(operation=="add") arg("content") else "",sourceChatId,onCreated)
                 }
                 val applied = reviews.applyAutomaticDecision(context, change)
-                readVersions.remove(key)
+                if (stagedChanges==null) readVersions.remove(key)
                 reviews.toJson(applied)
             }
             "skill_list" -> {
@@ -82,10 +86,22 @@ class MemoryLearningActions(
             }
             "skill_read" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
+                val created = stagedSkillCreate(stagedChanges, name)
+                if (created != null) {
+                    // The batch's own draft is not installed yet, so it has no version and no files.
+                    check(path=="SKILL.md") {
+                        "This skill was created in this batch and is not installed yet, so it has no $path."
+                    }
+                    return JSONObject().put("content", created.body).put("version","")
+                        .put("exists",false).put("staged",true).put("files",JSONArray().put("SKILL.md"))
+                        .put("directory_version","")
+                }
                 val snapshot = skills.read(name,path)
                 readVersions["$name/$path"] = snapshot.version
-                JSONObject().put("content",snapshot.text).put("version",snapshot.version)
+                val staged = stagedSkillFile(stagedChanges,name,path)
+                JSONObject().put("content",staged?.body ?: snapshot.text).put("version",snapshot.version)
                     .put("exists",snapshot.exists).put("files",JSONArray(skills.files(name)))
+                    .put("staged",staged!=null)
                     .put("directory_version",skills.readDirectory(name).also { readVersions["$name/"] = it.version }.version)
             }
             "skill_create" -> {
@@ -107,6 +123,7 @@ class MemoryLearningActions(
             }
             "skill_delete" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
+                skillActionBlock(action,path,stagedSkillCreate(stagedChanges,name)!=null)?.let { error(it) }
                 if (background) check(name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
                     "Background deletion is limited to enabled learned skills in this space"
@@ -120,11 +137,13 @@ class MemoryLearningActions(
             }
             "skill_write","skill_patch","skill_remove_file" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
+                skillActionBlock(action,path,stagedSkillCreate(stagedChanges,name)!=null)?.let { error(it) }
                 val before = skills.read(name,path)
                 val expected = if(background) readVersions["$name/$path"] else arg("version")
                 check(expected==before.version) { "Read this file before editing it" }
                 val remove = action=="skill_remove_file"
-                val content = if(action=="skill_patch") editText(before.text,"replace",arg("content"),arg("old_text"))
+                // A revision patches the version this batch staged, not the untouched file on disk.
+                val content = if(action=="skill_patch") editText(stagedSkillFile(stagedChanges,name,path)?.body ?: before.text,"replace",arg("content"),arg("old_text"))
                     else arg("content")
                 val automatic = background && !remove && name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()
@@ -134,12 +153,34 @@ class MemoryLearningActions(
                 }
                 val change = reviews.proposeSkillFile(name,path,before,content,remove,automatic,sourceChatId,onCreated)
                 val applied = reviews.applyAutomaticDecision(context,change)
-                readVersions.remove("$name/$path")
+                if (stagedChanges==null) readVersions.remove("$name/$path")
                 reviews.toJson(applied)
             }
             else -> error("Unknown learning action")
         }
     }
+}
+
+/** What this batch staged for a skill file, so reads and revisions see it instead of the disk copy. */
+internal fun stagedSkillFile(changes: List<MemoryReviewChange>?, name: String, path: String) =
+    changes?.lastOrNull { it.kind == "skill_file" && it.title == name && it.path == path }
+/** A skill created earlier in this batch; it is not on disk yet, so it has no version or file list. */
+internal fun stagedSkillCreate(changes: List<MemoryReviewChange>?, name: String) =
+    changes?.lastOrNull { it.kind == "skill" && it.title == name }
+internal fun stagedDocument(changes: List<MemoryReviewChange>?, user: Boolean) =
+    changes?.lastOrNull { it.kind == if (user) "user" else "notes" }
+/**
+ * Null when a skill-file action may proceed, otherwise the message that tells the reviewer what to do
+ * instead. A skill that exists only as this batch's draft has no files on disk to read or change, and
+ * SKILL.md is never removable.
+ */
+internal fun skillActionBlock(action: String, path: String, drafted: Boolean): String? = when {
+    drafted -> "This skill was created in this batch and is not installed yet, so it has no files here; " +
+        "resubmit its full content with skill_create to revise it."
+    action=="skill_remove_file" && path=="SKILL.md" ->
+        "Pass path to remove one companion file under references/, scripts/, templates/ or assets/, " +
+            "or delete the whole skill with skill_delete."
+    else -> null
 }
 
 internal fun editText(current: String, operation: String, content: String, old: String): String = when(operation) {
