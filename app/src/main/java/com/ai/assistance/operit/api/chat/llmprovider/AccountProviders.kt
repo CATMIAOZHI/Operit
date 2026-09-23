@@ -31,6 +31,8 @@ internal object GrokAccountPolicy {
         "grok-4.5" -> listOf("low", "medium", "high")
         else -> emptyList()
     }
+    /** Null means this table has no mapping, so the user's chosen effort passes through. */
+    fun declaredEfforts(model: String): List<String>? = efforts(model).takeIf { it.isNotEmpty() }
     fun effort(model: String, requested: String): String? =
         if (!hasReasoning(model) || requested == "none") null
         else ThinkingRequestSemantics.catalogReasoningEffort(requested, efforts(model))
@@ -87,7 +89,7 @@ class GrokAccountProvider(
     apiEndpoint = ENDPOINT, apiKeyProvider = AccountApiKeyProvider(manager), modelName = model,
     client = client, customHeaders = customHeaders, providerType = ApiProviderType.GROK_ACCOUNT,
     supportsVision = vision, enableToolCall = tools, configureThinking = false,
-    reasoningEfforts = GrokAccountPolicy.efforts(model),
+    reasoningEfforts = GrokAccountPolicy.declaredEfforts(model),
 ) {
     private val fallbackSession = UUID.randomUUID().toString()
     override suspend fun applyAuthenticationHeaders(builder: Request.Builder, currentApiKey: String) {

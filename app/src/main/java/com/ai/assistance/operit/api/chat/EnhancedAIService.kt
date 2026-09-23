@@ -44,6 +44,7 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.forSelectedModel
+import com.ai.assistance.operit.data.model.protocolSettingsForModel
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.AITool
 import com.ai.assistance.operit.data.model.ConversationSummaryConfig
@@ -1299,6 +1300,9 @@ class EnhancedAIService private constructor(
                     val modelParameters = com.ai.assistance.operit.core.agent.collaboration.CollaborationModelParameters.apply(
                         modelSnapshot.modelParameters,
                         com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).reasoningEffort(chatId),
+                        modelSnapshot.config
+                            .protocolSettingsForModel(modelSnapshot.config.modelName)
+                            .reasoningEfforts,
                     )
                     val tAfterModelParams = messageTimingNow()
                     AppLogger.d(TAG, "sendMessage本地耗时: getModelParametersForFunction=${tAfterModelParams - tAfterPrepareHistory}ms")
@@ -2539,6 +2543,7 @@ class EnhancedAIService private constructor(
         val modelParameters = com.ai.assistance.operit.core.agent.collaboration.CollaborationModelParameters.apply(
             modelSnapshot.modelParameters,
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).reasoningEffort(chatId),
+            modelSnapshot.config.protocolSettingsForModel(modelSnapshot.config.modelName).reasoningEfforts,
         )
 
         // 获取对应功能类型的AIService实例

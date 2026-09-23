@@ -131,22 +131,32 @@ object ThinkingRequestSemantics {
         ) {
             return enabledRawTextParameter(modelParameters, "reasoning_effort")
                 ?.let(::textSummary)
-                ?: catalogReasoningEffort(
+                ?: declaredCatalogReasoningEffort(
                     if (enableThinking) ApiPreferences.thinkingQualityEffort(qualityLevel) else "none",
-                    runtime.protocolSettingsForModel(modelName).reasoningEfforts.orEmpty(),
+                    runtime.protocolSettingsForModel(modelName).reasoningEfforts,
                 )?.let(::textSummary)
                 ?: ThinkingRequestSummary.NotSent
         }
-        return resolve(
-            providerType = runtime.apiProviderType,
-            providerTypeId = runtime.apiProviderTypeId,
-            isToolPkgProvider = isToolPkgProvider,
-            configId = runtime.id,
-            apiEndpoint = runtime.apiEndpoint,
-            modelName = runtime.modelName,
-            qualityLevel = qualityLevel,
-            modelParameters = modelParameters,
-            enableThinking = enableThinking,
+        val summary =
+            resolve(
+                providerType = runtime.apiProviderType,
+                providerTypeId = runtime.apiProviderTypeId,
+                isToolPkgProvider = isToolPkgProvider,
+                configId = runtime.id,
+                apiEndpoint = runtime.apiEndpoint,
+                modelName = runtime.modelName,
+                qualityLevel = qualityLevel,
+                modelParameters = modelParameters,
+                enableThinking = enableThinking,
+            )
+        if (isToolPkgProvider || !supportsModelProtocolOverrides(config.apiProviderTypeId)) {
+            return summary
+        }
+        return declaredCatalogEffortSummary(
+            summary,
+            runtime.apiProviderType,
+            runtime.protocolSettingsForModel(modelName).reasoningEfforts,
+            modelParameters,
         )
     }
 
@@ -185,6 +195,7 @@ object ThinkingRequestSemantics {
                     ApiProviderType.OPENAI_LOCAL,
                     ApiProviderType.LMSTUDIO,
                     ApiProviderType.OLLAMA,
+                    ApiProviderType.OLLAMA_CLOUD,
                     ApiProviderType.MISTRAL,
                     ApiProviderType.FOUR_ROUTER,
                     ApiProviderType.BAIDU,
@@ -409,13 +420,66 @@ object ThinkingRequestSemantics {
     fun catalogReasoningEffort(preferred: String, supported: List<String>): String? {
         if (supported.isEmpty()) return preferred
         if (preferred == "none") return "none".takeIf { it in supported }
-        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max")
+        // "ultra" only arrives from explicit subagent requests and is a maximum ask, so it clamps
+        // to the highest declared level instead of being dropped.
+        val ordered = listOf("minimal", "low", "medium", "high", "xhigh", "max", "ultra")
         val available = ordered.filter { it in supported }
         if (available.isEmpty()) return preferred
         val requested = ordered.indexOf(preferred)
         if (requested < 0) return null
         return available.firstOrNull { ordered.indexOf(it) >= requested } ?: available.lastOrNull()
     }
+
+    /**
+     * Effort for a models.dev catalog entry, where the entry's own silence differs from a declared
+     * control surface: a null list means the entry never describes effort, so the caller's choice
+     * passes through; an empty list means the entry lists no effort values (it may list another
+     * control such as a toggle or budget), so no effort parameter may be sent.
+     */
+    fun declaredCatalogReasoningEffort(preferred: String, declared: List<String>?): String? =
+        when {
+            declared == null -> preferred
+            declared.isEmpty() -> null
+            else -> catalogReasoningEffort(preferred, declared)
+        }
+
+    /**
+     * Chat and Responses builders clamp an automatically chosen effort to the catalog, so the menu
+     * has to report the same value instead of the raw slider level.
+     */
+    private fun declaredCatalogEffortSummary(
+        summary: ThinkingRequestSummary,
+        providerType: ApiProviderType,
+        declared: List<String>?,
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary {
+        if (declared == null || providerType !in effortCatalogProviderTypes) return summary
+        // Explicit parameters reach the provider unchanged, so the menu reports them as they are.
+        if (explicitEffortSummary(providerType, modelParameters) != null) return summary
+        val effort = (summary as? ThinkingRequestSummary.Effort)?.value ?: return summary
+        return declaredCatalogReasoningEffort(effort, declared)?.let(::textSummary)
+            ?: ThinkingRequestSummary.NotSent
+    }
+
+    private fun explicitEffortSummary(
+        providerType: ApiProviderType,
+        modelParameters: List<ModelParameter<*>>,
+    ): ThinkingRequestSummary? =
+        when (providerType) {
+            ApiProviderType.OPENAI, ApiProviderType.OPENAI_GENERIC ->
+                resolveOpenAiChatReasoningEffortOverride(modelParameters)
+            ApiProviderType.OPENAI_RESPONSES, ApiProviderType.OPENAI_RESPONSES_GENERIC ->
+                resolveResponsesOverride(modelParameters)
+            else -> null
+        }
+
+    private val effortCatalogProviderTypes =
+        setOf(
+            ApiProviderType.OPENAI,
+            ApiProviderType.OPENAI_GENERIC,
+            ApiProviderType.OPENAI_RESPONSES,
+            ApiProviderType.OPENAI_RESPONSES_GENERIC,
+        )
 
     fun normalizeDeepseekEffort(effort: String): String =
         when (effort) {

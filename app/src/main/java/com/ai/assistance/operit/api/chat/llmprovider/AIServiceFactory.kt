@@ -355,7 +355,7 @@ object AIServiceFactory {
                 supportsVideo = supportsVideo,
                 enableToolCall = enableToolCall,
                 configureThinking = false,
-                reasoningEfforts = config.protocolSettingsForModel(config.modelName).reasoningEfforts.orEmpty(),
+                reasoningEfforts = config.protocolSettingsForModel(config.modelName).reasoningEfforts,
             )
         }
         
@@ -378,7 +378,9 @@ object AIServiceFactory {
                     supportsVision = supportsVision,
                     supportsAudio = supportsAudio,
                     supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall
+                    enableToolCall = enableToolCall,
+                    catalogReasoningEfforts =
+                        config.protocolSettingsForModel(config.modelName).reasoningEfforts,
                 )
 
             ApiProviderType.OPENAI_RESPONSES,
@@ -393,7 +395,9 @@ object AIServiceFactory {
                     supportsVision = supportsVision,
                     supportsAudio = supportsAudio,
                     supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall
+                    enableToolCall = enableToolCall,
+                    catalogReasoningEfforts =
+                        config.protocolSettingsForModel(config.modelName).reasoningEfforts,
                 )
 
             ApiProviderType.GROK_ACCOUNT ->

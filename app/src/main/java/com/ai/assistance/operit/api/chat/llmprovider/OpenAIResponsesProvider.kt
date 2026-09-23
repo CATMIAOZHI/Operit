@@ -29,7 +29,8 @@ open class OpenAIResponsesProvider(
     supportsAudio: Boolean = false,
     supportsVideo: Boolean = false,
     supportsFiles: Boolean = false,
-    enableToolCall: Boolean = false
+    enableToolCall: Boolean = false,
+    catalogReasoningEfforts: List<String>? = null,
 ) : OpenAIProvider(
     apiEndpoint = responsesApiEndpoint,
     apiKeyProvider = apiKeyProvider,
@@ -41,7 +42,8 @@ open class OpenAIResponsesProvider(
     supportsAudio = supportsAudio,
     supportsVideo = supportsVideo,
     supportsFiles = supportsFiles,
-    enableToolCall = enableToolCall
+    enableToolCall = enableToolCall,
+    catalogReasoningEfforts = catalogReasoningEfforts,
 ) {
     override val useResponsesApi: Boolean = true
 
@@ -123,6 +125,15 @@ open class OpenAIResponsesProvider(
             return
         }
 
+        // A catalog entry whose reasoning options exist but declare no effort values means the
+        // model does not take an effort control. Then no reasoning object is injected at all:
+        // otherwise the menu reports "nothing sent" while the body still carries reasoning.summary
+        // and include.reasoning.encrypted_content, which a strict gateway can reject.
+        val catalogDeclaresNoEffort = catalogReasoningEfforts?.isEmpty() == true
+        if (catalogDeclaresNoEffort && reasoningObject == null) {
+            return
+        }
+
         val finalReasoningObject = reasoningObject ?: JSONObject()
         val existingEffort =
             finalReasoningObject.optString("effort", "").trim().takeIf { it.isNotEmpty() }
@@ -131,11 +142,17 @@ open class OpenAIResponsesProvider(
                 enableThinking -> resolveResponsesReasoningEffort(context)
                 else -> "none"
             }
-            if (effort != null) {
-                finalReasoningObject.put("effort", effort)
+            val declaredEffort =
+                effort?.let {
+                    ThinkingRequestSemantics.declaredCatalogReasoningEffort(
+                        it, catalogReasoningEfforts,
+                    )
+                }
+            if (declaredEffort != null) {
+                finalReasoningObject.put("effort", declaredEffort)
                 AppLogger.d(
                     "OpenAIResponsesProvider",
-                    "Responses reasoning.effort=$effort"
+                    "Responses reasoning.effort=$declaredEffort"
                 )
             }
         } else {
@@ -147,7 +164,7 @@ open class OpenAIResponsesProvider(
 
         val existingSummary =
             finalReasoningObject.optString("summary", "").trim().takeIf { it.isNotEmpty() }
-        if (enableThinking && existingSummary == null) {
+        if (enableThinking && existingSummary == null && !catalogDeclaresNoEffort) {
             finalReasoningObject.put("summary", "auto")
             AppLogger.d(
                 "OpenAIResponsesProvider",
@@ -156,7 +173,12 @@ open class OpenAIResponsesProvider(
         }
 
         requestJson.put("reasoning", finalReasoningObject)
-        if (finalReasoningObject.optString("effort", "").trim() != "none") {
+        // Include encrypted reasoning content only when an effort control is actually sent. A
+        // catalog entry that declares no effort and gets nothing from the caller injects no
+        // reasoning object at all (early return above), while an explicitly configured reasoning
+        // object still returns its encrypted content.
+        val finalEffort = finalReasoningObject.optString("effort", "").trim()
+        if (finalEffort.isNotEmpty() && finalEffort != "none") {
             ensureResponsesReasoningEncryptedContentIncluded(requestJson)
         }
     }
@@ -173,7 +195,7 @@ open class OpenAIResponsesProvider(
         includeArray.put("reasoning.encrypted_content")
     }
 
-    private fun resolveResponsesReasoningEffort(context: Context): String? {
+    protected open fun resolveResponsesReasoningEffort(context: Context): String? {
         val qualityLevel = runCatching {
             runBlocking {
                 ApiPreferences.getInstance(context).thinkingQualityLevelFlow.first()
