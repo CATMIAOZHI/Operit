@@ -1,5 +1,13 @@
 package com.ai.assistance.operit.api.chat.library
 
+/**
+ * Budgets for one extraction batch, stated in the prompt so the reviewer can pace itself. A batch that
+ * runs out of rounds is discarded and its source range is reviewed again, so the reviewer must reserve
+ * a round to submit and confirm what it already has.
+ */
+internal const val LEARNING_ROUND_LIMIT = 12
+internal const val LEARNING_TOOL_CALL_LIMIT = 40
+
 internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, skills: Boolean, finish: String): String =
     buildString {
         appendLine("""
@@ -36,14 +44,18 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
         else appendLine("Skill extraction is not scheduled for this run. Do not list, read or change skills.")
         appendLine("""
             Changes are staged until this batch is finished, then follow the memory space auto-approval setting and retain history.
-            Submit at most one complete final change per document or skill file in this batch.
-            Staged changes are not readable yet. A new skill must be self-contained in skill_create;
-            do not try to read or extend that new skill in this batch.
+            Revise freely inside the batch: reading a target again returns the text this batch staged (staged=true)
+            while its version stays the on-disk one, and a later change to the same target replaces the earlier one,
+            so only the last version is submitted. A version that differs from your earlier read means the target
+            changed outside this batch, so read it again before changing it.
+            Submit a new skill whole in skill_create; only an installed skill can take companion files.
             If auto-approval is disabled, changes remain pending for review.
             No fabricated successful testing. If nothing qualifies, do not invent a change.
             If an operation is outside this run's scope, do not retry it; continue the enabled work or finish.
             Call $finish after reviewing all provided source, even when no changes qualify. This is mandatory.
-            A final summary alone does not confirm completion. At most 12 model rounds and 40 tool calls.
+            A final summary alone does not confirm completion. At most $LEARNING_ROUND_LIMIT model rounds and $LEARNING_TOOL_CALL_LIMIT tool calls.
+            Once within two rounds of that limit, stop exploring: submit the best complete change you
+            already have and call $finish, because an unfinished batch is discarded and reviewed again later.
         """.trimIndent())
     }.trim()
 
@@ -52,7 +64,7 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean): S
     if (notes) actions += listOf("memory_read", "memory_change")
     if (skills) actions += listOf("skill_list", "skill_read", "skill_create", "skill_write", "skill_patch", "skill_remove_file", "skill_delete")
     appendLine("Scoped learning operations. Only these actions are available in this run: ${actions.joinToString(", ")}.")
-    appendLine("arguments is a JSON object. Read before writes. Changes are staged until finish; one final change per target. Then changes including deletions follow this space's auto-approval setting.")
+    appendLine("arguments is a JSON object. Read before writes. Changes are staged until finish and the last change per target wins; a staged target reads back with staged=true. Then changes including deletions follow this space's auto-approval setting.")
     if (notes) appendLine("""
         Note arguments: target=memory/user; operation=add/replace/remove; content, old_text, reason.
         section=profile/preferences/interaction_rules for user edits (read returns all three sections).
@@ -61,6 +73,8 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean): S
         Skill arguments: name, path (default SKILL.md), content, old_text, description, reason.
         skill_create: name must match [a-z][a-z0-9-]{2,63} (no underscores);
         description is one line of 1-240 characters; content is 50-6000 characters.
+        skill_remove_file deletes one companion file under references/, scripts/, templates/ or assets/;
+        SKILL.md is never removable, delete the whole skill with skill_delete instead.
     """.trimIndent())
     appendLine("history accepts query/session_id/message_id/mode=message/offset/char_offset/window/role/profile/after/before/literal.")
     appendLine("Omit history query to browse recent sessions. Date filters accept ISO dates or relative 7d/24h.")

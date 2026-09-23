@@ -75,6 +75,11 @@ class MemoryReviewRepository internal constructor(
         private val skillInstallMutex = Mutex()
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+        /** A skill's directory entry and its files are one target, so a batch cannot stage both. */
+        internal fun sameTarget(previous: MemoryReviewChange, incoming: MemoryReviewChange): Boolean =
+            previous.title == incoming.title && previous.path == incoming.path &&
+                (previous.kind == incoming.kind || isSkillKind(previous.kind) && isSkillKind(incoming.kind))
+        private fun isSkillKind(kind: String) = kind == "skill" || kind == "skill_file" || kind == "skill_delete"
     }
     private val file = File(root, "${hash(profileId)}.json")
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
@@ -120,10 +125,22 @@ class MemoryReviewRepository internal constructor(
     }
     suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
         staged?.let { pending ->
-            require(pending.none { it.kind == change.kind && it.title == change.title && it.path == change.path }) {
-                "This batch already has a final proposal for this target. Finish the batch before further changes."
+            // A batch is revisable: the last change to a target replaces the earlier one, and the first
+            // proposal's baseline is kept so the applied change still matches the unchanged target on disk.
+            val index = pending.indexOfFirst { sameTarget(it, change) }
+            if (index < 0) {
+                return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
             }
-            return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
+            val previous = pending[index]
+            check(previous.kind == change.kind) {
+                "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
+                    "${previous.kind} instead of ${change.kind}."
+            }
+            // The replacement carries the whole target text, so an accumulated notes addition must not
+            // be appended on top of it.
+            return@withContext change.copy(id = previous.id, before = previous.before,
+                baseVersion = previous.baseVersion, addition = "", createdAt = previous.createdAt)
+                .also { pending[index] = it }
         }
         mutex.withLock {
             val items = read().toMutableList()
