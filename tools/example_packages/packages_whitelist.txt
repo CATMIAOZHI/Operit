@@ -26,6 +26,7 @@ various_search.js
 workflow.js
 xai_draw.js
 openai_draw.js
+ollama_search.js
 operit_editor.js
 browser.js
 context_limiter_c

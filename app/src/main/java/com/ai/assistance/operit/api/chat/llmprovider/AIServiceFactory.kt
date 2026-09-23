@@ -484,7 +484,8 @@ object AIServiceFactory {
                 )
 
             // Ollama使用OpenAI兼容格式
-            ApiProviderType.OLLAMA ->
+            ApiProviderType.OLLAMA,
+            ApiProviderType.OLLAMA_CLOUD ->
                 OllamaProvider(
                     apiEndpoint = config.apiEndpoint,
                     apiKeyProvider = apiKeyProvider,

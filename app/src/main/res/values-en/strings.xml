@@ -4249,6 +4249,7 @@
     <string name="provider_alipay_bailing">Alipay Bailing Model</string>
     <string name="provider_lmstudio">LM Studio (Local Model)</string>
     <string name="provider_ollama">Ollama (Local Model)</string>
+    <string name="provider_ollama_cloud">Ollama Cloud</string>
     <string name="provider_openai_local">OpenAI-Compatible (Local Model)</string>
     <string name="provider_ppinfra">PPInfra Cloud</string>
     <string name="provider_novita">Novita AI</string>

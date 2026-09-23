@@ -91,6 +91,7 @@ object ModelListFetcher {
                     ApiProviderType.ALIPAY_BAILING -> "${extractBaseUrl(apiEndpoint)}/llm/v1/models"
                     ApiProviderType.LMSTUDIO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OLLAMA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OLLAMA_CLOUD -> "${extractBaseUrl(apiEndpoint)}/api/tags"
                     ApiProviderType.PPINFRA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     // 其他API提供商可能需要特殊处理
                     else -> "${extractBaseUrl(apiEndpoint)}/v1/models" // 默认尝试OpenAI兼容格式
@@ -450,6 +451,7 @@ object ModelListFetcher {
                                     ApiProviderType.LMSTUDIO,
                                     ApiProviderType.OLLAMA,
                                     ApiProviderType.PPINFRA -> parseOpenAIModelResponse(context, responseBody)
+                                    ApiProviderType.OLLAMA_CLOUD -> parseOllamaCloudModelResponse(context, responseBody)
                                     ApiProviderType.ANTHROPIC,
                                     ApiProviderType.ANTHROPIC_GENERIC -> parseAnthropicModelResponse(context, responseBody)
                                     ApiProviderType.GOOGLE,
@@ -540,6 +542,16 @@ object ModelListFetcher {
 
         // 按照模型名称排序
         return modelList.sortedBy { it.id }
+    }
+
+    internal fun parseOllamaCloudModelResponse(context: Context, jsonResponse: String): List<ModelOption> {
+        val models = JSONObject(jsonResponse).optJSONArray("models")
+            ?: throw JSONException(context.getString(R.string.modellist_error_missing_data_or_models))
+        return (0 until models.length()).mapNotNull { index ->
+            val entry = models.optJSONObject(index) ?: return@mapNotNull null
+            val name = entry.optString("name").ifBlank { entry.optString("model") }.trim()
+            name.takeIf { it.isNotEmpty() }?.let { ModelOption(id = it, name = it) }
+        }.distinctBy { it.id }.sortedBy { it.id }
     }
 
     /** 解析Anthropic格式的模型响应 */
