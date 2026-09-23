@@ -8890,6 +8890,17 @@
     <string name="codex_login_starting">Preparing Codex sign-in...</string>
     <string name="codex_login_waiting">Complete sign-in in your browser</string>
     <string name="codex_login_action">Sign in with ChatGPT</string>
+    <string name="codex_device_login_action">Sign in with device code</string>
+    <string name="codex_device_login_title">Codex device code sign-in</string>
+    <string name="codex_device_login_starting">Getting a one-time code…</string>
+    <string name="codex_device_login_instructions">Open this URL on another device, sign in, then enter the one-time code (valid for 15 minutes):</string>
+    <string name="codex_device_login_copy">Copy code</string>
+    <string name="codex_device_login_open">Open here</string>
+    <string name="codex_device_login_open_elsewhere">No browser available. Open the URL above on another device.</string>
+    <string name="codex_device_login_waiting">Waiting for authorization. Sign-in will complete automatically.</string>
+    <string name="codex_device_login_safety">Use this code only if you started the sign-in. Never share it with anyone.</string>
+    <string name="codex_device_login_expired">Device code expired. Please start again.</string>
+    <string name="codex_device_login_disabled">Codex device code authorization is disabled. Enable it in ChatGPT settings and try again.</string>
     <string name="codex_login_success">OpenAI Codex sign-in succeeded</string>
     <string name="codex_login_failed">OpenAI Codex sign-in failed: %1$s</string>
     <string name="codex_logout_action">Sign out of Codex</string>

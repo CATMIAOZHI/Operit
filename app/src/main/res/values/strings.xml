@@ -8865,6 +8865,17 @@
     <string name="codex_login_starting">正在准备 Codex 登录...</string>
     <string name="codex_login_waiting">请在浏览器中完成登录</string>
     <string name="codex_login_action">登录 ChatGPT</string>
+    <string name="codex_device_login_action">使用设备代码登录</string>
+    <string name="codex_device_login_title">Codex 设备代码登录</string>
+    <string name="codex_device_login_starting">正在获取一次性代码…</string>
+    <string name="codex_device_login_instructions">在另一台设备打开以下网址，登录后输入一次性代码（15 分钟内有效）：</string>
+    <string name="codex_device_login_copy">复制代码</string>
+    <string name="codex_device_login_open">在本机打开</string>
+    <string name="codex_device_login_open_elsewhere">无法打开浏览器，请在另一台设备访问上方网址</string>
+    <string name="codex_device_login_waiting">正在等待授权，完成后会自动登录。</string>
+    <string name="codex_device_login_safety">仅在你主动发起登录时使用此代码。不要把代码发给他人。</string>
+    <string name="codex_device_login_expired">设备代码已过期，请重新登录</string>
+    <string name="codex_device_login_disabled">未启用 Codex 设备代码授权，请在 ChatGPT 设置中启用后重试</string>
     <string name="codex_login_success">OpenAI Codex 登录成功</string>
     <string name="codex_login_failed">OpenAI Codex 登录失败：%1$s</string>
     <string name="codex_logout_action">退出 Codex 登录</string>
