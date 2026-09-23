@@ -2,9 +2,11 @@ package com.ai.assistance.operit.features.draw
 
 import android.content.Context
 import android.net.Uri
+import android.os.Environment
 import android.util.Base64
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.CodexOAuthProtocol
+import com.ai.assistance.operit.util.ImageSourcePathPolicy
 import com.ai.assistance.operit.util.OperitPaths
 import java.io.File
 import java.io.IOException
@@ -72,7 +74,8 @@ object CodexDrawBridge {
         val accessToken = auth.getValidAccessToken()
         val account = auth.accountForAccessToken(accessToken)
         val inputPaths = (if (isEdit) listOf(editPath) else emptyList()) + referencePaths
-        val imageData = inputPaths.map(::loadInputImage)
+        val permittedRoots = inputImageRoots(context)
+        val imageData = inputPaths.map { loadInputImage(it, permittedRoots) }
         // Codex sends any image-conditioned request to the edits endpoint, even when the intent is a new image.
         val hasImageInput = imageData.isNotEmpty()
 
@@ -123,7 +126,7 @@ object CodexDrawBridge {
         currentCoroutineContext().ensureActive()
         val bytes = decodeImage(imageBase64)
         val extension = imageExtension(bytes)
-        val outputDir = File(OperitPaths.pluginConfigDir("draw"), "codex_draw/draws")
+        val outputDir = codexDrawOutputDir()
         if (!outputDir.isDirectory && !outputDir.mkdirs()) throw IOException("无法创建绘图目录")
         val requestedName = params.optString("file_name").trim()
         val baseName = requestedName
@@ -155,10 +158,9 @@ object CodexDrawBridge {
             require(it in allowed) { "$name 不支持：$it" }
         }
 
-    private fun loadInputImage(path: String): String {
+    private fun loadInputImage(path: String, permittedRoots: List<File>): String {
         val localPath = if (path.startsWith("file://")) Uri.parse(path).path.orEmpty() else path
-        val file = File(localPath)
-        require(file.isFile && file.canRead()) { "无法读取参考图" }
+        val file = resolveScriptImagePath(localPath, permittedRoots)
         require(file.length() in 1..MAX_INPUT_BYTES.toLong()) { "参考图必须小于 20 MB" }
         val bytes = file.readBytes()
         val mime = when (imageExtension(bytes)) {
@@ -168,6 +170,33 @@ object CodexDrawBridge {
             else -> throw IllegalArgumentException("不支持的参考图格式")
         }
         return "data:$mime;base64,${Base64.encodeToString(bytes, Base64.NO_WRAP)}"
+    }
+
+    /**
+     * Script-provided image paths stay inside permitted storage, matching the boundary the other
+     * script image entries already use. The draw output directory is part of the allowlist so a
+     * generated image can be edited again without copying it out of the app first.
+     */
+    private fun inputImageRoots(context: Context): List<File> =
+        listOfNotNull(
+            Environment.getExternalStorageDirectory(),
+            OperitPaths.cleanOnExitInternalDir(context),
+        ) + context.getExternalFilesDirs(null).filterNotNull() + context.externalCacheDirs.filterNotNull() +
+            listOf(codexDrawOutputDir())
+
+    private fun codexDrawOutputDir() = File(OperitPaths.pluginConfigDir("draw"), "codex_draw/draws")
+
+    internal fun resolveScriptImagePath(path: String, permittedRoots: List<File>): File {
+        require(File(path).isAbsolute) { "参考图路径必须是绝对路径" }
+        val source = try {
+            ImageSourcePathPolicy.resolve(path, permittedRoots)
+        } catch (_: IllegalArgumentException) {
+            throw IllegalArgumentException("参考图必须位于允许的存储目录内")
+        } catch (_: IOException) {
+            throw IllegalArgumentException("无法读取参考图")
+        }
+        require(source.isFile && source.canRead()) { "无法读取参考图" }
+        return source
     }
 
     private fun decodeImage(value: String): ByteArray {
