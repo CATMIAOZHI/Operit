@@ -23,6 +23,16 @@ import java.util.concurrent.atomic.AtomicLong
 object MemoryLearningCoordinator {
     const val ACTION = "memory_learning_action"
     const val FINISH = "memory_learning_finish"
+    /**
+     * Wall-clock ceiling for one batch, derived from the round budget so the round limit stays
+     * reachable instead of being cut short by the clock.
+     */
+    private val BATCH_TIMEOUT_MS = LEARNING_ROUND_LIMIT * 45_000L
+    /**
+     * One manual review pass runs up to three batches, so this must not cut a pass short. The extra
+     * minute covers the per-batch work outside the batch timeout (checkpoint export, source advance).
+     */
+    private val MANUAL_TIMEOUT_MS = BATCH_TIMEOUT_MS * 3 + 60_000L
     private val scope = CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
     private val cancellingJobs = ConcurrentHashMap<String, Job>()
@@ -126,7 +136,7 @@ object MemoryLearningCoordinator {
             }
             // An explicit review waits for its backlog, rather than reporting a three-batch prefix
             // as a complete review. Cancellation/time limits retain completed batch checkpoints.
-            withTimeout(30*60_000L) {
+            withTimeout(MANUAL_TIMEOUT_MS) {
                 do {
                     review(context,profileId,chatId,manual=true)
                     val remaining=MemoryLearningJournal(context,profileId,chatId)
@@ -265,7 +275,7 @@ object MemoryLearningCoordinator {
         logRepo.save(log)
         try {
             // This budget includes reasoning and all model rounds, not just tool execution.
-            withTimeout(10 * 60_000L) {
+            withTimeout(BATCH_TIMEOUT_MS) {
                 session.job = currentCoroutineContext().job
                 val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH)
                 // Conservative byte accounting bounds repeated history/skill reads as well as SOURCE.

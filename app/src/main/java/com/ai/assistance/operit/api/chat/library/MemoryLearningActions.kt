@@ -61,13 +61,17 @@ class MemoryLearningActions(
                         arg("content"), arg("old_text"))).markdown()
                 } else editText(base,operation,arg("content"),arg("old_text"))
                 val change = if(user) {
-                    require(after.length<=12_000)
+                    require(after.length<=12_000) {
+                        "user.md would exceed its character limit; remove or replace existing text in this batch before adding"
+                    }
                     reviews.proposeUser(disk,after,sourceChatId,onCreated)
                 } else {
                     val repo = MemoryNotesRepository(context,profileId)
                     val before = repo.load()
                     check(before.markdown==disk)
-                    require(after.length<=MemoryNotesRepository.MAX_CHARS)
+                    require(after.length<=MemoryNotesRepository.MAX_CHARS) {
+                        "memory.md would exceed its character limit; remove or replace existing text in this batch before adding"
+                    }
                     reviews.proposeNotes(before,after,if(operation=="add") arg("content") else "",sourceChatId,onCreated)
                 }
                 val applied = reviews.applyAutomaticDecision(context, change)
