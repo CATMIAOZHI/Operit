@@ -77,6 +77,7 @@ object ModelListFetcher {
                     ApiProviderType.DEEPSEEK -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OPENCODE_GO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OPENCODE_ZEN_FREE -> OpenCodeZenFree.MODELS_ENDPOINT
                     ApiProviderType.FOUR_ROUTER -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.NOUS_PORTAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.MOONSHOT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
@@ -90,6 +91,7 @@ object ModelListFetcher {
                     ApiProviderType.ALIPAY_BAILING -> "${extractBaseUrl(apiEndpoint)}/llm/v1/models"
                     ApiProviderType.LMSTUDIO -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.OLLAMA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.OLLAMA_CLOUD -> "${extractBaseUrl(apiEndpoint)}/api/tags"
                     ApiProviderType.PPINFRA -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     // 其他API提供商可能需要特殊处理
                     else -> "${extractBaseUrl(apiEndpoint)}/v1/models" // 默认尝试OpenAI兼容格式
@@ -299,8 +301,10 @@ object ModelListFetcher {
                             Request.Builder()
                                     .url(modelsUrl)
                                     .addHeader("Content-Type", "application/json")
-                    customHeaders.forEach { (name, value) ->
-                        requestBuilder.header(name, value)
+                    if (apiProviderType != ApiProviderType.OPENCODE_ZEN_FREE) {
+                        customHeaders.forEach { (name, value) ->
+                            requestBuilder.header(name, value)
+                        }
                     }
 
                     // 根据不同供应商添加不同的认证头
@@ -438,6 +442,7 @@ object ModelListFetcher {
                                     ApiProviderType.NVIDIA,
                                     ApiProviderType.BAICHUAN,
                                     ApiProviderType.OPENROUTER,
+                                    ApiProviderType.OPENCODE_ZEN_FREE,
                                     ApiProviderType.FOUR_ROUTER,
                                     ApiProviderType.NOUS_PORTAL,
                                     ApiProviderType.INFINIAI,
@@ -446,6 +451,7 @@ object ModelListFetcher {
                                     ApiProviderType.LMSTUDIO,
                                     ApiProviderType.OLLAMA,
                                     ApiProviderType.PPINFRA -> parseOpenAIModelResponse(context, responseBody)
+                                    ApiProviderType.OLLAMA_CLOUD -> parseOllamaCloudModelResponse(context, responseBody)
                                     ApiProviderType.ANTHROPIC,
                                     ApiProviderType.ANTHROPIC_GENERIC -> parseAnthropicModelResponse(context, responseBody)
                                     ApiProviderType.GOOGLE,
@@ -459,8 +465,11 @@ object ModelListFetcher {
                                 return@withContext Result.failure(e)
                             }
 
-                    AppLogger.d(TAG, "成功解析模型列表，共获取 ${modelOptions.size} 个模型")
-                    return@withContext Result.success(modelOptions)
+                    val visibleModels = if (apiProviderType == ApiProviderType.OPENCODE_ZEN_FREE) {
+                        modelOptions.filter { OpenCodeZenFree.isFreeModel(it.id) }
+                    } else modelOptions
+                    AppLogger.d(TAG, "成功解析模型列表，共获取 ${visibleModels.size} 个模型")
+                    return@withContext Result.success(visibleModels)
                 } catch (e: SocketTimeoutException) {
                     lastException = e
                     retryCount++
@@ -533,6 +542,16 @@ object ModelListFetcher {
 
         // 按照模型名称排序
         return modelList.sortedBy { it.id }
+    }
+
+    internal fun parseOllamaCloudModelResponse(context: Context, jsonResponse: String): List<ModelOption> {
+        val models = JSONObject(jsonResponse).optJSONArray("models")
+            ?: throw JSONException(context.getString(R.string.modellist_error_missing_data_or_models))
+        return (0 until models.length()).mapNotNull { index ->
+            val entry = models.optJSONObject(index) ?: return@mapNotNull null
+            val name = entry.optString("name").ifBlank { entry.optString("model") }.trim()
+            name.takeIf { it.isNotEmpty() }?.let { ModelOption(id = it, name = it) }
+        }.distinctBy { it.id }.sortedBy { it.id }
     }
 
     /** 解析Anthropic格式的模型响应 */

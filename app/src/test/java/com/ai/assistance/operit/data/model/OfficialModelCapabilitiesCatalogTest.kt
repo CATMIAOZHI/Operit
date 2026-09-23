@@ -60,6 +60,16 @@ class OfficialModelCapabilitiesCatalogTest {
     }
 
     @Test
+    fun `matches Zen free suffix to exact official base model`() {
+        val result = catalog.matchAll(
+            listOf("kimi-k2.6-free", "kimi-k2.6-contributor-free", "deepseek-v4-flash-free")
+        )
+        assertEquals(ModelMultimodalCapabilities(image = true, video = true), result["kimi-k2.6-free"])
+        assertEquals(ModelMultimodalCapabilities(image = true, video = true), result["kimi-k2.6-contributor-free"])
+        assertEquals(ModelMultimodalCapabilities(), result["deepseek-v4-flash-free"])
+    }
+
+    @Test
     fun `matches a route id that prefixes the official short id`() {
         val result = catalog.lookup("command-code/deepseek-deepseek-v4-flash")
         assertTrue(result is OfficialModelCapabilitiesLookup.Match)

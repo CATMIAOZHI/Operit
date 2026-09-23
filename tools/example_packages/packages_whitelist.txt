@@ -2,6 +2,7 @@
 automatic_ui_base.js
 automatic_ui_subagent.js
 code_runner.js
+codex_draw.js
 crossref.js
 daily_life.js
 duckduckgo.js
@@ -25,6 +26,7 @@ various_search.js
 workflow.js
 xai_draw.js
 openai_draw.js
+ollama_search.js
 operit_editor.js
 browser.js
 context_limiter_c

@@ -47,6 +47,7 @@ enum class ApiProviderType {
         IFLOW, // iFlow
         OPENROUTER, // OpenRouter (多模型聚合)
         OPENCODE_GO, // OpenCode Go subscription
+        OPENCODE_ZEN_FREE, // OpenCode Zen free models
         FOUR_ROUTER, // 4Router
         NOUS_PORTAL, // Nous Portal / Inference API
         INFINIAI, // 无问芯穹
@@ -55,6 +56,7 @@ enum class ApiProviderType {
         NVIDIA, // NVIDIA API Catalog / NIM
         LMSTUDIO, // LM Studio本地模型服务
         OLLAMA, // Ollama 本地/私有部署服务（OpenAI兼容）
+        OLLAMA_CLOUD, // Ollama 云端服务（OpenAI兼容，需要 API Key）
         OPENAI_LOCAL, // OpenAI兼容本地模型服务
         MNN, // MNN本地推理引擎
         LLAMA_CPP, // llama.cpp 本地推理引擎

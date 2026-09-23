@@ -24,6 +24,7 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
     var autoApprove by remember(profileId) { mutableStateOf(prefs.shouldAutoApproveChanges()) }
     var notes by remember(profileId) { mutableStateOf(prefs.shouldExtractNewMemory()) }
     var skills by remember(profileId) { mutableStateOf(prefs.shouldExtractSkills()) }
+    var includeThinking by remember(profileId) { mutableStateOf(prefs.shouldIncludeThinking()) }
     var revise by remember(profileId) { mutableStateOf(prefs.mayReviseLearnedSkills()) }
     var learningDelay by remember(profileId) { mutableStateOf(prefs.learningDelayMinutes()) }
     var memoryInterval by remember(profileId) { mutableStateOf(prefs.memoryReviewInterval()) }
@@ -37,6 +38,10 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                 scope.launch { api.saveEnableMemoryAutoUpdate(it) }
             }
             HorizontalDivider(Modifier.padding(vertical = 12.dp))
+            AutomationSwitch(stringResource(R.string.memory_include_thinking),
+                stringResource(R.string.memory_include_thinking_desc), includeThinking) {
+                prefs.setIncludeThinking(it); includeThinking = it
+            }
             AutomationSwitch(stringResource(R.string.memory_auto_approve),
                 stringResource(R.string.memory_auto_approve_desc), autoApprove) {
                 prefs.setAutoApproveChanges(it); autoApprove = it

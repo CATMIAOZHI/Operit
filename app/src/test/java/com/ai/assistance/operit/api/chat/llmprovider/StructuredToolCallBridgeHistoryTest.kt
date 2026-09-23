@@ -26,6 +26,42 @@ class StructuredToolCallBridgeHistoryTest {
     fun closeLogger() = logger.close()
 
     @Test
+    fun `repaired ranged read keeps its original call ID beside grep`() {
+        val messages = buildMessages(listOf(
+            PromptTurn(kind = PromptTurnKind.USER, content = "Read and search."),
+            PromptTurn(kind = PromptTurnKind.ASSISTANT,
+                content = toolCall("read_file", "path" to "strings.xml", "start_line" to "395", "end_line" to "415") +
+                    toolCall("grep_code", "path" to "strings.xml", "pattern" to "title")),
+            PromptTurn(kind = PromptTurnKind.TOOL_RESULT,
+                content = toolResult("grep_code", "GREP RESULT") + toolResult("read_file_part", "READ RESULT"))
+        ))
+        val calls = messages.at(1).getJSONArray("tool_calls")
+        assertEquals("read_file", calls.getJSONObject(0).getJSONObject("function").getString("name"))
+        assertEquals(calls.getJSONObject(1).getString("id"), messages.at(2).getString("tool_call_id"))
+        assertEquals(calls.getJSONObject(0).getString("id"), messages.at(3).getString("tool_call_id"))
+        assertEquals("READ RESULT", messages.at(3).getString("content"))
+        assertFalse(messages.toString().contains("工具结果缺失"))
+        assertToolResultsFollowTheirCalls(messages)
+    }
+
+    @Test
+    fun `repair name matching shares execution rules across provider argument shapes`() {
+        val args = JSONObject().put("path", "file").put("start_line", 1)
+        val shapes = listOf(
+            JSONObject().put("function", JSONObject().put("name", "read_file").put("arguments", args.toString())),
+            JSONObject().put("name", "read_file").put("args", args),
+            JSONObject().put("name", "read_file").put("input", args),
+            JSONObject().put("function", JSONObject().put("name", "proxy").put("arguments",
+                JSONObject().put("tool_name", "read_file").put("params", args).toString()))
+        )
+        shapes.forEach { assertEquals("read_file_part", StructuredToolCallBridge.toolCallName(it)) }
+        assertEquals("read_file", StructuredToolCallBridge.toolCallName(
+            JSONObject().put("name", "read_file").put("args", JSONObject().put("path", "file"))))
+        assertEquals("super_admin:terminal", StructuredToolCallBridge.toolCallName(
+            JSONObject().put("name", "super_admin::terminal").put("args", JSONObject().put("command", "pwd"))))
+    }
+
+    @Test
     fun `unanswered calls are closed before the trailing tool result text`() {
         val messages =
             buildMessages(

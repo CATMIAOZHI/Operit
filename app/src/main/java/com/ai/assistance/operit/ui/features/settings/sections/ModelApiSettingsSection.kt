@@ -45,6 +45,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.text.input.VisualTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.llmprovider.EndpointCompleter
@@ -52,6 +53,7 @@ import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.CodexModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.LlamaProvider
+import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeZenFree
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.api.CodexAuthManager
@@ -84,6 +86,7 @@ import com.ai.assistance.operit.ui.features.settings.DebouncedModelConfigAutoSav
 import com.ai.assistance.operit.ui.features.settings.ModelConfigSaveCoordinator
 import com.ai.assistance.operit.ui.features.settings.RegisterModelConfigSaveAction
 import com.ai.assistance.operit.ui.features.codex.CodexLoginDialog
+import com.ai.assistance.operit.ui.features.codex.CodexDeviceLoginDialog
 import com.ai.assistance.operit.util.LocationUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -115,6 +118,7 @@ fun ModelApiSettingsSection(
         navigateToMnnModelDownload: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val codexLogoutSuccessText = stringResource(R.string.codex_logout_success)
     val codexLoginSuccessText = stringResource(R.string.codex_login_success)
@@ -122,6 +126,7 @@ fun ModelApiSettingsSection(
     val codexAuthState by codexAuthManager.authState.collectAsState()
     val persistedCodexUsage by codexAuthManager.usageSnapshotFlow.collectAsState(initial = null)
     var showCodexLoginDialog by remember(config.id) { mutableStateOf(false) }
+    var showCodexDeviceLoginDialog by remember(config.id) { mutableStateOf(false) }
     var codexUsageLoading by remember(config.id) { mutableStateOf(false) }
     var codexUsageError by remember(config.id) { mutableStateOf(false) }
     var codexUsageNow by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
@@ -154,6 +159,7 @@ fun ModelApiSettingsSection(
     var previousProviderTypeId by remember(config.id) { mutableStateOf(config.apiProviderTypeId) }
     val selectedApiProvider = ApiProviderType.fromProviderTypeId(selectedProviderTypeId)
     val isCodexProvider = selectedApiProvider == ApiProviderType.OPENAI_CODEX
+    val currentModelSelection by rememberUpdatedState(config.id to selectedProviderTypeId)
     val browserAccountType = AccountProvider.from(selectedApiProvider)
     val browserAccountManager = remember(browserAccountType) {
         browserAccountType?.let { ProviderAccountManager.get(context, it) }
@@ -256,6 +262,7 @@ fun ModelApiSettingsSection(
             }
         )
     }
+    var automaticallyMatchedZenModels by remember(config.id) { mutableStateOf(emptySet<String>()) }
     var modelProtocolSettingsInput by remember(config.id) { mutableStateOf(config.modelProtocolSettings) }
     var isConfiguringProtocols by remember(config.id) { mutableStateOf(false) }
     var protocolSyncJob by remember(config.id) { mutableStateOf<Job?>(null) }
@@ -265,6 +272,18 @@ fun ModelApiSettingsSection(
     val protocolCatalogUpdatedAt by protocolCatalogRepository.updatedAt.collectAsState()
     LaunchedEffect(protocolCatalogRepository) {
         protocolCatalogRepository.loadCatalog()
+    }
+    LaunchedEffect(selectedApiProvider, modelNameInput, protocolCatalogUpdatedAt) {
+        if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+            val configuredModels = getModelList(modelNameInput)
+            if (configuredModels.isNotEmpty()) {
+                val matched = protocolCatalogRepository.loadCatalog()
+                    .matchAll(OpenCodeZenFree.CHAT_ENDPOINT, configuredModels)
+                if (matched.any { (model, settings) -> modelProtocolSettingsInput[model] != settings }) {
+                    modelProtocolSettingsInput = modelProtocolSettingsInput + matched
+                }
+            }
+        }
     }
     DisposableEffect(config.id) {
         onDispose { protocolSyncJob?.cancel() }
@@ -284,6 +303,21 @@ fun ModelApiSettingsSection(
     val multimodalCatalogUpdatedAt by officialModelCapabilitiesRepository.updatedAt.collectAsState()
     LaunchedEffect(officialModelCapabilitiesRepository) {
         officialModelCapabilitiesRepository.loadCatalog()
+    }
+    LaunchedEffect(selectedApiProvider, modelNameInput, multimodalCatalogUpdatedAt) {
+        if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+            val missingModels = getModelList(modelNameInput).filter {
+                it !in config.modelMultimodalCapabilities && it !in automaticallyMatchedZenModels
+            }
+            if (missingModels.isNotEmpty()) {
+                val matched = OpenCodeZenFree.matchMultimodalCapabilities(
+                    officialModelCapabilitiesRepository.loadCatalog(),
+                    missingModels,
+                )
+                modelMultimodalCapabilitiesInput = modelMultimodalCapabilitiesInput + matched
+                automaticallyMatchedZenModels = automaticallyMatchedZenModels + matched.keys
+            }
+        }
     }
     var isSyncingMultimodalCapabilities by remember(config.id) { mutableStateOf(false) }
     var isRefreshingModelCatalog by remember(config.id) { mutableStateOf(false) }
@@ -495,7 +529,8 @@ fun ModelApiSettingsSection(
         hasInitializedProviderEndpointSync = true
         if (!shouldSyncEndpointByProviderChange) {
             // 首次进入页面时保留持久化配置，避免把用户已选择的端点覆盖成默认值。
-            if (selectedApiProvider == ApiProviderType.OPENAI_CODEX || browserAccountType != null) {
+            if (selectedApiProvider in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.OPENCODE_ZEN_FREE)
+                || browserAccountType != null) {
                 apiEndpointInput = getDefaultApiEndpoint(requireNotNull(selectedApiProvider))
             }
             return@LaunchedEffect
@@ -510,7 +545,8 @@ fun ModelApiSettingsSection(
         val previousDefaultEndpoint =
             previousProvider?.let { getDefaultApiEndpoint(it) }.orEmpty()
         val shouldApplyNewProviderDefault =
-            selectedApiProvider == ApiProviderType.OPENAI_CODEX || browserAccountType != null ||
+            selectedApiProvider in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.OPENCODE_ZEN_FREE)
+                || browserAccountType != null ||
             apiEndpointInput.isEmpty() ||
                 isDefaultApiEndpoint(apiEndpointInput) ||
                 (previousDefaultEndpoint.isNotEmpty() && apiEndpointInput == previousDefaultEndpoint)
@@ -522,11 +558,26 @@ fun ModelApiSettingsSection(
     }
 
     // 模型列表状态
-    var isLoadingModels by remember { mutableStateOf(false) }
-    var showModelsDialog by remember { mutableStateOf(false) }
-    var modelsList by remember { mutableStateOf<List<ModelOption>>(emptyList()) }
-    var modelLoadError by remember { mutableStateOf<String?>(null) }
+    var isLoadingModels by remember(config.id, selectedProviderTypeId) { mutableStateOf(false) }
+    var showModelsDialog by remember(config.id, selectedProviderTypeId) { mutableStateOf(false) }
+    var modelsList by remember(config.id, selectedProviderTypeId) {
+        mutableStateOf<List<ModelOption>>(emptyList())
+    }
+    var modelLoadError by remember(config.id, selectedProviderTypeId) { mutableStateOf<String?>(null) }
+    var modelFetchGeneration by remember(config.id) { mutableIntStateOf(0) }
     var showEndpointDialog by remember(config.id) { mutableStateOf(false) }
+    LaunchedEffect(config.id, selectedProviderTypeId) {
+        modelFetchGeneration++
+    }
+    fun isCurrentModelRequest(
+        selection: Pair<String, String>,
+        generation: Int,
+        codexAccountId: String?,
+        wasCodexProvider: Boolean,
+    ): Boolean =
+        selection == currentModelSelection &&
+            generation == modelFetchGeneration &&
+            (!wasCodexProvider || codexAccountId == codexAuthManager.currentAccountId())
 
     // 检查是否未填写API密钥（仅用于UI显示）
     val isUsingDefaultApiKey = apiKeyInput.isBlank()
@@ -662,7 +713,12 @@ fun ModelApiSettingsSection(
         multimodalSyncJob = scope.launch {
             try {
                 val catalog = officialModelCapabilitiesRepository.loadCatalog()
-                val matchedCapabilities = catalog.matchAll(configuredModelNames)
+                val matchedCapabilities =
+                    if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+                        OpenCodeZenFree.matchMultimodalCapabilities(catalog, configuredModelNames)
+                    } else {
+                        catalog.matchAll(configuredModelNames)
+                    }
                 val unmatchedCount = configuredModelNames.size - matchedCapabilities.size
 
                 if (matchedCapabilities.isNotEmpty()) {
@@ -756,9 +812,19 @@ fun ModelApiSettingsSection(
 
             if (showApiProviderDialog) {
                 ApiProviderDialog(
-                        onDismissRequest = { showApiProviderDialog = false },
-                        onProviderSelected = { provider ->
-                            selectedProviderTypeId = provider.id
+                         onDismissRequest = { showApiProviderDialog = false },
+                         onProviderSelected = { provider ->
+                             val oldProviderTypeId = selectedProviderTypeId
+                             selectedProviderTypeId = provider.id
+                              if (provider.id != oldProviderTypeId &&
+                                  (provider.id == ApiProviderType.OPENCODE_ZEN_FREE.name ||
+                                      oldProviderTypeId == ApiProviderType.OPENCODE_ZEN_FREE.name)) {
+                                 apiKeyInput = ""
+                             }
+                             if (provider.id == ApiProviderType.OPENCODE_ZEN_FREE.name) {
+                                 apiEndpointInput =
+                                     ApiProviderConfigs.getDefaultApiEndpoint(ApiProviderType.OPENCODE_ZEN_FREE)
+                             }
 
                             // 对有默认模型名的供应商，视为"有强制内容"：切换时总是重置为该供应商默认模型名
                             val hasForcedModelName = getDefaultModelName(provider.id).isNotEmpty()
@@ -777,6 +843,9 @@ fun ModelApiSettingsSection(
 
             AnimatedVisibility(visible = showRegionWarning) {
                 SettingsInfoBanner(text = stringResource(R.string.overseas_provider_warning))
+            }
+            if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+                SettingsInfoBanner(text = stringResource(R.string.provider_opencode_zen_free_warning))
             }
 
             if (isMnnProvider) {
@@ -824,10 +893,16 @@ fun ModelApiSettingsSection(
                      usageError = codexUsageError,
                      usageNowEpochSeconds = codexUsageNow,
                      onLogin = { showCodexLoginDialog = true },
-                     onRefreshUsage = ::refreshCodexUsage,
-                     onLogout = {
-                         scope.launch {
-                             codexAuthManager.logout()
+                     onDeviceLogin = { showCodexDeviceLoginDialog = true },
+                      onRefreshUsage = ::refreshCodexUsage,
+                      onLogout = {
+                          scope.launch {
+                              modelFetchGeneration++
+                              isLoadingModels = false
+                              codexAuthManager.logout()
+                             modelsList = emptyList()
+                             showModelsDialog = false
+                             modelLoadError = null
                              codexUsageError = false
                              EnhancedAIService.refreshAllServices(configManager.appContext)
                              showNotification(codexLogoutSuccessText)
@@ -845,6 +920,14 @@ fun ModelApiSettingsSection(
                         keyboardType = KeyboardType.Uri,
                         imeAction = ImeAction.Next,
                     ),
+                )
+            } else if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+                SettingsTextField(
+                    title = stringResource(R.string.api_endpoint),
+                    subtitle = stringResource(R.string.provider_opencode_zen_free_endpoint_fixed),
+                    value = ApiProviderConfigs.getDefaultApiEndpoint(ApiProviderType.OPENCODE_ZEN_FREE),
+                    onValueChange = {},
+                    enabled = false,
                 )
             } else {
                 SettingsTextField(
@@ -948,28 +1031,35 @@ fun ModelApiSettingsSection(
                     )
                 }
 
+            }
+            if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE ||
+                (!isMnnProvider && !isLlamaProvider && browserAccountType == null && !isCodexProvider)) {
                 val apiKeyInteractionSource = remember { MutableInteractionSource() }
                 val isApiKeyFocused by apiKeyInteractionSource.collectIsFocusedAsState()
-
                 SettingsTextField(
-                        title = stringResource(R.string.api_key),
-                        subtitle =
-                                if (isUsingDefaultApiKey)
-                                        stringResource(R.string.api_key_placeholder_default)
-                                else
-                                        stringResource(R.string.api_key_placeholder_custom),
-                        value = if (isUsingDefaultApiKey) "" else apiKeyInput,
-                        onValueChange = {
-                            val filteredInput = it.replace("\n", "").replace("\r", "").replace(" ", "")
-                            apiKeyInput = filteredInput
-                        },
-                        keyboardOptions = KeyboardOptions(
-                                keyboardType = KeyboardType.Text,
-                                imeAction = ImeAction.Next
-                        ),
-                        visualTransformation = if (isApiKeyFocused || apiKeyInput.isEmpty()) VisualTransformation.None else ApiKeyVisualTransformation(),
-                         interactionSource = apiKeyInteractionSource
-                 )
+                    title = stringResource(R.string.api_key),
+                    subtitle = if (selectedApiProvider == ApiProviderType.OPENCODE_ZEN_FREE) {
+                        stringResource(R.string.provider_opencode_zen_free_key_optional)
+                    } else if (isUsingDefaultApiKey) {
+                        stringResource(R.string.api_key_placeholder_default)
+                    } else {
+                        stringResource(R.string.api_key_placeholder_custom)
+                    },
+                    value = apiKeyInput,
+                    onValueChange = {
+                        apiKeyInput = it.replace("\n", "").replace("\r", "").replace(" ", "")
+                    },
+                    keyboardOptions = KeyboardOptions(
+                        keyboardType = KeyboardType.Text,
+                        imeAction = ImeAction.Next,
+                    ),
+                    visualTransformation = if (isApiKeyFocused || apiKeyInput.isEmpty()) {
+                        VisualTransformation.None
+                    } else {
+                        ApiKeyVisualTransformation()
+                    },
+                    interactionSource = apiKeyInteractionSource,
+                )
             }
             SettingsTextField(
                     title = stringResource(R.string.model_name),
@@ -1001,6 +1091,11 @@ fun ModelApiSettingsSection(
                             
                             showNotification(gettingModelsText)
 
+                            val requestSelection = config.id to selectedProviderTypeId
+                            val requestGeneration = ++modelFetchGeneration
+                            val wasCodexProvider = isCodexProvider
+                            val requestAccountId =
+                                if (wasCodexProvider) codexAuthManager.currentAccountId() else null
                             scope.launch {
                                 if (canRequestModelList) {
                                     isLoadingModels = true
@@ -1012,6 +1107,13 @@ fun ModelApiSettingsSection(
 
                                     try {
                                         val result = fetchAvailableModels()
+                                        if (!isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) return@launch
                                         if (result.isSuccess) {
                                             val models = result.getOrThrow()
                                             AppLogger.d(TAG, "模型列表获取成功，共 ${models.size} 个模型")
@@ -1026,11 +1128,24 @@ fun ModelApiSettingsSection(
                                             showNotification(modelLoadError ?: getModelsFailedText.format(""))
                                         }
                                     } catch (e: Exception) {
+                                        if (!isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) return@launch
                                         AppLogger.e(TAG, "获取模型列表发生异常", e)
                                         modelLoadError = getModelsFailedText.format(e.message ?: "")
                                         showNotification(modelLoadError ?: getModelsFailedText.format(""))
                                     } finally {
-                                        isLoadingModels = false
+                                        if (isCurrentModelRequest(
+                                                requestSelection,
+                                                requestGeneration,
+                                                requestAccountId,
+                                                wasCodexProvider,
+                                            )
+                                        ) isLoadingModels = false
                                         AppLogger.d(TAG, "模型列表获取流程完成")
                                     }
                                 } else if (!isToolPkgProvider && isUsingDefaultApiKey && providerRequiresApiKey) {
@@ -1444,16 +1559,60 @@ fun ModelApiSettingsSection(
         }
     }
 
-    if (showCodexLoginDialog) {
-        CodexLoginDialog(
-            onDismissRequest = { showCodexLoginDialog = false },
-            onLoginSuccess = {
+    val onCodexLoginSuccess: (CodexAuthState) -> Unit = { state ->
                 showCodexLoginDialog = false
+                showCodexDeviceLoginDialog = false
+                val requestSelection = config.id to selectedProviderTypeId
+                val requestGeneration = ++modelFetchGeneration
                 scope.launch {
                     EnhancedAIService.refreshAllServices(configManager.appContext)
                     showNotification(codexLoginSuccessText)
+                    isLoadingModels = true
+                    modelLoadError = null
+                    try {
+                        val result = CodexModelListFetcher.getModelsList(context)
+                        if (isCurrentModelRequest(
+                                requestSelection,
+                                requestGeneration,
+                                state.accountId,
+                                wasCodexProvider = true,
+                            )
+                        ) {
+                            result.fold(
+                                onSuccess = {
+                                    modelsList = it
+                                    showModelsDialog = true
+                                },
+                                onFailure = {
+                                    modelLoadError = resources.getString(
+                                        R.string.codex_model_catalog_refresh_failed,
+                                        it.message.orEmpty(),
+                                    )
+                                    showNotification(requireNotNull(modelLoadError))
+                                },
+                            )
+                        }
+                    } finally {
+                        if (isCurrentModelRequest(
+                                requestSelection,
+                                requestGeneration,
+                                state.accountId,
+                                wasCodexProvider = true,
+                            )
+                        ) isLoadingModels = false
+                    }
                 }
-            },
+    }
+    if (showCodexLoginDialog) {
+        CodexLoginDialog(
+            onDismissRequest = { showCodexLoginDialog = false },
+            onLoginSuccess = onCodexLoginSuccess,
+        )
+    }
+    if (showCodexDeviceLoginDialog) {
+        CodexDeviceLoginDialog(
+            onDismissRequest = { showCodexDeviceLoginDialog = false },
+            onLoginSuccess = onCodexLoginSuccess,
         )
     }
 
@@ -1500,11 +1659,23 @@ fun ModelApiSettingsSection(
 
                         FilledIconButton(
                                 onClick = {
+                                    val requestSelection = config.id to selectedProviderTypeId
+                                    val requestGeneration = ++modelFetchGeneration
+                                    val wasCodexProvider = isCodexProvider
+                                    val requestAccountId =
+                                        if (wasCodexProvider) codexAuthManager.currentAccountId() else null
                                     scope.launch {
                                         if (canRequestModelList) {
                                             isLoadingModels = true
                                             try {
                                                 val result = fetchAvailableModels()
+                                                if (!isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) return@launch
                                                 if (result.isSuccess) {
                                                     modelsList = result.getOrThrow()
                                                 } else {
@@ -1513,11 +1684,24 @@ fun ModelApiSettingsSection(
                                                     showNotification(modelLoadError ?: refreshModelsFailedText)
                                                 }
                                             } catch (e: Exception) {
+                                                if (!isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) return@launch
                                                 val errorMsg = e.message ?: refreshUnknownErrorText
                                                 modelLoadError = refreshModelsListFailedText.format(errorMsg)
                                                 showNotification(modelLoadError ?: refreshModelsFailedText)
                                             } finally {
-                                                isLoadingModels = false
+                                                if (isCurrentModelRequest(
+                                                        requestSelection,
+                                                        requestGeneration,
+                                                        requestAccountId,
+                                                        wasCodexProvider,
+                                                    )
+                                                ) isLoadingModels = false
                                             }
                                         }
                                     }
@@ -1745,6 +1929,7 @@ private fun CodexAuthSettingsBlock(
     usageError: Boolean,
     usageNowEpochSeconds: Long,
     onLogin: () -> Unit,
+    onDeviceLogin: () -> Unit,
     onRefreshUsage: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -1767,6 +1952,9 @@ private fun CodexAuthSettingsBlock(
                 Icon(Icons.Default.Login, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.codex_login_action))
+            }
+            OutlinedButton(onClick = onDeviceLogin, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.codex_device_login_action))
             }
         } else {
             Text(
@@ -1957,6 +2145,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.IFLOW -> context.getString(R.string.provider_iflow)
         ApiProviderType.OPENROUTER -> context.getString(R.string.provider_openrouter)
         ApiProviderType.OPENCODE_GO -> context.getString(R.string.provider_opencode_go)
+        ApiProviderType.OPENCODE_ZEN_FREE -> context.getString(R.string.provider_opencode_zen_free)
         ApiProviderType.FOUR_ROUTER -> context.getString(R.string.provider_4router)
         ApiProviderType.NOUS_PORTAL -> context.getString(R.string.provider_nous_portal)
         ApiProviderType.INFINIAI -> context.getString(R.string.provider_infiniai)
@@ -1965,6 +2154,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.NVIDIA -> context.getString(R.string.provider_nvidia)
         ApiProviderType.LMSTUDIO -> context.getString(R.string.provider_lmstudio)
         ApiProviderType.OLLAMA -> context.getString(R.string.provider_ollama)
+        ApiProviderType.OLLAMA_CLOUD -> context.getString(R.string.provider_ollama_cloud)
         ApiProviderType.OPENAI_LOCAL -> context.getString(R.string.provider_openai_local)
         ApiProviderType.MNN -> context.getString(R.string.provider_mnn)
         ApiProviderType.LLAMA_CPP -> context.getString(R.string.provider_llama_cpp)
@@ -2738,6 +2928,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.IFLOW -> MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f)
         ApiProviderType.OPENROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.6f)
         ApiProviderType.OPENCODE_GO -> MaterialTheme.colorScheme.onSurface.copy(alpha = 0.75f)
+        ApiProviderType.OPENCODE_ZEN_FREE -> MaterialTheme.colorScheme.tertiary
         ApiProviderType.FOUR_ROUTER -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.56f)
         ApiProviderType.NOUS_PORTAL -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.52f)
         ApiProviderType.INFINIAI -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
@@ -2746,6 +2937,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.NVIDIA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
         ApiProviderType.LMSTUDIO -> MaterialTheme.colorScheme.tertiary
         ApiProviderType.OLLAMA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
+        ApiProviderType.OLLAMA_CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
         ApiProviderType.OPENAI_LOCAL -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
         ApiProviderType.MNN -> MaterialTheme.colorScheme.secondary
         ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)

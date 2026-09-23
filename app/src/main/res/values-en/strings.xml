@@ -1,4 +1,8 @@
 <resources>
+    <string name="openai_error_repetition_truncation">The server stopped repetitive model output. The response was discarded and its tools will not run.</string>
+    <string name="openai_retry_repetition_truncation">Repetitive output was discarded. Retrying the request once.</string>
+    <string name="memory_include_thinking">Include thinking in extraction</string>
+    <string name="memory_include_thinking_desc">Graph, note and skill extraction in this memory space can use model thinking, including history read during extraction. On by default. Turn off to use only visible replies and tool records. Chat display and context caching are unchanged.</string>
     <string name="permission_review_always_allow">Always allow this tool</string>
     <string name="permission_review_always_allowed">This tool is always allowed</string>
     <string name="permission_review_always_allow_confirm">Always allow “%1$s”?\n\nThis applies to all conversations and all arguments for this tool, without permission prompts or automatic reviews. Other tools are unaffected.\n\nFinished calls will not be retried automatically. Revoke this in Settings → Tool permissions.</string>
@@ -4232,6 +4236,12 @@
     <string name="provider_iflow">iFlow</string>
     <string name="provider_openrouter">OpenRouter (Multi-model Hub)</string>
     <string name="provider_opencode_go">OpenCode Go</string>
+    <string name="provider_opencode_zen_free">OpenCode Zen Free (data may be used for training)</string>
+    <string name="provider_opencode_zen_free_warning">Prompts, attachments, and replies sent to free models may be used to train or improve models. Do not send sensitive information. You can leave the Zen API key blank, but anonymous requests may be rejected. Your own key is more reliable. Only free models are allowed.</string>
+    <string name="provider_opencode_zen_free_endpoint_fixed">Uses the official OpenCode Zen endpoint</string>
+    <string name="provider_opencode_zen_free_key_optional">Optional: leave blank to try anonymous access, or enter your Zen API key</string>
+    <string name="provider_opencode_zen_free_model_required">This provider only allows OpenCode Zen free models. Choose one from the model list.</string>
+    <string name="provider_opencode_zen_free_anonymous_denied">Zen rejected anonymous access. Enter your own Zen API key and try again.</string>
     <string name="provider_opencode_go_protocol_hint">OpenCode Go models use different APIs. Auto-configure protocols uses the local catalog. Refresh the catalog manually when needed, or configure each model yourself.</string>
     <string name="provider_4router">4Router</string>
     <string name="provider_nous_portal">Nous Portal</string>
@@ -4239,6 +4249,7 @@
     <string name="provider_alipay_bailing">Alipay Bailing Model</string>
     <string name="provider_lmstudio">LM Studio (Local Model)</string>
     <string name="provider_ollama">Ollama (Local Model)</string>
+    <string name="provider_ollama_cloud">Ollama Cloud</string>
     <string name="provider_openai_local">OpenAI-Compatible (Local Model)</string>
     <string name="provider_ppinfra">PPInfra Cloud</string>
     <string name="provider_novita">Novita AI</string>
@@ -8880,6 +8891,17 @@
     <string name="codex_login_starting">Preparing Codex sign-in...</string>
     <string name="codex_login_waiting">Complete sign-in in your browser</string>
     <string name="codex_login_action">Sign in with ChatGPT</string>
+    <string name="codex_device_login_action">Sign in with device code</string>
+    <string name="codex_device_login_title">Codex device code sign-in</string>
+    <string name="codex_device_login_starting">Getting a one-time code…</string>
+    <string name="codex_device_login_instructions">Open this URL on another device, sign in, then enter the one-time code (valid for 15 minutes):</string>
+    <string name="codex_device_login_copy">Copy code</string>
+    <string name="codex_device_login_open">Open here</string>
+    <string name="codex_device_login_open_elsewhere">No browser available. Open the URL above on another device.</string>
+    <string name="codex_device_login_waiting">Waiting for authorization. Sign-in will complete automatically.</string>
+    <string name="codex_device_login_safety">Use this code only if you started the sign-in. Never share it with anyone.</string>
+    <string name="codex_device_login_expired">Device code expired. Please start again.</string>
+    <string name="codex_device_login_disabled">Codex device code authorization is disabled. Enable it in ChatGPT settings and try again.</string>
     <string name="codex_login_success">OpenAI Codex sign-in succeeded</string>
     <string name="codex_login_failed">OpenAI Codex sign-in failed: %1$s</string>
     <string name="codex_logout_action">Sign out of Codex</string>
@@ -8888,7 +8910,8 @@
     <string name="codex_auth_not_logged_in">Sign in with ChatGPT to use Codex subscription access</string>
     <string name="codex_auth_account">Account: %1$s</string>
     <string name="codex_endpoint_fixed">The Codex endpoint is fixed by the system</string>
-    <string name="codex_model_directory_hint">Models come from the local directory, or the bundled Codex list when OpenAI is absent. Availability depends on the signed-in account.</string>
+    <string name="codex_model_directory_hint">Shows models available to the signed-in account. If loading fails, open the model list to retry.</string>
+    <string name="codex_model_catalog_refresh_failed">Signed in, but failed to load models: %1$s</string>
     <string name="codex_plan">Plan: %1$s</string>
     <string name="codex_direct_media_processing">Direct image/PDF input</string>
     <string name="codex_direct_media_processing_desc">Send images and PDFs directly to Codex</string>

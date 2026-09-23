@@ -1886,6 +1886,19 @@
       ]
     }
   },
+  "meta/muse-spark-1.3": {
+    "name": "Muse Spark 1.3",
+    "family": "muse",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
   "microsoft/mai-code-1-flash": {
     "name": "MAI-Code-1-Flash",
     "family": "mai",

@@ -537,6 +537,15 @@ class UserPreferencesManager private constructor(private val context: Context) {
                 .orEmpty()
         }
 
+    val memorySpaceNamesFlow: Flow<Map<String, String>> =
+        context.userPreferencesDataStore.data.map { preferences ->
+            decodeIdList(preferences[MEMORY_SPACE_LIST]).mapNotNull { id ->
+                preferences[stringPreferencesKey("memory_space_$id")]?.let { encoded ->
+                    id to Json.decodeFromString<MemorySpace>(encoded).name
+                }
+            }.toMap()
+        }
+
     fun getMemorySpaceFlow(memorySpaceId: String = ""): Flow<MemorySpace> {
         return context.userPreferencesDataStore.data.map { preferences ->
             val targetId =
@@ -593,6 +602,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     suspend fun deleteMemorySpace(memorySpaceId: String) {
         if (memorySpaceId == DEFAULT_PROFILE_ID) return
+        com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.deleteSpace(context,memorySpaceId)
         val wasActive = activeMemorySpaceIdFlow.first() == memorySpaceId
         val characterCardManager = CharacterCardManager.getInstance(context)
         characterCardManager.getAllCharacterCards()

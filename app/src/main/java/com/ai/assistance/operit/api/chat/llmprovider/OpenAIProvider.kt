@@ -170,6 +170,8 @@ open class OpenAIProvider(
     protected val supportsVideo: Boolean = false, // 是否支持视频输入
     protected val supportsFiles: Boolean = false, // 是否支持文件输入
     val enableToolCall: Boolean = false, // 是否启用Tool Call接口
+    /** Catalog-declared effort values; null means the catalog does not describe effort at all. */
+    protected val catalogReasoningEfforts: List<String>? = null,
 ) : AIService {
     // private val client: OkHttpClient = HttpClientFactory.instance
 
@@ -197,6 +199,17 @@ open class OpenAIProvider(
         override val statusCode: Int,
         cause: Throwable? = null
     ) : IOException(message, cause), HttpStatusCodeException
+
+    internal class RepetitionTruncationException(message: String) : IOException(message)
+
+    private fun rejectRepetitionTruncation(context: Context, response: JSONObject) {
+        val choices = response.optJSONArray("choices") ?: return
+        for (index in 0 until choices.length()) {
+            if (choices.optJSONObject(index)?.optString("finish_reason") == "repetition_truncation") {
+                throw RepetitionTruncationException(context.getString(R.string.openai_error_repetition_truncation))
+            }
+        }
+    }
 
     // Token缓存管理器
     val tokenCacheManager = TokenCacheManager()
@@ -297,6 +310,8 @@ open class OpenAIProvider(
     ) {
         if (currentApiKey.isNotEmpty()) {
             builder.addHeader("Authorization", "Bearer $currentApiKey")
+        } else if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            builder.addHeader("Authorization", "Bearer public")
         }
     }
 
@@ -759,10 +774,13 @@ open class OpenAIProvider(
         } else {
             "none"
         } ?: return
-        requestJson.put("reasoning_effort", effort)
+        val declaredEffort =
+            ThinkingRequestSemantics.declaredCatalogReasoningEffort(effort, catalogReasoningEfforts)
+                ?: return
+        requestJson.put("reasoning_effort", declaredEffort)
         AppLogger.d(
             "OpenAIProvider",
-            "OpenAI Chat Completions reasoning_effort=$effort"
+            "OpenAI Chat Completions reasoning_effort=$declaredEffort"
         )
     }
 
@@ -896,6 +914,10 @@ open class OpenAIProvider(
             }
 
         customizeFinalRequestObject(finalRequestObject, messagesArray, toolsJson)
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            OpenCodeZenFree.enforceFreeModel(finalRequestObject, modelName)
+            OpenCodeZenFree.ensureAnonymousRequestShape(finalRequestObject)
+        }
 
         // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
         logRequestBodyForDebugging("AIService", "Request body: ") {
@@ -1495,6 +1517,8 @@ open class OpenAIProvider(
         return Pair(messagesArray, tokenCount)
     }
 
+    protected open val preserveReasoningForTokenEstimate: Boolean = false
+
     override suspend fun calculateInputTokens(
         chatHistory: List<PromptTurn>,
         availableTools: List<ToolPrompt>?
@@ -1509,7 +1533,10 @@ open class OpenAIProvider(
         }
         // 使用TokenCacheManager计算token数量
         return tokenCacheManager.calculateInputTokens(
-            buildComparableHistory(chatHistory, preserveThinkInHistory = false),
+            buildComparableHistory(
+                prepareHistoryForProvider(chatHistory, enableToolCall && !availableTools.isNullOrEmpty()),
+                preserveThinkInHistory = preserveReasoningForTokenEstimate
+            ),
             toolsJson,
             updateState = false
         )
@@ -1859,7 +1886,7 @@ open class OpenAIProvider(
         }
         checkCancellation(context, exception)
 
-        if (exception is CommandCodeProtocolException) throw exception
+        if (exception is CommandCodeProtocolException || exception is RepetitionTruncationException) throw exception
 
         val errorText = resolveRetryErrorText(context, exception)
 
@@ -2018,6 +2045,7 @@ open class OpenAIProvider(
 
     // 创建请求
     private val openCodeGoHeaders = OpenCodeGoHeaders()
+    private val openCodeZenFreeHeaders = OpenCodeZenFreeHeaders()
 
     private suspend fun createRequest(
         requestBody: RequestBody,
@@ -2050,6 +2078,9 @@ open class OpenAIProvider(
         }
 
         openCodeGoHeaders.applyTo(builder)
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            openCodeZenFreeHeaders.applyTo(builder, logicalRequestId)
+        }
         applyRequestIdentityHeaders(builder, logicalRequestId)
         val request = builder.post(requestBody).build()
         val bodyBytes = runCatching { requestBody.contentLength() }.getOrDefault(-1L)
@@ -2922,6 +2953,7 @@ open class OpenAIProvider(
                 try {
                     val jsonResponse = JSONObject(data)
                     throwIfOpenAiErrorPayload(context, jsonResponse)
+                    rejectRepetitionTruncation(context, jsonResponse)
 
                     if (useResponsesApi) {
                         processResponsesStreamingEvent(context, jsonResponse, state, emitter, onTokensUpdated, onUsageReported, attemptNumber)
@@ -3001,7 +3033,8 @@ open class OpenAIProvider(
         enableRetry: Boolean,
         statsCategory: com.ai.assistance.operit.data.stats.TokenStatCategory?
     ): Stream<String> {
-        val effectiveStream = stream || requiresStreamingResponse
+        val effectiveStream = stream || requiresStreamingResponse ||
+            providerType == ApiProviderType.OPENCODE_ZEN_FREE
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val responseStream = stream {
             val logicalRequestId = UUID.randomUUID().toString()
@@ -3021,6 +3054,7 @@ open class OpenAIProvider(
 
             val maxRetries = LlmRetryPolicy.MAX_RETRY_ATTEMPTS
             var retryCount = 0
+            var repetitionRetryCount = 0
             var lastException: Exception? = null
 
             // 用于保存当前 attempt 已接收到的内容；一旦需要重试，会整体回滚到请求起点
@@ -3104,8 +3138,16 @@ open class OpenAIProvider(
                             )
                             // 4xx错误仍保留单独的异常类型，具体是否重试由统一策略决定
                             if (response.code in 400..499) {
+                                val errorMessage =
+                                    if (providerType == ApiProviderType.OPENCODE_ZEN_FREE &&
+                                        response.code == 403 &&
+                                        apiKeyProvider.getApiKey().isBlank()) {
+                                        context.getString(R.string.provider_opencode_zen_free_anonymous_denied)
+                                    } else {
+                                        context.getString(R.string.openai_error_api_request_failed_with_status, response.code, errorBody)
+                                    }
                                 throw NonRetriableException(
-                                    context.getString(R.string.openai_error_api_request_failed_with_status, response.code, errorBody),
+                                    errorMessage,
                                     statusCode = response.code
                                 )
                             }
@@ -3179,6 +3221,7 @@ open class OpenAIProvider(
 
                                     if (choices.length() > 0) {
                                         val choice = choices.getJSONObject(0)
+                                        rejectRepetitionTruncation(context, jsonResponse)
                                         val messageObj = choice.optJSONObject("message")
 
                                         if (messageObj != null) {
@@ -3244,6 +3287,14 @@ open class OpenAIProvider(
             } catch (e: Exception) {
                 lastException = e
                 emitter.emitRollback(requestSavepointId)
+                if (e is RepetitionTruncationException) {
+                    if (!enableRetry || repetitionRetryCount >= 1 || retryCount >= maxRetries) throw e
+                    repetitionRetryCount++
+                    retryCount++
+                    AppLogger.w("AIService", "Repetition truncation: discarded response; retrying once")
+                    onNonFatalError(context.getString(R.string.openai_retry_repetition_truncation))
+                    continue
+                }
                 // 停滞单独限次：每次停滞都要等满超时，全量重试会把用户晾十几分钟
                 // 取消类异常与手动取消优先：看门狗恰好与用户取消重合时，不能把取消改写成停滞错误
                 val cancelled =

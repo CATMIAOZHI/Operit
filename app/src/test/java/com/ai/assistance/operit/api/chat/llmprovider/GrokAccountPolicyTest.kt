@@ -13,6 +13,11 @@ class GrokAccountPolicyTest {
         assertNull(GrokAccountPolicy.effort("grok-build-0.1", "high"))
         assertEquals("max", GrokAccountPolicy.effort("grok-future", "max"))
     }
+    @Test fun modelsOutsideThePolicyTableKeepPassingTheUserEffortThrough() {
+        assertEquals(listOf("low", "medium", "high", "xhigh"), GrokAccountPolicy.declaredEfforts("grok-4.6"))
+        assertNull(GrokAccountPolicy.declaredEfforts("grok-4.7"))
+        assertNull(GrokAccountPolicy.declaredEfforts("grok-build-0.1"))
+    }
     @Test fun displayedEffortMatchesTheAccountRequestPolicy() {
         assertEquals(ThinkingRequestSummary.Effort("xhigh"),
             ThinkingRequestSemantics.resolve(providerType = ApiProviderType.GROK_ACCOUNT, modelName = "grok-4.6", qualityLevel = 5, modelParameters = emptyList()))

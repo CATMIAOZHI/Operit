@@ -103,9 +103,7 @@ class MemoryViewModel(
         loadSearchSettings()
         loadCloudEmbeddingSettings()
         refreshEmbeddingDimensionUsage()
-        // Initially load the graph
-        loadMemoryGraph()
-        loadFolderPaths()
+        // The graph destination loads data when it becomes visible.
     }
 
     private suspend fun refreshGraph(): Graph {

@@ -26,7 +26,29 @@ object MemoryLearningCoordinator {
     private val jobs = ConcurrentHashMap<String, Job>()
     private val cancellingJobs = ConcurrentHashMap<String, Job>()
     private val automaticJobs = ConcurrentHashMap<String, Job>()
+    private val jobProfiles = ConcurrentHashMap<String,String>()
+    private val deletedProfiles = ConcurrentHashMap.newKeySet<String>()
+    private val lifecycleLocks = ConcurrentHashMap<String,Mutex>()
+    private fun lifecycle(profile: String) = lifecycleLocks.computeIfAbsent(profile) { Mutex() }
+    private data class Prepared(val profile: String, val iterations: Int)
+    private val prepared = ConcurrentHashMap<Pair<String,String>,Prepared>()
+    private val foreground = ConcurrentHashMap.newKeySet<String>()
+    private val manualClaims = ConcurrentHashMap.newKeySet<String>()
     fun cancelAutomaticReviews() { automaticJobs.values.forEach { it.cancel() } }
+    suspend fun deleteSpace(context: Context, profile: String) {
+        lifecycle(profile).withLock {
+            deletedProfiles.add(profile)
+            prepared.entries.removeAll { it.value.profile==profile }
+        }
+        val targets=jobProfiles.filterValues { it==profile }.keys.flatMap {
+            listOfNotNull(jobs[it],cancellingJobs[it])
+        }.distinct()
+        targets.forEach { it.cancel() }
+        targets.forEach { it.join() }
+        lifecycle(profile).withLock {
+            withContext(Dispatchers.IO) { MemoryLearningJournal.deleteSpace(context,profile) }
+        }
+    }
     private val sessions = ConcurrentHashMap<String, Session>()
     private class Session(val actions: MemoryLearningActions) : AgentRunObserver {
         override val capabilityTools = setOf(ACTION,FINISH)
@@ -55,58 +77,136 @@ object MemoryLearningCoordinator {
     }
     fun foregroundStarted(chatId: String?) {
         chatId?.let { id ->
-            jobs.remove(id)?.let { job ->
-                cancellingJobs[id] = job
-                job.invokeOnCompletion { cancellingJobs.remove(id, job) }
-                job.cancel()
-            }
+            foreground.add(id)
+            prepared.keys.removeAll { it.first==id }
+            cancelReview(id)
         }
     }
-    suspend fun manualReview(context: Context, profileId: String, chatId: String) = coroutineScope {
-        foregroundStarted(chatId)
+    private fun cancelReview(id: String) {
+        jobs.remove(id)?.let { job ->
+            cancellingJobs[id] = job
+            job.invokeOnCompletion { cancellingJobs.remove(id, job) }
+            job.cancel()
+        }
+    }
+    fun foregroundEnded(context: Context, chatId: String?) {
+        if (chatId != null) {
+            foreground.remove(chatId)
+            prepared.keys.removeAll { it.first==chatId }
+            resumePending(context)
+        }
+    }
+    suspend fun manualReview(context: Context, profileId: String, chatId: String) {
+        check(manualClaims.add(chatId)) { "A manual review is already running" }
+        try { runManualReview(context,profileId,chatId) }
+        finally {
+            manualClaims.remove(chatId)
+            resumePending(context)
+        }
+    }
+    private suspend fun runManualReview(context: Context, profileId: String, chatId: String) = coroutineScope {
+        check(!foreground.contains(chatId)) { "Wait for the current response before manually reviewing it" }
+        cancelReview(chatId)
         cancellingJobs[chatId]?.join()
-        val task = async(start=CoroutineStart.LAZY) { review(context,profileId,chatId,manual=true) }
+        val task = async(start=CoroutineStart.LAZY) {
+            lifecycle(profileId).withLock {
+                check(profileId !in deletedProfiles) { "Memory space was deleted" }
+                val journal=MemoryLearningJournal(context,profileId,chatId)
+                journal.export()
+                journal.enqueue(true,true,AppDatabase.getDatabase(context).chatContentDao().learningSourceHorizon(chatId),
+                    restart=true)
+            }
+            // An explicit review waits for its backlog, rather than reporting a three-batch prefix
+            // as a complete review. Cancellation/time limits retain completed batch checkpoints.
+            withTimeout(30*60_000L) {
+                do {
+                    review(context,profileId,chatId,manual=true)
+                    val remaining=MemoryLearningJournal(context,profileId,chatId)
+                } while (remaining.pending("notes") || remaining.pending("skills"))
+            }
+        }
         jobs[chatId]=task
-        task.invokeOnCompletion { jobs.remove(chatId,task) }
+        jobProfiles[chatId]=profileId
+        task.invokeOnCompletion { if (jobs.remove(chatId,task)) jobProfiles.remove(chatId,profileId) }
+        if (foreground.contains(chatId)) task.cancel()
         task.start()
-        task.await()
+        try { task.await() } finally {
+            jobs.remove(chatId,task)
+        }
     }
 
-    suspend fun replyCompleted(context: Context, profileId: String, chatId: String, snapshot: List<Pair<String, String>>,
-                               toolIterations: Int = 0) {
-        if (!ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
+    suspend fun prepareReview(context: Context, profileId: String, chatId: String, turnKey: String?,
+                              toolIterations: Int = 0) {
+        if (profileId in deletedProfiles || !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
+        if (turnKey != null) prepared[chatId to turnKey]=Prepared(profileId,toolIterations)
+    }
+
+    /** Called only after the matching foreground turn's final messages have been persisted. */
+    suspend fun sourceCommitted(context: Context, chatId: String, turnKey: String, revisedTimestamp: Long? = null) {
+        val metadata=prepared.remove(chatId to turnKey) ?: return
+        val profileId=metadata.profile
         val settings = MemorySearchSettingsPreferences(context,profileId)
-        if (!settings.shouldExtractNewMemory() && !settings.shouldExtractSkills()) return
-        foregroundStarted(chatId)
-        // Cancellation writes the interrupted review's pending flags before the next tick reads them.
         cancellingJobs[chatId]?.join()
-        val tick = settings.advanceLearningCadence(chatId, toolIterations)
-        if (!tick.notes && !tick.skills) return
+        val tick = settings.advanceLearningCadence(chatId, metadata.iterations)
+        val dao=AppDatabase.getDatabase(context).chatContentDao()
+        val horizon=dao.learningSourceHorizon(chatId)
+        val revisedId=revisedTimestamp?.let { dao.learningMessageId(chatId,it) }
+        lifecycle(profileId).withLock {
+            if (profileId in deletedProfiles) return
+            val journal=MemoryLearningJournal(context,profileId,chatId)
+            revisedId?.let { journal.rewind(it) }
+            if (!tick.notes && !tick.skills && !journal.pending("notes") && !journal.pending("skills")) return
+            journal.enqueue(tick.notes,tick.skills,horizon)
+        }
+        foreground.remove(chatId)
+        schedule(context,profileId,chatId)
+    }
+
+    fun resumePending(context: Context) {
+        scope.launch {
+            MemoryLearningJournal.pending(context).forEach { (profile,chat) ->
+                if (!foreground.contains(chat) && !jobs.containsKey(chat)) schedule(context,profile,chat)
+            }
+        }
+    }
+
+    private fun schedule(context: Context, profileId: String, chatId: String) {
+        if (profileId in deletedProfiles || chatId in manualClaims) return
+        val settings = MemorySearchSettingsPreferences(context,profileId)
         val job = scope.launch(start=CoroutineStart.LAZY) {
-            var startedPaths: Pair<Boolean, Boolean>? = null
             try {
-                // New foreground activity cancels this job; its next reply schedules the latest snapshot.
-                delay(settings.learningDelayMinutes() * 60_000L)
-                if (!ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return@launch
-                val (notes, skills) = settings.consumePendingLearning(chatId)
-                startedPaths = notes to skills
-                if (notes || skills) review(context.applicationContext,profileId,chatId,snapshot=snapshot,
-                    reviewNotes=notes,reviewSkills=skills)
+                do {
+                    // A bounded run processes at most three batches, then yields another idle period.
+                    delay(settings.learningDelayMinutes() * 60_000L)
+                    if (profileId in deletedProfiles || foreground.contains(chatId) ||
+                        !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return@launch
+                    val journal=MemoryLearningJournal(context,profileId,chatId)
+                    val notes=journal.pending("notes") && settings.shouldExtractNewMemory()
+                    val skills=journal.pending("skills") && settings.shouldExtractSkills()
+                    journal.export()
+                    if (!notes && !skills) return@launch
+                    settings.consumePendingLearning(chatId)
+                    review(context.applicationContext,profileId,chatId,reviewNotes=notes,reviewSkills=skills)
+                    val remaining=MemoryLearningJournal(context,profileId,chatId)
+                } while (remaining.pending("notes") && settings.shouldExtractNewMemory() ||
+                    remaining.pending("skills") && settings.shouldExtractSkills())
             }
-            catch(e: CancellationException) {
-                startedPaths?.let { settings.restorePendingLearning(chatId, it.first, it.second) }
-                throw e
-            }
+            catch(e: CancellationException) { throw e }
             catch(e: Exception) { AppLogger.e("MemoryLearning","Background review failed",e) }
         }
-        jobs[chatId] = job
+        if (jobs.putIfAbsent(chatId,job)!=null) { job.cancel(); return }
+        jobProfiles[chatId]=profileId
         automaticJobs[chatId] = job
-        job.invokeOnCompletion { jobs.remove(chatId,job); automaticJobs.remove(chatId,job) }
+        job.invokeOnCompletion {
+            if (jobs.remove(chatId,job)) jobProfiles.remove(chatId,profileId)
+            automaticJobs.remove(chatId,job)
+        }
+        if (foreground.contains(chatId) || chatId in manualClaims) { job.cancel(); return }
         job.start()
     }
 
     suspend fun review(context: Context, profileId: String, chatId: String, manual: Boolean = false,
-                       snapshot: List<Pair<String, String>>? = null, reviewNotes: Boolean = true, reviewSkills: Boolean = true) {
+                       reviewNotes: Boolean = true, reviewSkills: Boolean = true) {
         if (!manual && !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
         val db = AppDatabase.getDatabase(context)
         val chat = db.chatDao().getChatById(chatId)
@@ -115,10 +215,39 @@ object MemoryLearningCoordinator {
         val notes = manual || (reviewNotes && settings.shouldExtractNewMemory())
         val skills = manual || (reviewSkills && settings.shouldExtractSkills())
         if (!notes && !skills) return
+        val journal=MemoryLearningJournal(context,profileId,chatId)
+        if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
+        journal.export()
+        MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
+            settings.shouldIncludeThinking()).use { source ->
+            repeat(3) {
+                val paths=listOfNotNull("notes".takeIf { notes && journal.pending(it) },
+                    "skills".takeIf { skills && journal.pending(it) })
+                if (paths.isEmpty()) return
+                val first=paths.minBy { journal.cursor(it).messageId }
+                val selected=paths.filter { journal.cursor(it)==journal.cursor(first) }
+                val instructions=buildMemoryLearningInstructions(chatId,"notes" in selected,"skills" in selected,FINISH)
+                val config=MemoryLearningSnapshot.build(context,emptyList(),instructions.toByteArray().size,
+                    settings.shouldIncludeThinking())
+                val batch=source.next(journal.cursor(first),
+                    MemoryLearningSnapshot.sourceBudget(config.contextWindow,instructions.toByteArray().size))
+                if (batch.text.isBlank()) {
+                    journal.complete(selected,batch.next,batch.more,emptyList())
+                    journal.export()
+                } else reviewBatch(context,profileId,chatId,selected,batch,config.contextWindow,journal)
+            }
+        }
+    }
+
+    private suspend fun reviewBatch(context: Context, profileId: String, chatId: String,
+        paths: List<String>, batch: MemoryLearningSource.Batch, contextWindow: Int, journal: MemoryLearningJournal) {
+        val notes="notes" in paths
+        val skills="skills" in paths
         val logRepo = MemoryExtractionLogRepository(context,profileId)
         val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills)
         var created = 0
-        val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true) { created++ })
+        val staged=mutableListOf<MemoryReviewChange>()
+        val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged))
         var childId: String? = null
         var runId = ""
         fun snapshot(status: String = "running", finishedAt: Long = 0, detail: String = session.failures.joinToString("\n")) =
@@ -131,22 +260,17 @@ object MemoryLearningCoordinator {
             withTimeout(10 * 60_000L) {
                 session.job = currentCoroutineContext().job
                 val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH)
-                val recent = MemoryLearningSnapshot.build(context, snapshot ?:
-                    db.chatContentDao().getMessagesForChatDesc(chatId,48).asReversed()
-                        .filter { it.sender in setOf("user","ai","summary") }
-                        .map { (if (it.sender == "summary") "SUMMARY" else it.sender) to it.content },
-                    instructions.toByteArray(Charsets.UTF_8).size)
                 // Conservative byte accounting bounds repeated history/skill reads as well as SOURCE.
                 // Leave room for the scoped tool schema, model output and protocol overhead.
-                session.evidenceBudget = (recent.contextWindow * 0.75).toLong()
-                session.evidenceBytes.set((recent.text + instructions).toByteArray(Charsets.UTF_8).size.toLong())
+                session.evidenceBudget = (contextWindow * 0.75).toLong()
+                session.evidenceBytes.set((batch.text + instructions).toByteArray(Charsets.UTF_8).size.toLong())
                 val result = SubagentCoordinator.getInstance(context).runTask(SubagentTaskRequest(
                     parentChatId=chatId,parentToolCallId=null,parentAgentName=null,
-                    title=context.getString(R.string.memory_learning_run),prompt="$instructions\n\nSOURCE:\n${recent.text}",
+                    title=context.getString(R.string.memory_learning_run),prompt="$instructions\n\nSOURCE BATCH:\n${batch.text}",
                     subagentType="memory-learning",functionType=FunctionType.MEMORY,
                     profileOverride=AgentProfile("memory-learning","Memory learning","",AgentMode.SUBAGENT,instructions,hidden=true),
                     isolatedToolPrompts=prompts(notes, skills),terminalToolNames=setOf(FINISH),
-                    promptHooksEnabled=false,disableSummary=true,childHidden=true,
+                    promptHooksEnabled=false,disableSummary=false,childHidden=true,
                     childHiddenReason="MEMORY_LEARNING",externalOwnerType="memory-learning",externalOwnerId=log.id,
                     onRunCreated={ run ->
                         childId=run.childChatId
@@ -163,8 +287,14 @@ object MemoryLearningCoordinator {
                     }
                 ))
                 check(result is SubagentTaskResult.Completed) { "Learning task did not complete" }
+                check(session.finished) { "Learning review did not confirm batch completion; source progress was retained" }
             }
-            logRepo.save(snapshot(status=memoryLearningFinalStatus(null,created,session.failures.size),
+            currentCoroutineContext().ensureActive()
+            journal.complete(paths,batch.next,batch.more,staged)
+            created=staged.size
+            session.failures.addAll(journal.export())
+            logRepo.save(snapshot(status=if (batch.more && session.failures.isEmpty()) "batch_complete"
+                else memoryLearningFinalStatus(null,created,session.failures.size),
                 finishedAt=System.currentTimeMillis()))
         } catch(e: Exception) {
             withContext(NonCancellable) {

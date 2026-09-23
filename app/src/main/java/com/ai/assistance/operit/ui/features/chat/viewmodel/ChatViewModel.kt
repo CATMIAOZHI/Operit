@@ -1597,7 +1597,19 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun steeringTurnId(chatId: String): String? = messageProcessingDelegate.steeringTurnId(chatId)
 
-    fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
+    suspend fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
+        if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
+        if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
+        val preparedText = try {
+            messageProcessingDelegate.prepareSteeringInput(
+                chatId, expectedTurnId, item.text, item.attachments
+            ) ?: return false
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Failed to prepare queued attachments for steering", e)
+            return false
+        }
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         pendingMessageQueueStore.restore(chatId, item.copy(isSteering = true))
@@ -1605,7 +1617,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chatId,
             expectedTurnId,
             com.ai.assistance.operit.core.chat.TurnInputInbox.Input(
-                text = item.text,
+                text = preparedText,
                 consumed = { pendingMessageQueueStore.remove(chatId, item.id) },
                 returned = { pendingMessageQueueStore.returnSteer(chatId, item) },
             ),
@@ -1618,6 +1630,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         text: String,
         chatId: String,
         chatGeneration: Long,
+        attachments: List<AttachmentInfo> = emptyList(),
         promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
     ): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
@@ -1628,6 +1641,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             promptFunctionType = promptFunctionType,
             chatId = chatId,
             messageText = text,
+            attachments = attachments,
         )
     }
 
@@ -1643,8 +1657,15 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             sendTriggeredSummaryForThisChat
     }
 
-    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean) {
-        pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked)
+    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Boolean {
+        val snapshot = attachmentDelegate.attachments.value.toList()
+        if (!pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot)) return false
+        snapshot.forEach { attachmentDelegate.removeAttachment(it.filePath) }
+        return true
+    }
+
+    fun restoreQueuedAttachments(item: PendingQueueMessageItem) {
+        attachmentDelegate.addAttachments(item.attachments)
     }
 
     fun removePendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =

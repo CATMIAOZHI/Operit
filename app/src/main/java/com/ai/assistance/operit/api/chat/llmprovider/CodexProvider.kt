@@ -4,10 +4,12 @@ import android.content.Context
 import com.ai.assistance.operit.BuildConfig
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.CodexOAuthProtocol
+import com.ai.assistance.operit.data.api.CodexModelsClient
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.model.ModelProtocolCatalogRepository
 import java.util.UUID
+import java.io.IOException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.CancellationException
 import okhttp3.OkHttpClient
@@ -142,6 +144,16 @@ object CodexModelListFetcher {
         context: Context,
     ): Result<List<ModelOption>> {
         return try {
+            val auth = CodexAuthManager.getInstance(context)
+            if (auth.authState.value != null) {
+                val accessToken = auth.getValidAccessToken()
+                val account = auth.accountForAccessToken(accessToken)
+                val models = CodexModelsClient().fetch(accessToken, account.accountId, account.residency)
+                if (auth.currentAccountId() != account.accountId) {
+                    throw IOException("Codex account changed while loading models")
+                }
+                return Result.success(models)
+            }
             val responseBody = ModelProtocolCatalogRepository(context).loadCatalogJson()
             Result.success(parseModels(responseBody))
         } catch (error: CancellationException) {

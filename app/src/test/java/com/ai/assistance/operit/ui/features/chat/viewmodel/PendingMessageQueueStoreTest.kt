@@ -8,6 +8,27 @@ import org.junit.Test
 
 class PendingMessageQueueStoreTest {
     @Test
+    fun attachmentsRemainWithTheirMessageThroughSteerReturnAndDequeue() {
+        val store = PendingMessageQueueStore()
+        val attachment = com.ai.assistance.operit.data.model.AttachmentInfo(
+            "/tmp/picture.png", "picture.png", "image/png", 123L)
+        val source = mutableListOf(attachment)
+        assertTrue(store.enqueue("chat-a", "", true, source))
+        source.clear()
+        store.enqueue("chat-b", "other chat", true)
+        val original = store.states.value.getValue("chat-a").messages.single()
+        assertEquals(listOf(attachment), original.attachments)
+        assertTrue(store.states.value.getValue("chat-b").messages.single().attachments.isEmpty())
+        store.remove("chat-a", original.id)
+        store.restore("chat-a", original.copy(isSteering = true))
+        store.returnSteer("chat-a", original)
+        assertEquals(listOf(attachment), store.states.value.getValue("chat-a").messages.single().attachments)
+        assertFalse(store.hasPendingAutoDequeue("chat-a", false))
+        store.hasPendingAutoDequeue("chat-a", true)
+        assertEquals(listOf(attachment), store.takeNextAutoDequeue("chat-a")!!.attachments)
+    }
+
+    @Test
     fun returningMiddleSteerPreservesOriginalQueueOrder() {
         val store = PendingMessageQueueStore()
         listOf("A", "B", "C").forEach { store.enqueue("chat-a", it, true) }

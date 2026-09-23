@@ -58,6 +58,11 @@ internal object ToolCallRepairLogger {
     fun record(context: Context, repair: ToolCallRepairRouter.Repair) {
         val file = File(context.applicationContext.filesDir, FILE_NAME)
         val line = entry(repair, System.currentTimeMillis())
+        // Include routing evidence in the exported app log as well as the dedicated repair log.
+        // Parameter values and tool output are deliberately excluded.
+        AppLogger.i("ToolCallRepair",
+            "callId=${repair.original.callId ?: "unavailable"}, index=${repair.original.invocationIndex}, " +
+                "original=${repair.originalToolName}, executed=${repair.targetToolName}, rules=${repair.rules}")
         scope.launch {
             try {
                 mutex.withLock {

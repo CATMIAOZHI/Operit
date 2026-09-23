@@ -14,6 +14,8 @@
     <string name="memory_auto_approve">Automatically approve AI changes (this space)</string>
     <string name="memory_auto_approve_desc">On by default. New notes, global user.md and skill additions, edits and deletions from this space apply automatically, with full history. Turn off for manual review. Existing pending changes are not approved in bulk.</string>
     <string name="memory_review_auto_applied">Change automatically approved and applied. See change history for details.</string>
+    <string name="memory_graph_title">Memory graph</string>
+    <string name="memory_nav_graph">Explore memory nodes and connections</string>
     <string name="memory_nav_notes">Read and edit memory.md</string>
     <string name="memory_nav_review">Review changes and decisions</string>
     <string name="memory_nav_learned">Extraction and ongoing revision</string>
@@ -105,6 +107,7 @@
     <string name="memory_extraction_graph">Legacy memory graph</string>
     <string name="memory_extraction_skills">Skill library</string>
     <string name="memory_extraction_success">Extraction completed</string>
+    <string name="memory_extraction_batch_complete">Batch completed; more content pending</string>
     <string name="memory_extraction_failed">Extraction failed</string>
     <string name="memory_extraction_cancelled">Extraction cancelled</string>
     <string name="memory_extraction_running">Started; no completion recorded</string>

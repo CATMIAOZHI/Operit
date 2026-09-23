@@ -97,6 +97,35 @@ data class ChatRecallPart(val messageId: Long, val chatId: String, val sender: S
 @Dao
 abstract class ChatContentDao {
     @Query("""
+        SELECT COALESCE(MAX(m.messageId),0) FROM messages m JOIN chats c ON c.id=m.chatId
+        WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.sender IN ('user','ai')
+    """)
+    abstract suspend fun learningSourceHorizon(chatId: String): Long
+
+    @Query("""
+        SELECT m.messageId,m.chatId,m.sender,m.timestamp,'' AS content,0 AS totalChars,0 AS containsNull
+        FROM messages m JOIN chats c ON c.id=m.chatId
+        WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.sender IN ('user','ai') AND m.messageId>=:fromId AND m.messageId<=:horizon
+        ORDER BY m.messageId LIMIT 1
+    """)
+    abstract suspend fun nextLearningSource(chatId: String, fromId: Long, horizon: Long): ChatRecallPart?
+
+    @Query("SELECT messageId FROM messages WHERE chatId=:chatId AND timestamp=:timestamp LIMIT 1")
+    abstract suspend fun learningMessageId(chatId: String, timestamp: Long): Long?
+
+    @Query("""
+        SELECT SUBSTR(CAST(COALESCE(v.content,m.content) AS BLOB),:byteOffset+1,32768)
+        FROM messages m JOIN chats c ON c.id=m.chatId
+        LEFT JOIN message_variants v ON v.chatId=m.chatId AND v.messageTimestamp=m.timestamp
+            AND v.variantIndex=m.selectedVariantIndex
+        WHERE m.messageId=:id AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.sender IN ('user','ai')
+    """)
+    abstract suspend fun readLearningMessageBytes(id: Long, byteOffset: Long): ByteArray?
+
+    @Query("""
         SELECT c.id AS chatId, c.title, c.updatedAt, c.characterCardName AS profile
         FROM chats c WHERE c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND (:profile='' OR c.characterCardName=:profile)

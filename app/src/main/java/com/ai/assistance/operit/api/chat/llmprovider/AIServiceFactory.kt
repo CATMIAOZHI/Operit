@@ -7,6 +7,7 @@ import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
 
 import android.content.Context
 import com.ai.assistance.llama.LlamaSession
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -299,9 +300,15 @@ object AIServiceFactory {
                 ?: throw IllegalArgumentException(
                     "AI provider type not found or not enabled: $providerTypeId"
                 )
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE &&
+            !OpenCodeZenFree.isFreeModel(config.modelName)) {
+            throw IllegalArgumentException(context.getString(R.string.provider_opencode_zen_free_model_required))
+        }
 
         // 根据配置决定使用单个API Key还是多API Key轮询
-        val apiKeyProvider = if (config.useMultipleApiKeys) {
+        val apiKeyProvider = if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {
+            SingleApiKeyProvider(config.apiKey)
+        } else if (config.useMultipleApiKeys) {
             MultiApiKeyProvider(config.id, modelConfigManager)
         } else {
             SingleApiKeyProvider(config.apiKey)
@@ -314,6 +321,24 @@ object AIServiceFactory {
         val supportsVideo = config.enableDirectVideoProcessing
         // Tool Call支持标志
         val enableToolCall = config.enableToolCall
+
+        if (providerType == ApiProviderType.OPENCODE_ZEN_FREE &&
+            OpenCodeZenFree.usesResponses(
+                config.modelName,
+                config.protocolSettingsForModel(config.modelName).protocol,
+            )) {
+            return OpenAIResponsesProvider(
+                responsesApiEndpoint = OpenCodeZenFree.RESPONSES_ENDPOINT,
+                apiKeyProvider = apiKeyProvider,
+                modelName = config.modelName,
+                client = httpClient,
+                responsesProviderType = providerType,
+                supportsVision = supportsVision,
+                supportsAudio = supportsAudio,
+                supportsVideo = supportsVideo,
+                enableToolCall = enableToolCall
+            )
+        }
 
         if (supportsModelProtocolOverrides(config.apiProviderTypeId) &&
             config.protocolSettingsForModel(config.modelName).protocol == ModelProtocol.CHAT_REASONING
@@ -330,7 +355,7 @@ object AIServiceFactory {
                 supportsVideo = supportsVideo,
                 enableToolCall = enableToolCall,
                 configureThinking = false,
-                reasoningEfforts = config.protocolSettingsForModel(config.modelName).reasoningEfforts.orEmpty(),
+                reasoningEfforts = config.protocolSettingsForModel(config.modelName).reasoningEfforts,
             )
         }
         
@@ -339,18 +364,23 @@ object AIServiceFactory {
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENCODE_GO,
+            ApiProviderType.OPENCODE_ZEN_FREE,
             ApiProviderType.OPENAI_LOCAL ->
                 OpenAIProvider(
-                    apiEndpoint = config.apiEndpoint,
+                    apiEndpoint = if (providerType == ApiProviderType.OPENCODE_ZEN_FREE)
+                        OpenCodeZenFree.CHAT_ENDPOINT else config.apiEndpoint,
                     apiKeyProvider = apiKeyProvider,
                     modelName = config.modelName,
                     client = httpClient,
-                    customHeaders = customHeaders,
+                    customHeaders = if (providerType == ApiProviderType.OPENCODE_ZEN_FREE)
+                        emptyMap() else customHeaders,
                     providerType = providerType,
                     supportsVision = supportsVision,
                     supportsAudio = supportsAudio,
                     supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall
+                    enableToolCall = enableToolCall,
+                    catalogReasoningEfforts =
+                        config.protocolSettingsForModel(config.modelName).reasoningEfforts,
                 )
 
             ApiProviderType.OPENAI_RESPONSES,
@@ -365,7 +395,9 @@ object AIServiceFactory {
                     supportsVision = supportsVision,
                     supportsAudio = supportsAudio,
                     supportsVideo = supportsVideo,
-                    enableToolCall = enableToolCall
+                    enableToolCall = enableToolCall,
+                    catalogReasoningEfforts =
+                        config.protocolSettingsForModel(config.modelName).reasoningEfforts,
                 )
 
             ApiProviderType.GROK_ACCOUNT ->
@@ -456,7 +488,8 @@ object AIServiceFactory {
                 )
 
             // Ollama使用OpenAI兼容格式
-            ApiProviderType.OLLAMA ->
+            ApiProviderType.OLLAMA,
+            ApiProviderType.OLLAMA_CLOUD ->
                 OllamaProvider(
                     apiEndpoint = config.apiEndpoint,
                     apiKeyProvider = apiKeyProvider,

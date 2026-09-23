@@ -11,17 +11,20 @@ import org.json.JSONObject
 class MemoryLearningActions(
     private val context: Context, val profileId: String, private val sourceChatId: String,
     private val notesEnabled: Boolean, private val skillsEnabled: Boolean,
-    private val background: Boolean, private val onCreated: () -> Unit = {}
+    private val background: Boolean,
+    private val stagedChanges: MutableList<MemoryReviewChange>? = null,
+    private val onCreated: () -> Unit = {}
 ) {
     private val skills = LearnedSkillRepository(context)
-    private val reviews = MemoryReviewRepository(context,profileId)
+    private val reviews = MemoryReviewRepository(context,profileId,stagedChanges)
     private val readVersions = mutableMapOf<String,String>()
     suspend fun execute(action: String, args: Map<String,String>): JSONObject {
         fun arg(name:String) = args[name].orEmpty()
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true)
+            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true,
+                includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"

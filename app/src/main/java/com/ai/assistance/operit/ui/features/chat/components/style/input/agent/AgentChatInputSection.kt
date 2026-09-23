@@ -483,7 +483,7 @@ fun AgentChatInputSection(
 
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
-    val showQueueAction = isProcessing && hasDraftText
+    val showQueueAction = isProcessing && canSendMessage
     val showCancelAction = isProcessing && !showQueueAction
     val sendButtonEnabled = true
     val tokenLimitWarning: @Composable () -> Unit = {
@@ -2759,12 +2759,6 @@ private fun AgentMemorySelectorItem(
                 isChecked = !injectNotes,
                 onToggle = { notesSettings.setInjectNotes(!injectNotes) },
                 onInfoClick = { showNotesInfo = true },
-            )
-            AgentActionSettingItem(
-                title = stringResource(R.string.manual_memory_update),
-                icon = Icons.Outlined.Save,
-                onClick = onManualMemoryUpdate,
-                onInfoClick = onManualMemoryUpdateInfoClick,
             )
         }
     }

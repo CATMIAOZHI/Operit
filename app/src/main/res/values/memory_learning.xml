@@ -14,6 +14,8 @@
     <string name="memory_auto_approve">自动通过 AI 改动（当前空间）</string>
     <string name="memory_auto_approve_desc">默认开启。此空间新产生的笔记、全局 user.md 和技能增删改直接生效，保留完整历史；关闭后需手动审批。不会批量通过已有待审改动。</string>
     <string name="memory_review_auto_applied">改动已自动通过并生效，可在改动历史查看。</string>
+    <string name="memory_graph_title">记忆图谱</string>
+    <string name="memory_nav_graph">查看记忆节点与关联</string>
     <string name="memory_nav_notes">查看和编辑 memory.md</string>
     <string name="memory_nav_review">审核改动 · 查看历史</string>
     <string name="memory_nav_learned">自动提炼与持续修订</string>
@@ -105,6 +107,7 @@
     <string name="memory_extraction_graph">旧记忆图谱</string>
     <string name="memory_extraction_skills">技能库</string>
     <string name="memory_extraction_success">提取完成</string>
+    <string name="memory_extraction_batch_complete">本段已提取，还有内容待处理</string>
     <string name="memory_extraction_failed">提取失败</string>
     <string name="memory_extraction_cancelled">提取已取消</string>
     <string name="memory_extraction_running">已开始，尚无结束记录</string>
