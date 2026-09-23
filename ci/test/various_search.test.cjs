@@ -25,7 +25,9 @@ test('combined default preserves summaries without visiting results', async () =
   const results = await tools.combined_search({ query: 'test', platforms: 'bing,baidu' });
   assert.equal(calls.length, 2);
   assert.ok(results.every(result => result.content.includes('Useful search summary')));
-  assert.ok(results.every(result => !result.content.includes('https://a.example')));
+  // Every fixture result page lives under `/article`, so that path showing up would mean the
+  // combined search inlined a result URL it never visited.
+  assert.ok(results.every(result => !result.content.includes('/article')));
 });
 test('one result is retained with original cached index and summary', async () => {
   const { tools, calls } = fixture([
