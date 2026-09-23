@@ -2154,6 +2154,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.NVIDIA -> context.getString(R.string.provider_nvidia)
         ApiProviderType.LMSTUDIO -> context.getString(R.string.provider_lmstudio)
         ApiProviderType.OLLAMA -> context.getString(R.string.provider_ollama)
+        ApiProviderType.OLLAMA_CLOUD -> context.getString(R.string.provider_ollama_cloud)
         ApiProviderType.OPENAI_LOCAL -> context.getString(R.string.provider_openai_local)
         ApiProviderType.MNN -> context.getString(R.string.provider_mnn)
         ApiProviderType.LLAMA_CPP -> context.getString(R.string.provider_llama_cpp)
@@ -2936,6 +2937,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.NVIDIA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.72f)
         ApiProviderType.LMSTUDIO -> MaterialTheme.colorScheme.tertiary
         ApiProviderType.OLLAMA -> MaterialTheme.colorScheme.primary.copy(alpha = 0.78f)
+        ApiProviderType.OLLAMA_CLOUD -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
         ApiProviderType.OPENAI_LOCAL -> MaterialTheme.colorScheme.primary.copy(alpha = 0.82f)
         ApiProviderType.MNN -> MaterialTheme.colorScheme.secondary
         ApiProviderType.LLAMA_CPP -> MaterialTheme.colorScheme.secondary.copy(alpha = 0.9f)

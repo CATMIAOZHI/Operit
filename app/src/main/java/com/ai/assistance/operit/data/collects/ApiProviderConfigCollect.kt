@@ -238,6 +238,11 @@ object ApiProviderConfigs {
             requiresApiKey = false
         ),
         ProviderApiConfig(
+            providerType = ApiProviderType.OLLAMA_CLOUD,
+            defaultModelName = "",
+            defaultApiEndpoint = "https://ollama.com/v1/chat/completions"
+        ),
+        ProviderApiConfig(
             providerType = ApiProviderType.OPENAI_LOCAL,
             defaultModelName = "",
             defaultApiEndpoint = "http://localhost:8000/v1/chat/completions",

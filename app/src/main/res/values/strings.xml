@@ -4174,6 +4174,7 @@
     <string name="provider_alipay_bailing">支付宝百灵大模型</string>
     <string name="provider_lmstudio">LM Studio（本地模型）</string>
     <string name="provider_ollama">Ollama（本地模型）</string>
+    <string name="provider_ollama_cloud">Ollama Cloud</string>
     <string name="provider_openai_local">OpenAI兼容（本地模型）</string>
     <string name="provider_mnn">MNN 本地推理</string>
     <string name="provider_llama_cpp">llama.cpp 本地推理</string>
