@@ -171,6 +171,8 @@ python3 ./tools/example_packages/sync_example_packages.py --no-hot-reload
 # 需要 local.properties 中配置签名
 ```
 
+发布稳定版的完整流程（触发 CI release 构建、校验产物非 debuggable、打包资产与创建 Release）见 [dev → main 晋升操作手册](./dev-to-main-promotion.md) 第 9 节。注意 `personal/main` 的 push 构建只产出 `:app:assembleDebug`，不能作为发布包。
+
 ## 最小验证命令
 
 根据改动范围选择，不要求每次都跑完整构建：
