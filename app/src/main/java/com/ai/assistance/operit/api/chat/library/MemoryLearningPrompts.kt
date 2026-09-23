@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.api.chat.library
 
+import com.ai.assistance.operit.data.preferences.LearnedSkillRepository
+
 /**
  * Budgets for one extraction batch, stated in the prompt so the reviewer can pace itself. A batch that
  * runs out of rounds is discarded and its source range is reviewed again, so the reviewer must reserve
@@ -69,9 +71,12 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
               bidirectional Unicode control characters before writing.
             Maintain references/, scripts/, templates/, assets/ when appropriate; all are plain text writes, never executed.
             Read each target file before changing it; absent files have a version too.
-            SKILL.md holds 50-6000 characters. When a file is near that limit, trim or replace inside this batch
-            before adding more. A whole-file rewrite of SKILL.md must keep its YAML frontmatter: the file starts
-            with ---, and its name must equal the skill name and its description must not be empty.
+            A skill created with skill_create is body text of ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-${LearnedSkillRepository.MAX_SKILL_BODY_CHARS}
+            characters and must NOT include YAML frontmatter: the header is composed from the name and description
+            you pass. Any single skill file may hold up to ${LearnedSkillRepository.MAX_SKILL_FILE_CHARS} characters; when one is near that
+            limit, trim or replace inside this batch before adding more. A whole-file rewrite of an installed
+            SKILL.md must keep its YAML frontmatter: the file starts with ---, and its name must equal the skill
+            name and its description must not be empty.
             Only previously approved, automatically learned skills in this space can be revised automatically.
         """.trimIndent())
         else appendLine("Skill extraction is not scheduled for this run. Do not list, read or change skills.")
@@ -105,7 +110,8 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean): S
     if (skills) appendLine("""
         Skill arguments: name, path (default SKILL.md), content, old_text, description, reason.
         skill_create: name must match [a-z][a-z0-9-]{2,63} (no underscores);
-        description is one line, at most 60 characters is expected (240 is the hard limit); content is 50-6000 characters.
+        description is one line, at most 60 characters is expected (${LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS} is the hard limit);
+        content is the body only, ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-${LearnedSkillRepository.MAX_SKILL_BODY_CHARS} characters, without YAML frontmatter.
         skill_remove_file deletes one companion file under references/, scripts/, templates/ or assets/;
         SKILL.md is never removable, delete the whole skill with skill_delete instead.
     """.trimIndent())

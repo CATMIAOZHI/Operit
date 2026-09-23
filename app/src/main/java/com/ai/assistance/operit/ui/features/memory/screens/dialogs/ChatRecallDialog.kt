@@ -30,6 +30,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val recallError = stringResource(R.string.chat_recall_error)
     val draftExtracted = stringResource(R.string.skill_draft_extracted)
+    val extractionTimeout = stringResource(R.string.memory_extraction_timeout)
     val repo = remember { ChatRecallRepository(context) }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
@@ -138,6 +139,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     }) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.chat_recall_hint),style=MaterialTheme.typography.bodySmall)
                 OutlinedTextField(query,{ query=it; more=false },enabled=!busy,singleLine=true,
                     modifier=Modifier.fillMaxWidth(),label={ Text(stringResource(R.string.chat_recall_query)) })
                 Row {
@@ -173,6 +175,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                     Row { Text(stringResource(R.string.memory_recall_literal),Modifier.weight(1f)); Switch(literal,{ literal=it; more=false },enabled=!busy) }
                 }
                 if(busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                // Success and failure share this line, so it keeps the neutral style.
                 message?.let { Text(it,style=MaterialTheme.typography.bodySmall) }
                 LazyColumn(Modifier.weight(1f),state=listState,verticalArrangement=Arrangement.spacedBy(8.dp)) {
                     if(sessions.isEmpty() && hits.isEmpty() && full.isNullOrEmpty()) item { Text(stringResource(R.string.chat_recall_empty)) }
@@ -219,8 +222,20 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                     if(more) item { TextButton(onClick={ run { load(true) } },enabled=!busy) { Text(stringResource(R.string.chat_recall_more)) } }
                 }
                 sourceChat?.let { id ->
+                    Text(stringResource(R.string.skill_draft_manual_hint),style=MaterialTheme.typography.bodySmall)
                     TextButton(onClick={ run {
-                        MemoryLearningService.extract(context,profileId,id)
+                        try {
+                            MemoryLearningService.extract(context,profileId,id)
+                        } catch(e: kotlinx.coroutines.TimeoutCancellationException) {
+                            // A timeout is our own limit, not a user cancellation, so report it.
+                            message = extractionTimeout
+                            return@run
+                        } catch(e: CancellationException) { throw e }
+                        catch(e: Exception) {
+                            // The extractor refuses with a specific, already-localized reason.
+                            message = e.message?.takeIf { it.isNotBlank() } ?: recallError
+                            return@run
+                        }
                         message=draftExtracted
                     } },enabled=!busy) { Text(stringResource(R.string.skill_draft_extract)) }
                 }

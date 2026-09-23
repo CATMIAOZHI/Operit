@@ -28,7 +28,9 @@ data class MemoryExtractionLog(
     val runId: String = "",
     val childChatId: String = "",
     val modelRounds: Int = 0,
-    val toolCalls: Int = 0
+    val toolCalls: Int = 0,
+    /** False when no subagent ran, so the log row must not offer an audit view. */
+    val reviewable: Boolean = true
 )
 
 /** Separate from approval history: bounded operational records, without conversation contents. */
@@ -46,7 +48,8 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
             MemoryExtractionLog(obj.getString("id"), obj.getLong("startedAt"), obj.optLong("finishedAt"),
                 obj.optString("sourceChatId"), obj.getBoolean("graph"), obj.getBoolean("notes"),
                 obj.getBoolean("skills"), obj.getString("status"), obj.optInt("proposals"), obj.optString("detail"),
-                obj.optString("runId"), obj.optString("childChatId"), obj.optInt("modelRounds"), obj.optInt("toolCalls"))
+                obj.optString("runId"), obj.optString("childChatId"), obj.optInt("modelRounds"), obj.optInt("toolCalls"),
+                obj.optBoolean("reviewable", true))
         }
     }
     suspend fun list(): List<MemoryExtractionLog> = withContext(Dispatchers.IO) {
@@ -60,7 +63,8 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
                     .put("sourceChatId", it.sourceChatId).put("graph", it.graph).put("notes", it.notes)
                     .put("skills", it.skills).put("status", it.status).put("proposals", it.proposals).put("detail", it.detail)
                     .put("runId", it.runId).put("childChatId", it.childChatId)
-                    .put("modelRounds", it.modelRounds).put("toolCalls", it.toolCalls))
+                    .put("modelRounds", it.modelRounds).put("toolCalls", it.toolCalls)
+                    .put("reviewable", it.reviewable))
             }
             file.parentFile!!.mkdirs()
             val temp = File.createTempFile(".extract-", ".tmp", file.parentFile)
@@ -68,6 +72,7 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
                 temp.outputStream().use { it.write(data.toString().toByteArray()); it.fd.sync() }
                 Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } finally { temp.delete() }
+            syncDirectory(file.parentFile!!)
         }
     }
     suspend fun delete() = withContext(Dispatchers.IO) { mutex.withLock { Files.deleteIfExists(file.toPath()); Unit } }

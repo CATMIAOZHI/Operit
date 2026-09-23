@@ -17,7 +17,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 @Composable
-fun MemoryNotesDialog(profileId: String, profileName: String, onDismiss: () -> Unit) {
+fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val repository = remember(profileId) { MemoryNotesRepository(context, profileId) }
     val settings = remember(profileId) {

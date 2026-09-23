@@ -629,6 +629,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
         MemoryNotesRepository(context, memorySpaceId).delete()
         MemoryReviewRepository(context, memorySpaceId).delete()
         MemoryExtractionLogRepository(context, memorySpaceId).delete()
+        MemorySearchSettingsPreferences(context, memorySpaceId).clear()
     }
 
     suspend fun readLegacyUserProfiles(): LegacyUserProfileSnapshot {

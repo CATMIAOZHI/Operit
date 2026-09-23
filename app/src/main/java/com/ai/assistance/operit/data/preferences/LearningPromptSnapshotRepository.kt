@@ -36,6 +36,7 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
             tmp.outputStream().use { it.write(data.toString().toByteArray()); it.fd.sync() }
             Files.move(tmp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } finally { tmp.delete() }
+        syncDirectory(file.parentFile!!)
     }
 
     /** Only a persisted successful summary starts a new prefix epoch. */

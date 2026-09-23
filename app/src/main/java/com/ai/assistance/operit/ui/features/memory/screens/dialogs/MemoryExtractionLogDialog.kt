@@ -29,6 +29,7 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
     val repo = remember(profileId) { MemoryExtractionLogRepository(context, profileId) }
     var logs by remember { mutableStateOf<List<MemoryExtractionLog>>(emptyList()) }
     var titles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var loaded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
     var opening by remember { mutableStateOf(false) }
     var openError by remember { mutableStateOf<String?>(null) }
@@ -39,8 +40,14 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
             try {
                 logs = repo.list()
                 val dao = AppDatabase.getDatabase(context).chatDao()
-                titles = logs.map { it.sourceChatId }.distinct().filter { it.isNotBlank() }
-                    .associateWith { dao.getChatById(it)?.title.orEmpty() }
+                // Titles are append-only from the caller's point of view, so only resolve ids
+                // that are new since the previous refresh instead of re-reading every row.
+                val missing = logs.map { it.sourceChatId }.distinct()
+                    .filter { it.isNotBlank() && it !in titles }
+                if (missing.isNotEmpty()) {
+                    titles = titles + missing.associateWith { dao.getChatById(it)?.title.orEmpty() }
+                }
+                loaded = true
                 error = false
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = true }
@@ -55,9 +62,13 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
                 openError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (opening) LinearProgressIndicator(Modifier.fillMaxWidth())
                 LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (logs.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
+                    // Do not report "no records" before the first read finishes; a read failure is
+                    // already shown above and should not leave a spinner behind.
+                    if (!loaded && !error) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                    else if (logs.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
                     items(logs, key = { it.id }) { log ->
-                        Column(Modifier.fillMaxWidth().clickable(enabled = !opening) {
+                        // A range that was never handed to a subagent has no transcript to audit.
+                        Column(Modifier.fillMaxWidth().clickable(enabled = !opening && log.reviewable) {
                             opening = true
                             openError = null
                             scope.launch {
@@ -79,8 +90,14 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
                                 Text(stringResource(memoryExtractionStatusResource(log.status)))
                                 if (log.finishedAt > 0) Text(stringResource(R.string.memory_extraction_result,
                                     (log.finishedAt - log.startedAt) / 1000, log.proposals))
+                                // Counters exist only once a run was handed to the model, so an
+                                // empty pair means the record predates them rather than 0 work.
+                                if (log.modelRounds > 0 || log.toolCalls > 0) Text(
+                                    stringResource(R.string.memory_audit_counts, log.modelRounds, log.toolCalls),
+                                    style = MaterialTheme.typography.bodySmall)
                                 if (log.detail.isNotBlank()) Text(log.detail, style = MaterialTheme.typography.bodySmall)
-                                Text(stringResource(R.string.memory_audit_title), color = MaterialTheme.colorScheme.primary)
+                                if (log.reviewable) Text(stringResource(R.string.memory_audit_title),
+                                    color = MaterialTheme.colorScheme.primary)
                             }
                             HorizontalDivider()
                         }

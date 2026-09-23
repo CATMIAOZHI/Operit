@@ -244,9 +244,16 @@ fun SkillConfigScreen(
                     }
                 }
 
+            // The learned-only view has no import action, so the shared "look in this
+            // directory" wording would be a dead end there.
+            val learnedEmpty = stringResource(R.string.memory_learned_empty)
             if (skills.isEmpty()) {
                 Text(
-                    text = stringResource(R.string.skillmgr_no_skills_found, skillRepository.getSkillsDirectoryPath()),
+                    text = if (learnedOnlyProfileId != null) {
+                        learnedEmpty
+                    } else {
+                        stringResource(R.string.skillmgr_no_skills_found, skillRepository.getSkillsDirectoryPath())
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -272,7 +279,11 @@ fun SkillConfigScreen(
                     if (orderedSkills.isEmpty()) {
                         item(key = "empty_skill_search_state") {
                             Text(
-                                text = stringResource(R.string.no_matching_skills_found),
+                                text = if (learnedOnlyProfileId != null && searchQuery.isBlank()) {
+                                    learnedEmpty
+                                } else {
+                                    stringResource(R.string.no_matching_skills_found)
+                                },
                                 style = MaterialTheme.typography.bodyMedium,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )

@@ -86,12 +86,6 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         editor.apply()
         notes to skills
     }
-    internal fun restorePendingLearning(chatId: String, notes: Boolean, skills: Boolean) = synchronized(cadenceLock) {
-        val editor = searchPrefs.edit()
-        if (notes) editor.putBoolean("learning_pending_notes:$chatId", true)
-        if (skills) editor.putBoolean("learning_pending_skills:$chatId", true)
-        editor.apply()
-    }
     fun mayReviseLearnedSkills(): Boolean = searchPrefs.getBoolean("revise_learned_skills", true)
     fun setReviseLearnedSkills(enabled: Boolean) {
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
@@ -103,6 +97,23 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
     }
     fun setAiReviewChanges(enabled: Boolean) {
         searchPrefs.edit().putBoolean("allow_ai_memory_decisions", enabled).apply()
+    }
+
+    /**
+     * Dropped together with the memory space. This file also holds the per-conversation learning
+     * cadence (`learning_turns:` / `learning_iterations:` / `learning_pending_*`), so clearing it is
+     * what stops a future space that reuses the id from inheriting stale counters and switches.
+     */
+    suspend fun clear() = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        // commit(), not apply(): the space is already gone from the list, and a leftover file is
+        // exactly how a future space reusing this id would inherit the old switches.
+        val searchCleared = searchPrefs.edit().clear().commit()
+        val cloudCleared = cloudPrefs.edit().clear().commit()
+        if (!searchCleared || !cloudCleared) {
+            com.ai.assistance.operit.util.AppLogger.w(
+                "MemorySearchSettings", "Could not clear the settings of deleted memory space $profileId"
+            )
+        }
     }
     fun shouldExtractNewMemory(): Boolean = searchPrefs.getBoolean("extract_new_memory", true)
     fun setExtractNewMemory(enabled: Boolean) {

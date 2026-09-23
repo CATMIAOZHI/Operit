@@ -164,6 +164,44 @@ class MemoryLearningBatchTest {
         }
         assertEquals(1,staged.size)
     }
+    @Test fun deletingAConversationDropsItsPendingProgressOnly() = runBlocking {
+        val context=context()
+        MemoryLearningJournal(context,"space","chat-gone").enqueue(true,true,10)
+        MemoryLearningJournal(context,"space","chat-kept").enqueue(true,true,10)
+        MemoryLearningJournal(context,"other","chat-gone").enqueue(true,false,10)
+        // A deleted conversation can never be reviewed again, so its progress must not survive to be
+        // retried on the next launch, while other conversations and spaces stay untouched.
+        MemoryLearningJournal.deleteChat(context,"chat-gone")
+        assertEquals(setOf("space" to "chat-kept"),MemoryLearningJournal.pending(context).toSet())
+    }
+    @Test fun abandoningARangeStopsRetriesAndKeepsTheCursor() = runBlocking {
+        val context=context()
+        val journal=MemoryLearningJournal(context,"space","chat")
+        journal.enqueue(true,false,10)
+        journal.complete(listOf("notes"),LearningCursor(7),true,emptyList())
+        journal.export()
+        journal.abandon(listOf("notes"))
+        // Cleared so nothing reschedules it, and the cursor stays put so a later trigger re-reads it.
+        val restored=MemoryLearningJournal(context,"space","chat")
+        assertFalse(restored.pending("notes"))
+        assertEquals(7,restored.cursor("notes").messageId)
+        assertTrue(MemoryLearningJournal.pending(context).isEmpty())
+    }
+    @Test fun abandoningAFinishedBatchDoesNotStrandItsExportBarrier() = runBlocking {
+        val context=context()
+        val journal=MemoryLearningJournal(context,"space","chat")
+        journal.enqueue(true,false,10)
+        journal.complete(listOf("notes"),LearningCursor(7),true,emptyList())
+        journal.abandon(listOf("notes"))
+        assertEquals(7,journal.cursor("notes").messageId)
+        assertEquals(0,journal.export().size)
+        // The range is abandoned, but the next complete/export cycle must still work normally.
+        journal.complete(listOf("notes"),LearningCursor(9),false,emptyList())
+        journal.export()
+        val restored=MemoryLearningJournal(context,"space","chat")
+        assertFalse(restored.pending("notes"))
+        assertEquals(9,restored.cursor("notes").messageId)
+    }
     @Test fun notesOverCapacityTellTheReviewerToFreeSpaceFirst() = runBlocking {
         val context=context()
         // A document one add away from its cap: the capacity is checked on the staged result, so an
@@ -192,6 +230,34 @@ class MemoryLearningBatchTest {
         assertEquals("staged",actions.execute("memory_change",mapOf("target" to "memory",
             "operation" to "add","content" to "y".repeat(50))).optString("status"))
     }
+
+    /** Notes edits go through the repository, so its failure reasons are what the reviewer reads. */
+    @Test fun notesEditFailuresExplainThemselvesToTheReviewer() = runBlocking {
+        val context=context()
+        val notes=MemoryNotesRepository(context,"space")
+        notes.save("Project A uses Kotlin. Project B uses Kotlin.",notes.load().version)
+        val actions=MemoryLearningActions(context,"space","chat",notesEnabled=true,skillsEnabled=false,
+            background=true,stagedChanges=mutableListOf())
+        actions.execute("memory_read",mapOf("target" to "memory"))
+        suspend fun change(vararg args: Pair<String,String>): String = try {
+            actions.execute("memory_change",mapOf("target" to "memory")+args)
+            "accepted"
+        } catch (e: IllegalArgumentException) {
+            e.message.orEmpty()
+        }
+        // Ambiguous and missing old_text are refused with the same wording the direct writer uses.
+        assertEquals("old_text must match exactly once",
+            change("operation" to "remove","old_text" to "Kotlin"))
+        assertEquals("old_text must match exactly once",
+            change("operation" to "replace","old_text" to "missing","content" to "x"))
+        assertEquals("old_text and content are required",
+            change("operation" to "remove","old_text" to " "))
+        assertEquals("content is required",
+            change("operation" to "add","content" to "   "))
+        assertEquals("Use add/replace/remove",
+            change("operation" to "append","content" to "x"))
+    }
+
     @Test fun skillFilesCannotRemoveSkillMarkdown() = runBlocking {
         val context=context()
         val actions=MemoryLearningActions(context,"space","chat",notesEnabled=false,skillsEnabled=true,
