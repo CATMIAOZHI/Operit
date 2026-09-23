@@ -3,11 +3,14 @@ package com.ai.assistance.operit.ui.features.codex
 import android.content.Context
 import android.net.Uri
 import com.ai.assistance.operit.data.api.CodexAuthManager
+import com.ai.assistance.operit.data.api.CodexDeviceCode
 import com.ai.assistance.operit.data.api.CodexOAuthClient
 import com.ai.assistance.operit.data.api.CodexOAuthProtocol
 import com.ai.assistance.operit.data.api.CodexPkceCodes
 import com.ai.assistance.operit.data.preferences.CodexAuthState
 import java.io.IOException
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
 
 internal data class CodexOAuthLoginSession(
     internal val callbackServer: CodexOAuthLoopbackCallbackServer,
@@ -72,6 +75,19 @@ internal class CodexOAuthCoordinator(context: Context) {
         )
         return authManager.saveLoginTokens(tokens)
     }
+
+    suspend fun startDeviceLogin(): CodexDeviceCode = oauthClient.requestDeviceCode()
+
+    suspend fun completeDeviceLogin(code: CodexDeviceCode): CodexAuthState =
+        withTimeout(15 * 60 * 1000L) {
+            while (true) {
+                delay(code.intervalSeconds * 1000L)
+                val tokens = oauthClient.pollDeviceCode(code) ?: continue
+                return@withTimeout authManager.saveLoginTokens(tokens)
+            }
+            @Suppress("UNREACHABLE_CODE")
+            throw IllegalStateException("Codex device authorization stopped")
+        }
 
     suspend fun logout() {
         authManager.logout()

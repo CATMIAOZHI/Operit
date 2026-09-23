@@ -2,15 +2,20 @@ package com.ai.assistance.operit.data.api
 
 import android.net.Uri
 import android.util.Base64
+import com.ai.assistance.operit.BuildConfig
 import java.io.IOException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.suspendCancellableCoroutine
 import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.Call
+import okhttp3.Callback
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.Response
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONArray
 import org.json.JSONObject
@@ -40,6 +45,15 @@ data class CodexOAuthTokenResponse(
         return this
     }
 }
+
+data class CodexDeviceCode(
+    val deviceAuthId: String,
+    val userCode: String,
+    val intervalSeconds: Long,
+    val verificationUrl: String,
+)
+
+class CodexDeviceCodeDisabledException : IOException("Codex device code authorization is disabled")
 
 object CodexOAuthProtocol {
     const val CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
@@ -154,6 +168,66 @@ class CodexOAuthClient(
     private val client: OkHttpClient,
     private val issuer: String = CodexOAuthProtocol.ISSUER,
 ) {
+    suspend fun requestDeviceCode(): CodexDeviceCode {
+        val request = Request.Builder()
+            .url(endpoint("/api/accounts/deviceauth/usercode"))
+            .header("User-Agent", "Operit/${BuildConfig.VERSION_NAME}")
+            .post(
+                JSONObject().put("client_id", CodexOAuthProtocol.CLIENT_ID).toString()
+                    .toRequestBody("application/json".toMediaType())
+            )
+            .build()
+        val response = executeRawRequest(request)
+        if (response.code == 404) throw CodexDeviceCodeDisabledException()
+        if (response.code !in 200..299) {
+            throw IOException("Codex device code request failed with HTTP ${response.code}: ${oauthErrorMessage(response.body)}")
+        }
+        val body = response.body
+        val json = JSONObject(body)
+        val deviceAuthId = json.optString("device_auth_id").trim()
+        val userCode = json.optString("user_code").trim()
+        if (deviceAuthId.isBlank() || userCode.isBlank()) {
+            throw IOException("Codex device code response is invalid")
+        }
+        return CodexDeviceCode(
+            deviceAuthId = deviceAuthId,
+            userCode = userCode,
+            intervalSeconds = json.optString("interval").toLongOrNull()?.coerceIn(1L, 60L) ?: 5L,
+            verificationUrl = endpoint("/codex/device"),
+        )
+    }
+
+    /** Returns null while the user has not yet completed authorization. */
+    suspend fun pollDeviceCode(code: CodexDeviceCode): CodexOAuthTokenResponse? {
+        val request = Request.Builder()
+            .url(endpoint("/api/accounts/deviceauth/token"))
+            .header("User-Agent", "Operit/${BuildConfig.VERSION_NAME}")
+            .post(
+                JSONObject()
+                    .put("device_auth_id", code.deviceAuthId)
+                    .put("user_code", code.userCode)
+                    .toString()
+                    .toRequestBody("application/json".toMediaType())
+            )
+            .build()
+        val response = executeRawRequest(request)
+        if (response.code == 403 || response.code == 404) return null
+        if (response.code !in 200..299) {
+            throw IOException("Codex device authorization failed with HTTP ${response.code}: ${oauthErrorMessage(response.body)}")
+        }
+        val json = JSONObject(response.body)
+        val authorizationCode = json.optString("authorization_code").trim()
+        val verifier = json.optString("code_verifier").trim()
+        if (authorizationCode.isBlank() || verifier.isBlank()) {
+            throw IOException("Codex device authorization response is invalid")
+        }
+        return exchangeAuthorizationCode(
+            code = authorizationCode,
+            redirectUri = endpoint("/deviceauth/callback"),
+            verifier = verifier,
+        )
+    }
+
     suspend fun exchangeAuthorizationCode(
         code: String,
         redirectUri: String,
@@ -216,18 +290,40 @@ class CodexOAuthClient(
         )
     }
 
-    private suspend fun executeRequest(request: Request): String = withContext(Dispatchers.IO) {
-        client.newCall(request).execute().use { response ->
-            val body = response.body?.string().orEmpty()
-            if (!response.isSuccessful) {
-                throw IOException(
-                    "Codex OAuth request failed with HTTP ${response.code}: " +
-                        oauthErrorMessage(body),
-                )
-            }
-            body
+    private suspend fun executeRequest(request: Request): String {
+        val response = executeRawRequest(request)
+        if (response.code !in 200..299) {
+            throw IOException(
+                "Codex OAuth request failed with HTTP ${response.code}: " +
+                    oauthErrorMessage(response.body),
+            )
         }
+        return response.body
     }
+
+    private data class OAuthHttpResponse(val code: Int, val body: String)
+
+    private suspend fun executeRawRequest(request: Request): OAuthHttpResponse =
+        suspendCancellableCoroutine { continuation ->
+            val call = client.newCall(request)
+            continuation.invokeOnCancellation { call.cancel() }
+            call.enqueue(object : Callback {
+                override fun onFailure(call: Call, error: IOException) {
+                    if (continuation.isActive) continuation.resumeWithException(error)
+                }
+
+                override fun onResponse(call: Call, response: Response) {
+                    try {
+                        response.use {
+                            val result = OAuthHttpResponse(it.code, it.body?.string().orEmpty())
+                            if (continuation.isActive) continuation.resume(result)
+                        }
+                    } catch (error: Exception) {
+                        if (continuation.isActive) continuation.resumeWithException(error)
+                    }
+                }
+            })
+        }
 
     private fun endpoint(path: String): String = issuer.trimEnd('/') + path
 

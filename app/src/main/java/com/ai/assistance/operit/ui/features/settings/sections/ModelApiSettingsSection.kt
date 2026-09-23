@@ -86,6 +86,7 @@ import com.ai.assistance.operit.ui.features.settings.DebouncedModelConfigAutoSav
 import com.ai.assistance.operit.ui.features.settings.ModelConfigSaveCoordinator
 import com.ai.assistance.operit.ui.features.settings.RegisterModelConfigSaveAction
 import com.ai.assistance.operit.ui.features.codex.CodexLoginDialog
+import com.ai.assistance.operit.ui.features.codex.CodexDeviceLoginDialog
 import com.ai.assistance.operit.util.LocationUtils
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -125,6 +126,7 @@ fun ModelApiSettingsSection(
     val codexAuthState by codexAuthManager.authState.collectAsState()
     val persistedCodexUsage by codexAuthManager.usageSnapshotFlow.collectAsState(initial = null)
     var showCodexLoginDialog by remember(config.id) { mutableStateOf(false) }
+    var showCodexDeviceLoginDialog by remember(config.id) { mutableStateOf(false) }
     var codexUsageLoading by remember(config.id) { mutableStateOf(false) }
     var codexUsageError by remember(config.id) { mutableStateOf(false) }
     var codexUsageNow by remember { mutableLongStateOf(System.currentTimeMillis() / 1000L) }
@@ -891,6 +893,7 @@ fun ModelApiSettingsSection(
                      usageError = codexUsageError,
                      usageNowEpochSeconds = codexUsageNow,
                      onLogin = { showCodexLoginDialog = true },
+                     onDeviceLogin = { showCodexDeviceLoginDialog = true },
                       onRefreshUsage = ::refreshCodexUsage,
                       onLogout = {
                           scope.launch {
@@ -1556,11 +1559,9 @@ fun ModelApiSettingsSection(
         }
     }
 
-    if (showCodexLoginDialog) {
-        CodexLoginDialog(
-            onDismissRequest = { showCodexLoginDialog = false },
-            onLoginSuccess = { state ->
+    val onCodexLoginSuccess: (CodexAuthState) -> Unit = { state ->
                 showCodexLoginDialog = false
+                showCodexDeviceLoginDialog = false
                 val requestSelection = config.id to selectedProviderTypeId
                 val requestGeneration = ++modelFetchGeneration
                 scope.launch {
@@ -1601,7 +1602,17 @@ fun ModelApiSettingsSection(
                         ) isLoadingModels = false
                     }
                 }
-            },
+    }
+    if (showCodexLoginDialog) {
+        CodexLoginDialog(
+            onDismissRequest = { showCodexLoginDialog = false },
+            onLoginSuccess = onCodexLoginSuccess,
+        )
+    }
+    if (showCodexDeviceLoginDialog) {
+        CodexDeviceLoginDialog(
+            onDismissRequest = { showCodexDeviceLoginDialog = false },
+            onLoginSuccess = onCodexLoginSuccess,
         )
     }
 
@@ -1918,6 +1929,7 @@ private fun CodexAuthSettingsBlock(
     usageError: Boolean,
     usageNowEpochSeconds: Long,
     onLogin: () -> Unit,
+    onDeviceLogin: () -> Unit,
     onRefreshUsage: () -> Unit,
     onLogout: () -> Unit,
 ) {
@@ -1940,6 +1952,9 @@ private fun CodexAuthSettingsBlock(
                 Icon(Icons.Default.Login, contentDescription = null)
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(stringResource(R.string.codex_login_action))
+            }
+            OutlinedButton(onClick = onDeviceLogin, modifier = Modifier.fillMaxWidth()) {
+                Text(stringResource(R.string.codex_device_login_action))
             }
         } else {
             Text(
