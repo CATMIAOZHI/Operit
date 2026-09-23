@@ -76,6 +76,59 @@ class ThinkingQualityTest {
         }
     }
 
+    @Test fun declaredCatalogEffortClampsAnUltraSubagentRequest() {
+        assertEquals(
+            "max",
+            ThinkingRequestSemantics.declaredCatalogReasoningEffort("ultra", listOf("low", "high", "max")),
+        )
+        assertEquals("ultra", ThinkingRequestSemantics.declaredCatalogReasoningEffort("ultra", null))
+        assertNull(ThinkingRequestSemantics.declaredCatalogReasoningEffort("ultra", emptyList()))
+        assertEquals(
+            "high",
+            ThinkingRequestSemantics.declaredCatalogReasoningEffort("medium", listOf("low", "high")),
+        )
+    }
+
+    @Test fun explicitEffortParameterIsReportedWithoutCatalogClamping() {
+        val configured = goConfig.copy(modelProtocolSettings = mapOf(
+            "deepseek-v4-flash" to ModelProtocolSettings(
+                ModelProtocol.CHAT_COMPLETIONS, reasoningEfforts = listOf("low", "high", "max"),
+            ),
+        ))
+        assertEquals(
+            ThinkingRequestSummary.Effort("max"),
+            ThinkingRequestSemantics.resolve(configured, "deepseek-v4-flash", 5, emptyList()),
+        )
+        assertEquals(
+            ThinkingRequestSummary.Effort("xhigh"),
+            ThinkingRequestSemantics.resolve(
+                configured, "deepseek-v4-flash", 5,
+                listOf(stringParameter("reasoning_effort", "xhigh")),
+            ),
+        )
+    }
+
+    @Test fun genericReplayDeclaredEmptyEffortsIsNotSent() {
+        val configured = goConfig.copy(modelProtocolSettings = mapOf(
+            "mimo-v2.6-flash" to ModelProtocolSettings(
+                ModelProtocol.CHAT_REASONING, reasoningEfforts = emptyList(),
+            ),
+        ))
+        for (enabled in listOf(false, true)) {
+            assertEquals(
+                ThinkingRequestSummary.NotSent,
+                ThinkingRequestSemantics.resolve(configured, "mimo-v2.6-flash", 5, emptyList(), enabled),
+            )
+            assertEquals(
+                ThinkingRequestSummary.Effort("high"),
+                ThinkingRequestSemantics.resolve(
+                    configured, "mimo-v2.6-flash", 5,
+                    listOf(stringParameter("reasoning_effort", "high")), enabled,
+                ),
+            )
+        }
+    }
+
     @Test fun genericReplayUsesOnlyCatalogDeclaredEfforts() {
         val configured = goConfig.copy(modelProtocolSettings = mapOf(
             "deepseek-v4-flash" to ModelProtocolSettings(

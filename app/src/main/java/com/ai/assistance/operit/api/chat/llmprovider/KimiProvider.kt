@@ -31,7 +31,8 @@ open class KimiProvider(
     supportsVideo: Boolean = false,
     enableToolCall: Boolean = false,
     private val configureThinking: Boolean = true,
-    private val reasoningEfforts: List<String> = emptyList(),
+    /** Catalog-declared effort values; null means the catalog does not describe effort at all. */
+    private val reasoningEfforts: List<String>? = null,
 ) : OpenAIProvider(
     apiEndpoint = apiEndpoint,
     apiKeyProvider = apiKeyProvider,
@@ -122,7 +123,7 @@ open class KimiProvider(
         ) {
             val preferred = if (enableThinking) resolveOpenAiChatReasoningEffort(context) else "none"
             val effort = preferred?.let {
-                ThinkingRequestSemantics.catalogReasoningEffort(it, reasoningEfforts)
+                ThinkingRequestSemantics.declaredCatalogReasoningEffort(it, reasoningEfforts)
             }
             if (effort != null) {
                 jsonObject.put("reasoning_effort", effort)

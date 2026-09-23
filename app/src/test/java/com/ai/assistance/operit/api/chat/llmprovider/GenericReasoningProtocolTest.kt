@@ -4,6 +4,8 @@ import android.content.Context
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.ModelProtocolSettings
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -54,7 +56,7 @@ class GenericReasoningProtocolTest {
     fun declaredEffortIsSentWithoutKimiThinkingFieldsAndCanBeSuppressed() = runBlocking {
         withContext(Dispatchers.IO) {
             Mockito.mockStatic(AppLogger::class.java).use {
-                for (efforts in listOf(listOf("low", "high", "max"), emptyList())) {
+                for (efforts in listOf(listOf("low", "high", "max"), null)) {
                     val provider = object : KimiProvider(
                         "https://opencode.ai/zen/go/v1/chat/completions",
                         SingleApiKeyProvider("test-only-key"), "deepseek-v4-flash", OkHttpClient(),
@@ -76,7 +78,9 @@ class GenericReasoningProtocolTest {
                             val functional = functionalLevel?.let {
                                 buildFunctionalReasoningRequest(
                                     ApiProviderType.OPENAI_GENERIC, "deepseek-v4-flash", parameters, it,
-                                    reasoningEfforts = efforts,
+                                    catalogReasoning = ModelProtocolSettings(
+                                        ModelProtocol.CHAT_REASONING, reasoningEfforts = efforts,
+                                    ),
                                 )
                             }
                             val body = createRequestBody(Mockito.mock(Context::class.java),
@@ -89,15 +93,57 @@ class GenericReasoningProtocolTest {
                         }
                     }
                     val enabled = provider.request(true)
-                    assertEquals(if (efforts.isEmpty()) "xhigh" else "max", enabled.getString("reasoning_effort"))
+                    assertEquals(if (efforts == null) "xhigh" else "max", enabled.getString("reasoning_effort"))
                     assertFalse(enabled.has("thinking"))
-                    if (efforts.isEmpty()) assertEquals("none", provider.request(false).getString("reasoning_effort"))
+                    if (efforts == null) assertEquals("none", provider.request(false).getString("reasoning_effort"))
                     else assertFalse(provider.request(false).has("reasoning_effort"))
                     val suppressed = provider.request(true, suppressed = true)
                     assertFalse(suppressed.has("reasoning_effort"))
                     assertFalse(suppressed.has(SUPPRESS_AUTOMATIC_REASONING_API_NAME))
                     assertEquals("low", provider.request(true, functionalLevel = 1).getString("reasoning_effort"))
-                    assertEquals(if (efforts.isEmpty()) "medium" else "high", provider.request(true, functionalLevel = 2).getString("reasoning_effort"))
+                    assertEquals(if (efforts == null) "medium" else "high", provider.request(true, functionalLevel = 2).getString("reasoning_effort"))
+                }
+            }
+        }
+    }
+
+    @Test
+    fun emptyCatalogEffortListSendsNoReasoningEffort() = runBlocking {
+        withContext(Dispatchers.IO) {
+            Mockito.mockStatic(AppLogger::class.java).use {
+                val provider = object : KimiProvider(
+                    "https://opencode.ai/zen/go/v1/chat/completions",
+                    SingleApiKeyProvider("test-only-key"), "mimo-v2.6-flash", OkHttpClient(),
+                    providerType = ApiProviderType.OPENAI_GENERIC,
+                    configureThinking = false,
+                    reasoningEfforts = emptyList(),
+                ) {
+                    override fun resolveOpenAiChatReasoningEffort(context: Context) = "max"
+                    fun request(thinking: Boolean, functionalLevel: Int? = null): JSONObject {
+                        val functional = functionalLevel?.let {
+                            buildFunctionalReasoningRequest(
+                                ApiProviderType.OPENAI_GENERIC, "mimo-v2.6-flash", emptyList(), it,
+                                catalogReasoning = ModelProtocolSettings(
+                                    ModelProtocol.CHAT_REASONING, reasoningEfforts = emptyList(),
+                                ),
+                            )
+                        }
+                        val body = createRequestBody(
+                            Mockito.mock(Context::class.java),
+                            listOf(PromptTurn(PromptTurnKind.USER, "Reply OK.")),
+                            functional?.modelParameters ?: emptyList(),
+                            functional?.enableThinking ?: thinking, false, null, false,
+                        )
+                        val buffer = Buffer()
+                        body.writeTo(buffer)
+                        return JSONObject(buffer.readUtf8())
+                    }
+                }
+                for (thinking in listOf(false, true)) {
+                    assertFalse(provider.request(thinking).has("reasoning_effort"))
+                }
+                for (level in listOf(1, 2, 5)) {
+                    assertFalse(provider.request(true, functionalLevel = level).has("reasoning_effort"))
                 }
             }
         }

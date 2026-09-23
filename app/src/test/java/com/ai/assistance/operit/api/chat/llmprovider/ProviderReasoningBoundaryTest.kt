@@ -285,6 +285,209 @@ class ProviderReasoningBoundaryTest {
     }
 
     @Test
+    fun chatCompletionsEffortFollowsCatalogDeclaration() = runBlocking {
+        for ((declared, thinking, expected) in listOf(
+            Triple<List<String>?, Boolean, String?>(null, true, "xhigh"),
+            Triple<List<String>?, Boolean, String?>(listOf(), true, null),
+            Triple<List<String>?, Boolean, String?>(listOf(), false, null),
+            Triple<List<String>?, Boolean, String?>(listOf("low", "high", "max"), true, "max"),
+            Triple<List<String>?, Boolean, String?>(listOf("low", "high", "max"), false, null),
+        )) {
+            val provider =
+                object : OpenAIProvider(
+                    apiEndpoint = "https://opencode.ai/zen/go/v1/chat/completions",
+                    apiKeyProvider = SingleApiKeyProvider("test-key"),
+                    modelName = "mimo-v2.6-flash",
+                    client = OkHttpClient(),
+                    providerType = ApiProviderType.OPENAI_GENERIC,
+                    catalogReasoningEfforts = declared,
+                ) {
+                    override fun resolveOpenAiChatReasoningEffort(context: Context) = "xhigh"
+                    fun buildRequest(thinking: Boolean): JSONObject {
+                        val requestBody =
+                            createRequestBody(
+                                context = Mockito.mock(Context::class.java),
+                                chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                                modelParameters = emptyList(),
+                                enableThinking = thinking,
+                                stream = false,
+                            )
+                        val buffer = Buffer()
+                        requestBody.writeTo(buffer)
+                        return JSONObject(buffer.readUtf8())
+                    }
+                }
+
+            withoutAndroidLoggingOnCurrentThread {
+                assertEquals(
+                    expected,
+                    provider.buildRequest(thinking).optString("reasoning_effort").takeIf { it.isNotEmpty() },
+                )
+            }
+        }
+    }
+
+    @Test
+    fun responsesEffortFollowsCatalogDeclaration() = runBlocking {
+        for ((declared, expected) in listOf(
+            null to "xhigh",
+            listOf<String>() to null,
+            listOf("low", "high", "max") to "max",
+        )) {
+            val provider =
+                object : OpenAIResponsesProvider(
+                    responsesApiEndpoint = "https://opencode.ai/zen/go/v1/responses",
+                    apiKeyProvider = SingleApiKeyProvider("test-key"),
+                    modelName = "mimo-v2.6-flash",
+                    client = OkHttpClient(),
+                    catalogReasoningEfforts = declared,
+                ) {
+                    override fun resolveResponsesReasoningEffort(context: Context) = "xhigh"
+                    fun buildRequest(): JSONObject {
+                        val requestBody =
+                            createRequestBody(
+                                context = Mockito.mock(Context::class.java),
+                                chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                                modelParameters = emptyList(),
+                                enableThinking = true,
+                                stream = false,
+                                availableTools = null,
+                                preserveThinkInHistory = false,
+                            )
+                        val buffer = Buffer()
+                        requestBody.writeTo(buffer)
+                        return JSONObject(buffer.readUtf8())
+                    }
+                }
+
+            withoutAndroidLoggingOnCurrentThread {
+                val reasoning = provider.buildRequest().optJSONObject("reasoning")
+                assertEquals(expected, reasoning?.optString("effort")?.takeIf { it.isNotEmpty() })
+            }
+        }
+    }
+
+    @Test
+    fun chatCompletionsExplicitEffortParameterIsSentVerbatimWithoutCatalogClamping() = runBlocking {
+        val provider =
+            object : OpenAIProvider(
+                apiEndpoint = "https://example.test/v1/chat/completions",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "deepseek-v4-flash",
+                client = OkHttpClient(),
+                providerType = ApiProviderType.OPENAI_GENERIC,
+                catalogReasoningEfforts = listOf("low", "high", "max"),
+            ) {
+                fun buildRequest(modelParameters: List<ModelParameter<*>>): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = Mockito.mock(Context::class.java),
+                            chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                            modelParameters = modelParameters,
+                            enableThinking = true,
+                            stream = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+        val reasoningEffort =
+            ModelParameter(
+                id = "reasoning_effort",
+                name = "reasoning_effort",
+                apiName = "reasoning_effort",
+                defaultValue = "xhigh",
+                currentValue = "xhigh",
+                isEnabled = true,
+                valueType = ParameterValueType.STRING,
+            )
+
+        withoutAndroidLoggingOnCurrentThread {
+            assertEquals(
+                "xhigh",
+                provider.buildRequest(listOf(reasoningEffort)).getString("reasoning_effort"),
+            )
+        }
+    }
+
+    @Test
+    fun responsesDeclaredEmptyCatalogEffortsSendNoReasoningControl() = runBlocking {
+        val provider =
+            object : OpenAIResponsesProvider(
+                responsesApiEndpoint = "https://example.test/v1/responses",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "gpt-5.2-codex",
+                client = OkHttpClient(),
+                catalogReasoningEfforts = emptyList(),
+            ) {
+                override fun resolveResponsesReasoningEffort(context: Context) = "xhigh"
+                fun buildRequest(): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = Mockito.mock(Context::class.java),
+                            chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                            modelParameters = emptyList(),
+                            enableThinking = true,
+                            stream = false,
+                            availableTools = null,
+                            preserveThinkInHistory = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+
+        withoutAndroidLoggingOnCurrentThread {
+            val request = provider.buildRequest()
+            assertFalse(request.has("reasoning"))
+            assertFalse(request.has("include"))
+        }
+    }
+
+    @Test
+    fun responsesUndescribedCatalogKeepsAutomaticReasoningSummaryAndInclude() = runBlocking {
+        val provider =
+            object : OpenAIResponsesProvider(
+                responsesApiEndpoint = "https://example.test/v1/responses",
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "gpt-5.6",
+                client = OkHttpClient(),
+                catalogReasoningEfforts = null,
+            ) {
+                override fun resolveResponsesReasoningEffort(context: Context) = "xhigh"
+                fun buildRequest(): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = Mockito.mock(Context::class.java),
+                            chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                            modelParameters = emptyList(),
+                            enableThinking = true,
+                            stream = false,
+                            availableTools = null,
+                            preserveThinkInHistory = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+
+        withoutAndroidLoggingOnCurrentThread {
+            val request = provider.buildRequest()
+            val reasoning = request.optJSONObject("reasoning")
+            assertEquals("xhigh", reasoning?.optString("effort"))
+            assertEquals("auto", reasoning?.optString("summary"))
+            assertTrue(
+                request.optJSONArray("include")?.let { array ->
+                    (0 until array.length()).any { array.optString(it) == "reasoning.encrypted_content" }
+                } == true,
+            )
+        }
+    }
+
+    @Test
     fun openAiCompatibleProviderPreservesExplicitReasoningEffortWhenThinkingIsOff() = runBlocking {
         val provider =
             object : OpenAIProvider(

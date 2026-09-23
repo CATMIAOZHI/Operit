@@ -170,6 +170,8 @@ open class OpenAIProvider(
     protected val supportsVideo: Boolean = false, // 是否支持视频输入
     protected val supportsFiles: Boolean = false, // 是否支持文件输入
     val enableToolCall: Boolean = false, // 是否启用Tool Call接口
+    /** Catalog-declared effort values; null means the catalog does not describe effort at all. */
+    protected val catalogReasoningEfforts: List<String>? = null,
 ) : AIService {
     // private val client: OkHttpClient = HttpClientFactory.instance
 
@@ -772,10 +774,13 @@ open class OpenAIProvider(
         } else {
             "none"
         } ?: return
-        requestJson.put("reasoning_effort", effort)
+        val declaredEffort =
+            ThinkingRequestSemantics.declaredCatalogReasoningEffort(effort, catalogReasoningEfforts)
+                ?: return
+        requestJson.put("reasoning_effort", declaredEffort)
         AppLogger.d(
             "OpenAIProvider",
-            "OpenAI Chat Completions reasoning_effort=$effort"
+            "OpenAI Chat Completions reasoning_effort=$declaredEffort"
         )
     }
 

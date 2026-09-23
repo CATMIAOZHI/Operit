@@ -20,4 +20,33 @@ class CollaborationModelParametersTest {
         assertEquals("high", result.single { it.apiName == "reasoning_effort" }.currentValue)
         assertSame(reasoning, CollaborationModelParameters.apply(listOf(reasoning), null).single())
     }
+
+    @Test fun declaredEmptyCatalogEffortsLeaveSubagentParametersUntouched() {
+        val reasoning = ModelParameter(
+            "r", "reasoning", "reasoning", defaultValue = "{}",
+            currentValue = """{"effort":"low"}""",
+            isEnabled = true, valueType = ParameterValueType.OBJECT,
+        )
+        assertSame(reasoning, CollaborationModelParameters.apply(listOf(reasoning), "high", emptyList()).single())
+        assertEquals(
+            "high",
+            CollaborationModelParameters.apply(listOf(reasoning), "high", listOf("low", "high"))
+                .single { it.apiName == "reasoning_effort" }.currentValue,
+        )
+        assertEquals(
+            "high",
+            CollaborationModelParameters.apply(listOf(reasoning), "max", listOf("low", "medium", "high"))
+                .single { it.apiName == "reasoning_effort" }.currentValue,
+        )
+        assertEquals(
+            "high",
+            CollaborationModelParameters.apply(listOf(reasoning), "ultra", listOf("low", "medium", "high"))
+                .single { it.apiName == "reasoning_effort" }.currentValue,
+        )
+        assertEquals(
+            "ultra",
+            CollaborationModelParameters.apply(listOf(reasoning), "ultra", null)
+                .single { it.apiName == "reasoning_effort" }.currentValue,
+        )
+    }
 }
