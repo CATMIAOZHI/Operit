@@ -39,12 +39,19 @@ class CodexDrawBridgePathTest {
         assertTrue(failure?.message.orEmpty().contains("允许的存储目录"))
     }
 
-    @Test fun rejectsRelativePathAndMissingFile() {
+    @Test fun rejectsRelativePath() {
         val root = temporary.newFolder("shared")
-        listOf("photo.png", File(temporary.root, "missing.png").path).forEach { path ->
-            val failure = runCatching { CodexDrawBridge.resolveScriptImagePath(path, listOf(root)) }
-                .exceptionOrNull()
-            assertTrue(failure is IllegalArgumentException)
-        }
+        val failure = runCatching { CodexDrawBridge.resolveScriptImagePath("photo.png", listOf(root)) }
+            .exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+    }
+
+    @Test fun reportsMissingFileInsidePermittedStorageAsUnreadable() {
+        val root = temporary.newFolder("shared")
+        val failure = runCatching {
+            CodexDrawBridge.resolveScriptImagePath(File(root, "missing.png").path, listOf(root))
+        }.exceptionOrNull()
+        assertTrue(failure is IllegalArgumentException)
+        assertTrue(failure?.message.orEmpty().contains("无法读取参考图"))
     }
 }
