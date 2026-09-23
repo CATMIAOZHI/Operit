@@ -9,6 +9,7 @@ import com.ai.assistance.operit.data.preferences.MemoryNotesRepository
 import com.ai.assistance.operit.data.preferences.MemoryReviewChange
 import com.ai.assistance.operit.data.preferences.MemoryReviewRepository
 import com.ai.assistance.operit.data.preferences.SkillDraft
+import java.util.Locale
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.*
 import org.junit.Rule
@@ -162,6 +163,34 @@ class MemoryLearningBatchTest {
             assertTrue(e.message.orEmpty().contains("not installed yet"))
         }
         assertEquals(1,staged.size)
+    }
+    @Test fun notesOverCapacityTellTheReviewerToFreeSpaceFirst() = runBlocking {
+        val context=context()
+        // A document one add away from its cap: the capacity is checked on the staged result, so an
+        // add-first attempt is rejected and the message has to say what to do instead.
+        val lines=(1..272).map { "note-%03d-%s".format(Locale.ROOT,it,"a".repeat(12)) }
+        val notes=MemoryNotesRepository(context,"space")
+        notes.save(lines.joinToString("\n"),notes.load().version)
+        val staged=mutableListOf<MemoryReviewChange>()
+        val actions=MemoryLearningActions(context,"space","chat",notesEnabled=true,skillsEnabled=false,
+            background=true,stagedChanges=staged)
+        actions.execute("memory_read",mapOf("target" to "memory"))
+        try {
+            actions.execute("memory_change",mapOf("target" to "memory","operation" to "add",
+                "content" to "y".repeat(50)))
+            fail("an add past the capacity must be rejected")
+        } catch (e: IllegalArgumentException) {
+            assertTrue(e.message.orEmpty().contains("remove or replace existing text in this batch before adding"))
+        }
+        // A rejected change must not be staged, or the reviewer would believe it landed.
+        assertTrue(staged.isEmpty())
+        // Freeing space in the same batch is what the message asks for, and it must succeed.
+        for(line in listOf("note-007-aaaaaaaaaaaa","note-008-aaaaaaaaaaaa")) {
+            assertEquals("staged",actions.execute("memory_change",mapOf("target" to "memory",
+                "operation" to "remove","old_text" to line)).optString("status"))
+        }
+        assertEquals("staged",actions.execute("memory_change",mapOf("target" to "memory",
+            "operation" to "add","content" to "y".repeat(50))).optString("status"))
     }
     @Test fun skillFilesCannotRemoveSkillMarkdown() = runBlocking {
         val context=context()

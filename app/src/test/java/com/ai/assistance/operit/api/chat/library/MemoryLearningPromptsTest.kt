@@ -44,4 +44,19 @@ class MemoryLearningPromptsTest {
         assertTrue(instructions.contains("Once within two rounds of that limit"))
         assertTrue(instructions.contains("an unfinished batch is discarded and reviewed again later"))
     }
+
+    @Test fun `notes scope tells the reviewer to free space before adding`() {
+        val instructions = buildMemoryLearningInstructions("chat", true, false, "finish")
+        assertTrue(instructions.contains("remove or replace existing text first, then add"))
+        assertTrue(instructions.contains("rejected"))
+    }
+
+    @Test fun `skill scope carries the authoring standard`() {
+        val instructions = buildMemoryLearningInstructions("chat", false, true, "finish")
+        assertTrue(instructions.contains("at most 60 characters"))
+        assertTrue(instructions.contains("## Verification"))
+        assertTrue(instructions.contains("Never invent flags"))
+        assertTrue(instructions.contains("bidirectional Unicode control characters"))
+        assertTrue(instructions.contains("not a transcript of one conversation"))
+    }
 }
