@@ -31,7 +31,6 @@ import kotlinx.coroutines.launch
 
 /** Memory UI State Represents the current state of the Memory screen. */
 data class MemoryUiState(
-        val memories: List<Memory> = emptyList(), // Keep for potential list view
         val graph: Graph = Graph(emptyList(), emptyList()),
         val selectedMemory: Memory? = null,
         val selectedNodeId: String? = null,
@@ -53,11 +52,6 @@ data class MemoryUiState(
         val selectedDocumentChunks: List<DocumentChunk> = emptyList(),
         val documentSearchQuery: String = "",
         val isDocumentViewOpen: Boolean = false,
-
-        // --- 新增：工具测试相关状态 ---
-        val isToolTestDialogVisible: Boolean = false,
-        val toolTestResult: String = "",
-        val isToolTestLoading: Boolean = false,
 
         // --- 新增：文件夹相关状态 ---
         val folderPaths: List<String> = emptyList(), // 所有文件夹路径
@@ -255,14 +249,6 @@ class MemoryViewModel(
         }
     }
 
-    fun saveSearchSettings(newConfig: MemorySearchConfig, newCloudConfig: CloudEmbeddingConfig) {
-        saveSearchSettings(
-            newConfig = newConfig,
-            newCloudConfig = newCloudConfig,
-            autoSaveIntervalMinutes = _uiState.value.autoSaveIntervalMinutes
-        )
-    }
-
     fun saveSearchSettings(
         newConfig: MemorySearchConfig,
         newCloudConfig: CloudEmbeddingConfig,
@@ -287,11 +273,6 @@ class MemoryViewModel(
             searchSettingsPreferences.saveAutoSaveIntervalMinutes(normalizedInterval)
             repository.saveCloudEmbeddingConfig(normalizedCloudConfig)
         }
-    }
-
-    fun resetSearchSettings() {
-        val defaults = MemorySearchConfig()
-        _uiState.update { it.copy(searchConfig = defaults) }
     }
 
     private fun loadSearchSettings() {
@@ -554,47 +535,6 @@ class MemoryViewModel(
         viewModelScope.launch {
             val chunks = repository.searchChunksInDocument(memoryId, query)
             _uiState.update { it.copy(selectedDocumentChunks = chunks) }
-        }
-    }
-
-    /**
-     * 显示或隐藏工具测试对话框
-     */
-    fun showToolTestDialog(visible: Boolean) {
-        _uiState.update { it.copy(isToolTestDialogVisible = visible, toolTestResult = "") } // 打开时清空上次结果
-    }
-
-    /**
-     * 执行记忆查询工具的测试
-     */
-    fun testQueryTool(query: String) {
-        viewModelScope.launch {
-            _uiState.update { it.copy(isToolTestLoading = true, toolTestResult = "") }
-            try {
-                val aiToolHandler = AIToolHandler.getInstance(context)
-                // 确保工具已注册
-                if (aiToolHandler.getToolExecutor("query_memory") == null) {
-                    aiToolHandler.registerDefaultTools()
-                }
-
-                val tool = AITool(
-                    name = "query_memory",
-                    parameters = listOf(ToolParameter("query", query))
-                )
-
-                val result = aiToolHandler.executeTool(tool)
-
-                val resultString = if (result.success) {
-                    // 使用Gson进行格式化输出，更美观
-                    Gson().newBuilder().setPrettyPrinting().create().toJson(result.result)
-                } else {
-                    "Error: ${result.error}"
-                }
-                _uiState.update { it.copy(isToolTestLoading = false, toolTestResult = resultString) }
-
-            } catch (e: Exception) {
-                _uiState.update { it.copy(isToolTestLoading = false, toolTestResult = "An unexpected error occurred: ${e.message}") }
-            }
         }
     }
 

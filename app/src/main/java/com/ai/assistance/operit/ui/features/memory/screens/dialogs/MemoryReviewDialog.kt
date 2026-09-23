@@ -32,6 +32,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     var aiDecisions by remember { mutableStateOf(settings.mayAiReviewChanges()) }
     val scope = rememberCoroutineScope()
     var records by remember { mutableStateOf<List<MemoryReviewChange>>(emptyList()) }
+    var loaded by remember { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = records.find { it.id == selectedId }
     var history by rememberSaveable { mutableStateOf(false) }
@@ -51,14 +52,14 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
         scope.launch {
             busy = true
             error = null
-            try { block(); records = repo.list() }
+            try { block(); records = repo.list(); loaded = true }
             catch (e: CancellationException) { throw e }
             catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
             finally { busy = false }
         }
     }
     LaunchedEffect(repo) {
-        try { records = repo.list() }
+        try { records = repo.list(); loaded = true }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
     }
@@ -79,7 +80,10 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                     }
                     val visible = records.filter { (it.status !in setOf("pending", "applying")) == history }
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (visible.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
+                        // The draft in the detail pane is restored before the list reloads, so an
+                        // empty list here must not be reported as "no records" while still loading.
+                        if (!loaded && error == null) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                        else if (visible.isEmpty()) item { Text(stringResource(R.string.memory_review_empty)) }
                         items(visible, key = { it.id }) { record ->
                             Column(modifier = Modifier.fillMaxWidth().clickable(enabled = !busy) {
                                 selectedId = record.id; body = record.body; description = record.description; reason = ""

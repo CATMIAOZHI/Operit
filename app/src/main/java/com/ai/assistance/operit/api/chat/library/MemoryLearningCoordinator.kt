@@ -201,7 +201,7 @@ object MemoryLearningCoordinator {
                     val journal=MemoryLearningJournal(context,profileId,chatId)
                     val notes=journal.pending("notes") && settings.shouldExtractNewMemory()
                     val skills=journal.pending("skills") && settings.shouldExtractSkills()
-                    journal.export()
+                    if (exportFinishedBatch(context,profileId,chatId,journal)!=null) return@launch
                     if (!notes && !skills) return@launch
                     settings.consumePendingLearning(chatId)
                     review(context.applicationContext,profileId,chatId,reviewNotes=notes,reviewSkills=skills)
@@ -228,14 +228,32 @@ object MemoryLearningCoordinator {
         if (!manual && !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
         val db = AppDatabase.getDatabase(context)
         val chat = db.chatDao().getChatById(chatId)
-        require(chat!=null && !chat.isHidden && chat.parentChatId==null && chat.chatKind=="NORMAL")
+        if (chat == null) {
+            // The conversation was deleted while its source range was still pending. It can never be
+            // reviewed, so record why and drop the progress instead of retrying on every launch.
+            val reason=context.getString(R.string.memory_extraction_source_deleted)
+            MemoryLearningJournal.deleteChat(context,chatId)
+            recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason)
+            if (manual) error(reason)
+            return
+        }
+        if (chat.isHidden || chat.parentChatId!=null || chat.chatKind!="NORMAL") {
+            // Branch and hidden conversations are not reviewed by design. Leaving the range pending
+            // would retry it on every later turn, and this is not a failure worth logging. A finished
+            // batch that was never exported is applied first so nothing already reviewed is lost.
+            val journal=MemoryLearningJournal(context,profileId,chatId)
+            journal.export()
+            journal.abandon(listOf("notes","skills"))
+            if (manual) error(context.getString(R.string.memory_extraction_not_reviewable))
+            return
+        }
         val settings = MemorySearchSettingsPreferences(context,profileId)
         val notes = manual || (reviewNotes && settings.shouldExtractNewMemory())
         val skills = manual || (reviewSkills && settings.shouldExtractSkills())
         if (!notes && !skills) return
         val journal=MemoryLearningJournal(context,profileId,chatId)
         if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
-        journal.export()
+        exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
         MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
             settings.shouldIncludeThinking()).use { source ->
             repeat(3) {
@@ -245,8 +263,20 @@ object MemoryLearningCoordinator {
                 val first=paths.minBy { journal.cursor(it).messageId }
                 val selected=paths.filter { journal.cursor(it)==journal.cursor(first) }
                 val instructions=buildMemoryLearningInstructions(chatId,"notes" in selected,"skills" in selected,FINISH)
-                val config=MemoryLearningSnapshot.build(context,emptyList(),instructions.toByteArray().size,
-                    settings.shouldIncludeThinking())
+                val config = try {
+                    MemoryLearningSnapshot.build(context,emptyList(),instructions.toByteArray().size,
+                        settings.shouldIncludeThinking())
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    // A window that cannot even hold the instructions will not become reviewable by
+                    // retrying, so stop the loop and leave the reason where the user can see it.
+                    val reason=context.getString(R.string.memory_extraction_window_too_small)
+                    recordUnreviewable(context,profileId,chatId,selected,reason,
+                        e.message?.takeIf { it.isNotBlank() } ?: e.toString())
+                    journal.abandon(selected)
+                    if (manual) error(reason)
+                    return
+                }
                 val batch=source.next(journal.cursor(first),
                     MemoryLearningSnapshot.sourceBudget(config.contextWindow,instructions.toByteArray().size))
                 if (batch.text.isBlank()) {
@@ -257,20 +287,59 @@ object MemoryLearningCoordinator {
         }
     }
 
+    /**
+     * Exports the batch finished by the previous run. A blocked export keeps the pending markers, so
+     * the range is retried; returning the reason turns that stuck state into something the user can see.
+     */
+    private suspend fun exportFinishedBatch(context: Context, profileId: String, chatId: String,
+        journal: MemoryLearningJournal): String? {
+        val failures = try {
+            journal.export()
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            val reason=context.getString(R.string.memory_extraction_export_blocked)
+            recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason,
+                e.message?.takeIf { it.isNotBlank() } ?: e.toString())
+            return reason
+        }
+        if (failures.isEmpty()) return null
+        val reason=context.getString(R.string.memory_extraction_export_blocked)
+        recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason,failures.joinToString("\n"))
+        return reason
+    }
+
+    /**
+     * Records a source range that could not be reviewed, so the reason shows up in the extraction log
+     * instead of only in logcat.
+     */
+    private suspend fun recordUnreviewable(context: Context, profileId: String, chatId: String,
+        paths: List<String>, reason: String, technical: String = "") {
+        MemoryExtractionLogRepository(context,profileId).save(MemoryExtractionLog(
+            sourceChatId=chatId,graph=false,notes="notes" in paths,skills="skills" in paths,
+            status="failed",detail=reason,finishedAt=System.currentTimeMillis(),reviewable=false))
+        AppLogger.w("MemoryLearning","Unreviewable source range for $chatId: $reason" +
+            technical.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty())
+    }
+
     private suspend fun reviewBatch(context: Context, profileId: String, chatId: String,
         paths: List<String>, batch: MemoryLearningSource.Batch, contextWindow: Int, journal: MemoryLearningJournal) {
         val notes="notes" in paths
         val skills="skills" in paths
         val logRepo = MemoryExtractionLogRepository(context,profileId)
-        val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills)
+        // The run does not exist yet, so the first row must not offer an audit view; onRunCreated
+        // flips this once the subagent is there to inspect.
+        val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills,reviewable=false)
         var created = 0
         val staged=mutableListOf<MemoryReviewChange>()
         val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged))
         var childId: String? = null
         var runId = ""
+        // Until the subagent exists there is no transcript to audit, so the row must not offer one.
+        var auditable = false
         fun snapshot(status: String = "running", finishedAt: Long = 0, detail: String = session.failures.joinToString("\n")) =
             log.copy(status=status,finishedAt=finishedAt,proposals=created,detail=detail,
-                runId=runId,childChatId=childId.orEmpty(),modelRounds=session.requests.get(),toolCalls=session.calls.get())
+                runId=runId,childChatId=childId.orEmpty(),modelRounds=session.requests.get(),toolCalls=session.calls.get(),
+                reviewable=auditable)
         session.persistProgress = { logRepo.save(snapshot()) }
         logRepo.save(log)
         try {
@@ -297,6 +366,7 @@ object MemoryLearningCoordinator {
                     onRunCreated={ run ->
                         childId=run.childChatId
                         runId=run.id
+                        auditable = true
                         logRepo.save(snapshot())
                         session.recordModelRound = {
                             runBlocking {

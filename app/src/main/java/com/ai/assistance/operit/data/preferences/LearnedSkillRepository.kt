@@ -16,6 +16,13 @@ import org.json.JSONObject
 class LearnedSkillRepository(private val context: Context) {
     companion object {
         private val mutex = Mutex()
+        /** Creation bounds for a new skill: short enough to stay scannable and cheap to read. */
+        const val MIN_SKILL_BODY_CHARS = 50
+        const val MAX_SKILL_BODY_CHARS = 6_000
+        /** One-line description; longer lines are accepted but cost every session that loads the index. */
+        const val MAX_SKILL_DESCRIPTION_CHARS = 240
+        /** Hard ceiling for any single skill file, including a whole-file SKILL.md rewrite. */
+        const val MAX_SKILL_FILE_CHARS = 24_000
         fun version(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
             .joinToString("") { "%02x".format(it) }
     }
@@ -30,6 +37,7 @@ class LearnedSkillRepository(private val context: Context) {
             tmp.outputStream().use { it.write(text.toByteArray()); it.fd.sync() }
             Files.move(tmp.toPath(),file.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
         } finally { tmp.delete() }
+        syncDirectory(file.parentFile!!)
     }
     suspend fun owned(profileId: String? = null): Set<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
@@ -128,7 +136,7 @@ class LearnedSkillRepository(private val context: Context) {
             // Completed journal retries are harmless; a different concurrent edit must be preserved.
             if ((!remove && file.exists() && current==body) || (remove && !file.exists())) return@withLock
             check(actualVersion==expectedVersion) { "Skill changed since it was read; reload before editing" }
-            require(body.length<=24_000)
+            require(body.length<=MAX_SKILL_FILE_CHARS)
             if (!remove && path=="SKILL.md") {
                 val normalized = body.replace("\r\n","\n")
                 val metadata = manager.parseSkillMetadataText(body)

@@ -5,8 +5,10 @@ import com.ai.assistance.operit.data.dao.ChatContentDao
 import com.ai.assistance.operit.data.preferences.MemoryReviewChange
 import com.ai.assistance.operit.data.preferences.MemoryReviewRepository
 import com.ai.assistance.operit.data.repository.RecallEvidenceReader
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -54,6 +56,7 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
             temp.outputStream().use { it.write(state.toString().toByteArray()); it.fd.sync() }
             Files.move(temp.toPath(),file.toPath(),StandardCopyOption.ATOMIC_MOVE,StandardCopyOption.REPLACE_EXISTING)
         } finally { temp.delete() }
+        com.ai.assistance.operit.data.preferences.syncDirectory(file.parentFile!!)
     }
     fun enqueue(notes: Boolean, skills: Boolean, horizon: Long, restart: Boolean = false) {
         state.put("horizon",maxOf(horizon,horizon()))
@@ -69,6 +72,14 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
         check(!state.has("export")) { "Previous batch must be exported first" }
         paths.forEach { state.put(it,next.json()).put("pending_$it",more) }
         state.put("export",JSONArray().apply { changes.forEach { put(reviews.toJson(it)) } })
+        save()
+    }
+    /**
+     * Stops retrying a range that can never be reviewed, keeping each cursor where it is so the next
+     * normal trigger covers the same range again once the cause is gone.
+     */
+    fun abandon(paths: List<String>) {
+        paths.forEach { state.put("pending_$it",false) }
         save()
     }
     suspend fun export(): List<String> {
@@ -94,6 +105,17 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
         fun deleteSpace(context: Context, profile: String) {
             File(context.filesDir,"memory_learning_progress").listFiles()?.filter { it.extension=="json" }
                 ?.forEach { if (JSONObject(it.readText()).getString("profile")==profile) it.delete() }
+        }
+        /**
+         * Drops the progress of a conversation that no longer exists, in every memory space. The
+         * deleted conversation can never be reviewed again, so keeping the file would only make the
+         * coordinator retry it on each launch.
+         */
+        suspend fun deleteChat(context: Context, chat: String) = withContext(Dispatchers.IO) {
+            File(context.filesDir,"memory_learning_progress").listFiles()?.filter { it.extension=="json" }
+                ?.forEach {
+                    runCatching { if (JSONObject(it.readText()).optString("chat")==chat) it.delete() }
+                }
         }
         fun pending(context: Context): List<Pair<String,String>> =
             File(context.filesDir,"memory_learning_progress").listFiles()?.filter { it.extension=="json" }

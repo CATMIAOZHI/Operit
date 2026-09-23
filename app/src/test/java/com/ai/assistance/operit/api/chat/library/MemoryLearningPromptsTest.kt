@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.api.chat.library
 
+import com.ai.assistance.operit.data.preferences.LearnedSkillRepository
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -58,5 +59,17 @@ class MemoryLearningPromptsTest {
         assertTrue(instructions.contains("Never invent flags"))
         assertTrue(instructions.contains("bidirectional Unicode control characters"))
         assertTrue(instructions.contains("not a transcript of one conversation"))
+    }
+
+    /** The prompt and the write path must quote the same numbers, or the reviewer paces itself wrongly. */
+    @Test fun `skill scope states the same size limits the tools enforce`() {
+        val instructions = buildMemoryLearningInstructions("chat", false, true, "finish")
+        val tools = memoryLearningActionDescription(false, true)
+        val creation = "${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-${LearnedSkillRepository.MAX_SKILL_BODY_CHARS}"
+        assertTrue(instructions.contains(creation))
+        assertTrue(tools.contains(creation))
+        assertTrue(instructions.contains(LearnedSkillRepository.MAX_SKILL_FILE_CHARS.toString()))
+        assertTrue(instructions.contains("must NOT include YAML frontmatter"))
+        assertTrue(tools.contains("without YAML frontmatter"))
     }
 }

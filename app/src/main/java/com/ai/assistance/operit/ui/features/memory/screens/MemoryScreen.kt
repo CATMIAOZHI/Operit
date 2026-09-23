@@ -658,28 +658,42 @@ private fun MemoryGraphPage(activeProfileId: String) {
 
 @Composable
 private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
-    val entries = listOf(
-        Triple("graph", R.string.memory_graph_title, R.string.memory_nav_graph),
-        Triple("notes", R.string.memory_notes_title, R.string.memory_nav_notes),
-        Triple("review", R.string.memory_review_title, R.string.memory_nav_review),
-        Triple("learned", R.string.memory_learned_skills, R.string.memory_nav_learned),
-        Triple("history", R.string.chat_recall_title, R.string.memory_nav_history),
-        Triple("skills", R.string.memory_extraction_skills, R.string.memory_nav_skills),
-        Triple("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs),
-        Triple("automation", R.string.memory_automation_title, R.string.memory_nav_automation)
+    // Grouped so the two skill pages sit side by side and read as different things, and so the
+    // extraction pipeline (learn -> log -> approve) is visually one sequence.
+    val groups = listOf(
+        R.string.memory_group_content to listOf(
+            Triple("graph", R.string.memory_graph_title, R.string.memory_nav_graph),
+            Triple("notes", R.string.memory_notes_title, R.string.memory_nav_notes)
+        ),
+        R.string.memory_group_learning to listOf(
+            Triple("learned", R.string.memory_learned_skills, R.string.memory_nav_learned),
+            Triple("skills", R.string.memory_extraction_skills, R.string.memory_nav_skills),
+            Triple("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs)
+        ),
+        R.string.memory_group_review to listOf(
+            Triple("review", R.string.memory_review_title, R.string.memory_nav_review),
+            Triple("history", R.string.chat_recall_title, R.string.memory_nav_history)
+        ),
+        R.string.memory_group_settings to listOf(
+            Triple("automation", R.string.memory_automation_title, R.string.memory_nav_automation)
+        )
     )
     Column(modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)) {
-        entries.chunked(2).forEach { row ->
-            Row(Modifier.fillMaxWidth()) {
-                row.forEach { (page, title, description) ->
-                    Column(Modifier.weight(1f).clickable { onOpen(page) }.padding(horizontal = 8.dp, vertical = 12.dp)) {
-                        Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
-                        Text(stringResource(description), style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+        groups.forEachIndexed { index, (header, entries) ->
+            if (index > 0) HorizontalDivider(Modifier.padding(top = 8.dp), color = MaterialTheme.colorScheme.outlineVariant)
+            Text(stringResource(header), style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 12.dp))
+            entries.chunked(2).forEach { row ->
+                Row(Modifier.fillMaxWidth()) {
+                    row.forEach { (page, title, description) ->
+                        Column(Modifier.weight(1f).clickable { onOpen(page) }.padding(horizontal = 8.dp, vertical = 12.dp)) {
+                            Text(stringResource(title), style = MaterialTheme.typography.titleSmall)
+                            Text(stringResource(description), style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                 }
             }
-            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
         }
     }
 }
@@ -689,7 +703,7 @@ private fun MemoryLibraryDestination(page: String, profileId: String, onBack: ()
     val context = LocalContext.current
     when (page) {
         "automation" -> MemoryAutomationPage(profileId, onBack)
-        "notes" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(profileId, profileId, onBack)
+        "notes" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(profileId, onBack)
         "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(profileId, onBack)
         "history" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.ChatRecallDialog(profileId, onBack)
         "learned" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.LearnedSkillsDialog(profileId, onBack)

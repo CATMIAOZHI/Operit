@@ -59,9 +59,10 @@ class MemoryLearningActions(
                     val sections = UserProfileSections.parse(base)
                     sections.with(section, editText(sections.get(section), operation,
                         arg("content"), arg("old_text"))).markdown()
-                } else editText(base,operation,arg("content"),arg("old_text"))
+                } else if (user) editText(base,operation,arg("content"),arg("old_text"))
+                else notesEdit(base,operation,arg("content"),arg("old_text"))
                 val change = if(user) {
-                    require(after.length<=12_000) {
+                    require(after.length<=UserProfileDocumentRepository.MAX_CONTENT_CHARS) {
                         "user.md would exceed its character limit; remove or replace existing text in this batch before adding"
                     }
                     reviews.proposeUser(disk,after,sourceChatId,onCreated)
@@ -70,7 +71,7 @@ class MemoryLearningActions(
                     val before = repo.load()
                     check(before.markdown==disk)
                     require(after.length<=MemoryNotesRepository.MAX_CHARS) {
-                        "memory.md would exceed its character limit; remove or replace existing text in this batch before adding"
+                        MemoryNotesRepository.OVERFLOW_MESSAGE
                     }
                     reviews.proposeNotes(before,after,if(operation=="add") arg("content") else "",sourceChatId,onCreated)
                 }
@@ -113,14 +114,20 @@ class MemoryLearningActions(
                 require(Regex("[a-z][a-z0-9-]{2,63}").matches(name)) {
                     "Skill name must be 3-64 lowercase ASCII letters, digits or hyphens, start with a letter; underscores are not allowed"
                 }
-                require(arg("description").trim().length in 1..240 && !arg("description").contains('\n')) {
-                    "Skill description must be one line, 1-240 characters"
+                require(arg("description").trim().length in 1..LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS &&
+                    !arg("description").contains('\n')) {
+                    "Skill description must be one line, 1-${LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS} characters"
                 }
-                require(arg("content").trim().length in 50..6000) {
-                    "Skill content must be 50-6000 characters"
+                // Frontmatter is composed for you, so a supplied header is stripped before the
+                // length check; otherwise this would accept a draft the installer rejects.
+                val body = stripSkillFrontmatter(arg("content").trim())
+                require(body.length in LearnedSkillRepository.MIN_SKILL_BODY_CHARS..
+                    LearnedSkillRepository.MAX_SKILL_BODY_CHARS) {
+                    "Skill content must be ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-" +
+                        "${LearnedSkillRepository.MAX_SKILL_BODY_CHARS} characters, without YAML frontmatter"
                 }
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
-                    .put("description",arg("description")).put("body",arg("content"))),sourceChatId)
+                    .put("description",arg("description")).put("body",body)),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
                 check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
                 reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated)))
@@ -164,6 +171,26 @@ class MemoryLearningActions(
         }
     }
 }
+
+/**
+ * Note edits use the repository's own rules, so the extraction tool and the direct writer cannot
+ * disagree about duplicates, ambiguity or empty text. Only the failure wording is local.
+ */
+private fun notesEdit(base: String, operation: String, content: String, oldText: String): String =
+    try {
+        MemoryNotesRepository.applyEdit(base, operation, content, oldText)
+    } catch (e: MemoryNotesRepository.NotesException) {
+        // Kept as IllegalArgumentException: that is the type the notes path raised before this was
+        // single-sourced, and the surrounding tool layers only ever catch the message.
+        throw IllegalArgumentException(when (e.reason) {
+            MemoryNotesRepository.Failure.EMPTY ->
+                if (operation == "add") "content is required" else "old_text and content are required"
+            MemoryNotesRepository.Failure.NOT_UNIQUE -> "old_text must match exactly once"
+            MemoryNotesRepository.Failure.CONFLICT -> "memory.md changed while this batch ran; read it again"
+            MemoryNotesRepository.Failure.FULL -> MemoryNotesRepository.OVERFLOW_MESSAGE
+            MemoryNotesRepository.Failure.INVALID -> "Use add/replace/remove"
+        })
+    }
 
 /** What this batch staged for a skill file, so reads and revisions see it instead of the disk copy. */
 internal fun stagedSkillFile(changes: List<MemoryReviewChange>?, name: String, path: String) =

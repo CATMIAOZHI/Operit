@@ -24,6 +24,22 @@ class MemoryReviewRepositoryTest {
         whenever(editor.putString(any(), any())).thenReturn(editor)
     }
 
+    @Test fun `history keeps unfinished items and only the newest finished ones`() {
+        fun change(id: Int, status: String) = MemoryReviewChange(
+            id = "c$id", kind = "notes", title = "memory.md", body = "b$id",
+            createdAt = id.toLong(), reviewedAt = id.toLong(), status = status)
+        val items = listOf(change(1,"pending"), change(2,"applying")) +
+            (1..MemoryReviewRepository.HISTORY_LIMIT + 5).map { change(100 + it, "approved") }
+        val kept = MemoryReviewRepository.pruneHistory(items)
+        assertEquals(MemoryReviewRepository.HISTORY_LIMIT + 2, kept.size)
+        // Unfinished work is never dropped, even though its timestamps are the oldest here.
+        assertTrue(kept.any { it.id == "c1" })
+        assertTrue(kept.any { it.id == "c2" })
+        // The five oldest finished entries fall out; the newest one survives.
+        assertFalse(kept.any { it.id == "c105" })
+        assertTrue(kept.any { it.id == "c${100 + MemoryReviewRepository.HISTORY_LIMIT + 5}" })
+    }
+
     @Test fun `proposals do not write notes and rejection retains content and audit`() = runBlocking {
         val context = context()
         val notes = MemoryNotesRepository(context, "a")
@@ -99,6 +115,24 @@ class MemoryReviewRepositoryTest {
         assertTrue(parseSkillDrafts(JSONObject(), "chat").isEmpty())
         assertTrue(parseSkillDrafts(JSONArray().put(JSONObject(valid.toString()).put("name", "tool_capability_inquiry")), "chat").isEmpty())
         assertEquals(1, parseSkillDrafts(JSONArray().put(JSONObject(valid.toString()).put("name", "capability-inquiry")), "chat").size)
+    }
+
+    @Test fun `a supplied skill frontmatter is folded away instead of doubled`() {
+        val body = "A verified procedure with prerequisites, commands and checks.".repeat(2)
+        val withHeader = "---\nname: check-build\ndescription: \"Check build\"\n---\n\n$body"
+        assertEquals(body, stripSkillFrontmatter(withHeader))
+        // No header, an unterminated header and plain dashes are left untouched.
+        assertEquals(body, stripSkillFrontmatter(body))
+        assertEquals("---\nname: check-build", stripSkillFrontmatter("---\nname: check-build"))
+        assertEquals("-- dash led text", stripSkillFrontmatter("-- dash led text"))
+        // The parsed draft is what gets installed, so the header cannot survive here either.
+        val parsed = parseSkillDrafts(JSONArray().put(
+            JSONObject().put("name", "check-build").put("description", "Check build").put("body", withHeader)), "chat")
+        assertEquals(body, parsed.single().body)
+        // A body that is nothing but frontmatter has no content left to install.
+        assertTrue(parseSkillDrafts(JSONArray().put(JSONObject().put("name", "check-build")
+            .put("description", "Check build").put("body", "---\nname: check-build\ndescription: \"x\"\n---\n")),
+            "chat").isEmpty())
     }
 
     @Test fun `extraction logs retain outcome after reload and isolate spaces`() = runBlocking {
