@@ -672,7 +672,8 @@ private fun renderNodeContent(
             EnhancedCodeBlock(
                 code = codeContent,
                 language = language,
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier.fillMaxWidth(),
+                enableDialogs = enableDialogs
             )
         }
         
