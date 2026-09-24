@@ -26,6 +26,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.tools.packTool.ToolPkgComposeDslParser
 import com.ai.assistance.operit.core.tools.packTool.ToolPkgComposeDslRenderResult
+import com.ai.assistance.operit.ui.common.composedsl.LocalComposeDslDialogsAllowed
 import com.ai.assistance.operit.ui.common.composedsl.LocalComposeDslXmlStream
 import com.ai.assistance.operit.ui.common.composedsl.RenderToolPkgComposeDslNode
 import com.ai.assistance.operit.util.AppLogger
@@ -120,7 +121,8 @@ object XmlRenderPluginRegistry {
         modifier: Modifier,
         textColor: Color,
         xmlStream: Stream<String>?,
-        renderInstanceKey: Any? = null
+        renderInstanceKey: Any? = null,
+        allowDialogs: Boolean = true
     ): Boolean {
         val registryVersion = changeVersion.collectAsState().value
         val plugin = plugins.firstOrNull { it.supports(tagName) } ?: return false
@@ -183,7 +185,8 @@ object XmlRenderPluginRegistry {
                     result = resolved,
                     modifier = modifier,
                     xmlStream = xmlStream,
-                    renderInstanceKey = renderInstanceKey
+                    renderInstanceKey = renderInstanceKey,
+                    allowDialogs = allowDialogs
                 )
                 true
             }
@@ -218,7 +221,8 @@ object XmlRenderPluginRegistry {
         result: XmlRenderResult.ComposeDslScreen,
         modifier: Modifier,
         xmlStream: Stream<String>?,
-        renderInstanceKey: Any?
+        renderInstanceKey: Any?,
+        allowDialogs: Boolean
     ) {
         val context = LocalContext.current
         val packageManager = remember(result.containerPackageName) {
@@ -557,7 +561,10 @@ object XmlRenderPluginRegistry {
         Box(modifier = modifier) {
             when {
                 renderResult?.tree != null -> {
-                    CompositionLocalProvider(LocalComposeDslXmlStream provides xmlStream) {
+                    CompositionLocalProvider(
+                        LocalComposeDslXmlStream provides xmlStream,
+                        LocalComposeDslDialogsAllowed provides allowDialogs
+                    ) {
                         RenderToolPkgComposeDslNode(
                             node = renderResult!!.tree,
                             modifier = Modifier.align(Alignment.TopStart),

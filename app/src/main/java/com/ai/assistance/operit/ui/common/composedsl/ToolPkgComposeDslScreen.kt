@@ -2078,6 +2078,12 @@ internal val LocalComposeDslActionHandler = staticCompositionLocalOf<(String, An
     { _, _ -> }
 }
 internal val LocalComposeDslXmlStream = staticCompositionLocalOf<Stream<String>?> { null }
+/**
+ * Whether the host window is able to show a dialog at all. A window hosted by a service has no
+ * activity token, so a dialog opened from one is rejected and takes the whole process down; such a
+ * host provides false and the dialog nodes lay their content out in place instead.
+ */
+internal val LocalComposeDslDialogsAllowed = staticCompositionLocalOf { true }
 internal val LocalComposeDslTextInputActionHandler =
     staticCompositionLocalOf<(String, String) -> Unit> {
         { _, _ -> }
@@ -2200,7 +2206,10 @@ internal fun renderMarkdownNode(
                 textColor = textColor,
                 fontSize = fontSize,
                 xmlRenderer = remember { DefaultXmlRenderer() },
-                enableDialogs = props.bool("enableDialogs", true),
+                // The package's own prop says what its content wants; the host still decides whether
+                // this window can show a dialog at all.
+                enableDialogs =
+                    props.bool("enableDialogs", true) && LocalComposeDslDialogsAllowed.current,
                 fillMaxWidth = props.bool("fillMaxWidth", true)
             )
         }
@@ -2217,7 +2226,8 @@ internal fun renderMarkdownNode(
             textColor = textColor,
             modifier = modifier,
             fontSize = fontSize,
-            enableDialogs = props.bool("enableDialogs", true)
+            enableDialogs =
+                props.bool("enableDialogs", true) && LocalComposeDslDialogsAllowed.current
         )
     }
 }
@@ -2290,7 +2300,7 @@ internal fun renderComposeDslAlertDialogNode(
                     MarkdownTextComposable(
                         text = markdownValue,
                         textColor = MaterialTheme.colorScheme.onSurface,
-                        enableDialogs = true
+                        enableDialogs = LocalComposeDslDialogsAllowed.current
                     )
                 }
             }
@@ -2311,6 +2321,59 @@ internal fun renderComposeDslAlertDialogNode(
         } else {
             null
         }
+
+    if (!LocalComposeDslDialogsAllowed.current) {
+        // This host has no activity window, so the same slots are laid out in place: the content and
+        // its buttons stay reachable instead of taking the process down or disappearing.
+        androidx.compose.material3.Surface(
+            modifier = applyScopedCommonModifier(Modifier, props, modifierResolver),
+            shape = props.shapeOrNull() ?: RoundedCornerShape(28.dp),
+            color = props.colorOrNull("containerColor") ?: MaterialTheme.colorScheme.surface,
+            tonalElevation = props.dp("tonalElevation", 6.dp)
+        ) {
+            Column(modifier = Modifier.padding(20.dp)) {
+                iconContent?.invoke()
+                titleContent?.invoke()
+                textContent?.invoke()
+                Row(
+                    modifier = Modifier.align(Alignment.End).padding(top = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    if (dismissButtonNodes.isNotEmpty()) {
+                        renderComposeDslNodes(
+                            nodes = dismissButtonNodes,
+                            onAction = onAction,
+                            nodePath = "$nodePath:dismissButton"
+                        )
+                    } else {
+                        ComposeDslDialogTextButton(
+                            text = props.stringOrNull("dismissText"),
+                            actionId = ToolPkgComposeDslParser.extractActionId(props["onDismiss"]),
+                            closeOnClick = false,
+                            onAction = onAction,
+                            onClose = null
+                        )
+                    }
+                    if (confirmButtonNodes.isNotEmpty()) {
+                        renderComposeDslNodes(
+                            nodes = confirmButtonNodes,
+                            onAction = onAction,
+                            nodePath = "$nodePath:confirmButton"
+                        )
+                    } else {
+                        ComposeDslDialogTextButton(
+                            text = props.stringOrNull("confirmText"),
+                            actionId = ToolPkgComposeDslParser.extractActionId(props["onConfirm"]),
+                            closeOnClick = false,
+                            onAction = onAction,
+                            onClose = null
+                        )
+                    }
+                }
+            }
+        }
+        return
+    }
 
     androidx.compose.material3.AlertDialog(
         onDismissRequest = {
@@ -2405,6 +2468,34 @@ internal fun renderComposeDslDialogNode(
     val dismissHost = LocalComposeDslDialogDismissHandler.current
     val onDismissRequestActionId =
         ToolPkgComposeDslParser.extractActionId(props["onDismissRequest"])
+    val contentNodes =
+        node.slots["content"]
+            ?.takeIf { it.isNotEmpty() }
+            ?: node.children
+    val body: @Composable () -> Unit = {
+        androidx.compose.material3.Surface(
+            modifier = applyScopedCommonModifier(Modifier, props, modifierResolver),
+            shape = props.shapeOrNull() ?: RoundedCornerShape(28.dp),
+            color = props.colorOrNull("containerColor") ?: MaterialTheme.colorScheme.surface,
+            tonalElevation = props.dp("tonalElevation", 6.dp)
+        ) {
+            renderComposeDslNodes(
+                nodes = contentNodes,
+                onAction = onAction,
+                nodePath = "$nodePath:content",
+                modifierResolver = { base, slotProps ->
+                    defaultComposeDslModifierResolver(base, slotProps)
+                }
+            )
+        }
+    }
+
+    if (!LocalComposeDslDialogsAllowed.current) {
+        // No activity window to put a dialog in, so the same body is laid out in place.
+        body()
+        return
+    }
+
     androidx.compose.ui.window.Dialog(
         onDismissRequest = {
             if (!onDismissRequestActionId.isNullOrBlank()) {
@@ -2416,25 +2507,7 @@ internal fun renderComposeDslDialogNode(
         },
         properties = dialogPropertiesFromValue(props["properties"])
     ) {
-        androidx.compose.material3.Surface(
-            modifier = applyScopedCommonModifier(Modifier, props, modifierResolver),
-            shape = props.shapeOrNull() ?: RoundedCornerShape(28.dp),
-            color = props.colorOrNull("containerColor") ?: MaterialTheme.colorScheme.surface,
-            tonalElevation = props.dp("tonalElevation", 6.dp)
-        ) {
-            val contentNodes =
-                node.slots["content"]
-                    ?.takeIf { it.isNotEmpty() }
-                    ?: node.children
-            renderComposeDslNodes(
-                nodes = contentNodes,
-                onAction = onAction,
-                nodePath = "$nodePath:content",
-                modifierResolver = { base, slotProps ->
-                    defaultComposeDslModifierResolver(base, slotProps)
-                }
-            )
-        }
+        body()
     }
 }
 
