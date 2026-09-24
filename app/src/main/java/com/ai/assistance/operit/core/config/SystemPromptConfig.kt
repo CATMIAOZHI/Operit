@@ -12,6 +12,18 @@ import com.ai.assistance.operit.data.skill.SkillRepository
 import com.ai.assistance.operit.ui.features.chat.webview.workspace.process.WorkspaceRuleFileReader
 import com.ai.assistance.operit.util.LocaleUtils
 
+/**
+ * The skill index is part of every session prefix, so one long description costs every turn. Entries
+ * longer than this are truncated the same way the reference implementation truncates its skill index.
+ */
+internal const val SKILL_INDEX_DESCRIPTION_LIMIT = 60
+
+internal fun skillIndexDescription(description: String): String {
+    val trimmed = description.trim()
+    return if (trimmed.length <= SKILL_INDEX_DESCRIPTION_LIMIT) trimmed
+        else trimmed.take(SKILL_INDEX_DESCRIPTION_LIMIT - 3) + "..."
+}
+
 object SystemPromptConfig {
 
     private const val TOOL_USAGE_GUIDELINES_EN = """
@@ -295,7 +307,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     suspend fun loadSkillCatalog(): String = org.json.JSONObject(try {
         SkillRepository.getInstance(
             com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
-        ).getAiVisibleSkillPackages().mapValues { it.value.description }
+        ).getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
     } catch (_: Exception) {
         emptyMap<String,String>()
     }).toString()

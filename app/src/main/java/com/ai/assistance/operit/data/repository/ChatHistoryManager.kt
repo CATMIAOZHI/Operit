@@ -2230,6 +2230,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
                 }
             }
+            forgetDeletedChats(deletedChatIds)
             true
         }
 
@@ -3272,6 +3273,21 @@ class ChatHistoryManager private constructor(private val context: Context) {
             subagentRunRepository.countChildren(chatId)
         }
 
+    /**
+     * A deleted conversation can never be reviewed again, so its learning progress and prompt snapshot
+     * are dropped here. Keeping them would only make the memory coordinator retry them later.
+     */
+    private suspend fun forgetDeletedChats(chatIds: Collection<String>) {
+        chatIds.forEach { id ->
+            // Housekeeping must never turn a completed deletion into a reported failure.
+            runCatching {
+                com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(id)
+                com.ai.assistance.operit.api.chat.library.MemoryLearningJournal.deleteChat(context,id)
+                com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,id).delete()
+            }.onFailure { AppLogger.w(TAG, "Failed to drop learning state of deleted chat $id", it) }
+        }
+    }
+
     // 删除聊天历史
     suspend fun deleteChatHistory(chatId: String): Boolean {
         chatMutex(chatId).withLock {
@@ -3297,11 +3313,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     AppLogger.w(TAG, "Chat $chatId subtree deletion refused (locked or missing)")
                     return false
                 }
-                subtreeChatIds.forEach { id ->
-                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(id)
-                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,id).delete()
-                }
-
+                forgetDeletedChats(subtreeChatIds)
                 // 如果删除的是当前聊天，清除当前聊天ID
                 val currentChatId = currentChatIdFlow.first()
                 if (currentChatId == chatId) {
@@ -4647,6 +4659,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         preferences.remove(PreferencesKeys.CURRENT_CHAT_ID)
                     }
                 }
+                forgetDeletedChats(expectedChatIds)
 
                 AppLogger.d(
                     TAG,

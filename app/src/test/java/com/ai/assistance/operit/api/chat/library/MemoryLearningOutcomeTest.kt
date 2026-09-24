@@ -20,4 +20,16 @@ class MemoryLearningOutcomeTest {
         assertEquals("skill_create: IllegalArgumentException: underscores are not allowed",
             learningFailureDetail("skill_create", IllegalArgumentException("underscores are not allowed")))
     }
+    @Test fun `round notice warns only near the limit and names the finish tool`() {
+        assertNull(learningRoundNotice(5))
+        assertNull(learningRoundNotice(3))
+        assertEquals(true, learningRoundNotice(2)!!.contains("2 model rounds left"))
+        assertEquals(true, learningRoundNotice(1)!!.contains("1 model round left"))
+        assertEquals(false, learningRoundNotice(2)!!.contains("1 model round left"))
+        assertEquals(true, learningRoundNotice(1)!!.contains(MemoryLearningCoordinator.FINISH))
+        // With no rounds left the batch is already lost, so the notice states the outcome instead of
+        // telling the reviewer to call a tool it no longer has a request with which to call.
+        assertEquals("No model rounds left; this batch is discarded and its source reviewed again.", learningRoundNotice(0))
+        assertEquals("No model rounds left; this batch is discarded and its source reviewed again.", learningRoundNotice(-1))
+    }
 }

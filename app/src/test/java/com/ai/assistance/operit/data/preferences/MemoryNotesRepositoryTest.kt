@@ -23,10 +23,8 @@ class MemoryNotesRepositoryTest {
     }
 
     @Test fun `parallel foreground and background writes preserve all additions`() = runBlocking {
-        (1..20).map { n -> async {
-            if (n % 2 == 0) repo().appendFromBackground(listOf("entry-$n."))
-            else repo().mutate("add", "entry-$n.")
-        } }.awaitAll()
+        // Every writer is a read-modify-write through the same lock; none may drop another's entry.
+        (1..20).map { n -> async { repo().mutate("add", "entry-$n.") } }.awaitAll()
         val saved = repo().load().markdown
         (1..20).forEach { assertTrue(saved.contains("entry-$it.")) }
         repo().mutate("add", "entry-1.")
@@ -35,7 +33,7 @@ class MemoryNotesRepositoryTest {
 
     @Test fun `stale editor cannot erase a background addition`() = runBlocking {
         val initial = repo().load()
-        repo().appendFromBackground(listOf("New fact"))
+        repo().mutate("add", "New fact")
         fails(MemoryNotesRepository.Failure.CONFLICT) { repo().save("Old draft", initial.version) }
         assertEquals("New fact", repo().load().markdown)
     }
@@ -54,10 +52,11 @@ class MemoryNotesRepositoryTest {
         assertEquals("Home notes", repo("home").load().markdown)
     }
 
-    @Test fun `overflow rejects whole batch and replacement without evicting notes`() = runBlocking {
+    @Test fun `overflow rejects additions and replacement without evicting notes`() = runBlocking {
         repo().mutate("add", "a".repeat(MemoryNotesRepository.MAX_CHARS - 3))
         val before = repo().load()
-        fails(MemoryNotesRepository.Failure.FULL) { repo().appendFromBackground(listOf("b", "c")) }
+        // Three characters of headroom: one more paragraph (plus its blank-line separator) no longer fits.
+        fails(MemoryNotesRepository.Failure.FULL) { repo().mutate("add", "bcd") }
         assertEquals(before, repo().load())
         fails(MemoryNotesRepository.Failure.FULL) {
             repo().mutate("replace", "z".repeat(MemoryNotesRepository.MAX_CHARS + 1), before.markdown)

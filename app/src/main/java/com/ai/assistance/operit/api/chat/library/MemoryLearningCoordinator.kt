@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.library
 import android.content.Context
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
 import com.ai.assistance.operit.core.agent.*
 import com.ai.assistance.operit.core.tools.StringResultData
 import com.ai.assistance.operit.data.db.AppDatabase
@@ -22,6 +23,21 @@ import java.util.concurrent.atomic.AtomicLong
 object MemoryLearningCoordinator {
     const val ACTION = "memory_learning_action"
     const val FINISH = "memory_learning_finish"
+    /**
+     * Stamped on every run this coordinator creates, so the conversation list can tell a background
+     * extraction apart from an agent the user delegated to.
+     */
+    const val OWNER_TYPE = "memory-learning"
+    /**
+     * Wall-clock ceiling for one batch, derived from the round budget so the round limit stays
+     * reachable instead of being cut short by the clock.
+     */
+    private val BATCH_TIMEOUT_MS = LEARNING_ROUND_LIMIT * 45_000L
+    /**
+     * One manual review pass runs up to three batches, so this must not cut a pass short. The extra
+     * minute covers the per-batch work outside the batch timeout (checkpoint export, source advance).
+     */
+    private val MANUAL_TIMEOUT_MS = BATCH_TIMEOUT_MS * 3 + 60_000L
     private val scope = CoroutineScope(SupervisorJob()+Dispatchers.IO)
     private val jobs = ConcurrentHashMap<String, Job>()
     private val cancellingJobs = ConcurrentHashMap<String, Job>()
@@ -68,12 +84,19 @@ object MemoryLearningCoordinator {
                 failures.add(reason)
                 error(reason)
             }
-            check(requests.incrementAndGet()<=12) { "Learning round limit reached" }
+            if (requests.incrementAndGet()>LEARNING_ROUND_LIMIT) {
+                // Recorded like the context-budget stop so the extraction log says why the batch ended
+                // instead of only reporting a bare limit message. The source range stays pending.
+                val reason = "Learning round limit reached; the batch was discarded and its source will be reviewed again"
+                failures.add(reason)
+                error(reason)
+            }
             recordModelRound()
         }
         override suspend fun beforeToolBatch(tools: List<AITool>) {
             check(tools.all { it.name in capabilityTools })
         }
+        fun roundNotice(): String? = learningRoundNotice(LEARNING_ROUND_LIMIT - requests.get())
     }
     fun foregroundStarted(chatId: String?) {
         chatId?.let { id ->
@@ -118,7 +141,7 @@ object MemoryLearningCoordinator {
             }
             // An explicit review waits for its backlog, rather than reporting a three-batch prefix
             // as a complete review. Cancellation/time limits retain completed batch checkpoints.
-            withTimeout(30*60_000L) {
+            withTimeout(MANUAL_TIMEOUT_MS) {
                 do {
                     review(context,profileId,chatId,manual=true)
                     val remaining=MemoryLearningJournal(context,profileId,chatId)
@@ -183,7 +206,7 @@ object MemoryLearningCoordinator {
                     val journal=MemoryLearningJournal(context,profileId,chatId)
                     val notes=journal.pending("notes") && settings.shouldExtractNewMemory()
                     val skills=journal.pending("skills") && settings.shouldExtractSkills()
-                    journal.export()
+                    if (exportFinishedBatch(context,profileId,chatId,journal)!=null) return@launch
                     if (!notes && !skills) return@launch
                     settings.consumePendingLearning(chatId)
                     review(context.applicationContext,profileId,chatId,reviewNotes=notes,reviewSkills=skills)
@@ -210,14 +233,32 @@ object MemoryLearningCoordinator {
         if (!manual && !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
         val db = AppDatabase.getDatabase(context)
         val chat = db.chatDao().getChatById(chatId)
-        require(chat!=null && !chat.isHidden && chat.parentChatId==null && chat.chatKind=="NORMAL")
+        if (chat == null) {
+            // The conversation was deleted while its source range was still pending. It can never be
+            // reviewed, so record why and drop the progress instead of retrying on every launch.
+            val reason=context.getString(R.string.memory_extraction_source_deleted)
+            MemoryLearningJournal.deleteChat(context,chatId)
+            recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason)
+            if (manual) error(reason)
+            return
+        }
+        if (chat.isHidden || chat.parentChatId!=null || chat.chatKind!="NORMAL") {
+            // Branch and hidden conversations are not reviewed by design. Leaving the range pending
+            // would retry it on every later turn, and this is not a failure worth logging. A finished
+            // batch that was never exported is applied first so nothing already reviewed is lost.
+            val journal=MemoryLearningJournal(context,profileId,chatId)
+            journal.export()
+            journal.abandon(listOf("notes","skills"))
+            if (manual) error(context.getString(R.string.memory_extraction_not_reviewable))
+            return
+        }
         val settings = MemorySearchSettingsPreferences(context,profileId)
         val notes = manual || (reviewNotes && settings.shouldExtractNewMemory())
         val skills = manual || (reviewSkills && settings.shouldExtractSkills())
         if (!notes && !skills) return
         val journal=MemoryLearningJournal(context,profileId,chatId)
         if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
-        journal.export()
+        exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
         MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
             settings.shouldIncludeThinking()).use { source ->
             repeat(3) {
@@ -227,8 +268,20 @@ object MemoryLearningCoordinator {
                 val first=paths.minBy { journal.cursor(it).messageId }
                 val selected=paths.filter { journal.cursor(it)==journal.cursor(first) }
                 val instructions=buildMemoryLearningInstructions(chatId,"notes" in selected,"skills" in selected,FINISH)
-                val config=MemoryLearningSnapshot.build(context,emptyList(),instructions.toByteArray().size,
-                    settings.shouldIncludeThinking())
+                val config = try {
+                    MemoryLearningSnapshot.build(context,emptyList(),instructions.toByteArray().size,
+                        settings.shouldIncludeThinking())
+                } catch (e: CancellationException) { throw e }
+                catch (e: Exception) {
+                    // A window that cannot even hold the instructions will not become reviewable by
+                    // retrying, so stop the loop and leave the reason where the user can see it.
+                    val reason=context.getString(R.string.memory_extraction_window_too_small)
+                    recordUnreviewable(context,profileId,chatId,selected,reason,
+                        e.message?.takeIf { it.isNotBlank() } ?: e.toString())
+                    journal.abandon(selected)
+                    if (manual) error(reason)
+                    return
+                }
                 val batch=source.next(journal.cursor(first),
                     MemoryLearningSnapshot.sourceBudget(config.contextWindow,instructions.toByteArray().size))
                 if (batch.text.isBlank()) {
@@ -239,30 +292,69 @@ object MemoryLearningCoordinator {
         }
     }
 
+    /**
+     * Exports the batch finished by the previous run. A blocked export keeps the pending markers, so
+     * the range is retried; returning the reason turns that stuck state into something the user can see.
+     */
+    private suspend fun exportFinishedBatch(context: Context, profileId: String, chatId: String,
+        journal: MemoryLearningJournal): String? {
+        val failures = try {
+            journal.export()
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) {
+            val reason=context.getString(R.string.memory_extraction_export_blocked)
+            recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason,
+                e.message?.takeIf { it.isNotBlank() } ?: e.toString())
+            return reason
+        }
+        if (failures.isEmpty()) return null
+        val reason=context.getString(R.string.memory_extraction_export_blocked)
+        recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),reason,failures.joinToString("\n"))
+        return reason
+    }
+
+    /**
+     * Records a source range that could not be reviewed, so the reason shows up in the extraction log
+     * instead of only in logcat.
+     */
+    private suspend fun recordUnreviewable(context: Context, profileId: String, chatId: String,
+        paths: List<String>, reason: String, technical: String = "") {
+        MemoryExtractionLogRepository(context,profileId).save(MemoryExtractionLog(
+            sourceChatId=chatId,graph=false,notes="notes" in paths,skills="skills" in paths,
+            status="failed",detail=reason,finishedAt=System.currentTimeMillis(),reviewable=false))
+        AppLogger.w("MemoryLearning","Unreviewable source range for $chatId: $reason" +
+            technical.takeIf { it.isNotBlank() }?.let { " ($it)" }.orEmpty())
+    }
+
     private suspend fun reviewBatch(context: Context, profileId: String, chatId: String,
         paths: List<String>, batch: MemoryLearningSource.Batch, contextWindow: Int, journal: MemoryLearningJournal) {
         val notes="notes" in paths
         val skills="skills" in paths
         val logRepo = MemoryExtractionLogRepository(context,profileId)
-        val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills)
+        // The run does not exist yet, so the first row must not offer an audit view; onRunCreated
+        // flips this once the subagent is there to inspect.
+        val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills,reviewable=false)
         var created = 0
         val staged=mutableListOf<MemoryReviewChange>()
         val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged))
         var childId: String? = null
         var runId = ""
+        // Until the subagent exists there is no transcript to audit, so the row must not offer one.
+        var auditable = false
         fun snapshot(status: String = "running", finishedAt: Long = 0, detail: String = session.failures.joinToString("\n")) =
             log.copy(status=status,finishedAt=finishedAt,proposals=created,detail=detail,
-                runId=runId,childChatId=childId.orEmpty(),modelRounds=session.requests.get(),toolCalls=session.calls.get())
+                runId=runId,childChatId=childId.orEmpty(),modelRounds=session.requests.get(),toolCalls=session.calls.get(),
+                reviewable=auditable)
         session.persistProgress = { logRepo.save(snapshot()) }
         logRepo.save(log)
         try {
             // This budget includes reasoning and all model rounds, not just tool execution.
-            withTimeout(10 * 60_000L) {
+            withTimeout(BATCH_TIMEOUT_MS) {
                 session.job = currentCoroutineContext().job
                 val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH)
                 // Conservative byte accounting bounds repeated history/skill reads as well as SOURCE.
                 // Leave room for the scoped tool schema, model output and protocol overhead.
-                session.evidenceBudget = (contextWindow * 0.75).toLong()
+                session.evidenceBudget = MemoryLearningSnapshot.evidenceBudget(contextWindow).toLong()
                 session.evidenceBytes.set((batch.text + instructions).toByteArray(Charsets.UTF_8).size.toLong())
                 val result = SubagentCoordinator.getInstance(context).runTask(SubagentTaskRequest(
                     parentChatId=chatId,parentToolCallId=null,parentAgentName=null,
@@ -270,11 +362,16 @@ object MemoryLearningCoordinator {
                     subagentType="memory-learning",functionType=FunctionType.MEMORY,
                     profileOverride=AgentProfile("memory-learning","Memory learning","",AgentMode.SUBAGENT,instructions,hidden=true),
                     isolatedToolPrompts=prompts(notes, skills),terminalToolNames=setOf(FINISH),
+                    // Every batch of one conversation asks under one identity so a provider that caches
+                    // prompt prefixes reuses what a sibling batch already warmed instead of paying a cold
+                    // prefix on each of them.
+                    providerSessionId=providerSessionIdForScope("memory_learning:$chatId"),
                     promptHooksEnabled=false,disableSummary=false,childHidden=true,
-                    childHiddenReason="MEMORY_LEARNING",externalOwnerType="memory-learning",externalOwnerId=log.id,
+                    childHiddenReason="MEMORY_LEARNING",externalOwnerType=OWNER_TYPE,externalOwnerId=log.id,
                     onRunCreated={ run ->
                         childId=run.childChatId
                         runId=run.id
+                        auditable = true
                         logRepo.save(snapshot())
                         session.recordModelRound = {
                             runBlocking {
@@ -316,7 +413,12 @@ object MemoryLearningCoordinator {
         return runBlocking(Dispatchers.IO + session.job + ToolExecutionManager.toolRuntimeContextElement(runtime)) {
         session.lock.withLock {
             currentCoroutineContext().ensureActive()
-            check(!session.finished && session.calls.incrementAndGet()<=40)
+            check(!session.finished) { "This review is already finished" }
+            if (session.calls.incrementAndGet()>LEARNING_TOOL_CALL_LIMIT) {
+                val reason = "Learning tool-call limit reached; the batch was discarded and its source will be reviewed again"
+                session.failures.add(reason)
+                error(reason)
+            }
             session.evidenceBytes.addAndGet(tool.parameters.sumOf {
                 it.value.toByteArray(Charsets.UTF_8).size.toLong()
             })
@@ -329,6 +431,7 @@ object MemoryLearningCoordinator {
                     val json = JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
                     val params = json.keys().asSequence().associateWith { json.get(it).toString() }
                     val result = session.actions.execute(args["action"].orEmpty(),params)
+                    session.roundNotice()?.let { result.put("notice",it) }
                     val resultText = result.toString()
                     session.evidenceBytes.addAndGet(resultText.toByteArray(Charsets.UTF_8).size.toLong())
                     ToolResult(toolName=tool.name,success=true,result=StringResultData(resultText))
@@ -336,7 +439,12 @@ object MemoryLearningCoordinator {
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) {
                 session.failures.add(learningFailureDetail(tool.parameters.find { it.name=="action" }?.value.orEmpty(),e))
-                ToolResult(toolName=tool.name,success=false,result=StringResultData(""),error=e.message.orEmpty())
+                // A run of rejected tool calls is exactly when the reviewer needs to know the budget is
+                // nearly gone, so the pacing hint rides on the error too.
+                val errorText = e.message.orEmpty().let { message ->
+                    session.roundNotice()?.let { message+" $it" } ?: message
+                }
+                ToolResult(toolName=tool.name,success=false,result=StringResultData(""),error=errorText)
             } finally { session.persistProgress() }
         }
         }
@@ -360,3 +468,15 @@ internal fun memoryLearningFinalStatus(error: Throwable?, proposals: Int, toolEr
 
 internal fun learningFailureDetail(action: String, error: Throwable): String =
     "$action: ${error.javaClass.simpleName}: ${error.message.orEmpty().take(500)}"
+
+/**
+ * Pacing hint attached to a tool result while a batch approaches its round limit. The batch is
+ * discarded when the limit is hit, so the reviewer is told to reserve a round to submit and confirm.
+ */
+internal fun learningRoundNotice(remainingRounds: Int, finish: String = MemoryLearningCoordinator.FINISH): String? = when {
+    // No rounds left means the next model request is refused, so finish is no longer reachable.
+    remainingRounds<=0 -> "No model rounds left; this batch is discarded and its source reviewed again."
+    remainingRounds<=2 -> "$remainingRounds model round${if (remainingRounds==1) "" else "s"} left: stop exploring, " +
+        "submit the best complete change you already have and call $finish; an unfinished batch is discarded."
+    else -> null
+}

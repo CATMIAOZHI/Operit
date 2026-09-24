@@ -84,7 +84,7 @@ git merge --no-ff origin/personal/main || {
 git push origin personal/dev
 ```
 
-若过滤后的待晋升候选为空，可立即按第 9 节建立新检查点；若仍有待晋升功能，只同步并验证 main，不要仅为这次小型维护执行 suspend/replay 或移动检查点。保留原检查点，下一次晋升时排除已经属于 `personal/main` 的提交，待晋升完成后再建立新检查点。
+若过滤后的待晋升候选为空，可立即按第 10 节建立新检查点；若仍有待晋升功能，只同步并验证 main，不要仅为这次小型维护执行 suspend/replay 或移动检查点。保留原检查点，下一次晋升时排除已经属于 `personal/main` 的提交，待晋升完成后再建立新检查点。
 
 ## 步骤
 
@@ -183,7 +183,7 @@ test -f app/src/debug/res/drawable/ic_launcher_dev_badge.xml \
 # Lint
 ./gradlew :app:lintDebug
 
-# 完整 release 构建与 APK 验证交给 GitHub Actions（PR Check / Nightly）
+# release APK 的构建与发布见第 9 节；PR Check 只验证编译、测试与 lint
 ```
 
 ### 7. 推送并创建 PR
@@ -205,7 +205,95 @@ gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 
 CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
 
-### 9. 回合并 main 并建立新检查点
+### 9. 发布稳定版
+
+晋升 PR 合并后发布稳定版。发布包只能来自 `workflow_dispatch` 手动触发的 `:app:assembleRelease`；本机不执行完整 `assembleRelease`：
+
+- push 到 `personal/main` 触发的 Android Build 走 `--lane full`，只构建 `:app:assembleDebug`（另跑 `:app:testDebugUnitTest` 与 `:app:lintDebug`），产物 `app-debug.apk` 带 `application-debuggable`，不得作为发布包；
+- `workflow_dispatch` 按输入的 `gradle_task` 构建，选 `:app:assembleRelease` 才产出 `app-release.apk`。
+
+```bash
+gh workflow run android-build.yml --repo CATMIAOZHI/Operit \
+  --ref personal/main \
+  -f gradle_task=:app:assembleRelease
+# 可选：-f run_unit_tests=true -f run_android_lint=true（默认均为 false）
+
+# 刚触发时 run 可能还没出现在列表里；取到空值就稍等重试，不要用旧的 run
+RUN_ID=$(gh run list --repo CATMIAOZHI/Operit --workflow android-build.yml \
+  --branch personal/main --event workflow_dispatch --limit 1 \
+  --json databaseId -q '.[0].databaseId')
+test -n "$RUN_ID" || { echo "run 尚不可见，稍后重试" >&2; exit 1; }
+gh run watch "$RUN_ID" --repo CATMIAOZHI/Operit --exit-status --interval 60 >/dev/null 2>&1
+```
+
+下载产物。`-n` 只指定一个 artifact 时，内容直接解压到 `-D` 目录，不再多一层 artifact 同名目录；同一次 run 还有 `operit-android-reports-<n>`，只取 `operit-android-<n>`：
+
+```bash
+RUN_NUMBER=$(gh run view "$RUN_ID" --repo CATMIAOZHI/Operit --json number -q .number)
+WORK=<临时目录>
+gh run download "$RUN_ID" --repo CATMIAOZHI/Operit \
+  -n "operit-android-$RUN_NUMBER" -D "$WORK"
+
+# artifact 内部路径固定为 apk/release/app-release.apk；后续校验与打包都用这个 $APK
+APK="$WORK/apk/release/app-release.apk"
+```
+
+校验该产物确为 release 且签名正确。`aapt`、`apksigner` 在 SDK 的 `build-tools/35.0.0/`（本机 `C:\AndroidSdk\build-tools\35.0.0`，CI 为 `$ANDROID_HOME/build-tools/35.0.0`）；不在 PATH 时用完整路径：
+
+```bash
+# 必须出现：package: name='com.rainy.operitry' versionCode='<本轮>' versionName='<本轮>'
+#           application-label:'Operit Ry'、native-code: 'arm64-v8a'
+# 不得出现：application-debuggable
+aapt dump badging "$APK" | grep -E "^package:|application-label:|native-code:|application-debuggable"
+
+# 证书 SHA-256 须为发布签名；CI 已按 OPERIT_RELEASE_CERT_SHA256 校验，这里是二次确认：
+# 40:F8:7A:4D:66:EB:70:D0:E2:D1:37:9C:6A:97:DD:DC:0C:ED:D3:BA:87:2E:02:74:50:CA:77:AF:42:EC:5E:74
+apksigner verify --print-certs "$APK"
+```
+
+整理发布资产。`SHA256SUMS.txt` 为单行、LF 结尾，格式 `<小写 sha256><两个空格>Operit-Ry-<version>-arm64-v8a.apk`：
+
+```bash
+cp "$APK" Operit-Ry-<version>-arm64-v8a.apk
+sha256sum Operit-Ry-<version>-arm64-v8a.apk > SHA256SUMS.txt
+
+# Windows PowerShell（必须显式写 LF，CRLF 会让 sha256sum -c 失败；必须用 -Path/-Value 命名参数，
+# 否则 -NoNewline 加位置参数会把值当成路径）：
+# $name = 'Operit-Ry-<version>-arm64-v8a.apk'
+# $hash = (Get-FileHash ".\$name" -Algorithm SHA256).Hash.ToLower()
+# Set-Content -Path SHA256SUMS.txt -Value ("{0}  {1}`n" -f $hash, $name) -NoNewline -Encoding ascii
+```
+
+创建 Release，`--target` 指向本轮 `personal/main` 合并后的 commit：
+
+```bash
+gh release create v<version> \
+  --repo CATMIAOZHI/Operit \
+  --target <本轮 main 合并 commit> \
+  --title "Operit Ry <version>" \
+  --notes-file <release-notes.md> \
+  Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt
+```
+
+资产传错（例如误传 debug 包）时覆盖并复核：
+
+```bash
+gh release upload v<version> Operit-Ry-<version>-arm64-v8a.apk SHA256SUMS.txt \
+  --repo CATMIAOZHI/Operit --clobber
+
+# assets[].digest 的 sha256 须与本地一致；targetCommitish 须为本轮 main 合并 commit
+gh release view v<version> --repo CATMIAOZHI/Operit --json assets,targetCommitish
+```
+
+release notes 首行为 `# Operit Ry <version>`，正文按功能域分组（模型与提供商 / 记忆与历史 / 对话与上下文 / 搜索与工具 / 安全边界 / 基础修复 等），末尾固定一行：
+
+```text
+稳定版包名为 `com.rainy.operitry`，可与开发版并存。支持从此前 Operit Ry 稳定版覆盖安装；请勿卸载旧版后再安装，以免丢失应用数据。
+```
+
+创建 Release 属于对外动作，必须先取得用户明确同意。
+
+### 10. 回合并 main 并建立新检查点
 
 晋升 PR 合并后，将稳定分支回合并到开发分支。由于晋升 PR 可能经过 squash，出现等价代码冲突时，通用代码以通过审查的 `personal/main` 为准，同时保留 dev 专属身份、Nightly 和热更新配置。
 
@@ -355,3 +443,4 @@ git push --atomic origin personal/dev "$CHECKPOINT"
 - **不要省略测试**：晋升 PR 必须通过 CI 必需检查，`personal/main` 受 Ruleset 保护。
 - **上游更新方向相反**：上游更新走 `upstream/main → personal/dev`（先测试）→ `personal/main`，晋升走 `personal/dev → personal/main`，两条路径都经过 dev 验证，不要混用。
 - **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`personal/main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
+- **发布资产必须来自 `:app:assembleRelease`**：`personal/main` 的 push 构建只构建 `:app:assembleDebug`（另跑单测与 lint），其 `app-debug.apk` 带 `application-debuggable`，不能当作发布包；发布步骤见第 9 节。

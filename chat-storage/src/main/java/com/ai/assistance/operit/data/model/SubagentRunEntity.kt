@@ -55,7 +55,7 @@ data class SubagentRunEntity(
     val modelConfigIdSnapshot: String? = null,
     val modelIndexSnapshot: Int? = null,
     val toolInvocationCount: Int = 0,
-    /** 外部跨库弱关联所有者类型（阅读伴侣：reading_companion_run）；可空表示普通任务。 */
+    /** 外部跨库弱关联所有者类型（阅读伴侣：reading_companion_run，记忆提取：memory-learning）；可空表示普通任务。 */
     val externalOwnerType: String? = null,
     /** 外部跨库弱关联所有者 ID（阅读伴侣：reading companion run id 字符串）。 */
     val externalOwnerId: String? = null,

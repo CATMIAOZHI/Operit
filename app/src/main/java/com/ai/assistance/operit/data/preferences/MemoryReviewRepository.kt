@@ -33,12 +33,27 @@ internal fun parseSkillDrafts(value: Any?, chatId: String): List<SkillDraft> {
         val obj = array.opt(i) as? JSONObject ?: return@mapNotNull null
         val name = (obj.opt("name") as? String)?.trim().orEmpty()
         val description = (obj.opt("description") as? String)?.trim().orEmpty()
-        val body = (obj.opt("body") as? String)?.trim().orEmpty()
+        val body = stripSkillFrontmatter((obj.opt("body") as? String)?.trim().orEmpty())
         if (!Regex("[a-z][a-z0-9-]{2,63}").matches(name) ||
-            description.length !in 1..240 || description.contains('\n') ||
-            body.length !in 50..6000) return@mapNotNull null
+            description.length !in 1..LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS ||
+            description.contains('\n') ||
+            body.length !in LearnedSkillRepository.MIN_SKILL_BODY_CHARS..LearnedSkillRepository.MAX_SKILL_BODY_CHARS
+        ) return@mapNotNull null
         SkillDraft(name, name, description, body, chatId, System.currentTimeMillis())
     }.take(1)
+}
+
+/**
+ * A created skill is submitted as its body only, and the frontmatter is composed from the already
+ * validated name and description. A draft that repeats the header anyway would otherwise install a
+ * doubled one, so drop a leading YAML block here — the single place every creation path goes through.
+ */
+internal fun stripSkillFrontmatter(body: String): String {
+    val normalized = body.replace("\r\n", "\n")
+    if (!normalized.startsWith("---\n")) return body
+    val end = normalized.indexOf("\n---", 4)
+    if (end <= 0) return body
+    return normalized.substring(end + 4).trimStart('\n')
 }
 
 data class MemoryReviewChange(
@@ -75,6 +90,23 @@ class MemoryReviewRepository internal constructor(
         private val skillInstallMutex = Mutex()
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
+        /** A skill's directory entry and its files are one target, so a batch cannot stage both. */
+        internal fun sameTarget(previous: MemoryReviewChange, incoming: MemoryReviewChange): Boolean =
+            previous.title == incoming.title && previous.path == incoming.path &&
+                (previous.kind == incoming.kind || isSkillKind(previous.kind) && isSkillKind(incoming.kind))
+        private fun isSkillKind(kind: String) = kind == "skill" || kind == "skill_file" || kind == "skill_delete"
+        /** Full before/after snapshots make history expensive, so only finished items are ever dropped. */
+        internal const val HISTORY_LIMIT = 200
+        /**
+         * Approval history keeps one full snapshot pair per change, so it must not grow without bound.
+         * Unfinished items are never removed: they are still waiting for a decision.
+         */
+        internal fun pruneHistory(items: List<MemoryReviewChange>): List<MemoryReviewChange> {
+            val unfinished = items.filter { it.status in setOf("pending","applying") }
+            val finished = items.filterNot { it.status in setOf("pending","applying") }
+                .sortedByDescending { maxOf(it.createdAt,it.reviewedAt) }
+            return unfinished + finished.take(HISTORY_LIMIT)
+        }
     }
     private val file = File(root, "${hash(profileId)}.json")
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
@@ -92,8 +124,9 @@ class MemoryReviewRepository internal constructor(
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
+        val kept = pruneHistory(items)
         root.mkdirs()
-        val json = JSONArray().apply { items.forEach { d ->
+        val json = JSONArray().apply { kept.forEach { d ->
             put(toJson(d))
         } }
         val temp = File.createTempFile(".draft-", ".tmp", root)
@@ -101,6 +134,7 @@ class MemoryReviewRepository internal constructor(
             temp.outputStream().use { out -> out.write(json.toString().toByteArray()); out.fd.sync() }
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } finally { temp.delete() }
+        syncDirectory(file.parentFile!!)
     }
     fun toJson(d: MemoryReviewChange): JSONObject = JSONObject().put("id", d.id).put("kind", d.kind)
         .put("title", d.title).put("body", d.body).put("description", d.description).put("before", d.before)
@@ -120,10 +154,22 @@ class MemoryReviewRepository internal constructor(
     }
     suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
         staged?.let { pending ->
-            require(pending.none { it.kind == change.kind && it.title == change.title && it.path == change.path }) {
-                "This batch already has a final proposal for this target. Finish the batch before further changes."
+            // A batch is revisable: the last change to a target replaces the earlier one, and the first
+            // proposal's baseline is kept so the applied change still matches the unchanged target on disk.
+            val index = pending.indexOfFirst { sameTarget(it, change) }
+            if (index < 0) {
+                return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
             }
-            return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
+            val previous = pending[index]
+            check(previous.kind == change.kind) {
+                "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
+                    "${previous.kind} instead of ${change.kind}."
+            }
+            // The replacement carries the whole target text, so an accumulated notes addition must not
+            // be appended on top of it.
+            return@withContext change.copy(id = previous.id, before = previous.before,
+                baseVersion = previous.baseVersion, addition = "", createdAt = previous.createdAt)
+                .also { pending[index] = it }
         }
         mutex.withLock {
             val items = read().toMutableList()
@@ -222,7 +268,12 @@ class MemoryReviewRepository internal constructor(
             require(index >= 0 && items[index].status == "pending")
             val previous = items[index]
             require(previous.kind!="skill_delete") { "Reject and submit a new deletion request instead of editing it" }
-            require(body.length <= when(previous.kind) { "skill_file" -> 24_000; "user" -> 12_000; else -> 6000 })
+            // Same limits the write paths enforce, so a manual edit cannot smuggle past them.
+            require(body.length <= when(previous.kind) {
+                "skill_file" -> LearnedSkillRepository.MAX_SKILL_FILE_CHARS
+                "user" -> UserProfileDocumentRepository.MAX_CONTENT_CHARS
+                else -> LearnedSkillRepository.MAX_SKILL_BODY_CHARS
+            })
             if (previous.kind == "skill") require(parseSkillDrafts(JSONArray().put(
                 JSONObject().put("name", previous.title).put("description", description).put("body", body)
             ), previous.sourceChatId).isNotEmpty())
@@ -282,9 +333,11 @@ class MemoryReviewRepository internal constructor(
                         skillInstalled = true
                         LearnedSkillRepository(context).register(change.title,profileId)
                     }
-                    if (reviewer == "user" && (change.kind in setOf("skill", "skill_delete") ||
+                    // Any catalog change invalidates a frozen prefix, including one the background
+                    // learner made: without this the new skill is invisible to existing chats.
+                    if (change.kind in setOf("skill", "skill_delete") ||
                         (change.kind == "skill_file" &&
-                            previousSkillDescription != SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description)))
+                            previousSkillDescription != SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description))
                         LearningPromptSnapshotRepository.markChanged(context, "settings")
                 } catch (e: MemoryNotesRepository.NotesException) {
                     // A rejected CAS/capacity check made no write; it is safe to return to pending.
@@ -315,10 +368,12 @@ class MemoryReviewRepository internal constructor(
         val validated = parseSkillDrafts(JSONArray().put(JSONObject().put("name", draft.title)
             .put("description", draft.description).put("body", draft.body)), draft.sourceChatId)
         require(validated.size == 1) { context.getString(com.ai.assistance.operit.R.string.skill_draft_invalid) }
+        // Write the validated draft, not the raw body, so the file always has exactly one header.
+        val skill = validated.single()
         val zip = File.createTempFile("learned-skill-", ".zip", context.cacheDir)
         try {
             // JSON quoted strings are valid YAML scalars; names are restricted path-safe slugs.
-            val markdown = "---\nname: ${draft.title}\ndescription: ${JSONObject.quote(draft.description)}\n---\n\n${draft.body}\n"
+            val markdown = "---\nname: ${skill.name}\ndescription: ${JSONObject.quote(skill.description)}\n---\n\n${skill.body}\n"
             val manager = SkillManager.getInstance(context)
             // Retry after installation but before the decision journal was finalized.
             if (manager.readSkillContent(draft.title) == markdown) return

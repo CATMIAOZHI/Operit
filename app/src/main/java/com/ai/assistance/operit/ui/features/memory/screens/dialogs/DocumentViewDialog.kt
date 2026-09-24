@@ -24,6 +24,10 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -50,6 +54,7 @@ fun DocumentViewDialog(
     folderPath: String = "" // 添加文件夹路径参数
 ) {
     val keyboardController = LocalSoftwareKeyboardController.current
+    var confirmingDelete by remember { mutableStateOf(false) }
 
     AlertDialog(
         modifier = Modifier.fillMaxHeight(0.85f),
@@ -134,7 +139,7 @@ fun DocumentViewDialog(
                     Text(stringResource(R.string.memory_save_all))
                 }
                 Button(
-                    onClick = onDelete,
+                    onClick = { confirmingDelete = true },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) {
                     Text(stringResource(R.string.memory_delete_document))
@@ -142,4 +147,9 @@ fun DocumentViewDialog(
             }
         }
     )
-} 
+    if (confirmingDelete) DeleteConfirmed(
+        message = stringResource(R.string.memory_confirm_delete_document),
+        onDismiss = { confirmingDelete = false },
+        onConfirm = { confirmingDelete = false; onDelete() }
+    )
+}

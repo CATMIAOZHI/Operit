@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
+import com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.util.AppLogger
@@ -17,7 +18,7 @@ import kotlinx.coroutines.runBlocking
 
 class SubagentManagementPresentationTest {
     @Test
-    fun allFilter_hidesArchivedAndPrioritizesActiveRuns() {
+    fun foregroundKind_hidesArchivedAndPrioritizesActiveRuns() {
         val completed = run(id = "completed", status = SubagentRunStatus.COMPLETED, createdAt = 40)
         val running = run(id = "running", status = SubagentRunStatus.RUNNING, createdAt = 10)
         val queued = run(id = "queued", status = SubagentRunStatus.QUEUED, createdAt = 30)
@@ -32,14 +33,15 @@ class SubagentManagementPresentationTest {
         val visible =
             filterAndSortSubagentRuns(
                 listOf(completed, running, queued, archived),
-                SubagentListFilter.ALL,
+                SubagentTaskKind.FOREGROUND,
+                SubagentRunStatusFilter.ALL,
             )
 
         assertEquals(listOf("running", "queued", "completed"), visible.map { it.id })
     }
 
     @Test
-    fun archivedFilter_ordersByMostRecentArchiveTime() {
+    fun archivedStatus_belongsToTheCategoryItWasArchivedIn() {
         val older =
             run(
                 id = "older",
@@ -54,19 +56,37 @@ class SubagentManagementPresentationTest {
                 createdAt = 50,
                 archivedAt = 300,
             )
+        val archivedReview =
+            run(
+                id = "review",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 20,
+                archivedAt = 400,
+                agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+            )
 
         val visible =
             filterAndSortSubagentRuns(
-                listOf(older, newer),
-                SubagentListFilter.ARCHIVED,
+                listOf(older, newer, archivedReview),
+                SubagentTaskKind.FOREGROUND,
+                SubagentRunStatusFilter.ARCHIVED,
             )
 
         assertEquals(listOf("newer", "older"), visible.map { it.id })
         assertTrue(visible.all { it.archivedAt != null })
+        assertEquals(
+            listOf("review"),
+            filterAndSortSubagentRuns(
+                    listOf(older, newer, archivedReview),
+                    SubagentTaskKind.BACKGROUND,
+                    SubagentRunStatusFilter.ARCHIVED,
+                )
+                .map { it.id },
+        )
     }
 
     @Test
-    fun autoReviewFilter_isSeparateFromOrdinarySubagentFilters() {
+    fun backgroundKindSeparatesTheRunsTheAppStartsOnItsOwn() {
         val ordinary = run(id = "ordinary", status = SubagentRunStatus.COMPLETED, createdAt = 20)
         val review =
             run(
@@ -75,25 +95,64 @@ class SubagentManagementPresentationTest {
                 createdAt = 30,
                 agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
             )
+        val extraction =
+            run(
+                id = "extraction",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 40,
+                agentProfileId = "memory-learning",
+                externalOwnerType = MemoryLearningCoordinator.OWNER_TYPE,
+            )
 
+        val allRuns = listOf(ordinary, review, extraction)
         assertEquals(
             listOf("ordinary"),
-            filterAndSortSubagentRuns(listOf(ordinary, review), SubagentListFilter.ALL).map { it.id },
-        )
-        assertEquals(
-            listOf("ordinary"),
-            filterAndSortSubagentRuns(listOf(ordinary, review), SubagentListFilter.COMPLETED)
+            filterAndSortSubagentRuns(
+                    allRuns,
+                    SubagentTaskKind.FOREGROUND,
+                    SubagentRunStatusFilter.ALL,
+                )
                 .map { it.id },
         )
         assertEquals(
-            listOf("review"),
-            filterAndSortSubagentRuns(listOf(ordinary, review), SubagentListFilter.AUTO_REVIEW)
+            listOf("ordinary"),
+            filterAndSortSubagentRuns(
+                    allRuns,
+                    SubagentTaskKind.FOREGROUND,
+                    SubagentRunStatusFilter.COMPLETED,
+                )
+                .map { it.id },
+        )
+        assertEquals(
+            listOf("extraction", "review"),
+            filterAndSortSubagentRuns(
+                    allRuns,
+                    SubagentTaskKind.BACKGROUND,
+                    SubagentRunStatusFilter.ALL,
+                )
+                .map { it.id },
+        )
+        // A v2 agent carries an owner type too, so only the extraction's own owner type separates them.
+        val agent =
+            run(
+                id = "agent",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 50,
+                externalOwnerType = "subagent_v2",
+            )
+        assertEquals(
+            listOf("agent"),
+            filterAndSortSubagentRuns(
+                    listOf(agent),
+                    SubagentTaskKind.FOREGROUND,
+                    SubagentRunStatusFilter.ALL,
+                )
                 .map { it.id },
         )
     }
 
     @Test
-    fun managerOpensOnAutoReviewWhenNoOrdinaryRunsExist() {
+    fun managerOpensOnBackgroundWhenTheChatHasNoForegroundRuns() {
         val review =
             run(
                 id = "review",
@@ -101,26 +160,87 @@ class SubagentManagementPresentationTest {
                 createdAt = 30,
                 agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
             )
+        val extraction =
+            run(
+                id = "extraction",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 40,
+                agentProfileId = "memory-learning",
+                externalOwnerType = MemoryLearningCoordinator.OWNER_TYPE,
+            )
 
         assertEquals(
-            SubagentListFilter.AUTO_REVIEW,
-            initialSubagentListFilter(listOf(review), hasPermissionReviewEvents = true),
+            SubagentTaskKind.BACKGROUND,
+            initialSubagentListSelection(listOf(review), hasPermissionReviewEvents = true).kind,
         )
         assertEquals(
-            SubagentListFilter.AUTO_REVIEW,
-            initialSubagentListFilter(emptyList(), hasPermissionReviewEvents = true),
+            SubagentTaskKind.BACKGROUND,
+            initialSubagentListSelection(emptyList(), hasPermissionReviewEvents = true).kind,
         )
         assertEquals(
-            SubagentListFilter.ALL,
-            initialSubagentListFilter(
-                listOf(run("ordinary", SubagentRunStatus.COMPLETED, 20)),
-                hasPermissionReviewEvents = true,
-            ),
+            SubagentTaskKind.BACKGROUND,
+            initialSubagentListSelection(listOf(extraction), hasPermissionReviewEvents = false).kind,
+        )
+        assertEquals(
+            SubagentTaskKind.FOREGROUND,
+            initialSubagentListSelection(
+                    listOf(run("ordinary", SubagentRunStatus.COMPLETED, 20), review),
+                    hasPermissionReviewEvents = true,
+                )
+                .kind,
+        )
+        assertEquals(
+            SubagentRunStatusFilter.ALL,
+            initialSubagentListSelection(listOf(review), hasPermissionReviewEvents = true).status,
         )
     }
 
     @Test
-    fun managerOpensArchivedWhenOnlyArchivedRunsExist() {
+    fun search_matchesLocalizedBackgroundDisplayNames() {
+        val review =
+            run(
+                id = "review",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 30,
+                agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
+                title = "shell_exec",
+            )
+        val extraction =
+            run(
+                id = "extraction",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 40,
+                agentProfileId = "memory-learning",
+                title = "background learning",
+                externalOwnerType = MemoryLearningCoordinator.OWNER_TYPE,
+            )
+
+        assertEquals(
+            listOf("review"),
+            filterAndSortSubagentRuns(
+                    listOf(review, extraction),
+                    SubagentTaskKind.BACKGROUND,
+                    SubagentRunStatusFilter.ALL,
+                    query = "审批员",
+                    autoReviewDisplayName = "权限审批员",
+                )
+                .map { it.id },
+        )
+        assertEquals(
+            listOf("extraction"),
+            filterAndSortSubagentRuns(
+                    listOf(review, extraction),
+                    SubagentTaskKind.BACKGROUND,
+                    SubagentRunStatusFilter.ALL,
+                    query = "记忆提取",
+                    memoryExtractionDisplayName = "记忆提取",
+                )
+                .map { it.id },
+        )
+    }
+
+    @Test
+    fun managerOpensOnTheArchiveWhenTheCategoryOnlyHoldsArchivedRuns() {
         val archived =
             run(
                 id = "archived",
@@ -128,10 +248,58 @@ class SubagentManagementPresentationTest {
                 createdAt = 20,
                 archivedAt = 30,
             )
+        val archivedExtraction =
+            run(
+                id = "archived-extraction",
+                status = SubagentRunStatus.COMPLETED,
+                createdAt = 25,
+                archivedAt = 35,
+                agentProfileId = "memory-learning",
+                externalOwnerType = MemoryLearningCoordinator.OWNER_TYPE,
+            )
 
         assertEquals(
-            SubagentListFilter.ARCHIVED,
-            initialSubagentListFilter(listOf(archived), hasPermissionReviewEvents = false),
+            SubagentListSelection(
+                kind = SubagentTaskKind.FOREGROUND,
+                status = SubagentRunStatusFilter.ARCHIVED,
+            ),
+            initialSubagentListSelection(listOf(archived), hasPermissionReviewEvents = false),
+        )
+        // The archive of the category that actually has history is the one worth opening.
+        assertEquals(
+            SubagentListSelection(
+                kind = SubagentTaskKind.BACKGROUND,
+                status = SubagentRunStatusFilter.ARCHIVED,
+            ),
+            initialSubagentListSelection(
+                listOf(archivedExtraction),
+                hasPermissionReviewEvents = false,
+            ),
+        )
+    }
+
+    @Test
+    fun orphanReviewEventsOnlyShowInTheFullBackgroundList() {
+        assertTrue(
+            showsOrphanPermissionReviewEvents(
+                SubagentTaskKind.BACKGROUND,
+                SubagentRunStatusFilter.ALL,
+            )
+        )
+        // A review event without a run row has no status of its own, so a status filter hides it.
+        assertEquals(
+            false,
+            showsOrphanPermissionReviewEvents(
+                SubagentTaskKind.BACKGROUND,
+                SubagentRunStatusFilter.ARCHIVED,
+            ),
+        )
+        assertEquals(
+            false,
+            showsOrphanPermissionReviewEvents(
+                SubagentTaskKind.FOREGROUND,
+                SubagentRunStatusFilter.ALL,
+            ),
         )
     }
 
@@ -180,7 +348,8 @@ class SubagentManagementPresentationTest {
             listOf("failed"),
             filterAndSortSubagentRuns(
                     listOf(failed, interrupted, cancelled, failedReview),
-                    SubagentListFilter.ERROR,
+                    SubagentTaskKind.FOREGROUND,
+                    SubagentRunStatusFilter.ERROR,
                 )
                 .map { it.id },
         )
@@ -189,7 +358,8 @@ class SubagentManagementPresentationTest {
             listOf("interrupted"),
             filterAndSortSubagentRuns(
                     listOf(failed, interrupted, cancelled, failedReview),
-                    SubagentListFilter.INTERRUPTED,
+                    SubagentTaskKind.FOREGROUND,
+                    SubagentRunStatusFilter.INTERRUPTED,
                 )
                 .map { it.id },
         )
@@ -225,33 +395,12 @@ class SubagentManagementPresentationTest {
         val visible =
             filterAndSortSubagentRuns(
                 listOf(byAgent, byTitle, running),
-                SubagentListFilter.COMPLETED,
+                SubagentTaskKind.FOREGROUND,
+                SubagentRunStatusFilter.COMPLETED,
                 query = "EXPLORE",
             )
 
         assertEquals(listOf("agent-match", "title-match"), visible.map { it.id })
-    }
-
-    @Test
-    fun search_matchesLocalizedAutoReviewDisplayName() {
-        val review =
-            run(
-                id = "review",
-                status = SubagentRunStatus.COMPLETED,
-                createdAt = 30,
-                agentProfileId = AgentProfileRepository.PERMISSION_REVIEWER_ID,
-                title = "shell_exec",
-            )
-
-        val visible =
-            filterAndSortSubagentRuns(
-                listOf(review),
-                SubagentListFilter.AUTO_REVIEW,
-                query = "审批员",
-                autoReviewDisplayName = "权限审批员",
-            )
-
-        assertEquals(listOf("review"), visible.map { it.id })
     }
 
     @Test
@@ -349,6 +498,7 @@ class SubagentManagementPresentationTest {
         archivedAt: Long? = null,
         agentProfileId: String = "explore",
         title: String = id,
+        externalOwnerType: String? = null,
     ): SubagentRunEntity =
         SubagentRunEntity(
             id = id,
@@ -359,6 +509,7 @@ class SubagentManagementPresentationTest {
             status = status.name,
             createdAt = createdAt,
             archivedAt = archivedAt,
+            externalOwnerType = externalOwnerType,
         )
 
     private fun reviewEvent(status: PermissionReviewStatus): PermissionReviewEvent =

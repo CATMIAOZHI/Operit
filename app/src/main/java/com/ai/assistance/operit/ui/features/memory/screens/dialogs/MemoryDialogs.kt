@@ -41,6 +41,7 @@ fun MemoryInfoDialog(
 ) {
     val scrollState = rememberScrollState()
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
+    var confirmingDelete by remember { mutableStateOf(false) }
 
     AlertDialog(
             onDismissRequest = onDismiss,
@@ -84,7 +85,7 @@ fun MemoryInfoDialog(
                 ) {
                     Button(onClick = onEdit) { Text(stringResource(R.string.memory_edit)) }
                     Button(
-                            onClick = onDelete,
+                            onClick = { confirmingDelete = true },
                             colors =
                                     ButtonDefaults.buttonColors(
                                             containerColor = MaterialTheme.colorScheme.error
@@ -93,6 +94,28 @@ fun MemoryInfoDialog(
                     OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
                 }
             }
+    )
+    if (confirmingDelete) DeleteConfirmed(
+        message = stringResource(R.string.memory_confirm_delete_node),
+        onDismiss = { confirmingDelete = false },
+        onConfirm = { confirmingDelete = false; onDelete() }
+    )
+}
+
+/** Shared shape for the one-off delete confirmations that the list screens already had. */
+@Composable
+internal fun DeleteConfirmed(message: String, onDismiss: () -> Unit, onConfirm: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.confirm_delete)) },
+        text = { Text(message) },
+        confirmButton = {
+            Button(onClick = onConfirm,
+                colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)) {
+                Text(stringResource(R.string.memory_confirm_delete_action))
+            }
+        },
+        dismissButton = { OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } }
     )
 }
 
@@ -107,6 +130,7 @@ fun EdgeInfoDialog(
 ) {
     val sourceNode = graph.nodes.find { it.id == edge.sourceId }
     val targetNode = graph.nodes.find { it.id == edge.targetId }
+    var confirmingDelete by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -128,12 +152,17 @@ fun EdgeInfoDialog(
             ) {
                 Button(onClick = onEdit) { Text(stringResource(R.string.memory_edit)) }
                 Button(
-                    onClick = onDelete,
+                    onClick = { confirmingDelete = true },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
                 ) { Text(stringResource(R.string.memory_delete)) }
                 OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
             }
         }
+    )
+    if (confirmingDelete) DeleteConfirmed(
+        message = stringResource(R.string.memory_confirm_delete_edge),
+        onDismiss = { confirmingDelete = false },
+        onConfirm = { confirmingDelete = false; onDelete() }
     )
 }
 
@@ -248,4 +277,4 @@ fun BatchDeleteConfirmDialog(
             }
         }
     )
-} 
+}

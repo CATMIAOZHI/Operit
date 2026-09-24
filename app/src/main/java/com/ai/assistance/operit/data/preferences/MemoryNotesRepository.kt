@@ -21,10 +21,42 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
 
     companion object {
         const val MAX_CHARS = 6_000
+        /** Guidance the extraction model needs when an edit would push memory.md over the limit. */
+        internal const val OVERFLOW_MESSAGE =
+            "memory.md would exceed its character limit; remove or replace existing text in this batch before adding"
         private val locks = ConcurrentHashMap<String, Mutex>()
         private fun digest(text: String): String =
             MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8))
                 .joinToString("") { "%02x".format(it) }
+
+        /**
+         * The one implementation of note edit semantics. [MemoryNotesRepository.mutate] and the
+         * extraction tool both route through this, so the two cannot drift apart or disagree on
+         * which edits are legal.
+         */
+        internal fun applyEdit(current: String, action: String, content: String, oldText: String): String =
+            when (action) {
+                "add" -> {
+                    val entry = content.trim()
+                    if (entry.isEmpty()) throw NotesException(Failure.EMPTY)
+                    // Match whole paragraphs, not prefixes such as "port 22" inside "port 2202".
+                    val document = "\n\n${current.trim().replace("\r\n", "\n")}\n\n"
+                    if (document.contains("\n\n${entry.replace("\r\n", "\n")}\n\n")) current
+                    else listOf(current.trimEnd(), entry).filter { it.isNotEmpty() }.joinToString("\n\n")
+                }
+                "replace", "remove" -> {
+                    if (oldText.isBlank()) throw NotesException(Failure.EMPTY)
+                    val first = current.indexOf(oldText)
+                    if (first < 0 || current.indexOf(oldText, first + 1) >= 0) {
+                        throw NotesException(Failure.NOT_UNIQUE)
+                    }
+                    if (action == "replace" && content.isBlank()) throw NotesException(Failure.EMPTY)
+                    current.replaceRange(
+                        first, first + oldText.length, if (action == "remove") "" else content
+                    ).trim()
+                }
+                else -> throw NotesException(Failure.INVALID)
+            }
     }
 
     data class Snapshot(val markdown: String, val version: String)
@@ -77,41 +109,7 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
         }
 
     private fun edit(current: Snapshot, action: String, content: String, oldText: String): String =
-                when (action) {
-                    "add" -> append(current.markdown, content)
-                    "replace", "remove" -> {
-                        if (oldText.isBlank()) throw NotesException(Failure.EMPTY)
-                        val first = current.markdown.indexOf(oldText)
-                        if (first < 0 || current.markdown.indexOf(oldText, first + 1) >= 0) {
-                            throw NotesException(Failure.NOT_UNIQUE)
-                        }
-                        if (action == "replace" && content.isBlank()) throw NotesException(Failure.EMPTY)
-                        current.markdown.replaceRange(
-                            first, first + oldText.length, if (action == "remove") "" else content
-                        ).trim()
-                    }
-                    else -> throw NotesException(Failure.INVALID)
-                }
-
-    /** Background extraction only has this append API, never a replace/remove operation. */
-    suspend fun appendFromBackground(notes: List<String>): Snapshot =
-        withContext(Dispatchers.IO) {
-            mutex.withLock {
-                var next = read().markdown
-                notes.filter { it.isNotBlank() }.forEach { next = append(next, it) }
-                // The batch is all-or-nothing. In particular, never evict old notes to make room.
-                write(next)
-            }
-        }
-
-    private fun append(current: String, content: String): String {
-        val entry = content.trim()
-        if (entry.isEmpty()) throw NotesException(Failure.EMPTY)
-        // Match whole paragraphs, not prefixes such as "port 22" inside "port 2202".
-        val document = "\n\n${current.trim().replace("\r\n", "\n")}\n\n"
-        if (document.contains("\n\n${entry.replace("\r\n", "\n")}\n\n")) return current
-        return listOf(current.trimEnd(), entry).filter { it.isNotEmpty() }.joinToString("\n\n")
-    }
+        applyEdit(current.markdown, action, content, oldText)
 
     private fun write(text: String): Snapshot {
         if (text.length > MAX_CHARS) throw NotesException(Failure.FULL)
@@ -126,6 +124,7 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
         } finally {
             temp.delete()
         }
+        syncDirectory(file.parentFile!!)
         return Snapshot(text, digest(text))
     }
 }

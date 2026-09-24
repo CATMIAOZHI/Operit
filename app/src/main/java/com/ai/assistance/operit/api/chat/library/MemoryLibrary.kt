@@ -137,7 +137,10 @@ object MemoryLibrary {
         val resolvedProfile = profileIdOverride ?: preferencesManager.activeMemorySpaceIdFlow.first()
         val logs = com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository(context, resolvedProfile)
         val log = com.ai.assistance.operit.data.preferences.MemoryExtractionLog(
-            sourceChatId = sourceChatId, graph = includeGraph, notes = includeNotes, skills = includeSkills)
+            sourceChatId = sourceChatId, graph = includeGraph, notes = includeNotes, skills = includeSkills,
+            // This path runs in the foreground without a review subagent, so there is no transcript
+            // to audit and the log row must not offer one.
+            reviewable = false)
         logs.save(log)
         var createdCount = 0
         val warnings = mutableListOf<String>()
