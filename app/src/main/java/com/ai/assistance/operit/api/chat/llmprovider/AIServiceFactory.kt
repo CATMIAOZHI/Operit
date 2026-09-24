@@ -439,6 +439,26 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall,
                 )
 
+            // Claude 订阅账户登录：令牌来自账户管理器，请求仍走 Anthropic 原生格式
+            ApiProviderType.CLAUDE_ACCOUNT ->
+                ClaudeProvider(
+                    config.apiEndpoint,
+                    AccountApiKeyProvider(
+                        com.ai.assistance.operit.data.api.ProviderAccountManager.get(
+                            context,
+                            com.ai.assistance.operit.data.api.AccountProvider.CLAUDE,
+                        )
+                    ),
+                    config.modelName,
+                    httpClient,
+                    customHeaders,
+                    providerType,
+                    supportsVision,
+                    enableToolCall,
+                    config.enableClaude1hPromptCache,
+                    config.id,
+                )
+
             // Claude格式，支持Anthropic Claude系列
             ApiProviderType.ANTHROPIC,
             ApiProviderType.ANTHROPIC_GENERIC ->

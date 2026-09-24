@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import android.content.Context
 import android.os.Environment
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -69,7 +70,8 @@ object ModelListFetcher {
                     ApiProviderType.OPENAI_GENERIC,
                     ApiProviderType.OPENAI_LOCAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.ANTHROPIC,
-                    ApiProviderType.ANTHROPIC_GENERIC -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.ANTHROPIC_GENERIC,
+                    ApiProviderType.CLAUDE_ACCOUNT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
                         buildGeminiModelsListUrl(apiEndpoint).toString()
@@ -353,6 +355,16 @@ object ModelListFetcher {
                             }
                             requestBuilder.addHeader("anthropic-version", ANTHROPIC_VERSION)
                         }
+                        ApiProviderType.CLAUDE_ACCOUNT -> {
+                            // 订阅凭证只接受 Bearer，且需要带上 Claude Code 的 beta 与客户端指纹
+                            AppLogger.d(TAG, "使用Claude订阅Bearer认证方式")
+                            if (apiKey.isNotBlank()) {
+                                requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+                            }
+                            requestBuilder.addHeader("anthropic-version", ANTHROPIC_VERSION)
+                            requestBuilder.addHeader("anthropic-beta", ClaudeOAuthProtocol.OAUTH_BETA)
+                            requestBuilder.addHeader("User-Agent", ClaudeOAuthProtocol.USER_AGENT)
+                        }
                         else -> {
                             if (apiKey.isNotBlank()) {
                                 AppLogger.d(TAG, "使用Bearer认证方式")
@@ -453,7 +465,8 @@ object ModelListFetcher {
                                     ApiProviderType.PPINFRA -> parseOpenAIModelResponse(context, responseBody)
                                     ApiProviderType.OLLAMA_CLOUD -> parseOllamaCloudModelResponse(context, responseBody)
                                     ApiProviderType.ANTHROPIC,
-                                    ApiProviderType.ANTHROPIC_GENERIC -> parseAnthropicModelResponse(context, responseBody)
+                                    ApiProviderType.ANTHROPIC_GENERIC,
+                                    ApiProviderType.CLAUDE_ACCOUNT -> parseAnthropicModelResponse(context, responseBody)
                                     ApiProviderType.GOOGLE,
                                     ApiProviderType.GEMINI_GENERIC -> parseGoogleModelResponse(context, responseBody)
 

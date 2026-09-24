@@ -22,8 +22,17 @@ class ChatConfigReadinessTest {
     }
 
     @Test fun accountProvidersRequireLoginInsteadOfApiKey() {
-        for (provider in listOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
-            val config = remoteConfig(provider, apiKey = "")
+        for (provider in listOf(
+            ApiProviderType.GROK_ACCOUNT,
+            ApiProviderType.GOOGLE_ANTIGRAVITY,
+            ApiProviderType.CLAUDE_ACCOUNT,
+        )) {
+            val endpoint = if (provider == ApiProviderType.CLAUDE_ACCOUNT) {
+                "https://api.anthropic.com/v1/messages"
+            } else {
+                "https://api.example.com/v1/chat/completions"
+            }
+            val config = remoteConfig(provider, apiKey = "", endpoint = endpoint)
             assertIssue(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED, config)
             assertTrue(ChatConfigReadiness.evaluate(config, 0, emptySet(), accountAuthenticated = true).isReady)
         }

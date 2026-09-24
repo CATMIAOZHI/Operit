@@ -31,5 +31,5 @@ fun supportsModelProtocolOverrides(providerTypeId: String): Boolean =
         it != ApiProviderType.MNN && it != ApiProviderType.LLAMA_CPP &&
             it !in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT,
                 ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY,
-                ApiProviderType.OPENCODE_ZEN_FREE)
+                ApiProviderType.OPENCODE_ZEN_FREE, ApiProviderType.CLAUDE_ACCOUNT)
     } == true

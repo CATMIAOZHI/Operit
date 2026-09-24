@@ -8940,6 +8940,7 @@
     <string name="codex_reset_after_clock">Resets in %1$02d:%2$02d</string>
     <string name="conversation_media_file_link">&lt;link type=&quot;file&quot; id=&quot;%1$s&quot; filename=&quot;%2$s&quot;&gt;PDF&lt;/link&gt;</string>
     <string name="provider_grok_account">Grok (Account login)</string>
+    <string name="provider_claude_account">Claude (Account login)</string>
     <string name="provider_google_antigravity">Google Antigravity</string>
     <string name="provider_account_not_logged_in">Sign in to select available models. No API key required.</string>
     <string name="provider_account_logged_in">Account signed in</string>
