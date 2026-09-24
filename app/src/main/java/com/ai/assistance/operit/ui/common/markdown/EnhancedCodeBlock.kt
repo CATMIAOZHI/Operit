@@ -57,7 +57,13 @@ private enum class CodeBlockPreviewType {
  * 8. Mermaid图表支持
  */
 @Composable
-fun EnhancedCodeBlock(code: String, language: String = "", modifier: Modifier = Modifier) {
+fun EnhancedCodeBlock(
+    code: String,
+    language: String = "",
+    modifier: Modifier = Modifier,
+    // The fullscreen preview is a dialog, and a dialog cannot be added to a service-hosted window.
+    enableDialogs: Boolean = true,
+) {
     val clipboardManager = LocalClipboardManager.current
     val scope = rememberCoroutineScope()
     var showCopiedToast by remember { mutableStateOf(false) }
@@ -211,7 +217,7 @@ fun EnhancedCodeBlock(code: String, language: String = "", modifier: Modifier = 
                         }
                     }
 
-                    if (isPreviewMode) {
+                    if (isPreviewMode && enableDialogs) {
                         IconButton(
                             onClick = {
                                 fullscreenPreviewType =
@@ -304,7 +310,7 @@ fun EnhancedCodeBlock(code: String, language: String = "", modifier: Modifier = 
         }
     }
 
-    if (showFullscreenPreview) {
+    if (showFullscreenPreview && enableDialogs) {
         Dialog(
             onDismissRequest = {
                 showFullscreenPreview = false

@@ -305,7 +305,9 @@ internal fun ToolExecutionStatusDisplay(
     if (toolName == "task") {
         val success = liveExecution?.success ?: persistedExecution?.success ?: false
         Column(modifier = modifier) {
-        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
+        reviewEvent?.let { event ->
+            PermissionReviewLifecycleDisplay(event, enableDialogs = enableDialogs)
+        }
         SubagentTaskStatusDisplay(
             callId = liveExecution?.callId ?: persistedExecution?.callId,
             fallbackState = state,
@@ -335,6 +337,7 @@ internal fun ToolExecutionStatusDisplay(
             requestedAgentName = requestedSubagentName,
             bodyText = requestedSubagentTask?.takeIf { it.isNotBlank() },
             reviewEvent = reviewEvent,
+            enableDialogs = enableDialogs,
             modifier = modifier,
         )
         return
@@ -351,7 +354,9 @@ internal fun ToolExecutionStatusDisplay(
     }
 
     Column(modifier = modifier) {
-        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
+        reviewEvent?.let { event ->
+            PermissionReviewLifecycleDisplay(event, enableDialogs = enableDialogs)
+        }
     when (state) {
         ToolExecutionState.WAITING_AUTHORIZATION -> {
             ToolPendingStatusRow(
@@ -413,7 +418,12 @@ internal fun ToolExecutionStatusDisplay(
 }
 
 @Composable
-private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
+private fun PermissionReviewLifecycleDisplay(
+    event: PermissionReviewEvent,
+    // A service-hosted window has no activity token, so a dialog opened from one would crash the
+    // process; the badge keeps its line and its outcome in that case and only drops the detail view.
+    enableDialogs: Boolean,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
@@ -522,7 +532,15 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
                 // run, and a full touch target on every one of them turned that run into a column of
                 // 48dp rows. The row is still the way into the review details.
                 .clip(RoundedCornerShape(6.dp))
-                .clickable(role = Role.Button) { showDetails = true }
+                // Without a dialog the line stays a status line rather than a button that answers
+                // nothing, so the touch target is left off entirely.
+                .then(
+                    if (enableDialogs) {
+                        Modifier.clickable(role = Role.Button) { showDetails = true }
+                    } else {
+                        Modifier
+                    }
+                )
                 // The line already carries the outcome, so it is set once instead of being merged
                 // with the label and read twice.
                 .clearAndSetSemantics {
@@ -563,7 +581,7 @@ private fun PermissionReviewLifecycleDisplay(event: PermissionReviewEvent) {
         )
     }
 
-    if (showDetails) {
+    if (showDetails && enableDialogs) {
         AlertDialog(
             onDismissRequest = { showDetails = false },
             title = { Text(stringResource(R.string.permission_review_detail_title)) },
@@ -1071,6 +1089,7 @@ private fun SubagentCallStatusDisplay(
     requestedAgentName: String?,
     bodyText: String?,
     reviewEvent: PermissionReviewEvent?,
+    enableDialogs: Boolean,
     modifier: Modifier,
 ) {
     val context = LocalContext.current
@@ -1112,7 +1131,9 @@ private fun SubagentCallStatusDisplay(
         }
 
     Column(modifier = modifier) {
-        reviewEvent?.let { event -> PermissionReviewLifecycleDisplay(event) }
+        reviewEvent?.let { event ->
+            PermissionReviewLifecycleDisplay(event, enableDialogs = enableDialogs)
+        }
         SubagentAgentCard(
             agentPath = agentPath,
             statusText =
