@@ -389,7 +389,10 @@ class CustomXmlRenderer(
                 modifier = modifier,
                 textColor = textColor,
                 xmlStream = xmlStream,
-                renderInstanceKey = renderInstanceKey
+                renderInstanceKey = renderInstanceKey,
+                // A package's XML render hook may answer with a Compose DSL screen, which can hold
+                // dialog nodes; the caller's dialog flag has to reach them as well.
+                allowDialogs = toolDetailDialogsEnabled
             )
         if (pluginHandled) {
             return
