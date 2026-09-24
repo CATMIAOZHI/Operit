@@ -935,7 +935,9 @@ internal fun resolveClaudeEffectiveMaxTokens(
             ?.takeIf { it > 0 }
     return enabledMaxTokens
         ?: resolveOfficialClaudeMaxTokens(modelName).takeIf {
-            providerType == ApiProviderType.ANTHROPIC
+            // 订阅账户跑的同样是官方 Claude 模型，沿用同一份每模型输出上限
+            providerType == ApiProviderType.ANTHROPIC ||
+                providerType == ApiProviderType.CLAUDE_ACCOUNT
         }
         ?: DEFAULT_CLAUDE_MAX_TOKENS
 }

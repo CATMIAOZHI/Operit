@@ -6,6 +6,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
+import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelOption
 import com.ai.assistance.operit.data.model.ModelParameter
@@ -106,6 +107,21 @@ class ClaudeProvider(
     private var activeCall: Call? = null
     private var activeResponse: Response? = null
     @Volatile private var isManuallyCancelled = false
+
+    /**
+     * Claude Pro/Max 订阅凭证走 Claude Code 的 OAuth 协议：Bearer 认证、额外的 beta 头、
+     * 必须置于首位的身份 system 块，以及带前缀的工具名。
+     */
+    private val isClaudeAccount: Boolean
+        get() = providerType == ApiProviderType.CLAUDE_ACCOUNT
+
+    /** 响应中的工具名去掉订阅前缀，保持上层执行时使用原始名称。 */
+    private fun modelToolName(wireName: String): String =
+        if (isClaudeAccount) ClaudeOAuthProtocol.modelToolName(wireName) else wireName
+
+    /** 发往订阅 OAuth 的工具名加上前缀；其余情况原样发出。 */
+    private fun wireToolName(name: String): String =
+        if (isClaudeAccount) ClaudeOAuthProtocol.wireToolName(name) else name
 
     /**
      * 将运行时探测到的 thinking 格式与菜单使用的配置/模型键关联。
@@ -402,6 +418,8 @@ class ClaudeProvider(
             toolUses.put(JSONObject().apply {
                 put("type", "tool_use")
                 put("id", callId)
+                // 这里保持模型侧原名：工具结果的配对、以及工具执行都按这个名字进行，
+                // 订阅 OAuth 的前缀只在真正发出去时（queueToolUses）才加上。
                 put("name", toolName)
                 put("input", input)
             })
@@ -460,7 +478,8 @@ class ClaudeProvider(
         
         for (tool in toolPrompts) {
             tools.put(JSONObject().apply {
-                put("name", tool.name)
+                // 订阅 OAuth 只接受 Claude Code 自己的工具名，因此自定义工具带前缀上线
+                put("name", wireToolName(tool.name))
                 // 组合description和details作为完整描述
                 val fullDescription = if (tool.details.isNotEmpty()) {
                     "${tool.description}\n${tool.details}"
@@ -797,6 +816,9 @@ class ClaudeProvider(
                 val toolUse = JSONObject(sourceToolUse.toString())
                 val toolUseId = generatedToolUseId(nextToolUseOrdinal++)
                 toolUse.put("id", toolUseId)
+                // 声明与回放的工具名必须一致：订阅 OAuth 只接受带前缀的自定义工具名，
+                // 而配对与执行用的名字（下面的 OpenToolCall）仍是模型侧原名。
+                decodeProviderToolName(toolUse.opt("name"))?.let { toolUse.put("name", wireToolName(it)) }
                 queuedToolUses.put(toolUse)
                 queuedOpenToolUses.add(
                     StructuredToolCallBridge.OpenToolCall(
@@ -1126,8 +1148,10 @@ class ClaudeProvider(
         jsonObject.put("messages", messagesArray)
 
         // Claude对系统消息的处理有所不同，它使用system参数
-        if (systemBlocks != null) {
-            jsonObject.put("system", systemBlocks)
+        val effectiveSystemBlocks =
+            if (isClaudeAccount) claudeCodeSystemBlocks(systemBlocks) else systemBlocks
+        if (effectiveSystemBlocks != null) {
+            jsonObject.put("system", effectiveSystemBlocks)
         }
 
         // 添加 extended/adaptive thinking 支持；显式调用方参数优先于默认推断。
@@ -1183,6 +1207,26 @@ class ClaudeProvider(
             body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),
             thinkingFormat = appliedThinkingFormat,
         )
+    }
+
+    /**
+     * 订阅 OAuth 请求要求首个 system 块是 Claude Code 的身份标识，其余系统提示依次排在其后。
+     * 没有系统提示时同样要单独发送该身份块。
+     */
+    private fun claudeCodeSystemBlocks(systemBlocks: JSONArray?): JSONArray {
+        val blocks =
+            JSONArray().put(
+                JSONObject().apply {
+                    put("type", "text")
+                    put("text", ClaudeOAuthProtocol.SYSTEM_INSTRUCTION)
+                }
+            )
+        if (systemBlocks != null) {
+            for (index in 0 until systemBlocks.length()) {
+                systemBlocks.opt(index)?.let { blocks.put(it) }
+            }
+        }
+        return blocks
     }
 
     /**
@@ -1308,16 +1352,33 @@ class ClaudeProvider(
     // 创建请求
     private val openCodeGoHeaders = OpenCodeGoHeaders()
 
-    private suspend fun createRequest(requestBody: RequestBody): Request {
+    private suspend fun createRequest(requestBody: RequestBody, stream: Boolean): Request {
         val currentApiKey = apiKeyProvider.getApiKey()
         val completedEndpoint = EndpointCompleter.completeEndpoint(apiEndpoint, providerType)
         val builder =
                 Request.Builder()
                         .url(completedEndpoint)
                         .post(requestBody)
-                        .addHeader("x-api-key", currentApiKey)
                         .addHeader("anthropic-version", ANTHROPIC_VERSION)
                         .addHeader("Content-Type", "application/json")
+
+        if (isClaudeAccount) {
+            // 订阅令牌只以 Bearer 提交，并需带上 Claude Code 的 beta 与客户端指纹头
+            builder.addHeader("Authorization", "Bearer $currentApiKey")
+            builder.addHeader("anthropic-beta", ClaudeOAuthProtocol.OAUTH_BETA)
+            builder.addHeader("User-Agent", ClaudeOAuthProtocol.USER_AGENT)
+            builder.addHeader(
+                "Accept",
+                if (stream) "text/event-stream" else "application/json",
+            )
+            ClaudeOAuthProtocol.FINGERPRINT_HEADERS.forEach { (name, value) ->
+                builder.addHeader(name, value)
+            }
+            builder.addHeader("X-Claude-Code-Session-Id", ClaudeOAuthProtocol.sessionId(currentApiKey))
+            builder.addHeader("x-client-request-id", UUID.randomUUID().toString())
+        } else {
+            builder.addHeader("x-api-key", currentApiKey)
+        }
 
         // 添加自定义请求头
         customHeaders.forEach { (key, value) ->
@@ -1441,7 +1502,7 @@ class ClaudeProvider(
                     }
                     "tool_use" -> {
                         if (enableToolCall) {
-                            val toolName = block.optProviderToolName() ?: ""
+                            val toolName = modelToolName(block.optProviderToolName() ?: "")
                             if (toolName.isNotEmpty()) {
                                 val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                 fullText.append("\n<$toolTagName name=\"$toolName\">")
@@ -1513,7 +1574,7 @@ class ClaudeProvider(
                     tokenCacheManager.cachedInputTokenCount,
                     tokenCacheManager.outputTokenCount
                 )
-                val request = createRequest(builtRequestBody.body)
+                val request = createRequest(builtRequestBody.body, stream)
                 client.newCall(request)
             } catch (e: Exception) {
                 throw e
@@ -1691,7 +1752,7 @@ class ClaudeProvider(
                                         when (contentBlock.optString("type")) {
                                             "tool_use" -> {
                                                 if (enableToolCall) {
-                                                    val toolName = contentBlock.optProviderToolName() ?: ""
+                                                    val toolName = modelToolName(contentBlock.optProviderToolName() ?: "")
                                                     if (toolName.isNotEmpty()) {
                                                         val toolTagName = ChatMarkupRegex.generateRandomToolTagName()
                                                         currentToolTagName = toolTagName

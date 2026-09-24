@@ -11,6 +11,7 @@ class ModelProtocolResolverTest {
     fun codexAuthenticationCannotBeOverriddenByGenericProtocol() {
         assertFalse(supportsModelProtocolOverrides(ApiProviderType.GROK_ACCOUNT.name))
         assertFalse(supportsModelProtocolOverrides(ApiProviderType.GOOGLE_ANTIGRAVITY.name))
+        assertFalse(supportsModelProtocolOverrides(ApiProviderType.CLAUDE_ACCOUNT.name))
         val account = config().copy(
             apiProviderType = ApiProviderType.OPENAI_CODEX,
             apiProviderTypeId = ApiProviderType.OPENAI_CODEX.name,

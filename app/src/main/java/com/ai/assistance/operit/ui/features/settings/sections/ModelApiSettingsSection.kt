@@ -58,6 +58,7 @@ import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.AccountProvider
+import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.api.ProviderAccountManager
 import com.ai.assistance.operit.data.api.OpenCodeGoQuotaClient
 import com.ai.assistance.operit.data.api.ProviderQuota
@@ -624,6 +625,21 @@ fun ModelApiSettingsSection(
             }
             browserAccountType == AccountProvider.GROK -> runCatching {
                 requireNotNull(browserAccountManager).availableGrokModels()
+            }
+            browserAccountType == AccountProvider.CLAUDE -> runCatching {
+                val token = requireNotNull(browserAccountManager).validAccount().accessToken
+                ModelListFetcher.getModelsList(
+                    context = context,
+                    apiKey = token,
+                    apiEndpoint = getDefaultApiEndpoint(ApiProviderType.CLAUDE_ACCOUNT),
+                    apiProviderType = ApiProviderType.CLAUDE_ACCOUNT,
+                ).getOrThrow()
+            }.recoverCatching { error ->
+                if (error is CancellationException) throw error
+                // 订阅账户没有可靠的 /v1/models 保障；列不出来时回落到 Claude Code 的模型表，
+                // 让模型选择器保持可用（会话本身用的是已保存的模型名）。
+                AppLogger.w(TAG, "Claude 模型列表获取失败，改用内置列表: ${error.message}")
+                ClaudeOAuthProtocol.SUBSCRIPTION_MODELS.map { ModelOption(id = it, name = it) }
             }
             isCodexProvider -> CodexModelListFetcher.getModelsList(context)
             isMnnProvider -> ModelListFetcher.getMnnLocalModels(context)
@@ -2126,6 +2142,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.COMMAND_CODE -> context.getString(R.string.provider_command_code)
         ApiProviderType.GOOGLE_ANTIGRAVITY -> context.getString(R.string.provider_google_antigravity)
         ApiProviderType.OPENAI_CODEX -> context.getString(R.string.provider_openai_codex)
+        ApiProviderType.CLAUDE_ACCOUNT -> context.getString(R.string.provider_claude_account)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> context.getString(R.string.provider_openai_responses_generic)
         ApiProviderType.OPENAI_GENERIC -> context.getString(R.string.provider_openai_generic)
         ApiProviderType.ANTHROPIC -> context.getString(R.string.provider_anthropic)
@@ -2908,6 +2925,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.GROK_ACCOUNT,
         ApiProviderType.COMMAND_CODE,
         ApiProviderType.GOOGLE_ANTIGRAVITY,
+        ApiProviderType.CLAUDE_ACCOUNT,
         ApiProviderType.OPENAI_CODEX -> MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
         ApiProviderType.OPENAI_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)

@@ -36,7 +36,8 @@ internal class AccountHttpException(val status: Int) : IOException("Account requ
 enum class AccountProvider(val type: ApiProviderType, val port: Int) {
     GROK(ApiProviderType.GROK_ACCOUNT, 56121),
     COMMAND_CODE(ApiProviderType.COMMAND_CODE, 5959),
-    ANTIGRAVITY(ApiProviderType.GOOGLE_ANTIGRAVITY, 51121);
+    ANTIGRAVITY(ApiProviderType.GOOGLE_ANTIGRAVITY, 51121),
+    CLAUDE(ApiProviderType.CLAUDE_ACCOUNT, ClaudeOAuthProtocol.CALLBACK_PORT);
 
     companion object {
         fun from(type: ApiProviderType?) = entries.firstOrNull { it.type == type }
@@ -121,37 +122,56 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     ): ProviderLoginSession {
         check(provider != AccountProvider.COMMAND_CODE) { "Use Command Code login" }
         val discovery = if (provider == AccountProvider.GROK) discoverXai() else null
-        val id = if (provider == AccountProvider.GROK) XAI_CLIENT_ID else
-            googleClientId.trim().ifBlank { preferences.getString("client_id", "").orEmpty() }
+        val id = when (provider) {
+            AccountProvider.GROK -> XAI_CLIENT_ID
+            AccountProvider.CLAUDE -> ClaudeOAuthProtocol.CLIENT_ID
+            else -> googleClientId.trim().ifBlank { preferences.getString("client_id", "").orEmpty() }
                 .ifBlank { AntigravityClientConfig.CLIENT_ID }
-        val secret = if (provider == AccountProvider.GROK) "" else
+        }
+        val secret = if (provider == AccountProvider.ANTIGRAVITY) {
             googleClientSecret.ifBlank { preferences.getString("client_secret", "").orEmpty() }
                 .ifBlank { AntigravityClientConfig.CLIENT_SECRET }
+        } else ""
         require(id.isNotBlank() && (provider != AccountProvider.ANTIGRAVITY || secret.isNotBlank())) {
             "Antigravity OAuth client ID and client secret are required"
         }
         val pkce = CodexOAuthProtocol.generatePkce()
         val state = CodexOAuthProtocol.generateState()
-        val server = CodexOAuthLoopbackCallbackServer.open(provider.port, "/callback", "127.0.0.1")
+        // Claude's OAuth app registers the `localhost` spelling of its callback, so that is the one
+        // the redirect has to advertise; the listener still binds loopback.
+        val callbackHost =
+            if (provider == AccountProvider.CLAUDE) ClaudeOAuthProtocol.CALLBACK_HOST else "127.0.0.1"
+        val server = CodexOAuthLoopbackCallbackServer.open(provider.port, "/callback", callbackHost)
         try {
-            val endpoint = discovery?.first ?: "https://accounts.google.com/o/oauth2/v2/auth"
-            val url = Uri.parse(endpoint).buildUpon()
-                .appendQueryParameter("response_type", "code")
-                .appendQueryParameter("client_id", id)
-                .appendQueryParameter("redirect_uri", server.redirectUri)
-                .appendQueryParameter("scope", if (provider == AccountProvider.GROK) XAI_SCOPE else GOOGLE_SCOPE)
-                .appendQueryParameter("code_challenge", pkce.challenge)
-                .appendQueryParameter("code_challenge_method", "S256")
-                .appendQueryParameter("state", state)
-                .apply {
-                    if (provider == AccountProvider.GROK) appendQueryParameter("nonce", UUID.randomUUID().toString())
-                    else {
-                        appendQueryParameter("access_type", "offline")
-                        appendQueryParameter("prompt", "consent select_account")
-                    }
-                }.build().toString()
-            return ProviderLoginSession(server, url, state, pkce.verifier,
-                discovery?.second ?: GOOGLE_TOKEN, id, secret)
+            val url = if (provider == AccountProvider.CLAUDE) {
+                ClaudeOAuthProtocol.buildAuthorizationUrl(
+                    redirectUri = server.redirectUri,
+                    challenge = pkce.challenge,
+                    state = state,
+                )
+            } else {
+                val endpoint = discovery?.first ?: "https://accounts.google.com/o/oauth2/v2/auth"
+                Uri.parse(endpoint).buildUpon()
+                    .appendQueryParameter("response_type", "code")
+                    .appendQueryParameter("client_id", id)
+                    .appendQueryParameter("redirect_uri", server.redirectUri)
+                    .appendQueryParameter("scope", if (provider == AccountProvider.GROK) XAI_SCOPE else GOOGLE_SCOPE)
+                    .appendQueryParameter("code_challenge", pkce.challenge)
+                    .appendQueryParameter("code_challenge_method", "S256")
+                    .appendQueryParameter("state", state)
+                    .apply {
+                        if (provider == AccountProvider.GROK) appendQueryParameter("nonce", UUID.randomUUID().toString())
+                        else {
+                            appendQueryParameter("access_type", "offline")
+                            appendQueryParameter("prompt", "consent select_account")
+                        }
+                    }.build().toString()
+            }
+            val tokenEndpoint = when (provider) {
+                AccountProvider.CLAUDE -> ClaudeOAuthProtocol.TOKEN_ENDPOINT
+                else -> discovery?.second ?: GOOGLE_TOKEN
+            }
+            return ProviderLoginSession(server, url, state, pkce.verifier, tokenEndpoint, id, secret)
         } catch (error: Throwable) {
             server.close()
             throw error
@@ -159,14 +179,37 @@ class ProviderAccountManager private constructor(context: Context, val provider:
     }
 
     internal suspend fun completeLogin(session: ProviderLoginSession, callback: Uri) = mutex.withLock {
-        require(callback.getQueryParameter("state") == session.state) { "OAuth state mismatch" }
+        // Claude's callback can fold the state into the code as `code#state`; the others carry it as
+        // a query parameter, so their codes are taken verbatim and the state → declined → code check
+        // order below stays exactly as it was.
+        val callbackCode = callback.getQueryParameter("code").orEmpty()
+        val callbackState = callback.getQueryParameter("state").orEmpty()
+        val (code, state) =
+            if (provider == AccountProvider.CLAUDE) {
+                ClaudeOAuthProtocol.splitAuthorizationCode(callbackCode, callbackState)
+            } else {
+                callbackCode to callbackState
+            }
+        require(state == session.state) { "OAuth state mismatch" }
         check(callback.getQueryParameter("error") == null) { "OAuth authorization was declined" }
-        val code = requireNotNull(callback.getQueryParameter("code")) { "Missing OAuth authorization code" }
-        val form = tokenForm(session.clientId, session.clientSecret).apply {
-            add("grant_type", "authorization_code"); add("code", code)
-            add("redirect_uri", session.server.redirectUri); add("code_verifier", session.verifier)
-        }.build()
-        val tokens = requestJson(session.tokenEndpoint, form)
+        require(code.isNotBlank()) { "Missing OAuth authorization code" }
+        val tokens = if (provider == AccountProvider.CLAUDE) {
+            requestJson(
+                session.tokenEndpoint,
+                ClaudeOAuthProtocol.authorizationCodeBody(
+                    code = code,
+                    state = state,
+                    redirectUri = session.server.redirectUri,
+                    verifier = session.verifier,
+                ).toBody(),
+            )
+        } else {
+            val form = tokenForm(session.clientId, session.clientSecret).apply {
+                add("grant_type", "authorization_code"); add("code", code)
+                add("redirect_uri", session.server.redirectUri); add("code_verifier", session.verifier)
+            }.build()
+            requestJson(session.tokenEndpoint, form)
+        }
         val value = parseTokens(tokens)
         val complete = if (provider == AccountProvider.ANTIGRAVITY) {
             value.copy(projectId = discoverProject(value.accessToken))
@@ -181,14 +224,23 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val current = account.value ?: throw IOException("Account is not logged in")
         if (provider == AccountProvider.COMMAND_CODE) return@withLock current
         if (current.expiresAt - System.currentTimeMillis() > 120_000) return@withLock current
-        val endpoint = if (provider == AccountProvider.GROK) discoverXai().second else GOOGLE_TOKEN
-        val form = tokenForm(
-            if (provider == AccountProvider.GROK) XAI_CLIENT_ID else preferences.getString("client_id", "").orEmpty(),
-            preferences.getString("client_secret", "").orEmpty(),
-        ).add("grant_type", "refresh_token").add("refresh_token", current.refreshToken).build()
+        val endpoint = when (provider) {
+            AccountProvider.GROK -> discoverXai().second
+            AccountProvider.CLAUDE -> ClaudeOAuthProtocol.TOKEN_ENDPOINT
+            else -> GOOGLE_TOKEN
+        }
+        val body = if (provider == AccountProvider.CLAUDE) {
+            ClaudeOAuthProtocol.refreshBody(current.refreshToken).toBody()
+        } else {
+            tokenForm(
+                if (provider == AccountProvider.GROK) XAI_CLIENT_ID
+                else preferences.getString("client_id", "").orEmpty(),
+                preferences.getString("client_secret", "").orEmpty(),
+            ).add("grant_type", "refresh_token").add("refresh_token", current.refreshToken).build()
+        }
         val updated = withContext(NonCancellable) {
             // Refresh grants can rotate. Persist the successful response even if the caller stops.
-            parseTokens(requestJson(endpoint, form), current).also(::save)
+            parseTokens(requestJson(endpoint, body), current).also(::save)
         }
         currentCoroutineContext().ensureActive()
         updated
@@ -314,9 +366,14 @@ class ProviderAccountManager private constructor(context: Context, val provider:
         val refresh = json.optString("refresh_token").ifBlank { previous?.refreshToken.orEmpty() }
             .also { require(it.isNotBlank()) { "Missing refresh token" } }
         val seconds = json.optLong("expires_in", 3600).also { require(it in 1..31_536_000) }
+        // Claude names the subscribed account in the token body; the OIDC providers put it in the
+        // id token instead.
+        val email = ClaudeOAuthProtocol.accountEmail(json).ifBlank {
+            CodexOAuthProtocol.parseJwtClaims(json.optString("id_token"))?.email.orEmpty()
+        }
         return ProviderAccount(access, refresh, System.currentTimeMillis() + seconds * 1000,
             previous?.projectId.orEmpty(),
-            CodexOAuthProtocol.parseJwtClaims(json.optString("id_token"))?.email ?: previous?.email.orEmpty(),
+            email.ifBlank { previous?.email.orEmpty() },
             previous?.identity ?: UUID.randomUUID().toString())
     }
 
@@ -386,6 +443,34 @@ class ProviderAccountManager private constructor(context: Context, val provider:
             return ProviderQuota(listOf(ProviderQuotaWindow(QuotaWindow.MONTHLY, percent, resetAt)))
         }
         throw IOException("Grok reported no quota")
+    }
+
+    /**
+     * Claude reports subscription windows per credential, so the probe rides the account's own
+     * bearer token. Only the two canonical windows are surfaced: the per-model Opus/Sonnet buckets
+     * have no place in [QuotaWindow].
+     */
+    suspend fun fetchClaudeQuota(): ProviderQuota {
+        check(provider == AccountProvider.CLAUDE)
+        val bearer = validAccount().accessToken
+        val body = requestJson(
+            ClaudeOAuthProtocol.USAGE_ENDPOINT,
+            token = bearer,
+            extraHeaders =
+                ClaudeOAuthProtocol.USAGE_EXTRA_HEADERS +
+                    ("anthropic-beta" to ClaudeOAuthProtocol.OAUTH_USAGE_BETA),
+        )
+        val windows =
+            listOf(
+                QuotaWindow.FIVE_HOUR to body.optJSONObject("five_hour"),
+                QuotaWindow.WEEKLY to body.optJSONObject("seven_day"),
+            ).mapNotNull { (window, row) ->
+                val percent = QuotaParsing.percent(row?.opt("utilization")) ?: return@mapNotNull null
+                ProviderQuotaWindow(window, percent, QuotaParsing.resetAt(row?.opt("resets_at")))
+            }
+        val quota = ProviderQuota(windows = windows)
+        if (quota.isEmpty) throw IOException("Claude reported no quota")
+        return quota
     }
 
     /** Soft-fail GET: a quota probe must never turn a provider hiccup into a thrown error path. */

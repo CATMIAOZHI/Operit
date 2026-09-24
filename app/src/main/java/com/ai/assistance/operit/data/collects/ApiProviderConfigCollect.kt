@@ -52,6 +52,12 @@ object ApiProviderConfigs {
             requiresApiKey = false,
         ),
         ProviderApiConfig(
+            providerType = ApiProviderType.CLAUDE_ACCOUNT,
+            defaultModelName = "claude-sonnet-5",
+            defaultApiEndpoint = "https://api.anthropic.com/v1/messages",
+            requiresApiKey = false,
+        ),
+        ProviderApiConfig(
             providerType = ApiProviderType.OPENAI_RESPONSES_GENERIC,
             defaultModelName = "",
             defaultApiEndpoint = ""

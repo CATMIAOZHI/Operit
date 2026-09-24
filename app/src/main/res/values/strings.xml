@@ -8914,6 +8914,7 @@
     <string name="codex_reset_after_days">%1$d 天后重置</string>
     <string name="codex_reset_after_clock">%1$02d:%2$02d 后重置</string>
     <string name="provider_grok_account">Grok（账户登录）</string>
+    <string name="provider_claude_account">Claude（账户登录）</string>
     <string name="provider_google_antigravity">Google Antigravity</string>
     <string name="provider_account_not_logged_in">登录账户后选择可用模型，无需 API Key</string>
     <string name="provider_account_logged_in">账户已登录</string>
