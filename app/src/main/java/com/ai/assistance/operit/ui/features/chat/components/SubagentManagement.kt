@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.Archive
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.MoreVert
@@ -32,6 +33,7 @@ import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.SmartToy
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material.icons.outlined.GppBad
 import androidx.compose.material.icons.outlined.GppMaybe
 import androidx.compose.material.icons.outlined.Security
@@ -69,13 +71,13 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
+import com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
 import com.ai.assistance.operit.core.agent.AgentProfileRepository
 import com.ai.assistance.operit.data.model.SubagentRunEntity
 import com.ai.assistance.operit.data.model.SubagentRunStatus
@@ -108,16 +110,31 @@ import com.ai.assistance.operit.ui.permissions.inputTokens
 import com.ai.assistance.operit.ui.permissions.permissionRiskScoreSummary
 import kotlinx.coroutines.delay
 
-internal enum class SubagentListFilter {
+/**
+ * The list separates what the user asked for from what the app does on its own: the agents they
+ * delegated to, and the background runs (the permission review, the memory extraction).
+ */
+internal enum class SubagentTaskKind {
+    FOREGROUND,
+    BACKGROUND,
+}
+
+/** The status narrowing inside one [SubagentTaskKind], offered behind the filter button. */
+internal enum class SubagentRunStatusFilter {
     ALL,
     RUNNING,
     QUEUED,
     COMPLETED,
-    AUTO_REVIEW,
     INTERRUPTED,
     ERROR,
     ARCHIVED,
 }
+
+/** The two choices the management list opens on. */
+internal data class SubagentListSelection(
+    val kind: SubagentTaskKind,
+    val status: SubagentRunStatusFilter,
+)
 
 private enum class SubagentManagementPage {
     RUNS,
@@ -176,9 +193,11 @@ internal suspend fun resolvePermissionReviewRunDisplayState(
 
 internal fun filterAndSortSubagentRuns(
     runs: List<SubagentRunEntity>,
-    filter: SubagentListFilter,
+    kind: SubagentTaskKind,
+    statusFilter: SubagentRunStatusFilter,
     query: String = "",
     autoReviewDisplayName: String = "",
+    memoryExtractionDisplayName: String = "",
 ): List<SubagentRunEntity> {
     val normalizedQuery = query.trim()
     val filtered =
@@ -186,43 +205,42 @@ internal fun filterAndSortSubagentRuns(
             val status = run.status.toSubagentRunStatus()
             val isAutoReview =
                 run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
-            val matchesFilter =
-                when (filter) {
-                    SubagentListFilter.ALL -> run.archivedAt == null && !isAutoReview
-                    SubagentListFilter.RUNNING ->
+            val isMemoryExtraction = run.isMemoryExtractionSubagentRun()
+            val matchesKind =
+                when (kind) {
+                    SubagentTaskKind.FOREGROUND -> !isAutoReview && !isMemoryExtraction
+                    SubagentTaskKind.BACKGROUND -> isAutoReview || isMemoryExtraction
+                }
+            val matchesStatus =
+                when (statusFilter) {
+                    SubagentRunStatusFilter.ALL -> run.archivedAt == null
+                    SubagentRunStatusFilter.RUNNING ->
                         run.archivedAt == null &&
-                            !isAutoReview &&
                             (status == SubagentRunStatus.CREATED ||
                                 status == SubagentRunStatus.RUNNING)
-                    SubagentListFilter.QUEUED ->
-                        run.archivedAt == null &&
-                            !isAutoReview &&
-                            status == SubagentRunStatus.QUEUED
-                    SubagentListFilter.COMPLETED ->
-                        run.archivedAt == null &&
-                            !isAutoReview &&
-                            status == SubagentRunStatus.COMPLETED
-                    SubagentListFilter.AUTO_REVIEW -> run.archivedAt == null && isAutoReview
-                    SubagentListFilter.INTERRUPTED ->
-                        run.archivedAt == null &&
-                            !isAutoReview &&
-                            status == SubagentRunStatus.INTERRUPTED
-                    SubagentListFilter.ERROR ->
-                        run.archivedAt == null &&
-                            !isAutoReview &&
-                            status == SubagentRunStatus.FAILED
-                    SubagentListFilter.ARCHIVED -> run.archivedAt != null
+                    SubagentRunStatusFilter.QUEUED ->
+                        run.archivedAt == null && status == SubagentRunStatus.QUEUED
+                    SubagentRunStatusFilter.COMPLETED ->
+                        run.archivedAt == null && status == SubagentRunStatus.COMPLETED
+                    SubagentRunStatusFilter.INTERRUPTED ->
+                        run.archivedAt == null && status == SubagentRunStatus.INTERRUPTED
+                    SubagentRunStatusFilter.ERROR ->
+                        run.archivedAt == null && status == SubagentRunStatus.FAILED
+                    SubagentRunStatusFilter.ARCHIVED -> run.archivedAt != null
                 }
-            matchesFilter &&
+            matchesKind &&
+                matchesStatus &&
                 (normalizedQuery.isEmpty() ||
                     run.agentProfileId.contains(normalizedQuery, ignoreCase = true) ||
                     run.title.contains(normalizedQuery, ignoreCase = true) ||
                     (isAutoReview &&
-                        autoReviewDisplayName.contains(normalizedQuery, ignoreCase = true)))
+                        autoReviewDisplayName.contains(normalizedQuery, ignoreCase = true)) ||
+                    (isMemoryExtraction &&
+                        memoryExtractionDisplayName.contains(normalizedQuery, ignoreCase = true)))
         }
     return filtered.sortedWith(
         compareBy<SubagentRunEntity> {
-                if (filter == SubagentListFilter.ARCHIVED) {
+                if (statusFilter == SubagentRunStatusFilter.ARCHIVED) {
                     0
                 } else {
                     when (it.status.toSubagentRunStatus()) {
@@ -246,29 +264,64 @@ internal fun SubagentRunEntity.isActiveSubagentRun(): Boolean =
         else -> false
     }
 
-internal fun initialSubagentListFilter(
+/**
+ * The hidden background extraction the memory library audits. It is not an agent the user delegated
+ * to, so it belongs to the background runs.
+ */
+internal fun SubagentRunEntity.isMemoryExtractionSubagentRun(): Boolean =
+    externalOwnerType == MemoryLearningCoordinator.OWNER_TYPE
+
+internal fun SubagentRunEntity.isPermissionReviewSubagentRun(): Boolean =
+    agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
+
+/** A run the app starts on its own, which the list keeps apart from the delegated agents. */
+internal fun SubagentRunEntity.isBackgroundSubagentRun(): Boolean =
+    isPermissionReviewSubagentRun() || isMemoryExtractionSubagentRun()
+
+/**
+ * The list opens on the category that has something in it, and lands on the archive when the
+ * category it picked only holds archived runs, so the first screen is never blank.
+ */
+internal fun initialSubagentListSelection(
     runs: List<SubagentRunEntity>,
     hasPermissionReviewEvents: Boolean,
-): SubagentListFilter {
-    val hasOrdinaryRuns =
-        runs.any { run ->
-            run.archivedAt == null &&
-                run.agentProfileId != AgentProfileRepository.PERMISSION_REVIEWER_ID
+): SubagentListSelection {
+    val hasActiveForegroundRuns =
+        runs.any { run -> run.archivedAt == null && !run.isBackgroundSubagentRun() }
+    val hasActiveBackgroundRuns =
+        runs.any { run -> run.archivedAt == null && run.isBackgroundSubagentRun() }
+    val kind =
+        when {
+            // A category that is doing something opens first, so the list starts on live work.
+            hasActiveForegroundRuns -> SubagentTaskKind.FOREGROUND
+            // A review event without a run row of its own is background work too.
+            hasActiveBackgroundRuns || hasPermissionReviewEvents -> SubagentTaskKind.BACKGROUND
+            // Otherwise the category that at least has history, archived or not.
+            runs.any { run -> !run.isBackgroundSubagentRun() } -> SubagentTaskKind.FOREGROUND
+            runs.any { run -> run.isBackgroundSubagentRun() } -> SubagentTaskKind.BACKGROUND
+            else -> SubagentTaskKind.FOREGROUND
         }
-    val hasAutoReviewRecords =
-        hasPermissionReviewEvents ||
-            runs.any { run ->
-                run.archivedAt == null &&
-                    run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
-            }
-    return if (!hasOrdinaryRuns && hasAutoReviewRecords) {
-        SubagentListFilter.AUTO_REVIEW
-    } else if (!hasOrdinaryRuns && runs.any { it.archivedAt != null }) {
-        SubagentListFilter.ARCHIVED
-    } else {
-        SubagentListFilter.ALL
-    }
+    val kindRuns = runs.filter { run -> run.belongsTo(kind) }
+    val status =
+        if (kindRuns.none { it.archivedAt == null } && kindRuns.any { it.archivedAt != null }) {
+            SubagentRunStatusFilter.ARCHIVED
+        } else {
+            SubagentRunStatusFilter.ALL
+        }
+    return SubagentListSelection(kind = kind, status = status)
 }
+
+internal fun SubagentRunEntity.belongsTo(kind: SubagentTaskKind): Boolean =
+    (kind == SubagentTaskKind.BACKGROUND) == isBackgroundSubagentRun()
+
+/**
+ * A review event whose run row is gone has no status of its own, so it is only listed in the full
+ * background list and it is counted there only, keeping the counter and the rows in step.
+ */
+internal fun showsOrphanPermissionReviewEvents(
+    kind: SubagentTaskKind,
+    status: SubagentRunStatusFilter,
+): Boolean = kind == SubagentTaskKind.BACKGROUND && status == SubagentRunStatusFilter.ALL
 
 internal fun findPermissionReviewEventForRun(
     events: List<PermissionReviewEvent>,
@@ -388,17 +441,15 @@ internal fun SubagentSwitcherSheet(
     remember(context) { PermissionReviewEventRepository.initialize(context); true }
     val reviewEvents by PermissionReviewEventRepository.events.collectAsState()
     val sortedRuns = remember(runs, currentChildChatId) {
-        val currentIsAutoReview =
-            runs.firstOrNull { it.childChatId == currentChildChatId }?.agentProfileId ==
-                AgentProfileRepository.PERMISSION_REVIEWER_ID
-        filterAndSortSubagentRuns(
-            runs,
-            if (currentIsAutoReview) {
-                SubagentListFilter.AUTO_REVIEW
+        val currentRun = runs.firstOrNull { it.childChatId == currentChildChatId }
+        // The run being read stays listed, so its own category is the one to show.
+        val currentKind =
+            if (currentRun?.isBackgroundSubagentRun() == true) {
+                SubagentTaskKind.BACKGROUND
             } else {
-                SubagentListFilter.ALL
-            },
-        )
+                SubagentTaskKind.FOREGROUND
+            }
+        filterAndSortSubagentRuns(runs, currentKind, SubagentRunStatusFilter.ALL)
     }
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Text(
@@ -455,6 +506,7 @@ internal fun SubagentManagementDialog(
     remember(context) { PermissionReviewEventRepository.initialize(context); true }
     remember(context) { PermissionRiskScoreRepository.initialize(context); true }
     val autoReviewDisplayName = stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
+    val memoryExtractionDisplayName = stringResource(R.string.subagent_memory_extraction)
     val reviewEvents by PermissionReviewEventRepository.events.collectAsState()
     val riskScoreRecords by PermissionRiskScoreRepository.records.collectAsState()
     val chatRiskScoreRecords =
@@ -471,22 +523,35 @@ internal fun SubagentManagementDialog(
         remember(parentReviewEvents, runs) {
             visiblePermissionReviewEvents(runs, parentReviewEvents)
         }
-    val initialFilter =
-        initialSubagentListFilter(
+    val initialSelection =
+        initialSubagentListSelection(
             runs = runs,
             hasPermissionReviewEvents = activeParentReviewEvents.isNotEmpty(),
         )
-    var selectedFilter by
+    var selectedKind by
         remember(parentChatId) {
             mutableStateOf(
-                initialFilter
+                initialSelection.kind
+            )
+        }
+    var selectedStatus by
+        remember(parentChatId) {
+            mutableStateOf(
+                initialSelection.status
             )
         }
     var searchQuery by remember(parentChatId) { mutableStateOf("") }
     var currentPage by remember(parentChatId) { mutableStateOf(SubagentManagementPage.RUNS) }
-    LaunchedEffect(parentChatId, initialFilter) {
-        if (initialFilter != SubagentListFilter.ALL && selectedFilter == SubagentListFilter.ALL) {
-            selectedFilter = initialFilter
+    LaunchedEffect(parentChatId, initialSelection) {
+        if (initialSelection.kind != SubagentTaskKind.FOREGROUND &&
+            selectedKind == SubagentTaskKind.FOREGROUND
+        ) {
+            selectedKind = initialSelection.kind
+        }
+        if (initialSelection.status != SubagentRunStatusFilter.ALL &&
+            selectedStatus == SubagentRunStatusFilter.ALL
+        ) {
+            selectedStatus = initialSelection.status
         }
     }
     val deniedReviewEvents =
@@ -503,17 +568,27 @@ internal fun SubagentManagementDialog(
                 .distinctBy { event -> event.actionFingerprint }
                 .take(10)
         }
-    val visibleRuns = remember(runs, selectedFilter, searchQuery, autoReviewDisplayName) {
-        filterAndSortSubagentRuns(
+    val visibleRuns =
+        remember(
             runs,
-            selectedFilter,
+            selectedKind,
+            selectedStatus,
             searchQuery,
-            autoReviewDisplayName = autoReviewDisplayName,
-        )
-    }
+            autoReviewDisplayName,
+            memoryExtractionDisplayName,
+        ) {
+            filterAndSortSubagentRuns(
+                runs,
+                kind = selectedKind,
+                statusFilter = selectedStatus,
+                query = searchQuery,
+                autoReviewDisplayName = autoReviewDisplayName,
+                memoryExtractionDisplayName = memoryExtractionDisplayName,
+            )
+        }
     val orphanReviewEvents =
-        remember(activeParentReviewEvents, runs, selectedFilter, searchQuery) {
-            if (selectedFilter != SubagentListFilter.AUTO_REVIEW) {
+        remember(activeParentReviewEvents, runs, selectedKind, selectedStatus, searchQuery) {
+            if (!showsOrphanPermissionReviewEvents(selectedKind, selectedStatus)) {
                 emptyList()
             } else {
                 val normalizedQuery = searchQuery.trim()
@@ -530,19 +605,33 @@ internal fun SubagentManagementDialog(
                     .toList()
             }
         }
-    val counts =
+    // A review event whose run row is gone is still a row of the background list, so it counts there.
+    val orphanReviewEventCount =
         remember(runs, activeParentReviewEvents) {
-            SubagentListFilter.entries.associateWith { filter ->
-                val runCount = filterAndSortSubagentRuns(runs, filter).size
-                if (filter == SubagentListFilter.AUTO_REVIEW) {
-                    val eventsWithoutRuns =
-                        activeParentReviewEvents.count { event ->
-                            findSubagentRunForPermissionReviewEvent(runs, event) == null
-                        }
-                    runCount + eventsWithoutRuns
-                } else {
-                    runCount
-                }
+            activeParentReviewEvents.count { event ->
+                findSubagentRunForPermissionReviewEvent(runs, event) == null
+            }
+        }
+    val kindCounts =
+        remember(runs, orphanReviewEventCount) {
+            SubagentTaskKind.entries.associateWith { kind ->
+                filterAndSortSubagentRuns(runs, kind, SubagentRunStatusFilter.ALL).size +
+                    if (showsOrphanPermissionReviewEvents(kind, SubagentRunStatusFilter.ALL)) {
+                        orphanReviewEventCount
+                    } else {
+                        0
+                    }
+            }
+        }
+    val statusCounts =
+        remember(runs, selectedKind, orphanReviewEventCount) {
+            SubagentRunStatusFilter.entries.associateWith { status ->
+                filterAndSortSubagentRuns(runs, selectedKind, status).size +
+                    if (showsOrphanPermissionReviewEvents(selectedKind, status)) {
+                        orphanReviewEventCount
+                    } else {
+                        0
+                    }
             }
         }
 
@@ -666,13 +755,16 @@ internal fun SubagentManagementDialog(
                     }
                     item(key = "filters") {
                         SubagentFilterRow(
-                            selectedFilter = selectedFilter,
-                            counts = counts,
-                            onSelect = { selectedFilter = it },
+                            selectedKind = selectedKind,
+                            kindCounts = kindCounts,
+                            selectedStatus = selectedStatus,
+                            statusCounts = statusCounts,
+                            onSelectKind = { selectedKind = it },
+                            onSelectStatus = { selectedStatus = it },
                         )
                         HorizontalDivider()
                     }
-                    if (selectedFilter == SubagentListFilter.AUTO_REVIEW) {
+                    if (selectedKind == SubagentTaskKind.BACKGROUND) {
                         item(key = "recent_denied_reviews") {
                             Card(
                                 modifier =
@@ -756,7 +848,7 @@ internal fun SubagentManagementDialog(
                                 text =
                                     if (searchQuery.isNotBlank()) {
                                         stringResource(R.string.subagent_search_empty)
-                                    } else if (selectedFilter == SubagentListFilter.ARCHIVED) {
+                                    } else if (selectedStatus == SubagentRunStatusFilter.ARCHIVED) {
                                         stringResource(R.string.subagent_archived_empty)
                                     } else {
                                         stringResource(R.string.subagent_manage_empty)
@@ -787,7 +879,7 @@ internal fun SubagentManagementDialog(
                                 onRestore = { onRestore(run) },
                             )
                         }
-                        if (selectedFilter == SubagentListFilter.AUTO_REVIEW) {
+                        if (showsOrphanPermissionReviewEvents(selectedKind, selectedStatus)) {
                             items(
                                 items = orphanReviewEvents,
                                 key = { event -> "review-event-${event.id}" },
@@ -1533,78 +1625,179 @@ private fun PermissionReviewStatisticCard(
     }
 }
 
+/**
+ * The category bar: the two categories on the left, the status filter button on the right. The
+ * categories share the width so the pair always fits, however long the status name is.
+ */
 @Composable
 private fun SubagentFilterRow(
-    selectedFilter: SubagentListFilter,
-    counts: Map<SubagentListFilter, Int>,
-    onSelect: (SubagentListFilter) -> Unit,
+    selectedKind: SubagentTaskKind,
+    kindCounts: Map<SubagentTaskKind, Int>,
+    selectedStatus: SubagentRunStatusFilter,
+    statusCounts: Map<SubagentRunStatusFilter, Int>,
+    onSelectKind: (SubagentTaskKind) -> Unit,
+    onSelectStatus: (SubagentRunStatusFilter) -> Unit,
 ) {
-    val filterRows =
-        listOf(
-            listOf(
-                SubagentListFilter.ALL,
-                SubagentListFilter.RUNNING,
-                SubagentListFilter.QUEUED,
-                SubagentListFilter.COMPLETED,
-            ),
-            listOf(
-                SubagentListFilter.AUTO_REVIEW,
-                SubagentListFilter.INTERRUPTED,
-                SubagentListFilter.ERROR,
-                SubagentListFilter.ARCHIVED,
-            ),
-        )
-    Column(
+    Row(
         modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        filterRows.forEach { rowFilters ->
+        SubagentTaskKind.entries.forEach { kind ->
+            SubagentKindChip(
+                kind = kind,
+                selected = kind == selectedKind,
+                count = kindCounts[kind] ?: 0,
+                onClick = { onSelectKind(kind) },
+                modifier = Modifier.weight(1f),
+            )
+        }
+        SubagentStatusFilterButton(
+            selectedStatus = selectedStatus,
+            statusCounts = statusCounts,
+            onSelectStatus = onSelectStatus,
+        )
+    }
+}
+
+/** One category, with how many runs it currently holds. */
+@Composable
+private fun SubagentKindChip(
+    kind: SubagentTaskKind,
+    selected: Boolean,
+    count: Int,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    FilterChip(
+        modifier = modifier,
+        selected = selected,
+        onClick = onClick,
+        label = {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                // The two categories share the row, so their labels are centred in their own chip.
+                horizontalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterHorizontally),
             ) {
-                rowFilters.forEach { filter ->
-                    val count = counts[filter] ?: 0
-                    FilterChip(
-                        selected = filter == selectedFilter,
-                        onClick = { onSelect(filter) },
-                        modifier = Modifier.weight(1f),
-                        label = {
-                            Column(
-                                horizontalAlignment = Alignment.CenterHorizontally,
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    text = subagentFilterLabel(filter),
-                                    maxLines = 2,
-                                    overflow = TextOverflow.Ellipsis,
-                                    textAlign = TextAlign.Center,
-                                )
-                                Text(
-                                    text = count.toString(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    textAlign = TextAlign.Center,
-                                )
-                            }
-                        },
+                Text(
+                    text = subagentKindLabel(kind),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = count.toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        },
+    )
+}
+
+/**
+ * The status narrowing of the current category. It is a menu rather than a row of chips, so the two
+ * categories stay the only thing that takes space; the button wears the active status, and reads
+ * "all statuses" while nothing is narrowed.
+ */
+@Composable
+private fun SubagentStatusFilterButton(
+    selectedStatus: SubagentRunStatusFilter,
+    statusCounts: Map<SubagentRunStatusFilter, Int>,
+    onSelectStatus: (SubagentRunStatusFilter) -> Unit,
+) {
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        FilterChip(
+            selected = selectedStatus != SubagentRunStatusFilter.ALL,
+            onClick = { expanded = true },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Default.Tune,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
+            label = {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(
+                        text = subagentStatusFilterLabel(selectedStatus),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = (statusCounts[selectedStatus] ?: 0).toString(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            },
+            trailingIcon = {
+                Icon(
+                    imageVector = Icons.Default.ExpandMore,
+                    contentDescription = stringResource(R.string.subagent_filter_menu),
+                    modifier = Modifier.size(18.dp),
+                )
+            },
+        )
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            SubagentRunStatusFilter.entries.forEach { status ->
+                DropdownMenuItem(
+                    text = {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(
+                                text = subagentStatusFilterLabel(status),
+                                modifier = Modifier.weight(1f),
+                            )
+                            Text(
+                                text = (statusCounts[status] ?: 0).toString(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    },
+                    leadingIcon = {
+                        if (status == selectedStatus) {
+                            Icon(
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                            )
+                        }
+                    },
+                    onClick = {
+                        expanded = false
+                        onSelectStatus(status)
+                    },
+                )
             }
         }
     }
 }
 
 @Composable
-private fun subagentFilterLabel(filter: SubagentListFilter): String =
-    when (filter) {
-        SubagentListFilter.ALL -> stringResource(R.string.subagent_filter_all)
-        SubagentListFilter.RUNNING -> stringResource(R.string.subagent_filter_running)
-        SubagentListFilter.QUEUED -> stringResource(R.string.subagent_filter_queued)
-        SubagentListFilter.COMPLETED -> stringResource(R.string.subagent_filter_completed)
-        SubagentListFilter.AUTO_REVIEW -> stringResource(R.string.subagent_filter_auto_review)
-        SubagentListFilter.INTERRUPTED -> stringResource(R.string.subagent_filter_interrupted)
-        SubagentListFilter.ERROR -> stringResource(R.string.subagent_filter_error)
-        SubagentListFilter.ARCHIVED -> stringResource(R.string.subagent_filter_archived)
+private fun subagentKindLabel(kind: SubagentTaskKind): String =
+    when (kind) {
+        SubagentTaskKind.FOREGROUND -> stringResource(R.string.subagent_kind_foreground)
+        SubagentTaskKind.BACKGROUND -> stringResource(R.string.subagent_kind_background)
+    }
+
+@Composable
+private fun subagentStatusFilterLabel(status: SubagentRunStatusFilter): String =
+    when (status) {
+        SubagentRunStatusFilter.ALL -> stringResource(R.string.subagent_filter_status_all)
+        SubagentRunStatusFilter.RUNNING -> stringResource(R.string.subagent_filter_running)
+        SubagentRunStatusFilter.QUEUED -> stringResource(R.string.subagent_filter_queued)
+        SubagentRunStatusFilter.COMPLETED -> stringResource(R.string.subagent_filter_completed)
+        SubagentRunStatusFilter.INTERRUPTED -> stringResource(R.string.subagent_filter_interrupted)
+        SubagentRunStatusFilter.ERROR -> stringResource(R.string.subagent_filter_error)
+        SubagentRunStatusFilter.ARCHIVED -> stringResource(R.string.subagent_filter_archived)
     }
 
 /**
@@ -1657,8 +1850,8 @@ private fun SubagentRunRow(
     val childToolInvocations =
         perChatValue(chatCore.lastTurnToolInvocationCountByChatId, run.childChatId) ?: 0
     val status = run.status.toSubagentRunStatus()
-    val isAutoReview =
-        run.agentProfileId == AgentProfileRepository.PERMISSION_REVIEWER_ID
+    val isAutoReview = run.isPermissionReviewSubagentRun()
+    val isMemoryExtraction = run.isMemoryExtractionSubagentRun()
     val isV2Agent =
         run.externalOwnerType ==
             com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE
@@ -1782,14 +1975,16 @@ private fun SubagentRunRow(
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text =
-                        if (isAutoReview) {
-                            stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
-                        } else {
-                            subagentRunTitle(
-                                isV2Agent = isV2Agent,
-                                externalOwnerId = run.externalOwnerId,
-                                agentProfileId = run.agentProfileId,
-                            )
+                        when {
+                            isAutoReview ->
+                                stringResource(R.string.agent_profile_builtin_permission_reviewer_name)
+                            isMemoryExtraction -> stringResource(R.string.subagent_memory_extraction)
+                            else ->
+                                subagentRunTitle(
+                                    isV2Agent = isV2Agent,
+                                    externalOwnerId = run.externalOwnerId,
+                                    agentProfileId = run.agentProfileId,
+                                )
                         },
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,

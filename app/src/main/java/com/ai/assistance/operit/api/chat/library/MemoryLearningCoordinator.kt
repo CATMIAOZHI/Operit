@@ -24,6 +24,11 @@ object MemoryLearningCoordinator {
     const val ACTION = "memory_learning_action"
     const val FINISH = "memory_learning_finish"
     /**
+     * Stamped on every run this coordinator creates, so the conversation list can tell a background
+     * extraction apart from an agent the user delegated to.
+     */
+    const val OWNER_TYPE = "memory-learning"
+    /**
      * Wall-clock ceiling for one batch, derived from the round budget so the round limit stays
      * reachable instead of being cut short by the clock.
      */
@@ -362,7 +367,7 @@ object MemoryLearningCoordinator {
                     // prefix on each of them.
                     providerSessionId=providerSessionIdForScope("memory_learning:$chatId"),
                     promptHooksEnabled=false,disableSummary=false,childHidden=true,
-                    childHiddenReason="MEMORY_LEARNING",externalOwnerType="memory-learning",externalOwnerId=log.id,
+                    childHiddenReason="MEMORY_LEARNING",externalOwnerType=OWNER_TYPE,externalOwnerId=log.id,
                     onRunCreated={ run ->
                         childId=run.childChatId
                         runId=run.id

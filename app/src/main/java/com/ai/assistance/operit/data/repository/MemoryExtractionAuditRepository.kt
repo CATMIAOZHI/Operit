@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.repository
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.SubagentRunEntity
@@ -11,7 +12,7 @@ class MemoryExtractionAuditRepository(context: Context) {
     private val db = AppDatabase.getDatabase(context)
     suspend fun resolve(log: MemoryExtractionLog): SubagentRunEntity? {
         // External-owner lookup also recovers links for logs written before runId was stored.
-        val run = db.subagentRunDao().getByExternalOwner("memory-learning", log.id)
+        val run = db.subagentRunDao().getByExternalOwner(MemoryLearningCoordinator.OWNER_TYPE, log.id)
             .lastOrNull { it.parentChatId == log.sourceChatId && (log.runId.isBlank() || it.id == log.runId) }
             ?: return null
         val chat = db.chatDao().getChatById(run.childChatId)
@@ -20,7 +21,7 @@ class MemoryExtractionAuditRepository(context: Context) {
 }
 
 internal fun isAuthorizedMemoryAuditChat(log: MemoryExtractionLog, run: SubagentRunEntity, chat: ChatEntity?): Boolean =
-    run.externalOwnerType == "memory-learning" && run.externalOwnerId == log.id &&
+    run.externalOwnerType == MemoryLearningCoordinator.OWNER_TYPE && run.externalOwnerId == log.id &&
         run.parentChatId == log.sourceChatId && (log.runId.isBlank() || log.runId == run.id) &&
         (log.childChatId.isBlank() || log.childChatId == run.childChatId) &&
         chat?.id == run.childChatId && chat.isHidden && chat.hiddenReason == "MEMORY_LEARNING" &&
