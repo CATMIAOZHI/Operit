@@ -5,25 +5,33 @@ import com.ai.assistance.operit.data.model.ChatMessage
 /** Boundaries are canonical display prefixes, never offsets into the raw replay stream. */
 internal class SteeredTranscript {
     private data class Boundary(val displayPrefix: String, val nextTimestamp: Long)
-    private val boundaries = mutableListOf<Boundary>()
+
+    /**
+     * Only the newest boundary is ever read, so older prefixes are dropped as newer ones arrive.
+     *
+     * A boundary prefix is the whole displayed turn up to that point, and one turn can publish many
+     * of them: keeping every prefix would hold the entire turn once per boundary, which is most of
+     * what a long tool-heavy turn retains in memory.
+     */
+    private var boundary: Boundary? = null
     private var rootTimestamp: Long? = null
     private var segmentStream: SteeredSegmentStream? = null
     fun finalTimestamp(original: Long): Long =
-        if (rootTimestamp == original) boundaries.lastOrNull()?.nextTimestamp ?: original else original
+        if (rootTimestamp == original) boundary?.nextTimestamp ?: original else original
     fun closeStream() = segmentStream?.close()
 
     fun clear() {
         segmentStream?.close()
         segmentStream = null
-        boundaries.clear()
+        boundary = null
         rootTimestamp = null
     }
 
     fun add(displayPrefix: String, nextTimestamp: Long, assistantTimestamp: Long) {
         if (rootTimestamp == null) rootTimestamp = assistantTimestamp
         require(rootTimestamp == assistantTimestamp)
-        require(boundaries.lastOrNull()?.let { displayPrefix.startsWith(it.displayPrefix) } != false)
-        boundaries += Boundary(displayPrefix, nextTimestamp)
+        require(boundary?.let { displayPrefix.startsWith(it.displayPrefix) } != false)
+        boundary = Boundary(displayPrefix, nextTimestamp)
         segmentStream?.close()
         segmentStream = SteeredSegmentStream()
     }
@@ -35,16 +43,16 @@ internal class SteeredTranscript {
             inputTokens = 0, outputTokens = 0, cachedInputTokens = 0,
             waitDurationMs = 0, outputDurationMs = 0, completedAt = 0,
         ) else input
-        if (boundaries.isEmpty() || message.timestamp != rootTimestamp) return listOf(message)
+        val lastBoundary = boundary ?: return listOf(message)
+        if (message.timestamp != rootTimestamp) return listOf(message)
         val result = mutableListOf<ChatMessage>()
         // onTurnInput persists each segment before sealing it. Replaying sealed rows here
         // would push old pages back into the visible window on every streaming snapshot.
-        val lastBoundary = boundaries.last()
         val start = lastBoundary.displayPrefix.length
         val timestamp = lastBoundary.nextTimestamp
         // A collector may have captured a snapshot before sealing; it cannot overwrite the
         // new segment with that stale text.
-        if (message.content.startsWith(boundaries.last().displayPrefix)) {
+        if (message.content.startsWith(lastBoundary.displayPrefix)) {
             val suffix = message.content.substring(start)
             segmentStream?.update(suffix)
             if (message.contentStream == null) segmentStream?.close()

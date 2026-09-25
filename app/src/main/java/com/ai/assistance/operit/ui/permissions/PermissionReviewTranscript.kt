@@ -65,13 +65,11 @@ internal fun permissionReviewTranscriptEntries(
             return@mapNotNull null
         }
         val content =
-            truncateTranscriptMessage(
-                permissionReviewTranscriptContent(
-                    sender = message.sender,
-                    roleName = message.roleName,
-                    content = message.content,
-                ),
-                maxMessageChars,
+            permissionReviewTranscriptContent(
+                sender = message.sender,
+                roleName = message.roleName,
+                content = message.content,
+                maxMessageChars = maxMessageChars,
             )
         if (content.isBlank()) return@mapNotNull null
         PermissionReviewTranscriptEntry(
@@ -193,7 +191,8 @@ internal fun buildPermissionReviewTranscript(
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
     maxChars: Int = MAX_TRANSCRIPT_CHARS,
 ): String {
-    val sanitizedLiveAssistant = sanitizedLiveAssistantContent(liveAssistantContent)
+    val sanitizedLiveAssistant =
+        sanitizedLiveAssistantContent(liveAssistantContent, maxMessageChars)
     val persistedLiveAssistant =
         sanitizedLiveAssistant?.let { persistedLiveAssistantMessage(history, timingScopeId) }
 
@@ -209,7 +208,7 @@ internal fun buildPermissionReviewTranscript(
         val role =
             persistedLiveAssistant?.let { message -> message.roleName.ifBlank { message.sender } }
                 ?: "assistant"
-        val rendered = "[$role]\n${truncateTranscriptMessage(liveContent, maxMessageChars)}\n"
+        val rendered = "[$role]\n$liveContent\n"
         entries += PermissionReviewTranscriptEntry(rendered = rendered, isUser = false)
     }
 
@@ -222,13 +221,17 @@ internal fun buildPermissionReviewTranscript(
 }
 
 /** The live assistant text a review may show, or null when there is nothing worth showing. */
-internal fun sanitizedLiveAssistantContent(liveAssistantContent: String?): String? =
+internal fun sanitizedLiveAssistantContent(
+    liveAssistantContent: String?,
+    maxMessageChars: Int,
+): String? =
     liveAssistantContent
         ?.let { content ->
             permissionReviewTranscriptContent(
                 sender = "ai",
                 roleName = "assistant",
                 content = content,
+                maxMessageChars = maxMessageChars,
             )
         }
         ?.takeIf(String::isNotBlank)
@@ -243,17 +246,29 @@ internal fun persistedLiveAssistantMessage(
             message.timestamp.toString() == timingScopeId
     }
 
+/**
+ * One entry's text, cut to [maxMessageChars].
+ *
+ * Assistant text is stripped of thinking blocks and cut in a single bounded pass, so a turn that
+ * grew to megabytes is never copied in full for the few thousand characters the review shows. User
+ * and delivered turns keep their text as delivered and are cut on their own. [maxMessageChars]
+ * defaults to the budget the transcript itself cuts to, so leaving it out is the review's own cut
+ * rather than a read of the whole entry.
+ */
 internal fun permissionReviewTranscriptContent(
     sender: String,
     roleName: String,
     content: String,
+    maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
 ): String =
     if (sender.equals("ai", ignoreCase = true) ||
         roleName.equals("assistant", ignoreCase = true)
     ) {
-        ChatUtils.removeThinkingContent(content)
+        truncateTranscriptMessage(
+            ChatUtils.removeThinkingContentWindow(content, maxMessageChars)
+        )
     } else {
-        content
+        truncateTranscriptMessage(content, maxMessageChars)
     }
 
 internal fun truncateTranscriptMessage(value: String, maxMessageChars: Int): String {
@@ -263,6 +278,25 @@ internal fun truncateTranscriptMessage(value: String, maxMessageChars: Int): Str
     val available = (maxMessageChars - marker.length).coerceAtLeast(0)
     val prefix = available / 2
     return value.take(prefix) + marker + value.takeLast(available - prefix)
+}
+
+/**
+ * [truncateTranscriptMessage] for a text the scan already windowed, in the same shape.
+ *
+ * The window holds the head and the tail of the trimmed visible text under the same budget it was
+ * scanned for, so the two slices this cuts are the slices the unwindowed call would have cut,
+ * without the copy of the whole text.
+ */
+internal fun truncateTranscriptMessage(window: ChatUtils.DisplayOnlyVisibleText): String {
+    val maxMessageChars = window.windowChars
+    if (window.length <= maxMessageChars) return window.headWindow
+    val omitted = window.length - maxMessageChars
+    val marker = "\n<transcript_truncated omitted_chars=\"$omitted\" />\n"
+    val available = (maxMessageChars - marker.length).coerceAtLeast(0)
+    val prefix = available / 2
+    return window.headWindow.take(prefix) +
+        marker +
+        window.tailWindow.takeLast(available - prefix)
 }
 
 internal fun isAssistantTranscriptMessage(sender: String, roleName: String): Boolean =

@@ -80,10 +80,15 @@ class ConversationRoundManager {
      * @return Clean content without round separators
      */
     fun getDisplayContent(): String {
-        val buffer = StringBuilder()
-
         // Add rounds in order
         val sortedKeys = roundContents.keys.filter { it >= 0 }.sorted()
+
+        // A tool-heavy turn reaches megabytes, and this runs once per tool batch, so the buffer is
+        // sized from the rounds it is about to copy instead of doubling its way there.
+        var expectedLength = (sortedKeys.size - 1).coerceAtLeast(0)
+        sortedKeys.forEach { round -> expectedLength += roundContents[round]?.length ?: 0 }
+        roundContents[-1]?.let { expectedLength += 1 + it.length }
+        val buffer = StringBuilder(expectedLength.coerceAtLeast(0))
 
         sortedKeys.forEachIndexed { index, round ->
             val content = roundContents[round] ?: SmartString()
