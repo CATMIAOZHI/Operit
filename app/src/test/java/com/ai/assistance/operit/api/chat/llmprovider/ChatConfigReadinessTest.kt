@@ -101,8 +101,9 @@ class ChatConfigReadinessTest {
     }
 
     @Test
-    fun localProviderDoesNotRequireEndpointOrKey() {
-        assertReady(
+    fun retiredLocalProviderIsUnavailableWithoutDestroyingItsConfig() {
+        assertIssue(
+            ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE,
             ModelConfigData(
                 id = "mnn",
                 name = "MNN",

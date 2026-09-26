@@ -56,6 +56,9 @@ object ChatConfigReadiness {
 
         val providerType = ApiProviderType.fromProviderTypeId(providerTypeId)
             ?: return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
+        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
+            return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
+        }
         if (providerType in setOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)
             && !accountAuthenticated) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED)
@@ -66,10 +69,6 @@ object ChatConfigReadiness {
         val validModelIndex = getValidModelIndex(config.modelName, modelIndex)
         if (getModelByIndex(config.modelName, validModelIndex).isBlank()) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.MODEL_MISSING)
-        }
-
-        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
-            return ChatConfigReadinessResult()
         }
 
         val completedEndpoint = EndpointCompleter.completeEndpoint(config.apiEndpoint, providerType)

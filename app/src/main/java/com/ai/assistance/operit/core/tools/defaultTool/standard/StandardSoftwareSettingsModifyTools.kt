@@ -1687,6 +1687,9 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 throw IllegalArgumentException("Invalid api_provider_type: $raw")
             }
             val provider = parseApiProviderType(providerTypeId) ?: ApiProviderType.OTHER
+            require(provider != ApiProviderType.MNN && provider != ApiProviderType.LLAMA_CPP) {
+                context.getString(com.ai.assistance.operit.R.string.local_llm_removed)
+            }
             updated = updated.copy(
                 apiProviderType = provider,
                 apiProviderTypeId = providerTypeId

@@ -59,8 +59,8 @@ enum class ApiProviderType {
         OLLAMA, // Ollama 本地/私有部署服务（OpenAI兼容）
         OLLAMA_CLOUD, // Ollama 云端服务（OpenAI兼容，需要 API Key）
         OPENAI_LOCAL, // OpenAI兼容本地模型服务
-        MNN, // MNN本地推理引擎
-        LLAMA_CPP, // llama.cpp 本地推理引擎
+        MNN, // Retired: retained only to deserialize existing configurations/backups.
+        LLAMA_CPP, // Retired: retained only to deserialize existing configurations/backups.
         PPINFRA, // 派欧云
         NOVITA, // Novita AI
         OTHER; // 其他提供商（自定义端点）
