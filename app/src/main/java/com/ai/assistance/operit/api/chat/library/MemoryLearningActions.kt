@@ -87,18 +87,22 @@ class MemoryLearningActions(
                         put(JSONObject().put("name",it.name).put("description",it.description)
                             .put("learned_in_this_space",it.name in owned))
                     }
+                    stagedChanges?.filter { it.kind=="skill" }?.forEach {
+                        put(JSONObject().put("name",it.title).put("description",it.description)
+                            .put("learned_in_this_space",true).put("staged",true))
+                    }
                 })
             }
             "skill_read" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val created = stagedSkillCreate(stagedChanges, name)
                 if (created != null) {
-                    // The batch's own draft is not installed yet, so it has no version and no files.
-                    check(path=="SKILL.md") {
-                        "This skill was created in this batch and is not installed yet, so it has no $path."
-                    }
-                    return JSONObject().put("content", created.body).put("version","")
-                        .put("exists",false).put("staged",true).put("files",JSONArray().put("SKILL.md"))
+                    LearnedSkillRepository.validatePath(path)
+                    val content = if(path=="SKILL.md") created.body else created.files[path]
+                    readVersions["$name/$path"] = "draft"
+                    return JSONObject().put("content", content.orEmpty()).put("version","draft")
+                        .put("exists",content!=null).put("staged",true)
+                        .put("files",JSONArray(listOf("SKILL.md")+created.files.keys))
                         .put("directory_version","")
                 }
                 val snapshot = skills.read(name,path)
@@ -121,20 +125,21 @@ class MemoryLearningActions(
                 // Frontmatter is composed for you, so a supplied header is stripped before the
                 // length check; otherwise this would accept a draft the installer rejects.
                 val body = stripSkillFrontmatter(arg("content").trim())
-                require(body.length in LearnedSkillRepository.MIN_SKILL_BODY_CHARS..
-                    LearnedSkillRepository.MAX_SKILL_BODY_CHARS) {
-                    "Skill content must be ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-" +
-                        "${LearnedSkillRepository.MAX_SKILL_BODY_CHARS} characters, without YAML frontmatter"
-                }
+                validateDraftBody(body)
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
                     .put("description",arg("description")).put("body",body)),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
                 check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
-                reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated)))
+                reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated,
+                    stagedSkillCreate(stagedChanges,name)?.files.orEmpty())))
             }
             "skill_delete" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
-                skillActionBlock(action,path,stagedSkillCreate(stagedChanges,name)!=null)?.let { error(it) }
+                if (stagedSkillCreate(stagedChanges,name)!=null) {
+                    stagedChanges!!.removeAll { it.title==name && it.kind in setOf("skill","skill_file") }
+                    return JSONObject().put("status","withdrawn").put("name",name)
+                        .put("message","Draft withdrawn. No installed skill was deleted.")
+                }
                 if (background) check(name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
                     "Background deletion is limited to enabled learned skills in this space"
@@ -148,7 +153,28 @@ class MemoryLearningActions(
             }
             "skill_write","skill_patch","skill_remove_file" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
-                skillActionBlock(action,path,stagedSkillCreate(stagedChanges,name)!=null)?.let { error(it) }
+                skillActionBlock(action,path)?.let { error(it) }
+                stagedSkillCreate(stagedChanges,name)?.let { created ->
+                    LearnedSkillRepository.validatePath(path)
+                    check(readVersions["$name/$path"]=="draft") { "Read this draft file before editing it" }
+                    val before = if(path=="SKILL.md") created.body else created.files[path].orEmpty()
+                    val text = if(action=="skill_patch") editText(before,"replace",arg("content"),arg("old_text"))
+                        else arg("content")
+                    val updated = if(path=="SKILL.md") {
+                        val body=stripSkillFrontmatter(text.trim())
+                        validateDraftBody(body)
+                        created.copy(body=body)
+                    } else {
+                        val files=created.files.toMutableMap()
+                        if(action=="skill_remove_file") files.remove(path) else files[path]=text
+                        validateDraftFiles(files)
+                        created.copy(files=files)
+                    }
+                    return reviews.toJson(reviews.applyAutomaticDecision(context,reviews.propose(updated)))
+                }
+                check(stagedChanges?.none { it.kind=="skill_delete" && it.title==name } != false) {
+                    "This batch already deletes the whole skill; do not edit its files."
+                }
                 val before = skills.read(name,path)
                 val expected = if(background) readVersions["$name/$path"] else arg("version")
                 check(expected==before.version) { "Read this file before editing it" }
@@ -201,17 +227,21 @@ internal fun stagedSkillCreate(changes: List<MemoryReviewChange>?, name: String)
 internal fun stagedDocument(changes: List<MemoryReviewChange>?, user: Boolean) =
     changes?.lastOrNull { it.kind == if (user) "user" else "notes" }
 /**
- * Null when a skill-file action may proceed, otherwise the message that tells the reviewer what to do
- * instead. A skill that exists only as this batch's draft has no files on disk to read or change, and
- * SKILL.md is never removable.
+ * SKILL.md is never removable on its own, whether staged or installed.
  */
-internal fun skillActionBlock(action: String, path: String, drafted: Boolean): String? = when {
-    drafted -> "This skill was created in this batch and is not installed yet, so it has no files here; " +
-        "resubmit its full content with skill_create to revise it."
+internal fun skillActionBlock(action: String, path: String): String? = when {
     action=="skill_remove_file" && path=="SKILL.md" ->
         "Pass path to remove one companion file under references/, scripts/, templates/ or assets/, " +
             "or delete the whole skill with skill_delete."
     else -> null
+}
+
+private fun validateDraftBody(body: String) {
+    require(body.length in LearnedSkillRepository.MIN_SKILL_BODY_CHARS..LearnedSkillRepository.MAX_SKILL_BODY_CHARS) {
+        "Skill body has ${body.length} characters; expected ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-" +
+            "${LearnedSkillRepository.MAX_SKILL_BODY_CHARS}. Keep a concise main procedure; move longer material " +
+            "to companion files with skill_write after skill_create. YAML frontmatter is added automatically."
+    }
 }
 
 internal fun editText(current: String, operation: String, content: String, old: String): String = when(operation) {

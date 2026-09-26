@@ -101,6 +101,42 @@ class MemoryLearningBatchTest {
         assertEquals(1,staged.count { it.title=="demo-skill" && it.path=="SKILL.md" })
         assertEquals(1,staged.count { it.title=="demo-skill" && it.path=="references/notes.md" })
     }
+    @Test fun deletingAnInstalledSkillDiscardsEarlierFileEdits() = runBlocking {
+        val context=context()
+        val staged=mutableListOf<MemoryReviewChange>()
+        val repo=MemoryReviewRepository(context,"space",staged)
+        val before=LearnedSkillRepository.Snapshot("original","v1",true)
+        repo.proposeSkillFile("demo-skill","SKILL.md",before,"new main")
+        repo.proposeSkillFile("demo-skill","references/notes.md",before,"new notes")
+        repo.proposeSkillFile("other-skill","SKILL.md",before,"other")
+        repo.proposeSkillDeletion("demo-skill",before)
+        assertEquals(listOf("skill_file","skill_delete"),staged.map { it.kind })
+        assertEquals("other-skill",staged.first().title)
+        assertEquals("v1",staged.last().baseVersion)
+    }
+    @Test fun companionFilesSurviveJournalExportAndManualRevision() = runBlocking {
+        val context=context()
+        val body="A repeatable procedure with prerequisites, steps and checks."
+        val change=MemoryReviewChange("draft","skill","demo-skill",body,description="Demo",
+            files=mapOf("references/guide.md" to "Full reference"))
+        val journal=MemoryLearningJournal(context,"space","chat")
+        journal.complete(listOf("skills"),LearningCursor(9),false,listOf(change))
+        MemoryLearningJournal(context,"space","chat").export()
+        val repo=MemoryReviewRepository(context,"space")
+        assertEquals(change.files,repo.list().single().files)
+        val revised=repo.revise("draft",body+" Updated.","Updated")
+        assertEquals(change.files,revised.files)
+        assertEquals(change.files,repo.list().first { it.id==revised.id }.files)
+    }
+    @Test fun draftCompanionsRejectTraversalAndFileDirectoryConflicts() {
+        for(files in listOf(mapOf("references/../outside" to "bad"),
+            mapOf("references/a" to "file","references/a/b" to "nested"))) {
+            try {
+                com.ai.assistance.operit.data.preferences.validateDraftFiles(files)
+                fail("Invalid companion paths must be rejected")
+            } catch (_: IllegalArgumentException) {}
+        }
+    }
     @Test fun stagedSkillCannotSwitchKindMidBatchButCanBeResubmitted() = runBlocking {
         val context=context()
         val staged=mutableListOf<MemoryReviewChange>()
@@ -135,34 +171,30 @@ class MemoryLearningBatchTest {
         // The staged file is still measured against the baseline the batch first read.
         assertEquals("v1",staged.single().baseVersion)
     }
-    @Test fun skillFileActionsRejectABatchThatOnlyDraftedTheSkill() = runBlocking {
+    @Test fun draftFilesCanBeReadRevisedAndWithdrawnBeforeInstallation() = runBlocking {
         val context=context()
         val staged=mutableListOf<MemoryReviewChange>()
-        staged.add(MemoryReviewChange("draft","skill","demo-skill","draft body",description="Demo skill"))
+        val body="A repeatable procedure with prerequisites, steps and checks."
+        staged.add(MemoryReviewChange("draft","skill","demo-skill",body,description="Demo skill"))
         val actions=MemoryLearningActions(context,"space","chat",notesEnabled=false,skillsEnabled=true,
             background=true,stagedChanges=staged)
-        // A skill that only exists as a staged draft is not installed, so its files cannot be written,
-        // read from disk or deleted; the draft itself is resubmitted whole instead.
-        for(action in listOf("skill_write","skill_patch","skill_remove_file","skill_delete")) {
-            try {
-                actions.execute(action,mapOf("name" to "demo-skill","content" to "rewrite",
-                    "old_text" to "draft","path" to "SKILL.md","version" to "v1"))
-                fail("$action should be rejected while the skill is only a draft")
-            } catch (e: IllegalStateException) {
-                assertTrue("$action: ${e.message}",e.message.orEmpty().contains("not installed yet"))
-            }
-        }
-        // The draft itself is readable, but it has no companion files to read.
         val draft=actions.execute("skill_read",mapOf("name" to "demo-skill"))
-        assertEquals("draft body",draft.getString("content"))
+        assertEquals(body,draft.getString("content"))
         assertTrue(draft.getBoolean("staged"))
-        try {
-            actions.execute("skill_read",mapOf("name" to "demo-skill","path" to "references/x.md"))
-            fail()
-        } catch (e: IllegalStateException) {
-            assertTrue(e.message.orEmpty().contains("not installed yet"))
-        }
+        actions.execute("skill_patch",mapOf("name" to "demo-skill","old_text" to "checks",
+            "content" to "verification checks"))
+        assertTrue(staged.single().body.contains("verification checks"))
+        val fileArgs=mapOf("name" to "demo-skill","path" to "references/x.md")
+        assertFalse(actions.execute("skill_read",fileArgs).getBoolean("exists"))
+        actions.execute("skill_write",fileArgs+("content" to "reference content"))
         assertEquals(1,staged.size)
+        assertEquals("reference content",staged.single().files["references/x.md"])
+        assertEquals("reference content",actions.execute("skill_read",fileArgs).getString("content"))
+        actions.execute("skill_remove_file",fileArgs)
+        assertTrue(staged.single().files.isEmpty())
+        assertEquals("withdrawn",actions.execute("skill_delete",mapOf("name" to "demo-skill")).getString("status"))
+        assertTrue(staged.isEmpty())
+        assertTrue(MemoryReviewRepository(context,"space").list().isEmpty())
     }
     @Test fun deletingAConversationDropsItsPendingProgressOnly() = runBlocking {
         val context=context()
@@ -277,12 +309,11 @@ class MemoryLearningBatchTest {
         }
     }
     @Test fun skillActionBlockOnlyRejectsCallsThatCannotSucceed() {
-        assertNull(skillActionBlock("skill_write","SKILL.md",false))
-        assertNull(skillActionBlock("skill_patch","references/notes.md",false))
-        assertNull(skillActionBlock("skill_remove_file","references/notes.md",false))
-        assertNull(skillActionBlock("skill_delete","SKILL.md",false))
-        assertTrue(skillActionBlock("skill_remove_file","SKILL.md",false)!!.contains("skill_delete"))
-        assertTrue(skillActionBlock("skill_patch","references/notes.md",true)!!.contains("skill_create"))
+        assertNull(skillActionBlock("skill_write","SKILL.md"))
+        assertNull(skillActionBlock("skill_patch","references/notes.md"))
+        assertNull(skillActionBlock("skill_remove_file","references/notes.md"))
+        assertNull(skillActionBlock("skill_delete","SKILL.md"))
+        assertTrue(skillActionBlock("skill_remove_file","SKILL.md")!!.contains("skill_delete"))
     }
     @Test fun stagedLookupsIgnoreUnrelatedKindsAndPaths() {
         val changes=listOf(

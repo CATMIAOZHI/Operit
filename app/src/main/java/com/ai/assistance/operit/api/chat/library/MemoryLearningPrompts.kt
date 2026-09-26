@@ -77,7 +77,7 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             limit, trim or replace inside this batch before adding more. A whole-file rewrite of an installed
             SKILL.md must keep its YAML frontmatter: the file starts with ---, and its name must equal the skill
             name and its description must not be empty.
-            Only previously approved, automatically learned skills in this space can be revised automatically.
+            Existing skills can be revised automatically only if learned in this space with revision enabled.
         """.trimIndent())
         else appendLine("Skill extraction is not scheduled for this run. Do not list, read or change skills.")
         appendLine("""
@@ -86,7 +86,12 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             while its version stays the on-disk one, and a later change to the same target replaces the earlier one,
             so only the last version is submitted. A version that differs from your earlier read means the target
             changed outside this batch, so read it again before changing it.
-            Submit a new skill whole in skill_create; only an installed skill can take companion files.
+            Submit a new skill's main body in skill_create. Its staged SKILL.md reads as body only;
+            skill_write/skill_patch can revise that body, and companion files can be read and written immediately.
+            All files of a new skill form ONE proposal and are installed together. Limit companion files to
+            20 files, 120000 characters total, and 24000 characters per file.
+            skill_delete on a new draft withdraws it and all its files; nothing is installed or deleted on disk.
+            skill_delete on an installed skill supersedes earlier file edits in this batch.
             If auto-approval is disabled, changes remain pending for review.
             No fabricated successful testing. If nothing qualifies, do not invent a change.
             If an operation is outside this run's scope, do not retry it; continue the enabled work or finish.
@@ -112,6 +117,10 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean): S
         skill_create: name must match [a-z][a-z0-9-]{2,63} (no underscores);
         description is one line, at most 60 characters is expected (${LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS} is the hard limit);
         content is the body only, ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-${LearnedSkillRepository.MAX_SKILL_BODY_CHARS} characters, without YAML frontmatter.
+        New drafts support skill_read/write/patch and companion files before installation. Read before editing.
+        A draft SKILL.md is body only; an installed SKILL.md includes YAML frontmatter and must keep it.
+        New draft companion limits: 20 files, 120000 characters total, ${LearnedSkillRepository.MAX_SKILL_FILE_CHARS} per file.
+        skill_delete withdraws a new draft including all its files; on an installed skill it replaces earlier file edits.
         skill_remove_file deletes one companion file under references/, scripts/, templates/ or assets/;
         SKILL.md is never removable, delete the whole skill with skill_delete instead.
     """.trimIndent())

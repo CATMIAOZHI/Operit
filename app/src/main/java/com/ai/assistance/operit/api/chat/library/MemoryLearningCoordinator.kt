@@ -358,7 +358,7 @@ object MemoryLearningCoordinator {
                 session.evidenceBytes.set((batch.text + instructions).toByteArray(Charsets.UTF_8).size.toLong())
                 val result = SubagentCoordinator.getInstance(context).runTask(SubagentTaskRequest(
                     parentChatId=chatId,parentToolCallId=null,parentAgentName=null,
-                    title=context.getString(R.string.memory_learning_run),prompt="$instructions\n\nSOURCE BATCH:\n${batch.text}",
+                    title=context.getString(R.string.memory_learning_run),prompt="SOURCE BATCH:\n${batch.text}",
                     subagentType="memory-learning",functionType=FunctionType.MEMORY,
                     profileOverride=AgentProfile("memory-learning","Memory learning","",AgentMode.SUBAGENT,instructions,hidden=true),
                     isolatedToolPrompts=prompts(notes, skills),terminalToolNames=setOf(FINISH),

@@ -43,7 +43,8 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     var hits by remember { mutableStateOf<List<ChatRecallHit>>(emptyList()) }
     var sessions by remember { mutableStateOf<List<ChatRecallSession>>(emptyList()) }
     var full by remember { mutableStateOf<List<ChatRecallPart>?>(null) }
-    var sourceChat by rememberSaveable { mutableStateOf<String?>(null) }
+    // The loaded page and its action target must have the same lifetime.
+    var sourceChat by remember { mutableStateOf<String?>(null) }
     var browsingSession by remember { mutableStateOf(false) }
     var offset by remember { mutableStateOf(0) }
     var more by remember { mutableStateOf(false) }
@@ -75,8 +76,10 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     }
     var activeWork by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     fun run(block: suspend () -> Unit) {
+        if (busy) return
+        busy=true
         activeWork = scope.launch {
-            busy=true; message=null
+            message=null
             try { block() }
             catch(e: CancellationException) { throw e }
             catch(e: Exception) { message=recallError }
@@ -103,9 +106,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
         offset=next
     }
     LaunchedEffect(Unit) {
-        try { load(false) }
-        catch(e: CancellationException) { throw e }
-        catch(e: Exception) { message=recallError }
+        run { load(false) }
     }
     fullMessage?.let { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
