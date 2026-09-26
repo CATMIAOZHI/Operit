@@ -54,6 +54,13 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
     var showExportDialog by remember { mutableStateOf(false) }
     var showWindowsExportDialog by remember { mutableStateOf(false) }
     var showProgressDialog by remember { mutableStateOf(false) }
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(exportJob) {
+        val completion = exportJob?.invokeOnCompletion {
+            if (it is kotlinx.coroutines.CancellationException) showProgressDialog = false
+        }
+        onDispose { completion?.dispose() }
+    }
     var showCompleteDialog by remember { mutableStateOf(false) }
 
     var exportProgress by remember { mutableStateOf(0f) }
@@ -179,7 +186,7 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
             onExport = { packageName, appName, iconUri, versionName, versionCode ->
                 showExportDialog = false
                 showProgressDialog = true
-                coroutineScope.launch {
+                exportJob = coroutineScope.launch {
                     val externalFilesDir = context.getExternalFilesDir(null)
                         ?: throw IllegalStateException("External files directory not available.")
                     val tempWorkDir = File(externalFilesDir, "html_packager_temp_${System.currentTimeMillis()}")
@@ -223,12 +230,13 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
                             }
                         )
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         exportResult = Result.failure(e)
                         showProgressDialog = false
                         showCompleteDialog = true
                     } finally {
                         // 5. 无论成功与否，都清理临时文件夹
-                        withContext(Dispatchers.IO) {
+                        withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                             if (tempWorkDir.exists()) {
                                 tempWorkDir.deleteRecursively()
                             }
@@ -247,7 +255,7 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
             onExport = { appName, iconUri ->
                 showWindowsExportDialog = false
                 showProgressDialog = true
-                coroutineScope.launch {
+                exportJob = coroutineScope.launch {
                     val externalFilesDir = context.getExternalFilesDir(null)
                         ?: throw IllegalStateException("External files directory not available.")
                     val tempWorkDir = File(externalFilesDir, "html_packager_temp_${System.currentTimeMillis()}")
@@ -285,11 +293,12 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
                             }
                         )
                     } catch (e: Exception) {
+                        if (e is kotlinx.coroutines.CancellationException) throw e
                         exportResult = Result.failure(e)
                         showProgressDialog = false
                         showCompleteDialog = true
                     } finally {
-                        withContext(Dispatchers.IO) {
+                        withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
                             if (tempWorkDir.exists()) {
                                 tempWorkDir.deleteRecursively()
                             }
@@ -304,7 +313,7 @@ fun HtmlPackagerScreen(onGoBack: () -> Unit) {
         ExportProgressDialog(
             progress = exportProgress,
             status = exportStatus,
-            onCancel = { /* Cancel logic can be added here */ }
+            onCancel = { exportJob?.cancel(); showProgressDialog = false }
         )
     }
 

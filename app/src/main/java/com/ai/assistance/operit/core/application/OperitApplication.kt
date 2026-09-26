@@ -139,6 +139,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         val startTime = System.currentTimeMillis()
         appStartupTimeMs = startTime
         instance = this
+        com.ai.assistance.operit.terminal.TerminalManager.setUbuntuArchivePreparer { context, target ->
+            com.ai.assistance.operit.util.OnDemandResources.ensureUbuntu(context, target)
+        }
 
         configureOpenMpEnvironment()
         Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(this))

@@ -146,6 +146,10 @@ androidComponents.onVariants { variant ->
 }
 
 android {
+    androidResources {
+        // Exact asset names, including assets merged from the terminal library.
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:sherpa-ncnn-streaming-zipformer-bilingual-zh-en-2023-02-13:ubuntu-noble-aarch64-pd-v4.18.0.tar.xz:android.apk:windows.zip"
+    }
     namespace = "com.ai.assistance.operit"
     compileSdk = 36
 

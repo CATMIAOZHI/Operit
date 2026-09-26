@@ -175,6 +175,13 @@ fun ChatScreenContent(
     var showAndroidExportDialog by remember { mutableStateOf(false) }
     var showWindowsExportDialog by remember { mutableStateOf(false) }
     var showExportProgressDialog by remember { mutableStateOf(false) }
+    var exportJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    DisposableEffect(exportJob) {
+        val completion = exportJob?.invokeOnCompletion {
+            if (it is kotlinx.coroutines.CancellationException) showExportProgressDialog = false
+        }
+        onDispose { completion?.dispose() }
+    }
     var showExportCompleteDialog by remember { mutableStateOf(false) }
     var exportProgress by remember { mutableStateOf(0f) }
     var exportStatus by remember { mutableStateOf("") }
@@ -909,7 +916,7 @@ fun ChatScreenContent(
                         exportStatus = context.getString(R.string.chat_starting_export)
 
                         // 启动导出过程
-                        coroutineScope.launch {
+                        exportJob = coroutineScope.launch {
                             exportAndroidApp(
                                     context = context,
                                     packageName = packageName,
@@ -947,7 +954,7 @@ fun ChatScreenContent(
                         exportStatus = context.getString(R.string.chat_starting_export)
 
                         // 启动导出过程
-                        coroutineScope.launch {
+                        exportJob = coroutineScope.launch {
                             exportWindowsApp(
                                     context = context,
                                     appName = appName,
@@ -975,7 +982,7 @@ fun ChatScreenContent(
             ExportProgressDialog(
                     progress = exportProgress,
                     status = exportStatus,
-                    onCancel = { showExportProgressDialog = false }
+                    onCancel = { exportJob?.cancel(); showExportProgressDialog = false }
             )
         }
 

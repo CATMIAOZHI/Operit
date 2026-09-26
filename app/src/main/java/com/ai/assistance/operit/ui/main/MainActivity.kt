@@ -1074,6 +1074,9 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        com.ai.assistance.operit.ui.components.ResourceDownloadPanel(
+                            Modifier.align(Alignment.BottomCenter)
+                        )
                     }
                     // 插件加载界面 (带有淡出效果) - 始终在最上层
                     PluginLoadingScreenWithState(
