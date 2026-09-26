@@ -19,7 +19,7 @@
 - Windows 上固定使用 `.\gradlew.bat <任务> --no-daemon --console=plain` 执行 Gradle。禁止通过 `| Select-Object -Last`、`Tee-Object` 等 PowerShell 实时管道运行 Gradle；需要保留或截取输出时，先将完整输出重定向到日志文件，命令结束后再读取日志末尾。
 - 所有可能长期运行的命令必须设置硬超时。达到超时后立即终止本次命令的整个进程树并输出已保存的日志，禁止无限等待。
 - 首次构建先执行 `git submodule update --init --recursive terminal`。
-- 完整 Android 构建需要 README/编译指南列出的 `models.zip`、`subpack.zip`、`jniLibs.zip` 和 `libs.zip` 内容；这些本地依赖不得提交。
+- 完整 Android 构建需要 `models.zip`、`jniLibs.zip` 和 `libs.zip` 内容，下载及校验入口见 `ci/README.md`；导出模板已改为运行时按需下载，不再需要 `subpack.zip`。这些本地依赖不得提交。
 - 隔离 worktree 不会继承被忽略的本机构建输入（如 `local.properties`、`app/libs` 本地依赖）或子模块状态。构建前先补齐并初始化，且不得提交；若仅 worktree 报缺依赖，先检查这些输入，不要改源码。
 - 原生第三方依赖（ncnn、sherpa-ncnn、WAMR、QuickJS、Saba、Bullet3、ufbx）已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`；升级时更新该清单和对应 `CMakeLists.txt`，不要通过 `OPERIT_*_GIT_REF` 命令行参数覆盖（已不再生效）。
 - 根据改动范围运行最小充分验证：默认优先编译，只运行与本次修改直接相关的测试；没有直接相关测试时只做编译检查，小改动无明显回归风险时不额外补测试，已通过的测试不重复运行。不得仅为提高信心主动运行完整 `testDebugUnitTest`；全量测试和耗时的集成/UI 测试仅在用户明确要求、合并或 PR 最终验证、CI，或核心基础设施改动确有必要时运行。测试超时应覆盖 Gradle 冷启动和增量编译：聚焦 JVM 单测默认设置 10 分钟硬超时，其他任务按预计耗时设置明确上限；若连续 5 分钟没有新日志、CPU/进程活动或输出文件变化，应终止整个进程树并分析原因，不得仅因运行超过 60 秒判定失败。

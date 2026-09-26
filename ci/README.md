@@ -56,9 +56,9 @@ PR workflow 只有 `contents: read` 权限，不读取仓库 secret，也不上�
 
 ## Android dependencies
 
-JVM lane 只下载 `libs.zip`，完整 Android lane 下载四个固定归档。`download_android_dependencies.sh` 使用固定 Google Drive file ID；`prepare_android_dependencies.py` 限制成员数量、解压大小、压缩比和文件类型，重建固定输出根目录，只验证本次实际解出的文件，并拒绝越界路径、重复成员及符号链接。
+JVM lane 只下载 `libs.zip`，完整 Android lane 下载 `libs.zip`、`models.zip` 和 `jniLibs.zip`。`download_android_dependencies.sh` 使用个人仓库 `deps-v1` Release 中的固定镜像，并校验每个归档的 SHA-256；导出模板已改为运行时按需下载，不再需要 `subpack.zip`。`prepare_android_dependencies.py` 限制成员数量、解压大小、压缩比和文件类型，重建固定输出根目录，只验证本次实际解出的文件，并拒绝越界路径、重复成员及符号链接。
 
-这些 Drive 归档目前还没有内容 hash。归档内容寻址与许可证清单继续由[外部制品清单计划](../docs/TODO/refactor_building_sys/3_ExternalArtifactManifest.md)跟踪，在取得并审计真实归档前不记录推测值。
+镜像归档的 SHA-256 已与 GitHub Release 资产的 digest 核对并固定在下载脚本中。进一步的内容寻址与许可证清单继续由[外部制品清单计划](../docs/TODO/refactor_building_sys/3_ExternalArtifactManifest.md)跟踪。
 
 ## Android lint baseline
 
