@@ -342,6 +342,7 @@ class SkillManager private constructor(private val context: Context) {
         return importSkillFromZipDetailed(zipFile, subDirPathInZip).message
     }
 
+    @Synchronized
     fun importSkillFromZipDetailed(zipFile: File, subDirPathInZip: String?, notifyPrefix: Boolean = true): SkillImportResult {
         if (!zipFile.exists() || !zipFile.canRead()) {
             return SkillImportResult(context.getString(R.string.skill_error_cannot_read_file, zipFile.absolutePath), null)
@@ -462,9 +463,10 @@ class SkillManager private constructor(private val context: Context) {
                 return SkillImportResult(context.getString(R.string.skill_error_import_duplicate_name, finalDir.name), null)
             }
 
-            // Copy the detected skill directory to final location
+            // Publish the fully extracted directory at once; interrupted copies must not leave
+            // a partial installed skill that blocks a retry as a duplicate.
             runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(metaName.ifBlank { finalDir.name }) }
-            selectedSkillDir.copyRecursively(finalDir, overwrite = false)
+            java.nio.file.Files.move(selectedSkillDir.toPath(), finalDir.toPath())
             cleanupTmp()
 
             // refresh cache

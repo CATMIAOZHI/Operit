@@ -74,7 +74,8 @@ data class MemoryReviewChange(
     val audits: String = "",
     val path: String = "SKILL.md",
     val operation: String = "write",
-    val automatic: Boolean = false
+    val automatic: Boolean = false,
+    val files: Map<String, String> = emptyMap()
 )
 
 class MemoryReviewRepository internal constructor(
@@ -120,7 +121,8 @@ class MemoryReviewRepository internal constructor(
                 obj.optString("baseVersion"), obj.optString("addition"), obj.optString("sourceChatId"),
                 obj.getLong("createdAt"), obj.getString("status"), obj.optLong("reviewedAt"),
                 obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"),
-                obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"))
+                obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"),
+                readFiles(obj))
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
@@ -142,6 +144,12 @@ class MemoryReviewRepository internal constructor(
         .put("createdAt", d.createdAt).put("status", d.status).put("reviewedAt", d.reviewedAt)
         .put("reviewer", d.reviewer).put("reason", d.reason).put("audits", d.audits)
         .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
+        .put("files", JSONObject(d.files))
+
+    private fun readFiles(obj: JSONObject): Map<String, String> =
+        obj.optJSONObject("files")?.let { files ->
+            files.keys().asSequence().associateWith { files.getString(it) }
+        }.orEmpty()
 
     suspend fun list(): List<MemoryReviewChange> = withContext(Dispatchers.IO) {
         mutex.withLock { read().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
@@ -154,6 +162,11 @@ class MemoryReviewRepository internal constructor(
     }
     suspend fun propose(change: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
         staged?.let { pending ->
+            if (change.kind == "skill_delete") {
+                // Delete supersedes earlier edits of every file in the directory. Applying those
+                // first would invalidate the deletion's directory version.
+                pending.removeAll { it.title==change.title && it.kind=="skill_file" }
+            }
             // A batch is revisable: the last change to a target replaces the earlier one, and the first
             // proposal's baseline is kept so the applied change still matches the unchanged target on disk.
             val index = pending.indexOfFirst { sameTarget(it, change) }
@@ -177,7 +190,7 @@ class MemoryReviewRepository internal constructor(
                 it.kind == change.kind && it.title == change.title && it.body == change.body &&
                 it.description == change.description && it.baseVersion == change.baseVersion &&
                 it.addition == change.addition && it.path==change.path && it.operation==change.operation &&
-                it.automatic==change.automatic }?.let { return@withLock it }
+                it.automatic==change.automatic && it.files==change.files }?.let { return@withLock it }
             // Old pending items must not block newly enabled automatic saving.
             require(items.count { it.status in setOf("pending", "applying") } < 30 || autoApprovalEnabled()) {
                 "Pending review limit reached"
@@ -209,13 +222,14 @@ class MemoryReviewRepository internal constructor(
         baseVersion=obj.optString("baseVersion"), addition=obj.optString("addition"),
         sourceChatId=obj.optString("sourceChatId"), createdAt=obj.getLong("createdAt"),
         path=obj.optString("path","SKILL.md"), operation=obj.optString("operation","write"),
-        automatic=obj.optBoolean("automatic")
+        automatic=obj.optBoolean("automatic"), files=readFiles(obj)
     )
 
-    suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {}): MemoryReviewChange = propose(MemoryReviewChange(
+    suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {},
+        files: Map<String, String> = emptyMap()): MemoryReviewChange = propose(MemoryReviewChange(
         id = hash("skill:${draft.name}:${draft.description}:${draft.body}"),
         kind = "skill", title = draft.name, description = draft.description, body = draft.body,
-        sourceChatId = draft.sourceChatId
+        sourceChatId = draft.sourceChatId, files = files
     ), onCreated)
 
     suspend fun proposeSkillFile(name: String, path: String, before: LearnedSkillRepository.Snapshot,
@@ -376,14 +390,40 @@ class MemoryReviewRepository internal constructor(
             val markdown = "---\nname: ${skill.name}\ndescription: ${JSONObject.quote(skill.description)}\n---\n\n${skill.body}\n"
             val manager = SkillManager.getInstance(context)
             // Retry after installation but before the decision journal was finalized.
-            if (manager.readSkillContent(draft.title) == markdown) return
+            validateDraftFiles(draft.files)
+            val installed = manager.getAvailableSkills()[draft.title]?.directory
+            if (manager.readSkillContent(draft.title) == markdown && installed != null &&
+                draft.files.all { (path, text) -> File(installed,path).let { it.isFile && it.readText()==text } }) return
             ZipOutputStream(zip.outputStream()).use { stream ->
                 stream.putNextEntry(ZipEntry("SKILL.md"))
                 stream.write(markdown.toByteArray())
                 stream.closeEntry()
+                draft.files.forEach { (path, text) ->
+                    stream.putNextEntry(ZipEntry(path))
+                    stream.write(text.toByteArray())
+                    stream.closeEntry()
+                }
             }
             val result = manager.importSkillFromZipDetailed(zip, null, notifyPrefix = false)
             check(result.installedDir != null) { result.message }
         } finally { zip.delete() }
+    }
+}
+
+/** A bounded, reviewable package; paths obey the same policy as installed skill files. */
+internal fun validateDraftFiles(files: Map<String, String>) {
+    require(files.size <= 20) { "A new skill may contain at most 20 companion files" }
+    require(files.values.sumOf { it.length.toLong() } <= 120_000) {
+        "New skill companion files must total at most 120000 characters"
+    }
+    files.forEach { (path, text) ->
+        LearnedSkillRepository.validatePath(path)
+        require(path != "SKILL.md") { "Edit the main skill content separately" }
+        require(files.keys.none { it != path && path.startsWith("$it/") }) {
+            "$path has a parent that is already a file"
+        }
+        require(text.length <= LearnedSkillRepository.MAX_SKILL_FILE_CHARS) {
+            "$path exceeds ${LearnedSkillRepository.MAX_SKILL_FILE_CHARS} characters"
+        }
     }
 }
