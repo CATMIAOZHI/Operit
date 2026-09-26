@@ -2,128 +2,81 @@ package com.ai.assistance.operit.util
 
 import java.io.File
 import java.security.MessageDigest
-import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 object SkillRepoZipPoolManager {
-    private const val TAG = "SkillRepoZipPoolManager"
-
-    var maxPoolSize = 6
-        set(value) {
-            if (value > 0) {
-                field = value
-                AppLogger.d(TAG, "池子大小限制已更新为: $value")
-            }
-        }
-
-    private var cacheDir: File? = null
-
-    private val keyMutexes = ConcurrentHashMap<String, Mutex>()
-    private val evictionMutex = Mutex()
+    @Volatile private var pool: SkillZipPool? = null
 
     @Synchronized
     fun initialize(baseDir: File) {
-        cacheDir = OperitPaths.skillRepoZipPoolDir(baseDir)
-        if (cacheDir?.exists() != true) {
-            runCatching { cacheDir?.mkdirs() }
-        }
+        if (pool == null) pool = SkillZipPool(OperitPaths.skillRepoZipPoolDir(baseDir))
     }
 
-    private fun sha256Hex16(value: String): String {
-        val bytes = MessageDigest.getInstance("SHA-256")
-            .digest(value.toByteArray(Charsets.UTF_8))
-        val hexChars = "0123456789abcdef"
-        val hex = buildString(bytes.size * 2) {
-            for (b in bytes) {
-                val v = b.toInt() and 0xFF
-                append(hexChars[v ushr 4])
-                append(hexChars[v and 0x0F])
-            }
-        }
-        return hex.take(16)
-    }
-
-    private fun zipFileFor(dir: File, key: String): File = File(dir, "repo_${sha256Hex16(key)}.zip")
-
-    private fun partFileFor(dir: File, key: String): File = File(dir, "repo_${sha256Hex16(key)}.download")
-
-    private fun touch(file: File) {
-        runCatching { file.setLastModified(System.currentTimeMillis()) }
-    }
-
-    private fun evictIfNeededLocked(dir: File) {
-        val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".zip", ignoreCase = true) } ?: return
-        if (files.size <= maxPoolSize) return
-
-        val removeCount = files.size - maxPoolSize
-        val sorted = files.sortedBy { it.lastModified() }
-        for (i in 0 until removeCount) {
-            val f = sorted.getOrNull(i) ?: continue
-            runCatching { f.delete() }
-        }
-    }
-
-    suspend fun getOrDownloadZip(
+    suspend fun <T> withZip(
         key: String,
-        downloadTo: suspend (outFile: File) -> Boolean
-    ): File? {
-        val dir = cacheDir
-        if (dir == null) {
-            AppLogger.w(TAG, "缓存目录未初始化，无法复用 ZIP")
-            return null
-        }
+        downloadTo: suspend (File) -> Boolean,
+        use: suspend (File) -> T
+    ): T? = pool?.withZip(key, downloadTo, use)
+}
 
-        val mutex = keyMutexes.getOrPut(key) { Mutex() }
-        return mutex.withLock {
-            val zipFile = zipFileFor(dir, key)
-            if (zipFile.exists() && zipFile.isFile && zipFile.length() > 0L) {
-                AppLogger.d(TAG, "ZIP 命中缓存: key=$key, file=${zipFile.name}, bytes=${zipFile.length()}")
-                touch(zipFile)
-                return@withLock zipFile
-            }
+/** Hold the lease through import: eviction must never delete a ZIP a caller is reading. */
+internal class SkillZipPool(
+    private val directory: File,
+    private val maxEntries: Int = 6,
+    private val maxBytes: Long = 128L * 1024 * 1024
+) {
+    private val mutex = Mutex()
+    private val managedName = Regex("repo_[a-f0-9]{16,32}\\.(zip|download)")
 
-            AppLogger.d(TAG, "ZIP 缓存未命中，开始下载: key=$key")
-            val partFile = partFileFor(dir, key)
-            runCatching { partFile.delete() }
-
-            val ok = try {
-                downloadTo(partFile)
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "下载失败: key=$key", e)
-                false
-            }
-
-            if (!ok || !partFile.exists() || partFile.length() <= 0L) {
-                AppLogger.w(TAG, "ZIP 下载失败或文件为空: key=$key")
-                runCatching { partFile.delete() }
-                return@withLock null
-            }
-
-            runCatching { if (zipFile.exists()) zipFile.delete() }
-
-            val renamed = runCatching { partFile.renameTo(zipFile) }.getOrNull() == true
-            if (!renamed) {
-                try {
-                    partFile.copyTo(zipFile, overwrite = true)
-                    partFile.delete()
-                } catch (e: Exception) {
-                    AppLogger.e(TAG, "写入 ZIP 失败: key=$key", e)
-                    runCatching { partFile.delete() }
-                    runCatching { zipFile.delete() }
-                    return@withLock null
+    suspend fun <T> withZip(
+        key: String,
+        downloadTo: suspend (File) -> Boolean,
+        use: suspend (File) -> T
+    ): T? = mutex.withLock {
+        check(directory.isDirectory || directory.mkdirs()) { "Cannot create skill ZIP cache" }
+        // Only our own interrupted downloads are disposable. No active writer exists under this lock.
+        directory.listFiles()?.filter { managedName.matches(it.name) && it.extension == "download" }
+            ?.forEach { it.delete() }
+        trim()
+        val digest = MessageDigest.getInstance("SHA-256").digest(key.toByteArray())
+            .take(8).joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        val zip = File(directory, "repo_$digest.zip")
+        val part = File(directory, "repo_$digest.download")
+        try {
+            if (!zip.isFile || zip.length() == 0L) {
+                if (!downloadTo(part) || !part.isFile || part.length() == 0L) return@withLock null
+                if (!part.renameTo(zip)) {
+                    try {
+                        part.copyTo(zip, overwrite = true)
+                    } catch (e: Exception) {
+                        zip.delete()
+                        throw e
+                    }
                 }
             }
+            zip.setLastModified(System.currentTimeMillis())
+            use(zip)
+        } finally {
+            part.delete()
+            // Oversized archives are usable for this import, but not retained.
+            trim()
+        }
+    }
 
-            touch(zipFile)
-
-            AppLogger.d(TAG, "ZIP 已缓存: key=$key, file=${zipFile.name}, bytes=${zipFile.length()}")
-
-            evictionMutex.withLock {
-                evictIfNeededLocked(dir)
+    private fun trim() {
+        val files = directory.listFiles()?.filter {
+            it.isFile && managedName.matches(it.name) && it.extension == "zip"
+        }?.sortedBy { it.lastModified() } ?: return
+        var bytes = files.sumOf { it.length() }
+        var count = files.size
+        for (file in files) {
+            if (count <= maxEntries && bytes <= maxBytes) break
+            val size = file.length()
+            if (file.delete()) {
+                count--
+                bytes -= size
             }
-
-            zipFile
         }
     }
 }
