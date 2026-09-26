@@ -257,7 +257,7 @@ class TerminalStartupServiceManager private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val repository = TerminalStartupServiceRepository.getInstance(appContext)
-    private val terminal = Terminal.getInstance(appContext)
+    private val terminal by lazy { Terminal.getInstance(appContext) }
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val serviceStateLifecycleLock = Any()
     private val deletedServiceIds = ConcurrentHashMap.newKeySet<String>()

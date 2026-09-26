@@ -4,6 +4,10 @@ import android.content.Context
 import android.graphics.BitmapFactory
 import android.net.Uri
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.OnDemandResources
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import com.canhub.cropper.CropImageContract
@@ -32,6 +36,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -629,7 +634,10 @@ private fun createExportIconCropOptions(context: Context, sourceUri: Uri): CropI
 /** 导出进度对话框 */
 @Composable
 fun ExportProgressDialog(progress: Float, status: String, onCancel: () -> Unit) {
-    val context = LocalContext.current
+    val resources by OnDemandResources.downloads.collectAsState()
+    val download = resources.values.firstOrNull {
+        it.error == null && (it.id == "android.apk" || it.id == "windows.zip")
+    }
     Dialog(
             onDismissRequest = { /* 不允许点击外部关闭 */},
             properties = DialogProperties(dismissOnBackPress = false, dismissOnClickOutside = false)
@@ -644,26 +652,32 @@ fun ExportProgressDialog(progress: Float, status: String, onCancel: () -> Unit) 
                     horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                        context.getString(R.string.export_in_progress_title),
+                        stringResource(R.string.export_in_progress_title),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+                LinearProgressIndicator(
+                    progress = { download?.let { it.downloaded.toFloat() / it.total } ?: progress },
+                    modifier = Modifier.fillMaxWidth()
+                )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
                 Text(
-                        status,
+                        download?.let {
+                            stringResource(R.string.resource_download_title, it.name) + "\n" +
+                                stringResource(R.string.resource_download_size, it.downloaded / 1024 / 1024, it.total / 1024 / 1024)
+                        } ?: status,
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
 
-                TextButton(onClick = onCancel) { Text(context.getString(R.string.cancel)) }
+                TextButton(onClick = onCancel) { Text(stringResource(R.string.cancel)) }
             }
         }
     }
@@ -678,7 +692,6 @@ fun ExportCompleteDialog(
         onDismiss: () -> Unit,
         onOpenFile: (String) -> Unit
 ) {
-    val context = LocalContext.current
     Dialog(
             onDismissRequest = onDismiss,
             properties = DialogProperties(dismissOnBackPress = true, dismissOnClickOutside = true)
@@ -693,7 +706,7 @@ fun ExportCompleteDialog(
                     horizontalAlignment = Alignment.CenterHorizontally
             ) {
                 Text(
-                        if (success) context.getString(R.string.export_success) else context.getString(R.string.export_failed),
+                        stringResource(if (success) R.string.export_success else R.string.export_failed),
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = if (success) Color.Green else Color.Red
@@ -702,7 +715,7 @@ fun ExportCompleteDialog(
                 Spacer(modifier = Modifier.height(16.dp))
 
                 if (success && filePath != null) {
-                    Text(context.getString(R.string.file_saved_to), style = MaterialTheme.typography.bodyMedium)
+                    Text(stringResource(R.string.file_saved_to), style = MaterialTheme.typography.bodyMedium)
 
                     Text(
                             filePath,
@@ -740,12 +753,12 @@ fun ExportCompleteDialog(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.Center
                 ) {
-                    TextButton(onClick = onDismiss) { Text(context.getString(R.string.close)) }
+                    TextButton(onClick = onDismiss) { Text(stringResource(R.string.close)) }
 
                     if (success && filePath != null) {
                         Spacer(modifier = Modifier.width(8.dp))
 
-                        Button(onClick = { onOpenFile(filePath) }) { Text(context.getString(R.string.open_file)) }
+                        Button(onClick = { onOpenFile(filePath) }) { Text(stringResource(R.string.open_file)) }
                     }
                 }
             }
@@ -779,7 +792,7 @@ suspend fun exportAndroidApp(
             onProgress(0.1f, context.getString(R.string.export_prepare_base_apk))
 
             // 1. 初始化APK编辑器
-            val apkEditor = ApkEditor.fromAsset(context, "subpack/android.apk")
+            val apkEditor = ApkEditor.fromFile(context, OnDemandResources.exportTemplate(context, android = true))
 
             // 2. 修改包名和应用名
             onProgress(0.3f, context.getString(R.string.export_modify_app_info))
@@ -840,14 +853,21 @@ suspend fun exportAndroidApp(
                 // 9. 清理
                 apkEditor.cleanup()
 
+                currentCoroutineContext().ensureActive()
                 onProgress(1.0f, context.getString(R.string.export_completed))
                 onComplete(true, signedApk.absolutePath, null)
             } catch (e: Exception) {
+                if (e is CancellationException) {
+                    apkEditor.cleanup()
+                    throw e
+                }
                 AppLogger.e("ExportDialogs", "签名APK失败", e)
                 onComplete(false, null, context.getString(R.string.export_sign_apk_failed, e.message ?: ""))
                 apkEditor.cleanup() // 确保失败时也清理资源
             }
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         AppLogger.e("ExportDialogs", "导出失败", e)
         onComplete(false, null, context.getString(R.string.export_failed_with_reason, e.message ?: ""))
@@ -890,9 +910,7 @@ suspend fun exportWindowsApp(
                 // 1. 从assets复制windows.zip模板到临时目录
                 onProgress(0.2f, context.getString(R.string.export_copy_template))
                 val templateZip = File(tempDir, "windows.zip")
-                context.assets.open("subpack/windows.zip").use { input ->
-                    FileOutputStream(templateZip).use { output -> input.copyTo(output) }
-                }
+                OnDemandResources.exportTemplate(context, android = false).copyTo(templateZip)
 
                 // 2. 解压windows.zip
                 onProgress(0.3f, context.getString(R.string.export_extract_template))
@@ -903,6 +921,7 @@ suspend fun exportWindowsApp(
                 java.util.zip.ZipFile(templateZip).use { zip ->
                     val entries = zip.entries()
                     while (entries.hasMoreElements()) {
+                        currentCoroutineContext().ensureActive()
                         val entry = entries.nextElement()
                         val entryFile = File(extractedDir, entry.name)
 
@@ -973,8 +992,10 @@ suspend fun exportWindowsApp(
                 }
 
                 onProgress(1.0f, context.getString(R.string.export_completed))
+                currentCoroutineContext().ensureActive()
                 onComplete(true, outputZip.absolutePath, null)
             } catch (e: Exception) {
+                if (e is CancellationException) throw e
                 AppLogger.e("ExportDialogs", "Windows应用导出过程失败", e)
                 onComplete(false, null, context.getString(R.string.export_process_failed, e.message ?: ""))
             } finally {
@@ -987,6 +1008,8 @@ suspend fun exportWindowsApp(
                 }
             }
         }
+    } catch (e: CancellationException) {
+        throw e
     } catch (e: Exception) {
         AppLogger.e("ExportDialogs", "Windows应用导出失败", e)
         onComplete(false, null, context.getString(R.string.export_failed_with_reason, e.message ?: ""))
@@ -994,13 +1017,14 @@ suspend fun exportWindowsApp(
 }
 
 /** 递归添加目录到ZIP文件 */
-private fun addDirToZip(
+private suspend fun addDirToZip(
         rootDir: File,
         currentDir: File,
         zipOut: java.util.zip.ZipOutputStream,
         buffer: ByteArray
 ) {
     currentDir.listFiles()?.forEach { file ->
+        currentCoroutineContext().ensureActive()
         val relativePath =
                 file.absolutePath.substring(rootDir.absolutePath.length + 1).replace("\\", "/")
 

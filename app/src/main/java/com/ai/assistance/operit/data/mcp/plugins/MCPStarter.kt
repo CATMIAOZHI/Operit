@@ -130,7 +130,7 @@ class MCPStarter(private val context: Context) {
     // Coroutine scope for async operations
     private val starterDispatcher = Dispatchers.IO.limitedParallelism(6)
     private val starterScope = CoroutineScope(starterDispatcher + SupervisorJob())
-    private val terminal = Terminal.getInstance(context)
+    private val terminal by lazy { Terminal.getInstance(context) }
     private var pnpmInstalled: Boolean? = null
 
     /** Plugin initialization status enum */

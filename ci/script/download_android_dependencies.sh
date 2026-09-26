@@ -36,6 +36,5 @@ download "1iiVkHVXLtcK6WX2LHwajTygMESn4bW4D" "libs.zip"
 
 if [[ "$profile" == "full" ]]; then
   download "1UUv500OQLGwUje6zD1VuYZzNV_29CXLh" "models.zip"
-  download "1yD7Xd3apvmNyAQcvfXeaer5WA1zzd97w" "subpack.zip"
   download "156f7qBnBMwuo8oAyNyF0wgBDN5iGv_Me" "jniLibs.zip"
 fi
