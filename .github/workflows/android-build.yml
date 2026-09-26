@@ -47,9 +47,7 @@ on:
       - gradle.properties
       - gradlew
       - gradlew.bat
-      - llama/**
       - mmd/**
-      - mnn/**
       - package.json
       - package-lock.json
       - npm-shrinkwrap.json

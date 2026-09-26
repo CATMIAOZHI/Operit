@@ -1,4 +1,5 @@
 <resources>
+    <string name="local_llm_removed">On-device LLM inference has been removed. Select a cloud or remote provider. Existing files remain in Download/Operit/models and can be removed using a file manager.</string>
     <string name="openai_error_repetition_truncation">The server stopped repetitive model output. The response was discarded and its tools will not run.</string>
     <string name="openai_retry_repetition_truncation">Repetitive output was discarded. Retrying the request once.</string>
     <string name="memory_include_thinking">Include thinking in extraction</string>
