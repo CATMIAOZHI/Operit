@@ -159,7 +159,7 @@ open class KimiProvider(
 
         logRequestBodyForDebugging("ReasoningChatProvider",
             "Request body [provider=$requestProviderType, model=$modelName, host=$requestEndpointHost]: ") {
-            requestBodyForLogging(jsonObject)
+            jsonObject
         }
 
         return createJsonRequestBody(jsonObject.toString())

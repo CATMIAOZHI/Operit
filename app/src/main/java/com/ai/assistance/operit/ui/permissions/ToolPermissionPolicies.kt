@@ -19,7 +19,7 @@ data class ToolPermissionReviewContext(
     val batchPosition: Int = 1,
     val batchSize: Int = 1,
     val deferCircuitBreaker: Boolean = false,
-    val liveAssistantContent: String? = null,
+    val liveAssistantContent: CharSequence? = null,
 )
 
 /**

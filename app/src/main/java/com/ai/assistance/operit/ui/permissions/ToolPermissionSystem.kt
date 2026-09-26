@@ -321,7 +321,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         batchPosition: Int = 1,
         batchSize: Int = 1,
         deferCircuitBreaker: Boolean = false,
-        liveAssistantContent: String? = null,
+        liveAssistantContent: CharSequence? = null,
     ): ToolPermissionDecision {
         AppLogger.d(TAG, "Starting permission check: ${tool.name}")
 
@@ -781,7 +781,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         parentModelConfigId: String? = null,
         parentModelIndex: Int? = null,
         timingScopeId: String? = null,
-        liveAssistantContent: String? = null,
+        liveAssistantContent: CharSequence? = null,
     ) {
         // Scoring a tool the permission system is never asked about would spend a classification
         // call on work the agent never dispatched to the user, let that verdict answer a later real

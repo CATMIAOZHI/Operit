@@ -170,7 +170,7 @@ internal fun permissionReviewDelta(
     modelKey: String,
     history: List<PermissionReviewTranscriptMessage>,
     timingScopeId: String?,
-    liveAssistantContent: String?,
+    liveAssistantContent: CharSequence?,
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
     maxChars: Int = MAX_TRANSCRIPT_CHARS,
 ): PermissionReviewDelta? {

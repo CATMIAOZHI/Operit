@@ -346,7 +346,7 @@ class EnhancedAIService private constructor(
     }
 
     data class ToolExecutionBoundarySnapshot(
-        val displayContent: String,
+        val displayContent: CharSequence,
         val replayCharCount: Int,
         val revisionEventCount: Int = 0,
     )
@@ -900,7 +900,7 @@ class EnhancedAIService private constructor(
         withContext(NonCancellable) {
             val scopeId = requireNotNull(execution.onTurnInput).invoke(
                 emptyList(), ToolExecutionBoundarySnapshot(
-                    execution.roundManager.getDisplayContent(), execution.emittedReplayCharCount.get(),
+                    execution.roundManager.getDisplaySnapshot(), execution.emittedReplayCharCount.get(),
                     execution.eventChannel.replayCache.size,
                 ),
             )
@@ -1799,8 +1799,9 @@ class EnhancedAIService private constructor(
             }
 
             // 禁止“纯思考输出”：移除 thinking 后正文为空时，发出专用告警并回传给 AI 继续生成
-            val contentWithoutThinking = ChatUtils.removeThinkingContent(content)
-            if (contentWithoutThinking.isEmpty()) {
+            // Only visibility is needed here; do not copy a long response merely to test emptiness.
+            val contentWithoutThinking = ChatUtils.removeThinkingContentWindow(content, 0)
+            if (contentWithoutThinking.length == 0) {
                 if (disableWarning) {
                     AppLogger.w(TAG, "检测到纯思考输出，disableWarning=true，直接结束本轮而不注入警告")
                     finishTurn()
@@ -2068,7 +2069,7 @@ class EnhancedAIService private constructor(
         // roundManager.clearContent()
         
         // 保存最后的回复内容用于通知
-        lastReplyContent = context.roundManager.getDisplayContent()
+        lastReplyContent = content
 
         // Ensure input processing state is updated to completed
         if (!isSubTask) {
@@ -2189,7 +2190,7 @@ class EnhancedAIService private constructor(
             return
         }
 
-        val liveAssistantContent = context.roundManager.getDisplayContent()
+        val liveAssistantContent = context.roundManager.getDisplaySnapshot()
         context.onToolExecutionBoundary?.invoke(
             ToolExecutionBoundarySnapshot(
                 displayContent = liveAssistantContent,
@@ -2477,7 +2478,7 @@ class EnhancedAIService private constructor(
                 val nextAssistantScope = context.onTurnInput?.invoke(
                     turnInputs,
                     ToolExecutionBoundarySnapshot(
-                        context.roundManager.getDisplayContent(), context.emittedReplayCharCount.get(),
+                        context.roundManager.getDisplaySnapshot(), context.emittedReplayCharCount.get(),
                         context.eventChannel.replayCache.size,
                     ),
                 )

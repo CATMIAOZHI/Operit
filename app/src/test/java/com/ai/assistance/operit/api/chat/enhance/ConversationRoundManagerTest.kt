@@ -11,6 +11,24 @@ import org.junit.Test
  * matter.
  */
 class ConversationRoundManagerTest {
+    @Test
+    fun retainedToolBoundarySnapshotsSurviveUpdatesAndShareOldPieces() {
+        org.mockito.Mockito.mockStatic(com.ai.assistance.operit.util.AppLogger::class.java).use {
+            val manager = ConversationRoundManager()
+            manager.appendChunk("first ".repeat(10_000))
+            val first = manager.getDisplaySnapshot()
+            manager.appendChunk("tool result")
+            manager.startNewRound()
+            manager.appendChunk("next")
+            val second = manager.getDisplaySnapshot()
+            manager.updateContent("revised")
+            assertEquals("first ".repeat(10_000), first.toString())
+            assertEquals(first.toString() + "tool result\nnext", second.toString())
+            assertEquals(first.toString() + "tool result\nrevised", manager.getDisplayContent())
+            manager.clearContent()
+            assertEquals("first ".repeat(10_000), first.toString())
+        }
+    }
 
     @Test
     fun roundsAreJoinedOldestFirstWithASeparatorBetweenThem() {

@@ -3,7 +3,7 @@ package com.ai.assistance.operit.util
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.withContent
 
-fun findMarkupTagEnd(content: String, tagStart: Int): Int {
+fun findMarkupTagEnd(content: CharSequence, tagStart: Int): Int {
     var quote: Char? = null
     var index = tagStart + 1
     while (index < content.length) {
@@ -66,7 +66,7 @@ object ChatUtils {
 
     /** Collects the visible text a scan keeps; each sink bounds it in its own way. */
     private interface VisibleTextSink {
-        fun append(source: String, start: Int, endExclusive: Int)
+        fun append(source: CharSequence, start: Int, endExclusive: Int)
     }
 
     /**
@@ -81,7 +81,7 @@ object ChatUtils {
         private var builder: StringBuilder? = null
         private var wholeInputOnly = false
 
-        override fun append(source: String, start: Int, endExclusive: Int) {
+        override fun append(source: CharSequence, start: Int, endExclusive: Int) {
             // The scan offers a range per visible stretch, and a display-only block at the very start
             // makes the first of them empty. An empty range adds no visible text, so skipping it must
             // not be the reason the sink stops reusing the input it already holds.
@@ -143,7 +143,7 @@ object ChatUtils {
 
     /** Keeps nothing, for the boundary caller that only reads the scan's own visibility answer. */
     private object DiscardingVisibleTextSink : VisibleTextSink {
-        override fun append(source: String, start: Int, endExclusive: Int) = Unit
+        override fun append(source: CharSequence, start: Int, endExclusive: Int) = Unit
     }
 
     /**
@@ -172,7 +172,7 @@ object ChatUtils {
         private var visibleChars = 0
         private var trailingWhitespace = 0
 
-        override fun append(source: String, start: Int, endExclusive: Int) {
+        override fun append(source: CharSequence, start: Int, endExclusive: Int) {
             for (index in start until endExclusive) {
                 val char = source[index]
                 if (!seenVisibleChar) {
@@ -318,7 +318,7 @@ object ChatUtils {
      * A window wider than the input is stored to the input's own length, which is all it could ever
      * need, so asking for one never allocates more than the input the scan already reads.
      */
-    fun removeThinkingContentWindow(content: String, windowChars: Int): DisplayOnlyVisibleText {
+    fun removeThinkingContentWindow(content: CharSequence, windowChars: Int): DisplayOnlyVisibleText {
         val visibleText =
             WindowedVisibleTextSink(
                 windowChars = windowChars,
@@ -346,7 +346,7 @@ object ChatUtils {
         )
 
     private fun scanDisplayOnlyContent(
-        content: String,
+        content: CharSequence,
         orderedBoundaries: IntArray,
         protectedRanges: IntArray,
         visibleText: VisibleTextSink,
@@ -477,7 +477,7 @@ object ChatUtils {
     }
 
     private fun findNextDisplayOnlyToken(
-        content: String,
+        content: CharSequence,
         fromIndex: Int,
         beforeExclusive: Int,
     ): DisplayOnlyBlockTag? {

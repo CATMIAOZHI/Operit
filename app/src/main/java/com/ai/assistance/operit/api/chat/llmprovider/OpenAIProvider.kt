@@ -394,28 +394,10 @@ open class OpenAIProvider(
         }
     }
 
-    /** 生成用于日志的请求体文本：省略超长的 tools 字段，抹掉图片 base64。 */
-    protected fun requestBodyForLogging(json: JSONObject): String {
-        val logJson = JSONObject(json.toString())
-        if (logJson.has("tools")) {
-            val toolsArray = logJson.getJSONArray("tools")
-            logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
-        }
-        return sanitizeImageDataForLogging(logJson).toString(4)
-    }
-
-    /**
-     * 记录请求体，默认开启（见 [AppLogger.logRequestBodies]）。
-     *
-     * [body] 只在开关打开时求值：关闭状态下不再把整个请求体复制成缩进文本，省掉构建字符串的
-     * 内存与 CPU（实测单请求峰值内存是请求体本身的 3-4 倍）。
-     *
-     * 注意：父类与子类的调用点都受同一开关控制，开启时子类 provider 会先由父类记录一份中间
-     * 请求体、再记录自己的最终请求体。
-     */
-    protected fun logRequestBodyForDebugging(tag: String, prefix: String, body: () -> String) {
+    /** Logging walks the existing request; it never materializes a second request-sized JSON. */
+    protected fun logRequestBodyForDebugging(tag: String, prefix: String, body: () -> JSONObject) {
         if (!AppLogger.logRequestBodies) return
-        logLargeString(tag, body(), prefix)
+        RequestBodyLog.write(tag, prefix, body())
     }
 
     protected fun logFinalOutput(tag: String, content: CharSequence, prefix: String = "Final output: ") {
@@ -426,49 +408,6 @@ open class OpenAIProvider(
         }
         logLargeString(tag, finalOutput, prefix)
     }
-
-     protected fun sanitizeImageDataForLogging(json: JSONObject): JSONObject {
-         fun sanitizeObject(obj: JSONObject) {
-             fun sanitizeArray(arr: JSONArray) {
-                 for (i in 0 until arr.length()) {
-                     val value = arr.get(i)
-                     when (value) {
-                         is JSONObject -> sanitizeObject(value)
-                         is JSONArray -> sanitizeArray(value)
-                         is String -> {
-                             if (value.startsWith("data:") && value.contains(";base64,")) {
-                                 arr.put(i, "[image base64 omitted, length=${value.length}]")
-                             }
-                         }
-                     }
-                 }
-             }
-
-             val keys = obj.keys()
-             while (keys.hasNext()) {
-                 val key = keys.next()
-                 val value = obj.get(key)
-                 when (value) {
-                     is JSONObject -> sanitizeObject(value)
-                     is JSONArray -> sanitizeArray(value)
-                     is String -> {
-                         if (value.startsWith("data:") && value.contains(";base64,")) {
-                             obj.put(key, "[image base64 omitted, length=${value.length}]")
-                         } else if (
-                             key == "data" &&
-                                 value.length > 256 &&
-                                 value.all { it.isLetterOrDigit() || it == '+' || it == '/' || it == '=' || it == '\n' || it == '\r' }
-                         ) {
-                             obj.put(key, "[base64 omitted, length=${value.length}]")
-                         }
-                     }
-                 }
-             }
-         }
-
-         sanitizeObject(json)
-         return json
-     }
 
     private fun getOutputImagesDir(): File {
         val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -921,7 +860,7 @@ open class OpenAIProvider(
 
         // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
         logRequestBodyForDebugging("AIService", "Request body: ") {
-            requestBodyForLogging(finalRequestObject)
+            finalRequestObject
         }
         return finalRequestObject.toString()
     }

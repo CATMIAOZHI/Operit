@@ -1216,51 +1216,6 @@ open class GeminiProvider(
         logLargeString(TAG, finalOutput, prefix)
     }
 
-    private fun sanitizeImageDataForLogging(json: JSONObject): JSONObject {
-        fun sanitizeObject(obj: JSONObject) {
-            fun sanitizeArray(arr: JSONArray) {
-                for (i in 0 until arr.length()) {
-                    val value = arr.get(i)
-                    when (value) {
-                        is JSONObject -> sanitizeObject(value)
-                        is JSONArray -> sanitizeArray(value)
-                        is String -> {
-                            if (value.startsWith("data:") && value.contains(";base64,")) {
-                                arr.put(i, "[image base64 omitted, length=${value.length}]")
-                            }
-                        }
-                    }
-                }
-            }
-
-            val maybeMimeType = obj.optString("mime_type", obj.optString("mimeType", ""))
-            if (maybeMimeType.startsWith("image/", ignoreCase = true) && obj.has("data")) {
-                val dataValue = obj.opt("data")
-                if (dataValue is String) {
-                    obj.put("data", "[image base64 omitted, length=${dataValue.length}]")
-                }
-            }
-
-            val keys = obj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                val value = obj.get(key)
-                when (value) {
-                    is JSONObject -> sanitizeObject(value)
-                    is JSONArray -> sanitizeArray(value)
-                    is String -> {
-                        if (value.startsWith("data:") && value.contains(";base64,")) {
-                            obj.put(key, "[image base64 omitted, length=${value.length}]")
-                        }
-                    }
-                }
-            }
-        }
-
-        sanitizeObject(json)
-        return json
-    }
-
      protected open fun getOutputImagesDir(): File {
          val downloadsDir = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
          return File(downloadsDir, "Operit/output images")
@@ -1723,14 +1678,7 @@ open class GeminiProvider(
 
         val jsonString = json.toString()
         if (AppLogger.logRequestBodies) {
-            // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
-            val logJson = JSONObject(jsonString)
-            if (logJson.has("tools")) {
-                val toolsArray = logJson.getJSONArray("tools")
-                logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
-            }
-            sanitizeImageDataForLogging(logJson)
-            logLargeString(TAG, logJson.toString(4), context.getString(R.string.gemini_request_body_json))
+            RequestBodyLog.write(TAG, context.getString(R.string.gemini_request_body_json), json)
         }
 
         return jsonString.toByteArray(Charsets.UTF_8).toRequestBody(JSON)

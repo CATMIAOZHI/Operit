@@ -1,7 +1,11 @@
 package com.ai.assistance.operit.api.chat.enhance
 
 import com.ai.assistance.operit.util.AppLogger
-import com.ai.assistance.operit.util.markdown.SmartString
+import com.ai.assistance.operit.util.ChunkedTextBuffer
+import com.ai.assistance.operit.util.SegmentedText
+import com.ai.assistance.operit.util.MemoryCounters
+import com.ai.assistance.operit.util.MemoryDiagnosticMetrics
+import com.ai.assistance.operit.util.MemoryMetricSource
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -10,14 +14,17 @@ import java.util.concurrent.atomic.AtomicInteger
  * This class is responsible for tracking and managing different rounds of conversation,
  * particularly when tools are being executed and responses are processed.
  */
-class ConversationRoundManager {
+class ConversationRoundManager : MemoryMetricSource {
+    @Volatile private var diagnosticChars = 0L
+    init { MemoryDiagnosticMetrics.register(this) }
+    override fun memoryCounters() = MemoryCounters(displayBuffers = 1, displayChars = diagnosticChars)
     companion object {
         private const val TAG = "ConversationRoundManager"
         private const val ROUND_SEPARATOR_FORMAT = "--- Round %d ---\n"
     }
 
     // Map to store content for each round
-    private val roundContents = mutableMapOf<Int, SmartString>()
+    private val roundContents = mutableMapOf<Int, ChunkedTextBuffer>()
 
     // Tracks the current round number
     private val currentResponseRound = AtomicInteger(0)
@@ -29,6 +36,7 @@ class ConversationRoundManager {
     fun initializeNewConversation() {
         currentResponseRound.set(0)
         roundContents.clear()
+        diagnosticChars = 0
         AppLogger.d(TAG, "New conversation initialized")
     }
 
@@ -40,14 +48,18 @@ class ConversationRoundManager {
      */
     fun updateContent(content: String): String {
         val currentRound = currentResponseRound.get()
-        roundContents.getOrPut(currentRound) { SmartString() }.replace(content)
+        val round = roundContents.getOrPut(currentRound) { ChunkedTextBuffer() }
+        val oldLength = round.length
+        round.replace(content)
+        diagnosticChars += content.length - oldLength
         return getDisplayContent()
     }
 
     /** Appends a streamed chunk without rebuilding the current round's complete text. */
-    fun appendChunk(content: String): SmartString {
+    fun appendChunk(content: String) {
         val currentRound = currentResponseRound.get()
-        return roundContents.getOrPut(currentRound) { SmartString() }.append(content)
+        roundContents.getOrPut(currentRound) { ChunkedTextBuffer() }.append(content)
+        diagnosticChars += content.length
     }
 
     /**
@@ -58,7 +70,7 @@ class ConversationRoundManager {
     fun startNewRound(): String {
         val separator = if (roundContents.keys.any { it >= 0 }) "\n" else ""
         val newRound = currentResponseRound.incrementAndGet()
-        roundContents[newRound] = SmartString()
+        roundContents[newRound] = ChunkedTextBuffer()
         AppLogger.d(TAG, "Starting new round: $newRound")
         return separator
     }
@@ -79,33 +91,21 @@ class ConversationRoundManager {
      *
      * @return Clean content without round separators
      */
-    fun getDisplayContent(): String {
-        // Add rounds in order
+    fun getDisplayContent(): String = getDisplaySnapshot().toString()
+
+    /** Tool batches can retain these immutable snapshots without retaining a full copy per batch. */
+    fun getDisplaySnapshot(): SegmentedText {
         val sortedKeys = roundContents.keys.filter { it >= 0 }.sorted()
-
-        // A tool-heavy turn reaches megabytes, and this runs once per tool batch, so the buffer is
-        // sized from the rounds it is about to copy instead of doubling its way there.
-        var expectedLength = (sortedKeys.size - 1).coerceAtLeast(0)
-        sortedKeys.forEach { round -> expectedLength += roundContents[round]?.length ?: 0 }
-        roundContents[-1]?.let { expectedLength += 1 + it.length }
-        val buffer = StringBuilder(expectedLength.coerceAtLeast(0))
-
-        sortedKeys.forEachIndexed { index, round ->
-            val content = roundContents[round] ?: SmartString()
-            if (index > 0) buffer.append("\n")
-            buffer.append(content)
+        val parts = sortedKeys.map { roundContents.getValue(it).snapshot() }.toMutableList()
+        roundContents[-1]?.let {
+            if (parts.isEmpty()) parts.add(SegmentedText(emptyList()))
+            parts.add(it.snapshot())
         }
-
-        // Append any content that's outside rounds (key -1)
-        if (roundContents.containsKey(-1)) {
-            buffer.append("\n").append(roundContents[-1])
-        }
-
-        return buffer.toString()
+        return SegmentedText.join(parts, "\n")
     }
 
     fun getCurrentRoundContent(): String {
-        return roundContents[currentResponseRound.get()]?.toString().orEmpty()
+        return roundContents[currentResponseRound.get()]?.snapshot()?.toString().orEmpty()
     }
 
     /**
@@ -120,7 +120,7 @@ class ConversationRoundManager {
         val sortedKeys = roundContents.keys.filter { it >= 0 }.sorted()
 
         sortedKeys.forEachIndexed { index, round ->
-            val content = roundContents[round] ?: SmartString()
+            val content = roundContents[round]?.snapshot() ?: return@forEachIndexed
             if (index > 0) buffer.append("\n")
             buffer.append(String.format(ROUND_SEPARATOR_FORMAT, round))
             buffer.append(content)
@@ -128,7 +128,7 @@ class ConversationRoundManager {
 
         // Append any content that's outside rounds (key -1)
         if (roundContents.containsKey(-1)) {
-            buffer.append("\n").append(roundContents[-1])
+            buffer.append("\n").append(roundContents[-1]?.snapshot())
         }
 
         return buffer.toString()
@@ -146,6 +146,7 @@ class ConversationRoundManager {
     /** Clears all content. */
     fun clearContent() {
         roundContents.clear()
+        diagnosticChars = 0
         AppLogger.d(TAG, "Content cleared")
     }
 }
