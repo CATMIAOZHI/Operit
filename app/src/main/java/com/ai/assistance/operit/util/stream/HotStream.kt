@@ -10,7 +10,11 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.channels.BufferOverflow
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
+import com.ai.assistance.operit.util.MemoryCounters
+import com.ai.assistance.operit.util.MemoryDiagnosticMetrics
+import com.ai.assistance.operit.util.MemoryMetricSource
 
 /** 共享Stream接口，类似于SharedFlow */
 interface SharedStream<T> : Stream<T> {
@@ -61,26 +65,45 @@ internal fun <T> SharedStream<T>.getInternalSubscriptionCountFlow():
     }
 }
 
-/** MutableSharedFlow的包装器，实现MutableSharedStream */
+/**
+ * Subscribers keep a cursor into one shared log, not a separate unbounded event queue.
+ * Unlimited replay intentionally retains the log for late subscribers and rollback consumers.
+ * Finite replay bounds unread events and suspends producers when a subscriber falls behind.
+ */
 class MutableSharedStreamImpl<T>(
         replay: Int = 0,
         extraBufferCapacity: Int = 0,
         onBufferOverflow: BufferOverflow = BufferOverflow.SUSPEND
-) : MutableSharedStream<T> {
-    private sealed interface SharedEvent<out T> {
-        data class Value<T>(val payload: T) : SharedEvent<T>
-        data class Completion(val cause: Throwable?) : SharedEvent<Nothing>
-    }
-
+) : MutableSharedStream<T>, MemoryMetricSource {
     private val replayLimit = replay.coerceAtLeast(0)
     private val replayBuffer = ArrayDeque<T>()
-    private val subscribers = linkedMapOf<Long, Channel<SharedEvent<T>>>()
+    private val subscribers = linkedMapOf<Long, Channel<Unit>>()
+    private val cursors = mutableMapOf<Long, Long>()
+    private val activeSubscribers = mutableSetOf<Long>()
+    private val capacity = (replayLimit.toLong() + extraBufferCapacity.coerceAtLeast(0))
+        .coerceAtLeast(64).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+    private val overflow = onBufferOverflow
+    private val spaceChanged = MutableStateFlow(0L)
     private val stateLock = Any()
+    private var firstIndex = 0L
+    private var nextIndex = 0L
+    private var resetIndex = 0L
     private var nextSubscriberId = 0L
     private var closeCause: Throwable? = null
     private var isClosed = false
 
     internal val internalSubscriptionCountFlow = MutableStateFlow(0)
+
+    init { MemoryDiagnosticMetrics.register(this) }
+
+    override fun memoryCounters(): MemoryCounters = synchronized(stateLock) {
+        MemoryCounters(
+            streams = 1,
+            replayEvents = replayBuffer.size.toLong(),
+            maxBacklog = nextIndex - (cursors.values.minOrNull() ?: nextIndex),
+            subscribers = activeSubscribers.size.toLong(),
+        )
+    }
 
     // 热流不需要锁定机制，所以这里提供默认实现
     override val isLocked: Boolean = false
@@ -105,136 +128,124 @@ class MutableSharedStreamImpl<T>(
         get() = internalSubscriptionCountFlow.value
 
     override val replayCache: List<T>
-        get() = synchronized(stateLock) { replayBuffer.toList() }
+        get() = replayFrom(0)
 
     /** Read only newly appended events without copying the entire replay on each token. */
     internal fun replayFrom(index: Int): List<T> = synchronized(stateLock) {
-        (index.coerceAtLeast(0) until replayBuffer.size).map { replayBuffer[it] }
+        val start = replayStartLocked() + index.coerceAtLeast(0)
+        (start until nextIndex).map { replayBuffer[(it - firstIndex).toInt()] }
     }
 
     override suspend fun emit(value: T) {
         currentCoroutineContext().ensureActive()
-        val subscriberChannels =
+        while (true) {
+            val version = spaceChanged.value
             synchronized(stateLock) {
-                if (isClosed) {
-                    emptyList()
-                } else {
-                    appendToReplayBufferLocked(value)
-                    subscribers.values.toList()
-                }
+                if (isClosed || appendLocked(value)) return
             }
-
-        for (channel in subscriberChannels) {
-            // Subscriber channels are unlimited. A failed send means that this subscriber
-            // has left; its cancellation must not cancel the producer or other subscribers.
-            channel.trySend(SharedEvent.Value(value))
+            spaceChanged.first { it != version }
+            currentCoroutineContext().ensureActive()
         }
     }
 
     override fun tryEmit(value: T): Boolean {
-        val subscriberChannels =
-            synchronized(stateLock) {
-                if (isClosed) {
-                    return false
-                }
-                appendToReplayBufferLocked(value)
-                subscribers.values.toList()
-            }
-
-        subscriberChannels.forEach { channel ->
-            channel.trySend(SharedEvent.Value(value))
+        return synchronized(stateLock) {
+            !isClosed && appendLocked(value)
         }
-        return true
     }
 
     override fun resetReplayCache() {
         synchronized(stateLock) {
-            replayBuffer.clear()
+            // Existing collectors still own their unread events; only future replay is reset.
+            resetIndex = nextIndex
+            trimLocked()
         }
     }
 
     fun close(cause: Throwable? = null) {
-        val subscriberChannels =
-            synchronized(stateLock) {
-                if (isClosed) {
-                    return
-                }
-                isClosed = true
-                closeCause = cause
-                subscribers.values.toList()
-            }
-
-        subscriberChannels.forEach { channel ->
-            channel.trySend(SharedEvent.Completion(cause))
-            channel.close()
+        synchronized(stateLock) {
+            if (isClosed) return
+            isClosed = true
+            closeCause = cause
+            subscribers.values.forEach { it.trySend(Unit) }
+            spaceChanged.value++
         }
     }
 
     override suspend fun collect(collector: StreamCollector<T>) {
-        val replaySnapshot: List<T>
-        val subscriberId: Long?
-        val subscriberChannel: Channel<SharedEvent<T>>?
-        val closedSnapshot: Throwable?
-
-        synchronized(stateLock) {
-            replaySnapshot = replayBuffer.toList()
-            closedSnapshot = if (isClosed) closeCause else null
-            if (isClosed) {
-                subscriberId = null
-                subscriberChannel = null
-            } else {
-                subscriberId = nextSubscriberId++
-                subscriberChannel = Channel(Channel.UNLIMITED)
-                subscribers[subscriberId] = subscriberChannel
-                internalSubscriptionCountFlow.value = subscribers.size
-            }
+        val changed = Channel<Unit>(Channel.CONFLATED)
+        val subscriberId = synchronized(stateLock) {
+            val id = nextSubscriberId++
+            cursors[id] = replayStartLocked()
+            subscribers[id] = changed
+            // Closed-stream replay still needs a cursor, but must not restart a LAZILY upstream.
+            if (!isClosed) activeSubscribers.add(id)
+            internalSubscriptionCountFlow.value = activeSubscribers.size
+            id
         }
-
         try {
-            replaySnapshot.forEach { value ->
-                collector.emit(value)
-            }
-
-            if (subscriberChannel == null) {
-                if (closedSnapshot != null) {
-                    throw closedSnapshot
-                }
-                return
-            }
-
-            for (event in subscriberChannel) {
-                when (event) {
-                    is SharedEvent.Value -> collector.emit(event.payload)
-                    is SharedEvent.Completion -> {
-                        if (event.cause != null) {
-                            throw event.cause
-                        }
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                var available = false
+                var value: T? = null
+                synchronized(stateLock) {
+                    val cursor = cursors.getValue(subscriberId)
+                    if (cursor < nextIndex) {
+                        value = replayBuffer[(cursor - firstIndex).toInt()]
+                        available = true
+                        cursors[subscriberId] = cursor + 1
+                        trimLocked()
+                        spaceChanged.value++
+                    } else if (isClosed) {
+                        closeCause?.let { throw it }
                         return
                     }
                 }
-            }
-
-            if (closedSnapshot != null) {
-                throw closedSnapshot
+                if (available) {
+                    @Suppress("UNCHECKED_CAST")
+                    collector.emit(value as T)
+                } else {
+                    changed.receive()
+                }
             }
         } finally {
-            subscriberChannel?.cancel()
-            if (subscriberId != null) {
-                synchronized(stateLock) {
-                    subscribers.remove(subscriberId)
-                    internalSubscriptionCountFlow.value = subscribers.size
-                }
+            changed.cancel()
+            synchronized(stateLock) {
+                subscribers.remove(subscriberId)
+                cursors.remove(subscriberId)
+                activeSubscribers.remove(subscriberId)
+                trimLocked()
+                spaceChanged.value++
+                internalSubscriptionCountFlow.value = activeSubscribers.size
             }
         }
     }
 
-    private fun appendToReplayBufferLocked(value: T) {
-        if (replayLimit <= 0) {
-            return
+    private fun appendLocked(value: T): Boolean {
+        val slowest = cursors.values.minOrNull() ?: nextIndex
+        if (replayLimit != Int.MAX_VALUE && nextIndex - slowest >= capacity) {
+            when (overflow) {
+                BufferOverflow.SUSPEND -> return false
+                BufferOverflow.DROP_LATEST -> return true
+                BufferOverflow.DROP_OLDEST -> cursors.replaceAll { _, cursor ->
+                    maxOf(cursor, nextIndex - capacity + 1)
+                }
+            }
         }
         replayBuffer.addLast(value)
-        while (replayBuffer.size > replayLimit) {
+        nextIndex++
+        trimLocked()
+        subscribers.values.forEach { it.trySend(Unit) }
+        return true
+    }
+
+    private fun replayStartLocked(): Long = maxOf(resetIndex, nextIndex - replayLimit)
+
+    private fun trimLocked() {
+        val keepFrom = minOf(replayStartLocked(), cursors.values.minOrNull() ?: nextIndex)
+        while (firstIndex < keepFrom) {
             replayBuffer.removeFirst()
+            firstIndex++
         }
     }
 }

@@ -7,6 +7,7 @@ import android.os.Environment
 import android.provider.MediaStore
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.MemoryDiagnostics
 import java.io.BufferedOutputStream
 import java.io.BufferedWriter
 import java.io.File
@@ -31,16 +32,9 @@ object LogcatExportHelper {
 
     suspend fun exportLogs(context: Context): LogcatExportResult = withContext(Dispatchers.IO) {
         try {
-            val logFile = AppLogger.getLogFile()
-            if (logFile == null || !logFile.exists() || logFile.length() == 0L) {
-                return@withContext LogcatExportResult(
-                    message = context.getString(R.string.logcat_no_logs_to_save),
-                    success = false
-                )
-            }
-
-            val logLineCount = countExportableLogLines(logFile)
-            if (logLineCount == 0L) {
+            val logFile = AppLogger.getLogFile()?.takeIf { it.isFile && it.length() > 0 }
+            val logLineCount = logFile?.let(::countExportableLogLines) ?: 0L
+            if (logLineCount == 0L && !MemoryDiagnostics.hasRecords(context)) {
                 return@withContext LogcatExportResult(
                     message = context.getString(R.string.logcat_no_logs_to_save),
                     success = false
@@ -88,7 +82,7 @@ object LogcatExportHelper {
     private fun writeLogContent(
         context: Context,
         writer: Writer,
-        logFile: File,
+        logFile: File?,
         logLineCount: Long
     ) {
         val exportTime = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()).format(Date())
@@ -98,7 +92,7 @@ object LogcatExportHelper {
         writer.appendLine("===================================")
         writer.appendLine()
 
-        logFile.bufferedReader().useLines { lines ->
+        logFile?.bufferedReader()?.useLines { lines ->
             lines.forEach { line ->
                 if (line.isNotBlank()) {
                     writer.appendLine(line)
@@ -118,7 +112,7 @@ object LogcatExportHelper {
         context: Context,
         outputStream: OutputStream,
         entryName: String,
-        logFile: File,
+        logFile: File?,
         logLineCount: Long
     ) {
         ZipOutputStream(BufferedOutputStream(outputStream)).use { zip ->
@@ -127,6 +121,7 @@ object LogcatExportHelper {
             writeLogContent(context, writer, logFile, logLineCount)
             writer.flush()
             zip.closeEntry()
+            MemoryDiagnostics.exportTo(context, zip)
         }
     }
 
@@ -135,7 +130,7 @@ object LogcatExportHelper {
         context: Context,
         fileName: String,
         entryName: String,
-        logFile: File,
+        logFile: File?,
         logLineCount: Long
     ): String {
         try {
@@ -165,7 +160,7 @@ object LogcatExportHelper {
         context: Context,
         fileName: String,
         entryName: String,
-        logFile: File,
+        logFile: File?,
         logLineCount: Long
     ): String {
         try {

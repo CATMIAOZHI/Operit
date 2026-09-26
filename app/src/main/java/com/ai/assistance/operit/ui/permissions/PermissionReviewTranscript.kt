@@ -165,7 +165,7 @@ internal suspend fun buildPermissionReviewTranscript(
     chatCore: ChatServiceCore,
     parentChatId: String,
     timingScopeId: String?,
-    liveAssistantContent: String?,
+    liveAssistantContent: CharSequence?,
     maxMessages: Int,
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
     maxChars: Int = MAX_TRANSCRIPT_CHARS,
@@ -186,7 +186,7 @@ internal suspend fun buildPermissionReviewTranscript(
 internal fun buildPermissionReviewTranscript(
     history: List<PermissionReviewTranscriptMessage>,
     timingScopeId: String?,
-    liveAssistantContent: String?,
+    liveAssistantContent: CharSequence?,
     maxMessages: Int,
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
     maxChars: Int = MAX_TRANSCRIPT_CHARS,
@@ -222,7 +222,7 @@ internal fun buildPermissionReviewTranscript(
 
 /** The live assistant text a review may show, or null when there is nothing worth showing. */
 internal fun sanitizedLiveAssistantContent(
-    liveAssistantContent: String?,
+    liveAssistantContent: CharSequence?,
     maxMessageChars: Int,
 ): String? =
     liveAssistantContent
@@ -258,7 +258,7 @@ internal fun persistedLiveAssistantMessage(
 internal fun permissionReviewTranscriptContent(
     sender: String,
     roleName: String,
-    content: String,
+    content: CharSequence,
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
 ): String =
     if (sender.equals("ai", ignoreCase = true) ||
@@ -271,13 +271,13 @@ internal fun permissionReviewTranscriptContent(
         truncateTranscriptMessage(content, maxMessageChars)
     }
 
-internal fun truncateTranscriptMessage(value: String, maxMessageChars: Int): String {
-    if (value.length <= maxMessageChars) return value
+internal fun truncateTranscriptMessage(value: CharSequence, maxMessageChars: Int): String {
+    if (value.length <= maxMessageChars) return value.toString()
     val omitted = value.length - maxMessageChars
     val marker = "\n<transcript_truncated omitted_chars=\"$omitted\" />\n"
     val available = (maxMessageChars - marker.length).coerceAtLeast(0)
     val prefix = available / 2
-    return value.take(prefix) + marker + value.takeLast(available - prefix)
+    return value.take(prefix).toString() + marker + value.takeLast(available - prefix)
 }
 
 /**

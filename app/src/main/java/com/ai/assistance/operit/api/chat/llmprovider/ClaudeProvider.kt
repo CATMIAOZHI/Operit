@@ -598,49 +598,6 @@ class ClaudeProvider(
         }
     }
 
-    private fun sanitizeImageDataForLogging(json: JSONObject): JSONObject {
-        fun sanitizeObject(obj: JSONObject) {
-            fun sanitizeArray(arr: JSONArray) {
-                for (index in 0 until arr.length()) {
-                    when (val value = arr.get(index)) {
-                        is JSONObject -> sanitizeObject(value)
-                        is JSONArray -> sanitizeArray(value)
-                        is String -> {
-                            if (value.startsWith("data:") && value.contains(";base64,")) {
-                                arr.put(index, "[image base64 omitted, length=${value.length}]")
-                            }
-                        }
-                    }
-                }
-            }
-
-            val mediaType = obj.optString("media_type", obj.optString("mime_type", ""))
-            if (mediaType.startsWith("image/", ignoreCase = true) && obj.has("data")) {
-                val dataValue = obj.opt("data")
-                if (dataValue is String) {
-                    obj.put("data", "[image base64 omitted, length=${dataValue.length}]")
-                }
-            }
-
-            val keys = obj.keys()
-            while (keys.hasNext()) {
-                val key = keys.next()
-                when (val value = obj.get(key)) {
-                    is JSONObject -> sanitizeObject(value)
-                    is JSONArray -> sanitizeArray(value)
-                    is String -> {
-                        if (value.startsWith("data:") && value.contains(";base64,")) {
-                            obj.put(key, "[image base64 omitted, length=${value.length}]")
-                        }
-                    }
-                }
-            }
-        }
-
-        sanitizeObject(json)
-        return json
-    }
-
     private data class ClaudeSerializedHistory(
         val messagesArray: JSONArray,
         val systemBlocks: JSONArray?
@@ -1193,15 +1150,7 @@ class ClaudeProvider(
         }
 
         if (AppLogger.logRequestBodies) {
-            // 日志输出时省略过长的 tools 字段，可用 AppLogger.logRequestBodies 关闭
-            val logJson = JSONObject(jsonObject.toString())
-            if (logJson.has("tools")) {
-                val toolsArray = logJson.getJSONArray("tools")
-                logJson.put("tools", "[${toolsArray.length()} tools omitted for brevity]")
-            }
-            sanitizeImageDataForLogging(logJson)
-            // 走分块日志：单条日志有 12000 字符上限，Claude 请求体很容易超，直接写会丢尾部
-            logLargeString("AIService", logJson.toString(4), "Claude请求体: ")
+            RequestBodyLog.write("AIService", "Claude请求体: ", jsonObject)
         }
         return BuiltRequestBody(
             body = jsonObject.toString().toByteArray(Charsets.UTF_8).toRequestBody(JSON),

@@ -768,7 +768,7 @@ object ToolExecutionManager {
         batchPosition: Int = 1,
         batchSize: Int = 1,
         deferCircuitBreaker: Boolean = false,
-        liveAssistantContent: String? = null,
+        liveAssistantContent: CharSequence? = null,
     ): ToolPermissionCheckResult {
         if (PermissionReviewInternalTools.bypassesPermissionCheck(invocation.tool.name)) {
             toolHandler.notifyToolPermissionChecked(
@@ -865,7 +865,7 @@ object ToolExecutionManager {
         parentModelIndex: Int? = null,
         parentModelSupportsVision: Boolean = false,
         imageRecognitionModelAvailable: Boolean = false,
-        liveAssistantContent: String? = null,
+        liveAssistantContent: CharSequence? = null,
         isSubagent: Boolean = false,
         subagentToolLoopGuard: SubagentToolLoopGuard? = null,
         resolvedMemorySpaceId: String? = null,

@@ -83,7 +83,7 @@ open class OpenAIResponsesProvider(
         }
 
         logRequestBodyForDebugging("OpenAIResponsesProvider", "Final Responses request body: ") {
-            requestBodyForLogging(jsonObject)
+            jsonObject
         }
 
         return createJsonRequestBody(jsonObject.toString())

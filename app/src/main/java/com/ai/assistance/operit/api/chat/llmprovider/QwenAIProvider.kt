@@ -75,7 +75,7 @@ class QwenAIProvider(
 
         // 记录最终的请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
         logRequestBodyForDebugging("QwenAIProvider", "Final Qwen-compatible request body: ") {
-            requestBodyForLogging(jsonObject)
+            jsonObject
         }
 
         // 使用更新后的JSONObject创建新的RequestBody

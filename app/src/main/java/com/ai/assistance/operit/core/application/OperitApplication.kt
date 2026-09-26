@@ -8,6 +8,7 @@ import android.os.Build
 import android.os.LocaleList
 import android.system.Os
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.MemoryDiagnostics
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.work.Configuration as WorkConfiguration
@@ -203,6 +204,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
                     val compatibilityFailure = initializeMainApplicationLocked()
                     if (compatibilityFailure == null) {
                         mainApplicationInitialized = true
+                        MemoryDiagnostics.start(this)
                         MainApplicationInitResult.Initialized
                     } else {
                         MainApplicationInitResult.CompatibilityInitializationFailed(
@@ -806,6 +808,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
+        MemoryDiagnostics.onTrimMemory(level)
         if (!mainApplicationInitialized) {
             return
         }

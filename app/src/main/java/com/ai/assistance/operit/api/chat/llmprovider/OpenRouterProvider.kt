@@ -77,7 +77,7 @@ open class OpenRouterProvider(
         )
 
         logRequestBodyForDebugging("OpenRouterProvider", "Final OpenRouter request body: ") {
-            requestBodyForLogging(jsonObject)
+            jsonObject
         }
 
         return createJsonRequestBody(jsonObject.toString())
