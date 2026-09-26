@@ -371,7 +371,6 @@ dependencies {
     implementation(libs.mlkit.text.chinese)
     implementation(libs.mlkit.text.japanese)
     implementation(libs.mlkit.text.korean)
-    implementation(libs.mlkit.text.devanagari)
     
     implementation(libs.zxing.core)
     
@@ -457,14 +456,9 @@ dependencies {
     implementation(libs.jieba)
 
     // 向量搜索库 - 轻量级实现，适合Android
-    implementation(libs.hnswlib.core)
     implementation(libs.hnswlib.utils)
     
-    // 用于向量嵌入的TF Lite (如果需要自定义嵌入)
-    implementation(libs.tensorflow.lite)
-    implementation(libs.mediapipe.tasks.text)
-    
-    // ONNX Runtime for Android - 支持更强大的多语言Embedding模型
+    // ONNX Runtime is required by VITS speech synthesis and Silero VAD.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
 
     // Room 数据库
@@ -473,7 +467,6 @@ dependencies {
 
     // ObjectBox
     implementation(libs.objectbox.kotlin)
-    implementation(libs.commons.compress.v2)
     implementation(libs.junrar)
 
     // Compose dependencies - use BOM for version consistency

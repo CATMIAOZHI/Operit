@@ -19,6 +19,9 @@ import java.net.URL
 import java.net.URLEncoder
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
 class SkillRepository private constructor(private val context: Context) {
@@ -102,40 +105,19 @@ class SkillRepository private constructor(private val context: Context) {
             val encodedRef = encodePathSegment(ref)
             val zipUrl = "https://codeload.github.com/$owner/$repoName/zip/$encodedRef"
             val repoRefKey = "$owner/$repoName@$ref"
-            val pooledZip = SkillRepoZipPoolManager.getOrDownloadZip(repoRefKey) { outFile ->
-                downloadFromUrl(zipUrl, outFile)
-            }
-
-            val suffix = (target.subDir ?: "repo")
-                .replace('/', '_')
-                .take(60)
-            val fallbackTempFile = File(context.cacheDir, "skill_${owner}_${repoName}_$suffix.zip")
-            if (pooledZip == null) {
-                if (fallbackTempFile.exists()) fallbackTempFile.delete()
-            }
-
             try {
-                val zipFile = if (pooledZip != null) {
-                    pooledZip
-                } else {
-                    val downloaded = downloadFromUrl(zipUrl, fallbackTempFile)
-                    if (!downloaded || !fallbackTempFile.exists() || fallbackTempFile.length() <= 0L) {
-                        if (fallbackTempFile.exists()) fallbackTempFile.delete()
-                        return@withContext SkillRepoImportResult(context.getString(R.string.skill_download_zip_failed), null)
-                    }
-                    fallbackTempFile
-                }
-
-                val result = skillManager.importSkillFromZipDetailed(zipFile, target.subDir)
-
-                if (pooledZip == null) {
-                    runCatching { fallbackTempFile.delete() }
-                }
-
-                SkillRepoImportResult(result.message, result.installedDir)
+                SkillRepoZipPoolManager.initialize(context.filesDir)
+                SkillRepoZipPoolManager.withZip(
+                    repoRefKey,
+                    downloadTo = { downloadFromUrl(zipUrl, it) }
+                ) { zip ->
+                    val result = skillManager.importSkillFromZipDetailed(zip, target.subDir)
+                    SkillRepoImportResult(result.message, result.installedDir)
+                } ?: SkillRepoImportResult(context.getString(R.string.skill_download_zip_failed), null)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to import skill from GitHub repo", e)
-                if (pooledZip == null && fallbackTempFile.exists()) fallbackTempFile.delete()
                 SkillRepoImportResult(context.getString(R.string.skill_import_failed, e.message ?: "Unknown error"), null)
             }
         }
@@ -379,7 +361,7 @@ class SkillRepository private constructor(private val context: Context) {
         }
     }
 
-    private fun downloadFromUrl(zipUrl: String, outFile: File): Boolean {
+    private suspend fun downloadFromUrl(zipUrl: String, outFile: File): Boolean {
         val url = URL(zipUrl)
         val connection = (url.openConnection() as HttpURLConnection).apply {
             connectTimeout = CONNECT_TIMEOUT
@@ -391,6 +373,7 @@ class SkillRepository private constructor(private val context: Context) {
             )
         }
 
+        try {
         connection.connect()
         if (connection.responseCode != HttpURLConnection.HTTP_OK) {
             AppLogger.e(TAG, "Download failed, HTTP ${connection.responseCode}")
@@ -401,6 +384,7 @@ class SkillRepository private constructor(private val context: Context) {
             FileOutputStream(outFile).use { output ->
                 val buffer = ByteArray(BUFFER_SIZE)
                 while (true) {
+                    currentCoroutineContext().ensureActive()
                     val read = input.read(buffer)
                     if (read <= 0) break
                     output.write(buffer, 0, read)
@@ -410,6 +394,9 @@ class SkillRepository private constructor(private val context: Context) {
         }
 
         return true
+        } finally {
+            connection.disconnect()
+        }
     }
 
     private fun getGithubDefaultBranch(owner: String, repoName: String): String? {
