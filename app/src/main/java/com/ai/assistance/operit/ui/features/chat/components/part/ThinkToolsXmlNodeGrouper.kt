@@ -57,10 +57,9 @@ class ThinkToolsXmlNodeGrouper(
                 var j = i + 1
                 var toolCount = 0
                 var xmlToolRelatedCount = 0
+                // 整段连续的思考/工具序列折叠成一个分组，边界只由内容决定；按条数切块会让
+                // 长任务重复出现多个「思考与工具调用（8）」标题，也会把总数藏进分块里。
                 while (j < nodes.size) {
-                    // End only after all calls in this batch have their results. Keep
-                    // concurrent calls and their results together with absolute indices.
-                    if (toolCount >= 8 && xmlToolRelatedCount >= toolCount * 2) break
                     val next = nodes[j]
                     // 允许 think 与 tool/tool_result 之间出现纯空白文本（通常是换行）
                     if (next.type == MarkdownProcessorType.PLAIN_TEXT && next.content.isBlank()) {
@@ -117,10 +116,8 @@ class ThinkToolsXmlNodeGrouper(
                 var toolCount = if (tag == "tool") 1 else 0
                 var xmlToolRelatedCount = 1
 
+                // 同上：并发批次里调用和它的结果属于同一段，不会被切开。
                 while (j < nodes.size) {
-                    // End only after all calls in this batch have their results. Keep
-                    // concurrent calls and their results together with absolute indices.
-                    if (toolCount >= 8 && xmlToolRelatedCount >= toolCount * 2) break
                     val next = nodes[j]
                     if (next.type == MarkdownProcessorType.PLAIN_TEXT && next.content.isBlank()) {
                         j++
