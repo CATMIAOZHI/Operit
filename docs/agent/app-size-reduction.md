@@ -47,3 +47,15 @@ CI 不再下载旧 `subpack.zip`；模型依赖压缩包仍为内置 VAD 提供�
 子模块来源为 `CATMIAOZHI/OperitTerminalCore`，基于 `cd5d53c` 更新至 `52afb8c`。
 后续推送时先推送终端的 `codex/on-demand-resources`，再推送引用它的主仓库提交，
 否则 CI 无法取到新的子模块版本。
+
+## 终端项目地址
+
+终端设置页的「项目地址」卡片和更新检查原本在子模块里写死 `AAswordman/OperitTerminal`，
+主仓库无法覆盖。现在由终端库的 `TerminalProjectInfo` 承接，主应用启动时用
+`DistributionConfig.TERMINAL_OWNER` / `TERMINAL_REPOSITORY` 注入；卡片文字、「访问」
+链接、更新检查和 tags 接口都跟随发行版，独立使用终端库时仍默认指向上游项目。
+嵌入运行时自己的版本号是三位（例如 `1.12.2-ry.3-dev`），更新检查因此直接判定
+「已是最新」，不会把用户带到目前还没有 release 的页面；独立应用仍按 `vX.Y` 标签比较。
+
+子模块来源为 `CATMIAOZHI/OperitTerminalCore`，基于 `52afb8c` 更新至 `995b7d5`（分支
+`codex/on-demand-resources`）。推送时同样先推送终端分支，再推送引用它的主仓库提交。
