@@ -788,7 +788,11 @@ class PluginLoadingState {
                     if (activeTimeoutOwner != owner) return@launch
                     _hasTimedOut.value = true
                     updateMessage(
-                        appContext?.getString(R.string.plugin_loading_timeout)
+                        appContext?.getString(
+                            if (com.ai.assistance.operit.util.OnDemandResources.downloads.value.isEmpty())
+                                R.string.plugin_loading_timeout
+                            else R.string.plugin_loading_timeout_downloading
+                        )
                             ?: "Loading timeout, you can click \"Skip\" in the top right corner to continue"
                     )
                     activeTimeoutOwner = null
@@ -1150,12 +1154,18 @@ class PluginLoadingState {
             override fun onAllPluginsStarted(
                     successCount: Int,
                     totalCount: Int,
-                    status: MCPStarter.PluginInitStatus
+                    status: MCPStarter.PluginInitStatus,
+                    message: String?
             ) {
                 // 根据初始化状态显示不同的消息
                 when (status) {
                     MCPStarter.PluginInitStatus.TERMINAL_SERVICE_UNAVAILABLE -> {
                         updateMessage(context.getString(R.string.plugin_terminal_service_unavailable))
+                    }
+                    MCPStarter.PluginInitStatus.TERMINAL_RESOURCE_UNAVAILABLE -> {
+                        updateMessage(
+                                message ?: context.getString(R.string.plugin_terminal_resource_required)
+                        )
                     }
                     MCPStarter.PluginInitStatus.NODEJS_MISSING -> {
                         updateMessage(context.getString(R.string.plugin_nodejs_missing))

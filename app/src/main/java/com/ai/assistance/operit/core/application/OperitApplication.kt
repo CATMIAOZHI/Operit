@@ -142,6 +142,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         com.ai.assistance.operit.terminal.TerminalManager.setUbuntuArchivePreparer { context, target ->
             com.ai.assistance.operit.util.OnDemandResources.ensureUbuntu(context, target)
         }
+        com.ai.assistance.operit.util.AppActivityTracker.register(this)
 
         configureOpenMpEnvironment()
         Thread.setDefaultUncaughtExceptionHandler(GlobalExceptionHandler(this))

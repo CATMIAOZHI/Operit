@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.Context
 import android.content.Context.INPUT_METHOD_SERVICE
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.util.OnDemandResources
 import com.ai.assistance.operit.R
 import android.view.View
 import android.view.inputmethod.InputMethodManager
@@ -68,7 +69,8 @@ class SpeechInteractionManager(
     suspend fun initialize() {
         resetState()
         try {
-            speechService.initialize()
+            // The recognition model is prepared lazily by startRecognition, so merely showing the
+            // floating ball never triggers a large download the user did not ask for.
             voiceService.initialize()
         } catch (e: Exception) {
             AppLogger.e(TAG, "Failed to initialize speech services", e)
@@ -167,13 +169,21 @@ class SpeechInteractionManager(
                         partialResults = true
                     )
                     attempt++
+                    // A recognizer that never initialized cannot become ready by retrying, and
+                    // retrying would ask for its download again right after the user declined.
+                    if (!ok && !speechService.isInitialized.value) break
                 }
 
                 if (!ok) {
                     isRecording = false
                     isProcessingSpeech = false
                     onStateChange(context.getString(R.string.floating_hold_microphone))
-                    onStartFailure?.invoke(context.getString(R.string.floating_start_recording_failed))
+                    // Only the download layer produces a reason that is safe to show here: the
+                    // provider's own error text is engine wording, sometimes not even translated.
+                    val reason = OnDemandResources.recentSpeechFailure() ?: ""
+                    onStartFailure?.invoke(
+                        reason.ifBlank { context.getString(R.string.floating_start_recording_failed) }
+                    )
                 }
             } catch (e: Exception) {
                 isRecording = false
