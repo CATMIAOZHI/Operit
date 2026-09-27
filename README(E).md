@@ -42,7 +42,7 @@
 
 ## 🌟 Project Introduction
 
-**Operit AI** is the first fully functional AI assistant application on mobile devices. Its core client, chat records, and model configuration run and are stored on your Android device. Cloud models are called directly from the device after you choose a provider and configure your own API key and endpoint; Operit does not provide LLM inference or relay chat requests. It features powerful **tool-calling capabilities**, **Deep Search**, **workflows & automation**, an **intelligent Memory Vault**, and highly customizable **User Personality** and **Character Cards**, with **MNN/llama.cpp local inference**, an **MCP/Skill ecosystem**, and a **multi-language UI**. It's more than just a chat interface—it's an **all-in-one assistant** deeply integrated with Android permissions and various tools, now featuring a built-in **Ubuntu 24 Environment** for unprecedented functionality.
+**Operit AI** is the first fully functional AI assistant application on mobile devices. Its core client, chat records, and model configuration run and are stored on your Android device. Cloud models are called directly from the device after you choose a provider and configure your own API key and endpoint; Operit does not provide LLM inference or relay chat requests. It features powerful **tool-calling capabilities**, **Deep Search**, **workflows & automation**, an **intelligent Memory Vault**, and highly customizable **User Personality** and **Character Cards**, with an **MCP/Skill ecosystem** and a **multi-language UI**. It's more than just a chat interface—it's an **all-in-one assistant** deeply integrated with Android permissions and various tools, now featuring a built-in **Ubuntu 24 Environment** for unprecedented functionality.
 
 ---
 
@@ -63,9 +63,6 @@ Natural continuous conversations with local/cloud TTS + local STT, custom voice 
 
 </td>
 <td width="50%">
-
-### 🤖 Local AI Models
-Support for MNN / llama.cpp local models (GGUF)—run AI completely offline to protect your privacy
 
 ### 🎭 Personality & Character Cards
 Customize AI personality and speaking style, with character card backup/export (Tavern/JSON)/QR sharing and independent histories; supports AI-to-AI chats
@@ -192,7 +189,7 @@ Import and manage MCP, Skill, and tool packages
 ## 🔐 Data, Models, and Public Deployment
 
 - **Cloud models are user configured:** When using a cloud model, choose the provider and configure the API key, model, and endpoint yourself. Chat requests are sent directly from your device to that provider. Operit does not provide chat inference, API request relaying, or cloud hosting for chat records. Review the selected provider's terms and privacy policy as well.
-- **Local models can infer offline:** MNN and llama.cpp models run inference on the device. Once model files are prepared, they can be used without connecting to a model provider.
+- **Local inference now uses self-hosted endpoints:** the app no longer bundles the MNN / llama.cpp engines. For local inference, connect your own OpenAI-compatible endpoint such as Ollama or LM Studio.
 - **Personal distribution network boundary:** Operit Ry disables the upstream online market and remote announcements. Update requests contact CATMIAOZHI GitHub Releases only after a manual check. MCP, search, speech, drawing, and GitHub features you explicitly enable still contact their corresponding third-party services.
 - **Deployers are responsible for public services:** The external HTTP service is disabled by default. Once enabled, it provides a web chat interface and HTTP API on the device's network interfaces. Examples such as the QQ Bot can also be used for automated replies. Expose them only to authorized parties, and take responsibility for access control, data protection, and content management. A deployer or operator that continuously provides anthropomorphic emotional-interaction services to the public in China must also assess and comply with applicable laws and regulatory requirements.
 
@@ -448,7 +445,7 @@ Join the Operit open-source ecosystem! We welcome all types of contributions: th
 
 **Developer Notes:**
 - 📚 [Contribution Guide](docs/doc-src/dev-core/CONTRIBUTING.md) | [Script Development Guide (Chinese)](docs/SCRIPT_DEV_GUIDE.md)
-- 📦 Building requires downloading dependency archives from [Google Drive](https://drive.google.com/drive/folders/1g-Q_i7cf6Ua4KX9ZM6V282EEZvTVVfF7?usp=sharing) (`models.zip`, `subpack.zip`, `jniLibs.zip`, `libs.zip`)
+- 📦 Building requires downloading dependency archives from [Google Drive](https://drive.google.com/drive/folders/1g-Q_i7cf6Ua4KX9ZM6V282EEZvTVVfF7?usp=sharing) (`models.zip`, `jniLibs.zip`, `libs.zip`)
 - 💬 Join community discussions: [QQ Group](https://qm.qq.com/q/Sa4fKEH7sO) | [Discord](https://discord.gg/YnV9MWurRF)
 
 ### 💖 Contributors
