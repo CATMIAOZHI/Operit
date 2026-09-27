@@ -52,12 +52,12 @@ import com.ai.assistance.operit.api.chat.llmprovider.EndpointCompleter
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.AIServiceFactory
 import com.ai.assistance.operit.api.chat.llmprovider.CodexModelListFetcher
-import com.ai.assistance.operit.api.chat.llmprovider.LlamaProvider
 import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeZenFree
 import com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
 import com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders
 import com.ai.assistance.operit.data.api.CodexAuthManager
 import com.ai.assistance.operit.data.api.AccountProvider
+import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.api.ProviderAccountManager
 import com.ai.assistance.operit.data.api.OpenCodeGoQuotaClient
 import com.ai.assistance.operit.data.api.ProviderQuota
@@ -115,7 +115,6 @@ fun ModelApiSettingsSection(
         configManager: ModelConfigManager,
         saveCoordinator: ModelConfigSaveCoordinator,
         showNotification: (String) -> Unit,
-        navigateToMnnModelDownload: (() -> Unit)? = null
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -245,13 +244,8 @@ fun ModelApiSettingsSection(
     }
 
     // MNN特定配置状态
-    var mnnForwardTypeInput by remember(config.id) { mutableStateOf(config.mnnForwardType) }
-    var mnnThreadCountInput by remember(config.id) { mutableStateOf(config.mnnThreadCount.toString()) }
 
     // llama.cpp 常用配置状态
-    var llamaThreadCountInput by remember(config.id) { mutableStateOf(config.llamaThreadCount.toString()) }
-    var llamaContextSizeInput by remember(config.id) { mutableStateOf(config.llamaContextSize.toString()) }
-    var llamaGpuLayersInput by remember(config.id) { mutableStateOf(config.llamaGpuLayers.toString()) }
 
     // 多模态处理配置状态
     var enableDirectImageProcessingInput by remember(config.id) { mutableStateOf(config.enableDirectImageProcessing) }
@@ -357,11 +351,6 @@ fun ModelApiSettingsSection(
         val modelName: String,
         val providerTypeId: String,
         val provider: ApiProviderType,
-        val mnnForwardType: Int,
-        val mnnThreadCount: Int,
-        val llamaThreadCount: Int,
-        val llamaContextSize: Int,
-        val llamaGpuLayers: Int,
         val enableDirectImageProcessing: Boolean,
         val enableDirectAudioProcessing: Boolean,
         val enableDirectVideoProcessing: Boolean,
@@ -383,11 +372,6 @@ fun ModelApiSettingsSection(
                     modelName = state.modelName,
                     apiProviderType = state.provider,
                     apiProviderTypeId = state.providerTypeId,
-                    mnnForwardType = state.mnnForwardType,
-                    mnnThreadCount = state.mnnThreadCount,
-                    llamaThreadCount = state.llamaThreadCount,
-                    llamaContextSize = state.llamaContextSize,
-                    llamaGpuLayers = state.llamaGpuLayers,
                     enableDirectImageProcessing = state.enableDirectImageProcessing,
                     enableDirectAudioProcessing = state.enableDirectAudioProcessing,
                     enableDirectVideoProcessing = state.enableDirectVideoProcessing,
@@ -396,6 +380,12 @@ fun ModelApiSettingsSection(
                     enableGoogleSearch = state.enableGoogleSearch,
                     enableClaude1hPromptCache = state.enableClaude1hPromptCache,
                     enableToolCall = state.enableToolCall,
+                    // Preserve retired fields when editing/importing an older configuration.
+                    mnnForwardType = config.mnnForwardType,
+                    mnnThreadCount = config.mnnThreadCount,
+                    llamaThreadCount = config.llamaThreadCount,
+                    llamaContextSize = config.llamaContextSize,
+                    llamaGpuLayers = config.llamaGpuLayers,
                 )
 
                 EnhancedAIService.refreshAllServices(
@@ -413,11 +403,6 @@ fun ModelApiSettingsSection(
             modelName = modelNameInput,
             providerTypeId = selectedProviderTypeId,
             provider = selectedApiProvider ?: ApiProviderType.OTHER,
-            mnnForwardType = mnnForwardTypeInput,
-            mnnThreadCount = mnnThreadCountInput.toIntOrNull() ?: 4,
-            llamaThreadCount = llamaThreadCountInput.toIntOrNull()?.coerceAtLeast(1) ?: 4,
-            llamaContextSize = llamaContextSizeInput.toIntOrNull()?.coerceAtLeast(1) ?: 2048,
-            llamaGpuLayers = llamaGpuLayersInput.toIntOrNull()?.coerceAtLeast(0) ?: 0,
             enableDirectImageProcessing = enableDirectImageProcessingInput,
             enableDirectAudioProcessing = enableDirectAudioProcessingInput,
             enableDirectVideoProcessing = enableDirectVideoProcessingInput,
@@ -594,7 +579,8 @@ fun ModelApiSettingsSection(
     val canRequestModelList = when {
         browserAccountType != null -> browserAccountState != null
         isCodexProvider -> codexAuthState != null && apiEndpointInput.isNotBlank()
-        isToolPkgProvider || isMnnProvider || isLlamaProvider -> true
+        isMnnProvider || isLlamaProvider -> false
+        isToolPkgProvider -> true
         else ->
             apiEndpointInput.isNotBlank() &&
                 (!providerRequiresApiKey || (!isUsingDefaultApiKey && apiKeyInput.isNotBlank()))
@@ -625,9 +611,22 @@ fun ModelApiSettingsSection(
             browserAccountType == AccountProvider.GROK -> runCatching {
                 requireNotNull(browserAccountManager).availableGrokModels()
             }
+            browserAccountType == AccountProvider.CLAUDE -> runCatching {
+                val token = requireNotNull(browserAccountManager).validAccount().accessToken
+                ModelListFetcher.getModelsList(
+                    context = context,
+                    apiKey = token,
+                    apiEndpoint = getDefaultApiEndpoint(ApiProviderType.CLAUDE_ACCOUNT),
+                    apiProviderType = ApiProviderType.CLAUDE_ACCOUNT,
+                ).getOrThrow()
+            }.recoverCatching { error ->
+                if (error is CancellationException) throw error
+                // 订阅账户没有可靠的 /v1/models 保障；列不出来时回落到 Claude Code 的模型表，
+                // 让模型选择器保持可用（会话本身用的是已保存的模型名）。
+                AppLogger.w(TAG, "Claude 模型列表获取失败，改用内置列表: ${error.message}")
+                ClaudeOAuthProtocol.SUBSCRIPTION_MODELS.map { ModelOption(id = it, name = it) }
+            }
             isCodexProvider -> CodexModelListFetcher.getModelsList(context)
-            isMnnProvider -> ModelListFetcher.getMnnLocalModels(context)
-            isLlamaProvider -> ModelListFetcher.getLlamaLocalModels(context)
             isToolPkgProvider -> runCatching {
                 val service =
                     AIServiceFactory.createService(
@@ -848,39 +847,8 @@ fun ModelApiSettingsSection(
                 SettingsInfoBanner(text = stringResource(R.string.provider_opencode_zen_free_warning))
             }
 
-            if (isMnnProvider) {
-                MnnSettingsBlock(
-                        mnnForwardTypeInput = mnnForwardTypeInput,
-                        onForwardTypeSelected = { mnnForwardTypeInput = it },
-                        mnnThreadCountInput = mnnThreadCountInput,
-                        onThreadCountChange = { input ->
-                            if (input.isEmpty() || input.toIntOrNull() != null) {
-                                mnnThreadCountInput = input
-                            }
-                        },
-                        navigateToMnnModelDownload = navigateToMnnModelDownload
-                )
-            } else if (isLlamaProvider) {
-                LlamaSettingsBlock(
-                    llamaThreadCountInput = llamaThreadCountInput,
-                    onThreadCountChange = { input ->
-                        if (input.isEmpty() || input.toIntOrNull() != null) {
-                            llamaThreadCountInput = input
-                        }
-                    },
-                    llamaContextSizeInput = llamaContextSizeInput,
-                    onContextSizeChange = { input ->
-                        if (input.isEmpty() || input.toIntOrNull() != null) {
-                            llamaContextSizeInput = input
-                        }
-                    },
-                    llamaGpuLayersInput = llamaGpuLayersInput,
-                    onGpuLayersChange = { input ->
-                        if (input.isEmpty() || input.toIntOrNull() != null) {
-                            llamaGpuLayersInput = input
-                        }
-                    }
-                )
+            if (isMnnProvider || isLlamaProvider) {
+                SettingsInfoBanner(text = stringResource(R.string.local_llm_removed))
             } else if (browserAccountType != null) {
                 ProviderAccountSettings(browserAccountType) {
                     scope.launch { EnhancedAIService.refreshAllServices(configManager.appContext) }
@@ -2126,6 +2094,7 @@ private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: an
         ApiProviderType.COMMAND_CODE -> context.getString(R.string.provider_command_code)
         ApiProviderType.GOOGLE_ANTIGRAVITY -> context.getString(R.string.provider_google_antigravity)
         ApiProviderType.OPENAI_CODEX -> context.getString(R.string.provider_openai_codex)
+        ApiProviderType.CLAUDE_ACCOUNT -> context.getString(R.string.provider_claude_account)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> context.getString(R.string.provider_openai_responses_generic)
         ApiProviderType.OPENAI_GENERIC -> context.getString(R.string.provider_openai_generic)
         ApiProviderType.ANTHROPIC -> context.getString(R.string.provider_anthropic)
@@ -2174,7 +2143,7 @@ private fun getProviderDisplayName(providerTypeId: String, context: android.cont
 
 private fun getProviderSelectionOptions(context: android.content.Context): List<ProviderSelectionOption> {
     val builtInProviders =
-        ApiProviderType.values().map { provider ->
+        ApiProviderType.values().filterNot { it == ApiProviderType.MNN || it == ApiProviderType.LLAMA_CPP }.map { provider ->
             ProviderSelectionOption(
                 id = provider.name,
                 displayName = getBuiltInProviderDisplayName(provider, context)
@@ -2462,181 +2431,7 @@ internal fun SettingsSwitchRow(
     }
 }
 
-@Composable
-private fun MnnSettingsBlock(
-        mnnForwardTypeInput: Int,
-        onForwardTypeSelected: (Int) -> Unit,
-        mnnThreadCountInput: String,
-        onThreadCountChange: (String) -> Unit,
-        navigateToMnnModelDownload: (() -> Unit)?
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SettingsInfoBanner(text = stringResource(R.string.mnn_local_model_tip))
 
-        navigateToMnnModelDownload?.let { navigate ->
-            Button(
-                    onClick = navigate,
-                    modifier = Modifier.fillMaxWidth(),
-                    colors =
-                            ButtonDefaults.buttonColors(
-                                    containerColor = MaterialTheme.colorScheme.primaryContainer,
-                                    contentColor = MaterialTheme.colorScheme.onPrimaryContainer
-                            )
-            ) {
-                Icon(
-                        imageVector = Icons.Default.Download,
-                        contentDescription = null,
-                        modifier = Modifier.size(18.dp)
-                )
-                Spacer(modifier = Modifier.width(8.dp))
-                Text(text = stringResource(R.string.mnn_model_download))
-            }
-        }
-
-        var showForwardTypeDialog by remember { mutableStateOf(false) }
-
-        SettingsSelectorRow(
-                title = stringResource(R.string.mnn_forward_type),
-                subtitle = stringResource(R.string.select),
-                value = forwardTypeName(mnnForwardTypeInput),
-                onClick = { showForwardTypeDialog = true }
-        )
-
-        if (showForwardTypeDialog) {
-            Dialog(onDismissRequest = { showForwardTypeDialog = false }) {
-                Surface(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                                text = stringResource(R.string.mnn_forward_type),
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                                modifier = Modifier.padding(bottom = 12.dp)
-                        )
-                        listOf(
-                                0 to "CPU",
-                                3 to "OpenCL",
-                                4 to "Auto",
-                                6 to "OpenGL",
-                                7 to "Vulkan"
-                        ).forEach { (type, name) ->
-                            Surface(
-                                    modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(vertical = 4.dp)
-                                            .clickable {
-                                                onForwardTypeSelected(type)
-                                                showForwardTypeDialog = false
-                                            },
-                                    shape = RoundedCornerShape(8.dp),
-                                    color =
-                                            if (mnnForwardTypeInput == type)
-                                                    MaterialTheme.colorScheme.primaryContainer
-                                            else MaterialTheme.colorScheme.surface
-                            ) {
-                                Text(
-                                        text = name,
-                                        modifier = Modifier.padding(14.dp),
-                                        style = MaterialTheme.typography.bodyLarge
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        SettingsTextField(
-                title = stringResource(R.string.mnn_thread_count),
-                value = mnnThreadCountInput,
-                onValueChange = onThreadCountChange,
-                placeholder = "4",
-                keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next
-                ),
-                valueFilter = { input -> input.filter { it.isDigit() } }
-        )
-    }
-}
-
-@Composable
-private fun LlamaSettingsBlock(
-        llamaThreadCountInput: String,
-        onThreadCountChange: (String) -> Unit,
-        llamaContextSizeInput: String,
-        onContextSizeChange: (String) -> Unit,
-        llamaGpuLayersInput: String,
-        onGpuLayersChange: (String) -> Unit
-) {
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        SettingsInfoBanner(text = stringResource(R.string.llama_local_model_tip))
-
-        SettingsInfoBanner(
-            text =
-                stringResource(R.string.llama_local_model_download_tip) +
-                    "\n" +
-                    stringResource(
-                        R.string.llama_local_model_dir,
-                        LlamaProvider.getModelsDir().absolutePath
-                    )
-        )
-
-        SettingsTextField(
-                title = stringResource(R.string.llama_thread_count),
-                value = llamaThreadCountInput,
-                onValueChange = onThreadCountChange,
-                placeholder = "4",
-                keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next
-                ),
-                valueFilter = { input -> input.filter { it.isDigit() } }
-        )
-
-        SettingsTextField(
-                title = stringResource(R.string.llama_context_size),
-                subtitle = stringResource(R.string.llama_context_size_subtitle),
-                value = llamaContextSizeInput,
-                onValueChange = onContextSizeChange,
-                placeholder = "2048",
-                keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next
-                ),
-                valueFilter = { input -> input.filter { it.isDigit() } }
-        )
-
-        SettingsTextField(
-                title = stringResource(R.string.llama_gpu_layers),
-                subtitle = stringResource(R.string.llama_gpu_layers_subtitle),
-                value = llamaGpuLayersInput,
-                onValueChange = onGpuLayersChange,
-                placeholder = "0",
-                keyboardOptions = KeyboardOptions(
-                        keyboardType = KeyboardType.Number,
-                        imeAction = ImeAction.Next
-                ),
-                valueFilter = { input -> input.filter { it.isDigit() } }
-        )
-
-        SettingsInfoBanner(text = stringResource(R.string.llama_auto_config_tip))
-    }
-}
-
-private fun forwardTypeName(type: Int): String {
-    return when (type) {
-        0 -> "CPU"
-        3 -> "OpenCL"
-        4 -> "Auto"
-        6 -> "OpenGL"
-        7 -> "Vulkan"
-        else -> "CPU"
-    }
-}
 
 @Composable
 private fun ApiProviderDialog(
@@ -2908,6 +2703,7 @@ private fun getProviderColor(providerTypeId: String): androidx.compose.ui.graphi
         ApiProviderType.GROK_ACCOUNT,
         ApiProviderType.COMMAND_CODE,
         ApiProviderType.GOOGLE_ANTIGRAVITY,
+        ApiProviderType.CLAUDE_ACCOUNT,
         ApiProviderType.OPENAI_CODEX -> MaterialTheme.colorScheme.primary.copy(alpha = 0.98f)
         ApiProviderType.OPENAI_RESPONSES_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.88f)
         ApiProviderType.OPENAI_GENERIC -> MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)

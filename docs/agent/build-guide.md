@@ -27,14 +27,15 @@ git submodule update --init --recursive terminal
 
 ### 2. 准备本地依赖
 
-完整构建需要四个手动下载的依赖包，放置位置如下：
+完整构建需要三个手动下载的依赖包，放置位置如下：
 
 | 压缩包 | 解压目标 |
 |---|---|
 | `libs.zip` | `app/libs` |
 | `models.zip` | `app/src/main/assets/models` |
-| `subpack.zip` | `app/src/main/assets/subpack` |
 | `jniLibs.zip` | `app/src/main/jniLibs` |
+
+导出模板已改为运行时按需下载，不再需要 `subpack.zip`。
 
 这些文件不得提交到 Git。下载地址见 `docs/doc-src/dev-core/BUILDING.md` 和 `README.md`。
 
@@ -96,14 +97,15 @@ sdk.dir=C\:\\AndroidSdk
 
 ```powershell
 rg -n 'CMAKE_MAKE_PROGRAM|cmake[\\/]3\.31\.6' `
-  app/.cxx mnn/.cxx llama/.cxx `
-  app/build/intermediates/cxx mnn/build/intermediates/cxx llama/build/intermediates/cxx
+  app/.cxx dragonbones/.cxx fbx/.cxx mmd/.cxx quickjs/.cxx `
+  app/build/intermediates/cxx dragonbones/build/intermediates/cxx `
+  fbx/build/intermediates/cxx mmd/build/intermediates/cxx quickjs/build/intermediates/cxx
 ```
 
 从仓库原始长路径执行以下验证：
 
 ```powershell
-.\gradlew.bat :mnn:assembleDebug
+.\gradlew.bat :mmd:assembleDebug
 .\gradlew.bat :app:assembleDebug
 .\gradlew.bat :app:lintDebug
 ```

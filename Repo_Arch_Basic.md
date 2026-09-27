@@ -13,9 +13,7 @@ Operit-follow-up/
 ├── examples/        JavaScript/TypeScript 工具包示例
 ├── fbx/             FBX 模型 Android 原生库
 ├── gradle/          Gradle Wrapper 与版本目录
-├── llama/           llama.cpp 本地推理 Android 模块
 ├── mmd/             MMD 模型运行时与预览模块
-├── mnn/             MNN 本地推理 Android 模块
 ├── quickjs/         QuickJS JNI 模块
 ├── showerclient/    Shower 虚拟显示客户端库
 ├── terminal/        OperitTerminalCore Git 子模块
@@ -53,17 +51,9 @@ Operit-follow-up/
 
 这是 Gradle 构建支持目录，包含 Gradle Wrapper 配置和项目统一的版本目录 `libs.versions.toml`。
 
-### [`llama`](llama/)
-
-这是 llama.cpp Android 原生集成模块。它通过 CMake/JNI 接入 llama.cpp，为应用提供 GGUF 等本地大语言模型的推理能力。上游 llama.cpp 源码由 CMake 从 ggml-org 仓库获取，默认使用上游主分支。
-
 ### [`mmd`](mmd/)
 
 这是 MMD 模型 Android 运行时和预览模块，包含模型渲染相关的原生集成，并使用 Bullet3 等第三方组件。Bullet3 由 CMake 从上游仓库获取，默认使用上游主分支。`UPSTREAM_SABA_VIEWER_MAPPING.md` 记录了上游 Saba Viewer 的映射关系。
-
-### [`mnn`](mnn/)
-
-这是 MNN Android 原生集成模块。它通过 CMake/Gradle 集成 Alibaba MNN，为应用提供本地模型推理及相关 AI 原生能力。MNN 源码由 CMake 从上游仓库获取，默认使用上游主分支。
 
 ### [`quickjs`](quickjs/)
 
@@ -89,5 +79,5 @@ Operit-follow-up/
 
 ## 相关说明
 
-- `app`、`dragonbones`、`terminal`、`mnn`、`llama`、`mmd`、`fbx`、`showerclient`、`quickjs` 是根 `settings.gradle.kts` 声明的 Gradle 模块。
+- `app`、`dragonbones`、`terminal`、`mmd`、`fbx`、`showerclient`、`quickjs` 是根 `settings.gradle.kts` 声明的 Gradle 模块。
 - 仍作为 Git 子模块维护的第三方目录，以根目录的 `.gitmodules` 为准。

@@ -145,6 +145,109 @@ class ThinkingQualityTest {
             configured, "deepseek-v4-flash", 5, emptyList(), enableThinking = false))
     }
 
+    /**
+     * The Zen free tier has no per-model protocol overrides, but the app still receives each model's
+     * models.dev entry, and the request builders clamp to it. The menu has to report the same value:
+     * this is the bug behind Zen models reading "not sent" while their bodies carried an effort.
+     */
+    @Test fun zenFreeReportsTheEffortItsCatalogEntryAllows() {
+        val zenConfig = ModelConfigSummary(
+            id = "zen", name = "Zen Free",
+            apiProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+            apiEndpoint = "https://opencode.ai/zen/v1/chat/completions",
+            modelProtocolSettings = mapOf(
+                "space-bunny-free" to ModelProtocolSettings(
+                    ModelProtocol.CHAT_COMPLETIONS,
+                    reasoningEfforts = listOf("low", "medium", "high", "xhigh", "max"),
+                ),
+                "muse-spark-1.3-contributor-free" to ModelProtocolSettings(
+                    ModelProtocol.RESPONSES,
+                    reasoningEfforts = listOf("minimal", "low", "medium", "high", "xhigh"),
+                ),
+                "glm-5-free" to ModelProtocolSettings(
+                    ModelProtocol.CHAT_COMPLETIONS,
+                    reasoningEfforts = emptyList(),
+                ),
+            ),
+        )
+        val bunny = { level: Int ->
+            ThinkingRequestSemantics.resolve(zenConfig, "space-bunny-free", level, emptyList())
+        }
+
+        assertEquals(ThinkingRequestSummary.Effort("low"), bunny(1))
+        assertEquals(ThinkingRequestSummary.Effort("high"), bunny(3))
+        assertEquals(ThinkingRequestSummary.Effort("max"), bunny(5))
+        // Muse Spark reads the same entry through the Responses request builder.
+        assertEquals(
+            ThinkingRequestSummary.Effort("xhigh"),
+            ThinkingRequestSemantics.resolve(
+                zenConfig, "muse-spark-1.3-contributor-free", 5, emptyList(),
+            ),
+        )
+        // A declared-but-empty entry takes no effort control, so nothing is sent.
+        assertEquals(
+            ThinkingRequestSummary.NotSent,
+            ThinkingRequestSemantics.resolve(zenConfig, "glm-5-free", 5, emptyList()),
+        )
+        // A model the catalog does not know keeps the caller's level, as the builders do.
+        assertEquals(
+            ThinkingRequestSummary.Effort("medium"),
+            ThinkingRequestSemantics.resolve(zenConfig, "hy3-preview-free", 2, emptyList()),
+        )
+        // An explicit account parameter is reported as written, without catalog clamping.
+        assertEquals(
+            ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(
+                zenConfig, "space-bunny-free", 5, listOf(stringParameter("reasoning_effort", "low")),
+            ),
+        )
+        // Turning thinking off still reports the disabled control these providers send.
+        assertEquals(
+            ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(zenConfig, "space-bunny-free", 5, emptyList(), false),
+        )
+    }
+
+    /**
+     * Zen's Responses models keep the effort in a reasoning object, not in the flat chat field. The
+     * menu has to report the field the Responses builder preserves, and clamp only the level it
+     * chooses itself.
+     */
+    @Test fun zenFreeResponsesModelsReportTheReasoningObjectTheirBodyPreserves() {
+        val model = "muse-spark-1.3-contributor-free"
+        val declared = listOf("minimal", "low", "medium", "high", "xhigh")
+        val config = ModelConfigSummary(
+            id = "zen", name = "Zen Free",
+            apiProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+            apiEndpoint = "https://opencode.ai/zen/v1/chat/completions",
+            modelProtocolSettings =
+                mapOf(model to ModelProtocolSettings(ModelProtocol.RESPONSES, reasoningEfforts = declared)),
+        )
+        val noEffortControl = config.copy(
+            modelProtocolSettings = mapOf(
+                model to ModelProtocolSettings(ModelProtocol.RESPONSES, reasoningEfforts = emptyList()),
+            ),
+        )
+        val explicitReasoning = listOf(objectParameter("reasoning", "{\"effort\":\"high\"}"))
+
+        // The automatic level is clamped to the same catalog entry the Responses builder uses.
+        assertEquals(ThinkingRequestSummary.Effort("low"),
+            ThinkingRequestSemantics.resolve(config, model, 1, emptyList()))
+        assertEquals(ThinkingRequestSummary.Effort("xhigh"),
+            ThinkingRequestSemantics.resolve(config, model, 5, emptyList()))
+        // A caller-supplied reasoning object is preserved verbatim, at any slider level.
+        for (enabled in listOf(false, true)) {
+            assertEquals(ThinkingRequestSummary.Effort("high"),
+                ThinkingRequestSemantics.resolve(config, model, 5, explicitReasoning, enabled))
+        }
+        // Turning thinking off sends no effort at all.
+        assertEquals(ThinkingRequestSummary.Disabled,
+            ThinkingRequestSemantics.resolve(config, model, 3, emptyList(), enableThinking = false))
+        // An entry that declares no effort takes no control, so the menu claims none either.
+        assertEquals(ThinkingRequestSummary.NotSent,
+            ThinkingRequestSemantics.resolve(noEffortControl, model, 5, emptyList()))
+    }
+
     @Test fun effortMapping_coversAllLevels() {
         val expected = listOf("low", "medium", "high", "xhigh", "max")
         (ApiPreferences.MIN_THINKING_QUALITY_LEVEL..ApiPreferences.MAX_THINKING_QUALITY_LEVEL)

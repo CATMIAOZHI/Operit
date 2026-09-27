@@ -62,9 +62,9 @@ internal fun preferToolBoundarySnapshot(
 ): String {
     boundarySnapshot ?: return replayCandidate
     if (replayCandidate.length <= boundarySnapshot.replayCharCount) {
-        return boundarySnapshot.displayContent
+        return boundarySnapshot.displayContent.toString()
     }
-    return boundarySnapshot.displayContent +
+    return boundarySnapshot.displayContent.toString() +
         replayCandidate.substring(boundarySnapshot.replayCharCount)
 }
 
@@ -1169,7 +1169,7 @@ class MessageProcessingDelegate(
                             toolBoundaryContentSnapshot.set(boundarySnapshot)
                             chatRuntime.toolBoundarySnapshot = boundarySnapshot
                             chatRuntime.steeredTranscript.project(
-                                snapshotMessage.copy(content = boundarySnapshot.displayContent),
+                                snapshotMessage.copy(content = boundarySnapshot.displayContent.toString()),
                             ).forEach { addMessageToChat(targetChatId, it) }
                         }
                     },
@@ -1181,7 +1181,7 @@ class MessageProcessingDelegate(
                             chatRuntime.toolBoundarySnapshot = boundary
                             chatRuntime.steeringBoundarySnapshot = boundary
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
-                                content = boundary.displayContent, contentStream = null,
+                                content = boundary.displayContent.toString(), contentStream = null,
                                 displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
                             )).forEach { addMessageToChat(chatId, it) }
                             texts.forEach { input ->
@@ -1197,7 +1197,7 @@ class MessageProcessingDelegate(
                             }
                             val nextAssistantTimestamp = ChatMessageTimestampAllocator.next()
                             chatRuntime.steeredTranscript.add(
-                                boundary.displayContent, nextAssistantTimestamp,
+                                boundary.displayContent.toString(), nextAssistantTimestamp,
                                 snapshotMessage.timestamp,
                             )
                             nextAssistantTimestamp.toString()

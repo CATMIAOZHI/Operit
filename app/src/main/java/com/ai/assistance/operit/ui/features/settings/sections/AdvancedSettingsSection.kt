@@ -59,7 +59,8 @@ fun AdvancedSettingsSection(
     val hideApiKeyPool =
         ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) in setOf(
             ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE,
-            ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.OPENCODE_ZEN_FREE)
+            ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT,
+            ApiProviderType.OPENCODE_ZEN_FREE)
 
     var useApiKeyPool by remember(config.id) { mutableStateOf(config.useMultipleApiKeys) }
     var apiKeyPool by remember(config.id) { mutableStateOf(config.apiKeyPool) }

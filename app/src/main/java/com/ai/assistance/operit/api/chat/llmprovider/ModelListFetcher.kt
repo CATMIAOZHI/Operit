@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 import android.content.Context
 import android.os.Environment
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.api.ClaudeOAuthProtocol
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -69,7 +70,8 @@ object ModelListFetcher {
                     ApiProviderType.OPENAI_GENERIC,
                     ApiProviderType.OPENAI_LOCAL -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.ANTHROPIC,
-                    ApiProviderType.ANTHROPIC_GENERIC -> "${extractBaseUrl(apiEndpoint)}/v1/models"
+                    ApiProviderType.ANTHROPIC_GENERIC,
+                    ApiProviderType.CLAUDE_ACCOUNT -> "${extractBaseUrl(apiEndpoint)}/v1/models"
                     ApiProviderType.GOOGLE,
                     ApiProviderType.GEMINI_GENERIC ->
                         buildGeminiModelsListUrl(apiEndpoint).toString()
@@ -353,6 +355,16 @@ object ModelListFetcher {
                             }
                             requestBuilder.addHeader("anthropic-version", ANTHROPIC_VERSION)
                         }
+                        ApiProviderType.CLAUDE_ACCOUNT -> {
+                            // 订阅凭证只接受 Bearer，且需要带上 Claude Code 的 beta 与客户端指纹
+                            AppLogger.d(TAG, "使用Claude订阅Bearer认证方式")
+                            if (apiKey.isNotBlank()) {
+                                requestBuilder.addHeader("Authorization", "Bearer $apiKey")
+                            }
+                            requestBuilder.addHeader("anthropic-version", ANTHROPIC_VERSION)
+                            requestBuilder.addHeader("anthropic-beta", ClaudeOAuthProtocol.OAUTH_BETA)
+                            requestBuilder.addHeader("User-Agent", ClaudeOAuthProtocol.USER_AGENT)
+                        }
                         else -> {
                             if (apiKey.isNotBlank()) {
                                 AppLogger.d(TAG, "使用Bearer认证方式")
@@ -453,7 +465,8 @@ object ModelListFetcher {
                                     ApiProviderType.PPINFRA -> parseOpenAIModelResponse(context, responseBody)
                                     ApiProviderType.OLLAMA_CLOUD -> parseOllamaCloudModelResponse(context, responseBody)
                                     ApiProviderType.ANTHROPIC,
-                                    ApiProviderType.ANTHROPIC_GENERIC -> parseAnthropicModelResponse(context, responseBody)
+                                    ApiProviderType.ANTHROPIC_GENERIC,
+                                    ApiProviderType.CLAUDE_ACCOUNT -> parseAnthropicModelResponse(context, responseBody)
                                     ApiProviderType.GOOGLE,
                                     ApiProviderType.GEMINI_GENERIC -> parseGoogleModelResponse(context, responseBody)
 
@@ -671,100 +684,4 @@ object ModelListFetcher {
         return modelList.sortedBy { it.id }
     }
 
-    /**
-     * 获取本地MNN模型列表
-     * 从固定目录读取已下载的MNN模型文件夹
-     */
-    suspend fun getMnnLocalModels(context: Context): Result<List<ModelOption>> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val modelsDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "Operit/models/mnn"
-                )
-                
-                AppLogger.d(TAG, "读取MNN模型目录: ${modelsDir.absolutePath}")
-                
-                if (!modelsDir.exists()) {
-                    AppLogger.w(TAG, "MNN模型目录不存在")
-                    return@withContext Result.success(emptyList())
-                }
-                
-                // 遍历所有模型文件夹
-                val models = modelsDir.listFiles { file -> 
-                    file.isDirectory
-                }?.mapNotNull { folder ->
-                    // 在文件夹中查找 llm.mnn 主文件
-                    val mnnFile = File(folder, "llm.mnn")
-                    val mnnWeightFile = File(folder, "llm.mnn.weight")
-                    
-                    if (mnnFile.exists()) {
-                        // 计算文件夹总大小
-                        val totalSize = folder.listFiles()?.sumOf { it.length() } ?: 0L
-                        
-                        AppLogger.d(TAG, "找到MNN模型: ${folder.name}, 主文件: ${mnnFile.exists()}, 权重文件: ${mnnWeightFile.exists()}, 总大小: ${formatFileSize(totalSize)}")
-                        
-                        ModelOption(
-                            id = folder.name,  // 使用文件夹名称作为ID（与其他提供商保持一致）
-                            name = "${folder.name} (${formatFileSize(totalSize)})"
-                        )
-                    } else {
-                        AppLogger.w(TAG, "文件夹 ${folder.name} 中未找到 llm.mnn 文件")
-                        null
-                    }
-                }?.sortedBy { it.name } ?: emptyList()
-                
-                AppLogger.d(TAG, "找到 ${models.size} 个可用的MNN模型")
-                Result.success(models)
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "读取MNN模型列表失败", e)
-                Result.failure(e)
-            }
-        }
-    }
-
-    suspend fun getLlamaLocalModels(context: Context): Result<List<ModelOption>> {
-        return withContext(Dispatchers.IO) {
-            try {
-                val modelsDir = File(
-                    Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS),
-                    "Operit/models/llama"
-                )
-
-                AppLogger.d(TAG, "读取llama.cpp模型目录: ${modelsDir.absolutePath}")
-
-                if (!modelsDir.exists()) {
-                    AppLogger.w(TAG, "llama.cpp模型目录不存在")
-                    return@withContext Result.success(emptyList())
-                }
-
-                val models = modelsDir.listFiles { file ->
-                    file.isFile && file.name.lowercase().endsWith(".gguf")
-                }?.map { file ->
-                    ModelOption(
-                        id = file.name,
-                        name = "${file.name} (${formatFileSize(file.length())})"
-                    )
-                }?.sortedBy { it.name } ?: emptyList()
-
-                AppLogger.d(TAG, "找到 ${models.size} 个可用的llama.cpp模型")
-                Result.success(models)
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "读取llama.cpp模型列表失败", e)
-                Result.failure(e)
-            }
-        }
-    }
-
-    /**
-     * 格式化文件大小
-     */
-    private fun formatFileSize(sizeBytes: Long): String {
-        return when {
-            sizeBytes < 1024 -> "$sizeBytes B"
-            sizeBytes < 1024 * 1024 -> "${sizeBytes / 1024} KB"
-            sizeBytes < 1024 * 1024 * 1024 -> "${sizeBytes / (1024 * 1024)} MB"
-            else -> String.format("%.2f GB", sizeBytes / (1024.0 * 1024.0 * 1024.0))
-        }
-    }
 }

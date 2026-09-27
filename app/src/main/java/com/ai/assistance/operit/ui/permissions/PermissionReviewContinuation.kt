@@ -170,7 +170,7 @@ internal fun permissionReviewDelta(
     modelKey: String,
     history: List<PermissionReviewTranscriptMessage>,
     timingScopeId: String?,
-    liveAssistantContent: String?,
+    liveAssistantContent: CharSequence?,
     maxMessageChars: Int = MAX_TRANSCRIPT_MESSAGE_CHARS,
     maxChars: Int = MAX_TRANSCRIPT_CHARS,
 ): PermissionReviewDelta? {
@@ -184,7 +184,7 @@ internal fun permissionReviewDelta(
     if (cursor.historySize !in 1..history.size) return null
     if (permissionReviewHistoryHash(history, cursor.historySize) != cursor.prefixHash) return null
 
-    val liveContent = sanitizedLiveAssistantContent(liveAssistantContent)
+    val liveContent = sanitizedLiveAssistantContent(liveAssistantContent, maxMessageChars)
     val persistedLiveAssistant =
         liveContent?.let { persistedLiveAssistantMessage(history, timingScopeId) }
     val entries =
@@ -200,7 +200,7 @@ internal fun permissionReviewDelta(
                 ?: "assistant"
         entries +=
             PermissionReviewTranscriptEntry(
-                rendered = "[$role]\n${truncateTranscriptMessage(content, maxMessageChars)}\n",
+                rendered = "[$role]\n$content\n",
                 isUser = false,
             )
     }

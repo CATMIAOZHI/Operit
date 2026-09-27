@@ -93,4 +93,19 @@ class SteeredTranscriptTest {
         val regenerated = ChatMessage(sender = "ai", timestamp = 10, content = "new response")
         assertEquals(listOf(regenerated), transcript.project(regenerated))
     }
+
+    @Test fun theNewestBoundaryIsTheOnlyOneAProjectionReads() {
+        val transcript = SteeredTranscript()
+        transcript.add("first", 3, 1)
+        transcript.add("firstsecond", 5, 1)
+        // An older prefix is not a prefix of the newest one, so a snapshot of it is stale and is
+        // refused: the projection has to read the newest boundary and nothing older.
+        assertTrue(transcript.project(ChatMessage(sender = "ai", timestamp = 1, content = "first")).isEmpty())
+        assertEquals(
+            listOf("\nlast"),
+            transcript
+                .project(ChatMessage(sender = "ai", timestamp = 1, content = "firstsecond\nlast"))
+                .map { it.content },
+        )
+    }
 }

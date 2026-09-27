@@ -6,7 +6,6 @@ import com.ai.assistance.operit.data.model.protocolSettingsForModel
 import com.ai.assistance.operit.data.model.supportsModelProtocolOverrides
 
 import android.content.Context
-import com.ai.assistance.llama.LlamaSession
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelConfigData
@@ -238,23 +237,6 @@ internal fun parseProviderCustomHeaders(customHeadersJson: String): Map<String, 
 /** AI服务工厂，根据提供商类型创建相应的AIService实例 */
 object AIServiceFactory {
 
-    private fun buildAndroidLlamaSessionConfig(config: ModelConfigData): LlamaSession.Config {
-        val safeThreadCount =
-            config.llamaThreadCount.coerceAtLeast(1)
-                .coerceAtMost(Runtime.getRuntime().availableProcessors().coerceAtLeast(1))
-        return LlamaSession.Config(
-            nThreads = safeThreadCount,
-            nCtx = config.llamaContextSize.coerceAtLeast(1),
-            nBatch = 512,
-            nUBatch = 512,
-            nGpuLayers = config.llamaGpuLayers.coerceAtLeast(0),
-            useMmap = false,
-            flashAttention = false,
-            kvUnified = true,
-            offloadKqv = false
-        )
-    }
-
     /**
      * 创建AI服务实例（统一统计记录边界）。
      *
@@ -336,7 +318,13 @@ object AIServiceFactory {
                 supportsVision = supportsVision,
                 supportsAudio = supportsAudio,
                 supportsVideo = supportsVideo,
-                enableToolCall = enableToolCall
+                enableToolCall = enableToolCall,
+                // Muse Spark and the other Responses models of this provider receive their catalog
+                // entry like every other free model, so the body clamps to it exactly as the
+                // thinking menu does. Without it the menu would report a clamped level while the
+                // body still carried the raw one.
+                catalogReasoningEfforts =
+                    config.protocolSettingsForModel(config.modelName).reasoningEfforts,
             )
         }
 
@@ -439,6 +427,26 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall,
                 )
 
+            // Claude 订阅账户登录：令牌来自账户管理器，请求仍走 Anthropic 原生格式
+            ApiProviderType.CLAUDE_ACCOUNT ->
+                ClaudeProvider(
+                    config.apiEndpoint,
+                    AccountApiKeyProvider(
+                        com.ai.assistance.operit.data.api.ProviderAccountManager.get(
+                            context,
+                            com.ai.assistance.operit.data.api.AccountProvider.CLAUDE,
+                        )
+                    ),
+                    config.modelName,
+                    httpClient,
+                    customHeaders,
+                    providerType,
+                    supportsVision,
+                    enableToolCall,
+                    config.enableClaude1hPromptCache,
+                    config.id,
+                )
+
             // Claude格式，支持Anthropic Claude系列
             ApiProviderType.ANTHROPIC,
             ApiProviderType.ANTHROPIC_GENERIC ->
@@ -503,29 +511,8 @@ object AIServiceFactory {
                     enableToolCall = enableToolCall
                 )
 
-            // MNN本地推理引擎
-            ApiProviderType.MNN ->
-                MNNProvider(
-                    context = context,
-                    modelName = config.modelName,
-                    forwardType = config.mnnForwardType,
-                    threadCount = config.mnnThreadCount,
-                    providerType = providerType,
-                    enableToolCall = enableToolCall,
-                    supportsVision = supportsVision,
-                    supportsAudio = supportsAudio,
-                    supportsVideo = supportsVideo
-                )
-
-            // llama.cpp 本地推理引擎
-            ApiProviderType.LLAMA_CPP ->
-                LlamaProvider(
-                    context = context,
-                    modelName = config.modelName,
-                    sessionConfig = buildAndroidLlamaSessionConfig(config),
-                    providerType = providerType,
-                    enableToolCall = enableToolCall
-                )
+            ApiProviderType.MNN, ApiProviderType.LLAMA_CPP ->
+                error(context.getString(com.ai.assistance.operit.R.string.local_llm_removed))
 
             // 阿里云（通义千问）使用QwenProvider
             ApiProviderType.ALIYUN ->

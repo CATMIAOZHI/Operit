@@ -137,7 +137,7 @@ internal class MainProcessStartupGate {
     }
 }
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components.ResourceDownloadDialogHost {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
         private val processStartupGate = MainProcessStartupGate()
@@ -1074,6 +1074,11 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
                         }
+                        com.ai.assistance.operit.ui.components.ResourceDownloadPanel(
+                            // Above the plugin loading layer: the first terminal download starts there.
+                            Modifier.align(Alignment.BottomCenter).zIndex(11f)
+                        )
+                        com.ai.assistance.operit.ui.components.ResourceDownloadConfirmHost()
                     }
                     // 插件加载界面 (带有淡出效果) - 始终在最上层
                     PluginLoadingScreenWithState(

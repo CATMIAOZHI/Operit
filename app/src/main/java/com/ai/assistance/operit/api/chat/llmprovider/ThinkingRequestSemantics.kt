@@ -137,6 +137,26 @@ object ThinkingRequestSemantics {
                 )?.let(::textSummary)
                 ?: ThinkingRequestSummary.NotSent
         }
+        // The Zen free tier serves both transports behind one provider type and each one carries the
+        // effort in a different field: its Responses models keep reasoning.effort, its chat models a
+        // flat reasoning_effort. Resolve through the transport the request builder will pick, or the
+        // menu would report the chat field while the body carried the reasoning object (or the
+        // automatic level) instead.
+        val protocolSettings = runtime.protocolSettingsForModel(modelName)
+        if (!isToolPkgProvider &&
+            runtime.apiProviderType == ApiProviderType.OPENCODE_ZEN_FREE &&
+            OpenCodeZenFree.usesResponses(modelName, protocolSettings.protocol)
+        ) {
+            // A caller-supplied effort is preserved verbatim by the Responses builder.
+            resolveResponsesOverride(modelParameters)?.let { return it }
+            if (!enableThinking) {
+                return ThinkingRequestSummary.Disabled
+            }
+            val effort = defaultReasoningEffort(ApiProviderType.OPENCODE_ZEN_FREE, qualityLevel)!!
+            return declaredCatalogReasoningEffort(effort, protocolSettings.reasoningEfforts)
+                ?.let(::textSummary)
+                ?: ThinkingRequestSummary.NotSent
+        }
         val summary =
             resolve(
                 providerType = runtime.apiProviderType,
@@ -149,13 +169,22 @@ object ThinkingRequestSemantics {
                 modelParameters = modelParameters,
                 enableThinking = enableThinking,
             )
-        if (isToolPkgProvider || !supportsModelProtocolOverrides(config.apiProviderTypeId)) {
+        val declaredEfforts = runtime.protocolSettingsForModel(modelName).reasoningEfforts
+        // Providers with per-model protocol settings already clamp through them. The Zen free tier
+        // has no overrides but still receives its models' catalog entries, so it clamps the same way;
+        // a model the catalog does not know keeps the caller's choice, as the request builders do.
+        val clampsToCatalog =
+            runtime.apiProviderType in effortCatalogProviderTypes &&
+                declaredEfforts != null &&
+                (supportsModelProtocolOverrides(config.apiProviderTypeId) ||
+                    runtime.apiProviderType == ApiProviderType.OPENCODE_ZEN_FREE)
+        if (isToolPkgProvider || !clampsToCatalog) {
             return summary
         }
         return declaredCatalogEffortSummary(
             summary,
             runtime.apiProviderType,
-            runtime.protocolSettingsForModel(modelName).reasoningEfforts,
+            declaredEfforts,
             modelParameters,
         )
     }
@@ -189,7 +218,8 @@ object ThinkingRequestSemantics {
                             ?.let { GrokAccountPolicy.effort(modelName, it) }
                             ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
                     ApiProviderType.OPENAI,
-                    ApiProviderType.OPENAI_GENERIC ->
+                    ApiProviderType.OPENAI_GENERIC,
+                    ApiProviderType.OPENCODE_ZEN_FREE ->
                         resolveOpenAiChatReasoningEffortOverride(modelParameters)
 
                     ApiProviderType.OPENAI_LOCAL,
@@ -265,7 +295,8 @@ object ThinkingRequestSemantics {
                         ?: ApiPreferences.thinkingQualityEffort(qualityLevel))
                     ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
             ApiProviderType.OPENAI,
-            ApiProviderType.OPENAI_GENERIC ->
+            ApiProviderType.OPENAI_GENERIC,
+            ApiProviderType.OPENCODE_ZEN_FREE ->
                 resolveOpenAiChatReasoningEffortOverride(modelParameters)
                     ?: ThinkingRequestSummary.Effort(
                         defaultReasoningEffort(effectiveProviderType, qualityLevel)!!,
@@ -405,7 +436,9 @@ object ThinkingRequestSemantics {
         val effort = ApiPreferences.thinkingQualityEffort(qualityLevel)
         return when (providerType) {
             ApiProviderType.DEEPSEEK -> normalizeDeepseekEffort(effort)
-            ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE -> effort
+            ApiProviderType.GROK_ACCOUNT,
+            ApiProviderType.COMMAND_CODE,
+            ApiProviderType.OPENCODE_ZEN_FREE -> effort
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENAI_CODEX,
@@ -466,7 +499,9 @@ object ThinkingRequestSemantics {
         modelParameters: List<ModelParameter<*>>,
     ): ThinkingRequestSummary? =
         when (providerType) {
-            ApiProviderType.OPENAI, ApiProviderType.OPENAI_GENERIC ->
+            ApiProviderType.OPENAI,
+            ApiProviderType.OPENAI_GENERIC,
+            ApiProviderType.OPENCODE_ZEN_FREE ->
                 resolveOpenAiChatReasoningEffortOverride(modelParameters)
             ApiProviderType.OPENAI_RESPONSES, ApiProviderType.OPENAI_RESPONSES_GENERIC ->
                 resolveResponsesOverride(modelParameters)
@@ -479,6 +514,7 @@ object ThinkingRequestSemantics {
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENAI_RESPONSES,
             ApiProviderType.OPENAI_RESPONSES_GENERIC,
+            ApiProviderType.OPENCODE_ZEN_FREE,
         )
 
     fun normalizeDeepseekEffort(effort: String): String =

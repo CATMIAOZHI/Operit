@@ -12,12 +12,11 @@ from pathlib import Path, PurePosixPath
 
 PROFILE_ARCHIVES = {
     "jvm": ("libs.zip",),
-    "full": ("libs.zip", "models.zip", "subpack.zip", "jniLibs.zip"),
+    "full": ("libs.zip", "models.zip", "jniLibs.zip"),
 }
 ARCHIVE_ROOTS = {
     "libs.zip": "app/libs",
     "models.zip": "app/src/main/assets/models",
-    "subpack.zip": "app/src/main/assets/subpack",
     "jniLibs.zip": "app/src/main/jniLibs",
 }
 MAX_ARCHIVE_MEMBERS = 100_000
@@ -165,7 +164,6 @@ def verify_outputs(profile: str, repository: Path, extracted_files: set[Path]) -
     if profile == "full":
         for relative_path in (
             "app/src/main/assets/models",
-            "app/src/main/assets/subpack",
             "app/src/main/jniLibs",
         ):
             output_root = repository / relative_path

@@ -66,7 +66,6 @@ import com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSetti
 import com.ai.assistance.operit.ui.features.settings.screens.ThemeSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.ToolPermissionSettingsScreen
 import com.ai.assistance.operit.ui.features.settings.screens.UserPreferencesSettingsScreen
-import com.ai.assistance.operit.ui.features.settings.screens.MnnModelDownloadScreen
 import com.ai.assistance.operit.ui.features.tokenstats.TokenUsageStatisticsScreen
 import com.ai.assistance.operit.ui.features.tokenstats.TokenStatsManagementScreen
 import com.ai.assistance.operit.ui.features.token.TokenConfigWebViewScreen
@@ -830,7 +829,6 @@ sealed class Screen(
                 onGestureConsumed: (Boolean) -> Unit
         ) {
             ModelConfigScreen(
-                navigateToMnnModelDownload = { navigateTo(MnnModelDownload) }
             )
         }
     }
@@ -864,7 +862,6 @@ sealed class Screen(
                 onGestureConsumed: (Boolean) -> Unit
         ) {
             ModelConfigScreen(
-                navigateToMnnModelDownload = { navigateTo(MnnModelDownload) },
                 entryMode = ModelConfigEntryMode.CHAT_ONBOARDING
             )
         }
@@ -902,23 +899,6 @@ sealed class Screen(
             onGestureConsumed: (Boolean) -> Unit
         ) {
             ExternalHttpChatSettingsScreen(onBackPressed = onGoBack)
-        }
-    }
-    
-    // MNN模型下载屏幕
-    data object MnnModelDownload :
-        Screen(navItem = NavItem.Settings, titleRes = R.string.screen_title_mnn_model_download) {
-        @Composable
-        override fun Content(
-            navController: NavController,
-            navigateTo: ScreenNavigationHandler,
-            onGoBack: () -> Unit,
-            hasBackgroundImage: Boolean,
-            onLoading: (Boolean) -> Unit,
-            onError: (String) -> Unit,
-            onGestureConsumed: (Boolean) -> Unit
-        ) {
-            MnnModelDownloadScreen(onBackPressed = onGoBack)
         }
     }
     

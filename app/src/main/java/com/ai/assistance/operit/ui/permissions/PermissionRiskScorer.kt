@@ -229,7 +229,7 @@ internal class PermissionRiskScorer private constructor(context: Context) {
         actions: List<PermissionRiskAction>,
         workspacePath: String?,
         workspaceEnv: String?,
-        liveAssistantContent: String?,
+        liveAssistantContent: CharSequence?,
     ) {
         // Registering the history here, rather than only where it is read, is what makes a record of
         // the first batch durable: the page that shows them may never be opened in this process.

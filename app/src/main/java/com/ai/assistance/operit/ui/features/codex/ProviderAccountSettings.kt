@@ -38,9 +38,11 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
     var clientId by remember(provider) { mutableStateOf("") }
     var clientSecret by remember(provider) { mutableStateOf("") }
     var error by remember(provider) { mutableStateOf<String?>(null) }
-    // Grok's own account row is the credential, so a probe cannot cross accounts the way a free-text
-    // key field can; it still runs through the same request-id guard as the other account panels.
-    val isGrok = provider == AccountProvider.GROK
+    // Grok and Claude report their own subscription windows; Antigravity has no billing endpoint.
+    // Their account row is the credential, so a probe cannot cross accounts the way a free-text key
+    // field can; it still runs through the same request-id guard as the other account panels.
+    val hasQuotaProbe =
+        provider == AccountProvider.GROK || provider == AccountProvider.CLAUDE
     var quota by remember(provider) { mutableStateOf<ProviderQuota?>(null) }
     var quotaLoading by remember(provider) { mutableStateOf(false) }
     var quotaFailed by remember(provider) { mutableStateOf(false) }
@@ -52,7 +54,10 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         quotaLoading = true
         scope.launch {
             val result = try {
-                withContext(Dispatchers.IO) { manager.fetchGrokQuota() }
+                withContext(Dispatchers.IO) {
+                    if (provider == AccountProvider.CLAUDE) manager.fetchClaudeQuota()
+                    else manager.fetchGrokQuota()
+                }
             } catch (cancelled: CancellationException) {
                 throw cancelled
             } catch (_: Exception) {
@@ -73,7 +78,7 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
         quotaLoading = false
         quotaRequestId++
         // Antigravity shares this composable but has no billing endpoint, so never probe for it.
-        if (isGrok && account != null) refreshQuota()
+        if (hasQuotaProbe && account != null) refreshQuota()
     }
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(if (account == null) R.string.provider_account_not_logged_in
@@ -101,7 +106,7 @@ fun ProviderAccountSettings(provider: AccountProvider, onAccountChanged: () -> U
                 scope.launch { manager.logout(); onAccountChanged() }
             }) { Text(stringResource(R.string.provider_account_logout)) }
         }
-        if (isGrok && account != null) {
+        if (hasQuotaProbe && account != null) {
             ProviderQuotaPanel(
                 quota = quota,
                 loading = quotaLoading,

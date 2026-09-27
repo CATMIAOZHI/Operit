@@ -713,6 +713,18 @@ private fun copyTemplateFiles(context: Context, workspaceDir: File, templateName
                 }
             }
         }
+        val aaptPath = when (templateName) {
+            "android" -> "tools/aapt2/aapt2-arm64-v8a"
+            "flutter" -> "android/tools/aapt2/aapt2-arm64-v8a"
+            else -> null
+        }
+        if (aaptPath != null) {
+            val target = File(workspaceDir, aaptPath)
+            target.parentFile?.mkdirs()
+            assetManager.open("shared-tools/aapt2-arm64-v8a").use { input ->
+                target.outputStream().use { input.copyTo(it) }
+            }
+        }
     } catch (e: IOException) {
         e.printStackTrace()
     }

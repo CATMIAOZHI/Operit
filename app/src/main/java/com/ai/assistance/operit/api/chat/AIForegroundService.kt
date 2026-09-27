@@ -120,6 +120,9 @@ class AIForegroundService : Service() {
         private const val REQUEST_CODE_TOGGLE_WAKE_LISTENING = 9006
         private const val REPLY_NOTIFICATION_TAG_PREFIX = "ai_reply:"
 
+        private const val WAKE_RETRY_INITIAL_DELAY_MS = 650L
+        private const val WAKE_RETRY_MAX_DELAY_MS = 30_000L
+
         private const val ACTION_SET_WAKE_LISTENING_SUSPENDED_FOR_IME =
             "com.ai.assistance.operit.action.SET_WAKE_LISTENING_SUSPENDED_FOR_IME"
         private const val EXTRA_IME_VISIBLE = "extra_ime_visible"
@@ -741,6 +744,8 @@ class AIForegroundService : Service() {
     private val wakeStateMutex = Mutex()
     private var wakeStateApplyJob: Job? = null
     private var wakeStateRetryJob: Job? = null
+    /** Backs off so a missing speech model is not re-requested on every wake tick. */
+    private var wakeRetryDelayMs = WAKE_RETRY_INITIAL_DELAY_MS
 
     private var personalWakeJob: Job? = null
     private var personalWakeListener: PersonalWakeListener? = null
@@ -1653,6 +1658,21 @@ class AIForegroundService : Service() {
 
         try {
             val provider = ensureWakeSpeechProvider()
+            // Wake listening must never raise a download dialog from the background: it waits for
+            // the user to download the offline model instead, then keeps retrying with backoff.
+            // Wake listening is always the on-device engine, so this is a plain file check.
+            if (!com.ai.assistance.operit.util.OnDemandResources.hasSpeechModel(this)) {
+                AppLogger.w(TAG, "唤醒监听暂缓：离线语音模型尚未下载")
+                wakeListeningMicActiveForRecordingDetection = false
+                wakeRetryDelayMs = (wakeRetryDelayMs * 2).coerceAtMost(WAKE_RETRY_MAX_DELAY_MS)
+                wakeStateRetryJob?.cancel()
+                wakeStateRetryJob =
+                    serviceScope.launch {
+                        delay(wakeRetryDelayMs)
+                        wakeStateMutex.withLock { applyWakeListeningStateLocked() }
+                    }
+                return
+            }
             val initOk = provider.initialize()
             AppLogger.d(TAG, "唤醒识别器 initialize: ok=$initOk")
             wakeListeningMicActiveForRecordingDetection = true
@@ -1663,6 +1683,9 @@ class AIForegroundService : Service() {
                 audioSource = MediaRecorder.AudioSource.MIC,
             )
             AppLogger.d(TAG, "唤醒识别器 startRecognition: ok=$startOk")
+            if (startOk) {
+                wakeRetryDelayMs = WAKE_RETRY_INITIAL_DELAY_MS
+            }
             if (!startOk) {
                 val alreadyRunning =
                     provider.isRecognizing ||
@@ -1672,10 +1695,12 @@ class AIForegroundService : Service() {
                 if (!alreadyRunning) {
                     AppLogger.w(TAG, "唤醒识别器 startRecognition failed (will retry)")
                     wakeListeningMicActiveForRecordingDetection = false
+                    wakeRetryDelayMs =
+                        (wakeRetryDelayMs * 2).coerceAtMost(WAKE_RETRY_MAX_DELAY_MS)
                     wakeStateRetryJob?.cancel()
                     wakeStateRetryJob =
                         serviceScope.launch {
-                            delay(650)
+                            delay(wakeRetryDelayMs)
                             wakeStateMutex.withLock {
                                 applyWakeListeningStateLocked()
                             }

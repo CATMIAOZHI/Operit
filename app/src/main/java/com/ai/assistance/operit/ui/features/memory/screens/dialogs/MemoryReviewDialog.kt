@@ -113,6 +113,11 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         else OutlinedTextField(body, { body = it }, readOnly = !pending, enabled = !busy,
                             label = { Text(stringResource(R.string.memory_review_after)) },
                             modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12)
+                        record.files.toSortedMap().forEach { (path, text) ->
+                            OutlinedTextField(text, {}, readOnly = true,
+                                label = { Text(path) }, modifier = Modifier.fillMaxWidth(),
+                                minLines = 2, maxLines = 8)
+                        }
                         if (record.audits.isNotBlank()) Text(record.audits)
                         if (record.reviewedAt > 0) Text("${record.reviewer} · ${DateFormat.getDateTimeInstance().format(Date(record.reviewedAt))}\n${record.reason}")
                         if (pending || record.status == "applying") {

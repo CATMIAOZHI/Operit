@@ -56,7 +56,10 @@ object ChatConfigReadiness {
 
         val providerType = ApiProviderType.fromProviderTypeId(providerTypeId)
             ?: return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
-        if (providerType in setOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY)
+        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
+            return ChatConfigReadinessResult(ChatConfigReadinessIssue.PROVIDER_UNAVAILABLE)
+        }
+        if (providerType in setOf(ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)
             && !accountAuthenticated) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.ACCOUNT_LOGIN_REQUIRED)
         }
@@ -68,16 +71,12 @@ object ChatConfigReadiness {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.MODEL_MISSING)
         }
 
-        if (providerType == ApiProviderType.MNN || providerType == ApiProviderType.LLAMA_CPP) {
-            return ChatConfigReadinessResult()
-        }
-
         val completedEndpoint = EndpointCompleter.completeEndpoint(config.apiEndpoint, providerType)
         if (!isHttpEndpoint(completedEndpoint)) {
             return ChatConfigReadinessResult(ChatConfigReadinessIssue.ENDPOINT_INVALID)
         }
 
-        if (providerType in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY)) {
+        if (providerType in setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT, ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)) {
             return ChatConfigReadinessResult()
         }
         if (providerType == ApiProviderType.OPENCODE_ZEN_FREE) {

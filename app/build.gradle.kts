@@ -144,6 +144,10 @@ androidComponents.onVariants { variant ->
 }
 
 android {
+    androidResources {
+        // Exact asset names, including assets merged from the terminal library.
+        ignoreAssetsPattern = "!.svn:!.git:!.ds_store:!*.scc:.*:!CVS:!thumbs.db:!picasa.ini:!*~:sherpa-ncnn-streaming-zipformer-bilingual-zh-en-2023-02-13:ubuntu-noble-aarch64-pd-v4.18.0.tar.xz:android.apk:windows.zip"
+    }
     namespace = "com.ai.assistance.operit"
     compileSdk = 36
 
@@ -180,7 +184,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 51
-        versionName = "1.12.2-ry.3"
+        versionName = "1.12.2-ry.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -336,8 +340,6 @@ dependencies {
     implementation("com.github.jelmerk:hnswlib-core:1.2.1")
     implementation(project(":dragonbones"))
     implementation(project(":terminal"))
-    implementation(project(":mnn"))
-    implementation(project(":llama"))
     implementation(project(":mmd"))
     implementation(project(":fbx"))
     implementation(project(":showerclient"))
@@ -365,7 +367,6 @@ dependencies {
     implementation(libs.mlkit.text.chinese)
     implementation(libs.mlkit.text.japanese)
     implementation(libs.mlkit.text.korean)
-    implementation(libs.mlkit.text.devanagari)
     
     implementation(libs.zxing.core)
     
@@ -451,14 +452,9 @@ dependencies {
     implementation(libs.jieba)
 
     // 向量搜索库 - 轻量级实现，适合Android
-    implementation(libs.hnswlib.core)
     implementation(libs.hnswlib.utils)
     
-    // 用于向量嵌入的TF Lite (如果需要自定义嵌入)
-    implementation(libs.tensorflow.lite)
-    implementation(libs.mediapipe.tasks.text)
-    
-    // ONNX Runtime for Android - 支持更强大的多语言Embedding模型
+    // ONNX Runtime is required by VITS speech synthesis and Silero VAD.
     implementation("com.microsoft.onnxruntime:onnxruntime-android:1.17.1")
 
     // Room 数据库
@@ -467,7 +463,6 @@ dependencies {
 
     // ObjectBox
     implementation(libs.objectbox.kotlin)
-    implementation(libs.commons.compress.v2)
     implementation(libs.junrar)
 
     // Compose dependencies - use BOM for version consistency

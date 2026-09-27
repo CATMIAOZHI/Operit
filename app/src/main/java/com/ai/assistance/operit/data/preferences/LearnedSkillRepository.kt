@@ -23,6 +23,12 @@ class LearnedSkillRepository(private val context: Context) {
         const val MAX_SKILL_DESCRIPTION_CHARS = 240
         /** Hard ceiling for any single skill file, including a whole-file SKILL.md rewrite. */
         const val MAX_SKILL_FILE_CHARS = 24_000
+        internal fun validatePath(path: String) {
+            require(path=="SKILL.md" || Regex("(references|scripts|templates|assets)/[A-Za-z0-9_./-]+").matches(path)) {
+                "Use SKILL.md or a file under references/, scripts/, templates/ or assets/"
+            }
+            require(path.split('/').none { it==".." || it=="." || it.isEmpty() }) { "Invalid skill file path" }
+        }
         fun version(text: String): String = MessageDigest.getInstance("SHA-256").digest(text.toByteArray())
             .joinToString("") { "%02x".format(it) }
     }
@@ -64,8 +70,7 @@ class LearnedSkillRepository(private val context: Context) {
         }
     }
     private fun target(name: String, path: String): File {
-        require(path=="SKILL.md" || Regex("(references|scripts|templates|assets)/[A-Za-z0-9_./-]+").matches(path))
-        require(path.split('/').none { it==".." || it=="." || it.isEmpty() })
+        validatePath(path)
         val skill = manager.getAvailableSkills()[name] ?: error("Skill not found")
         val root = skill.directory.canonicalFile
         val file = File(root,path).canonicalFile
