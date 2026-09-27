@@ -8,26 +8,57 @@ import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import org.junit.Assert.*
 import org.junit.Test
 
-class ThinkToolsPagingTest {
+class ThinkToolsGroupingTest {
     private fun xml(text: String) = MarkdownNodeStable(MarkdownProcessorType.XML_BLOCK, text, emptyList())
+    private fun text(value: String) = MarkdownNodeStable(MarkdownProcessorType.PLAIN_TEXT, value, emptyList())
     private fun call(id: Int) = xml("""<tool name="read_file" call_id="$id"></tool>""")
     private fun result(id: Int) = xml("""<tool_result name="read_file" call_id="$id">ok</tool_result>""")
+    private fun think(body: String) = xml("<think>" + body + "</think>")
 
     @Test
-    fun longSequentialAgentTranscriptSplitsWithoutLosingNodes() {
+    fun longSequentialAgentTranscriptFoldsIntoOneGroup() {
+        // 一次连续的工具序列只折叠一个分组；按条数切块会让长任务重复出现
+        // 多个「思考与工具调用（8）」标题，并把真实的调用总数藏进分块里。
         val nodes = (0 until 100).flatMap { listOf(call(it), result(it)) }
         val groups = ThinkToolsXmlNodeGrouper(true).group(nodes, "test")
-        assertTrue(groups.size > 1)
-        val indices = groups.flatMap {
-            when (it) {
-                is MarkdownGroupedItem.Single -> listOf(it.index)
-                is MarkdownGroupedItem.Group -> {
-                    assertTrue(it.endIndexInclusive - it.startIndex + 1 <= 16)
-                    (it.startIndex..it.endIndexInclusive).toList()
+        assertEquals(1, groups.size)
+        val group = groups.first() as MarkdownGroupedItem.Group
+        assertEquals(0, group.startIndex)
+        assertEquals(nodes.lastIndex, group.endIndexInclusive)
+    }
+
+    @Test
+    fun thinkingRunWithManyToolsFoldsIntoOneGroup() {
+        // think 起头的那条路径，就是用户看到「思考与工具调用（8）」重复出现的地方。
+        val nodes = listOf(think("thinking")) + (0 until 40).flatMap { listOf(call(it), result(it)) }
+        val groups = ThinkToolsXmlNodeGrouper(true).group(nodes, "test")
+        assertEquals(1, groups.size)
+        val group = groups.first() as MarkdownGroupedItem.Group
+        assertEquals(0, group.startIndex)
+        assertEquals(nodes.lastIndex, group.endIndexInclusive)
+        assertEquals("think-tools-0", group.stableKey)
+        // 索引恰好被划分一次：不丢、不重。
+        assertEquals(
+            nodes.indices.toList(),
+            groups.flatMap { item ->
+                when (item) {
+                    is MarkdownGroupedItem.Single -> listOf(item.index)
+                    is MarkdownGroupedItem.Group ->
+                        (item.startIndex..item.endIndexInclusive).toList()
                 }
             }
-        }
-        assertEquals(nodes.indices.toList(), indices)
+        )
+    }
+
+    @Test
+    fun visibleAnswerEndsTheFoldedRun() {
+        val nodes = (0 until 40).flatMap { listOf(call(it), result(it)) } + listOf(text("Final answer"))
+        val groups = ThinkToolsXmlNodeGrouper(true).group(nodes, "test")
+        assertEquals(2, groups.size)
+        val group = groups.first() as MarkdownGroupedItem.Group
+        assertEquals(0, group.startIndex)
+        assertEquals(nodes.size - 2, group.endIndexInclusive)
+        assertEquals(nodes.lastIndex, (groups.last() as MarkdownGroupedItem.Single).index)
     }
 
     @Test
@@ -37,14 +68,14 @@ class ThinkToolsPagingTest {
         val groups = ThinkToolsXmlNodeGrouper(true).group(nodes, "test")
         val first = groups.first() as MarkdownGroupedItem.Group
         assertEquals(0, first.startIndex)
-        assertEquals(23, first.endIndexInclusive)
+        assertEquals(nodes.lastIndex, first.endIndexInclusive)
     }
 
     @Test
     fun fullModeKeepsToolResultOnlySequenceUnfolded() {
         // 媒体标记会把工具序列切开，只剩工具结果、没有 <tool> 的片段在 FULL 模式下曾折叠成
         // “工具调用（0）”的空标题，这里锁定不再折叠的行为。
-        val nodes = listOf(xml("<think>thinking</think>"), result(1), result(2))
+        val nodes = listOf(think("thinking"), result(1), result(2))
         val groups =
             ThinkToolsXmlNodeGrouper(true, toolCollapseMode = ToolCollapseMode.FULL)
                 .group(nodes, "test")
@@ -62,7 +93,7 @@ class ThinkToolsPagingTest {
 
     @Test
     fun fullModeStillCollapsesThinkWithToolCalls() {
-        val nodes = listOf(xml("<think>thinking</think>"), call(1), result(1))
+        val nodes = listOf(think("thinking"), call(1), result(1))
         val groups =
             ThinkToolsXmlNodeGrouper(true, toolCollapseMode = ToolCollapseMode.FULL)
                 .group(nodes, "test")
