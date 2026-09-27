@@ -18,6 +18,7 @@ object DistributionConfig {
     const val DISABLED_ANNOUNCEMENT_POINTER_URL =
         "https://announcements.operit.disabled.invalid/latest.json"
 
+    /** The terminal project this build points at; injected into the terminal module at startup. */
     const val TERMINAL_OWNER = "CATMIAOZHI"
     const val TERMINAL_REPOSITORY = "OperitTerminal"
 }

@@ -142,6 +142,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         com.ai.assistance.operit.terminal.TerminalManager.setUbuntuArchivePreparer { context, target ->
             com.ai.assistance.operit.util.OnDemandResources.ensureUbuntu(context, target)
         }
+        // Point the terminal screens' project card and update check at this distribution instead
+        // of the upstream project the terminal module names by default.
+        com.ai.assistance.operit.terminal.utils.TerminalProjectInfo.configure(
+            com.ai.assistance.operit.core.config.DistributionConfig.TERMINAL_OWNER,
+            com.ai.assistance.operit.core.config.DistributionConfig.TERMINAL_REPOSITORY
+        )
         com.ai.assistance.operit.util.AppActivityTracker.register(this)
 
         configureOpenMpEnvironment()
