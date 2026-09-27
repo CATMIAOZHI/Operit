@@ -1232,6 +1232,29 @@ class FunctionalReasoningAIServiceTest {
         )
         assertTrue(supportsAutomaticOpenAiChatReasoning(ApiProviderType.OPENAI))
         assertTrue(supportsAutomaticOpenAiChatReasoning(ApiProviderType.OPENAI_GENERIC))
+        // Zen's OpenAI-compatible free models carry reasoning_effort on the chat path too; function
+        // requests suppress it, and a model that declares no effort keeps sending none.
+        assertTrue(supportsAutomaticOpenAiChatReasoning(ApiProviderType.OPENCODE_ZEN_FREE))
+    }
+
+    /**
+     * Function requests on the Zen free tier take no reasoning control: the provider now reaches
+     * the chat Completions reasoning_effort path, and without the suppression its automatic effort
+     * would come from the chat slider instead of this function's own level.
+     */
+    @Test
+    fun zenFreeFunctionRequestsKeepTheChatSliderOutOfTheirBody() {
+        val request =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.OPENCODE_ZEN_FREE,
+                "space-bunny-free",
+                listOf(intParameter("temperature", 1)),
+                5,
+            )
+        val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
+
+        assertTrue(consumed.suppressAutomaticReasoning)
+        assertEquals(listOf("temperature"), consumed.modelParameters.map { it.apiName })
     }
 
     @Test

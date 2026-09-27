@@ -318,7 +318,13 @@ object AIServiceFactory {
                 supportsVision = supportsVision,
                 supportsAudio = supportsAudio,
                 supportsVideo = supportsVideo,
-                enableToolCall = enableToolCall
+                enableToolCall = enableToolCall,
+                // Muse Spark and the other Responses models of this provider receive their catalog
+                // entry like every other free model, so the body clamps to it exactly as the
+                // thinking menu does. Without it the menu would report a clamped level while the
+                // body still carried the raw one.
+                catalogReasoningEfforts =
+                    config.protocolSettingsForModel(config.modelName).reasoningEfforts,
             )
         }
 

@@ -117,7 +117,12 @@ internal fun JSONObject.applyChatCompletionsStreamUsageOption(
 }
 
 internal fun supportsAutomaticOpenAiChatReasoning(providerType: ApiProviderType): Boolean =
-    providerType == ApiProviderType.OPENAI || providerType == ApiProviderType.OPENAI_GENERIC
+    providerType == ApiProviderType.OPENAI ||
+        providerType == ApiProviderType.OPENAI_GENERIC ||
+        // The Zen free tier lists each model's effort levels in the catalog, and the gateway accepts
+        // reasoning_effort for its OpenAI-compatible models. A model that declares no effort sends
+        // none, so this only adds the control for models that take one.
+        providerType == ApiProviderType.OPENCODE_ZEN_FREE
 
 /**
  * OpenAI API格式的实现，支持标准OpenAI接口和兼容此格式的其他提供商
