@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.util
 
 import java.io.File
+import java.io.FileOutputStream
 import java.io.IOException
 import java.io.InputStream
 import java.security.MessageDigest
@@ -14,8 +15,25 @@ internal data class DownloadResource(
     val sha256: String
 )
 
-/** Caller serializes access to each target. Partial files are never exposed as usable resources. */
+/** Downloaded bytes do not match the pinned size or checksum, so the partial file is unusable. */
+internal class ResourceContentException(message: String) : IOException(message)
+
+/**
+ * Caller serializes access to each target. Partial files are never exposed as usable resources, but
+ * they are kept across interrupted transfers so a retry can resume instead of restarting.
+ */
 internal object VerifiedResourceStore {
+    /** Bytes of a retained partial file that a resumed request may append to. */
+    fun resumeOffset(part: File, resource: DownloadResource): Long {
+        if (!part.isFile) return 0L
+        val length = part.length()
+        if (length >= resource.bytes) {
+            part.delete()
+            return 0L
+        }
+        return length.coerceAtLeast(0L)
+    }
+
     suspend fun isValid(file: File, resource: DownloadResource): Boolean {
         if (!file.isFile || file.length() != resource.bytes) return false
         val digest = MessageDigest.getInstance("SHA-256")
@@ -35,36 +53,67 @@ internal object VerifiedResourceStore {
         target: File,
         resource: DownloadResource,
         input: InputStream,
+        resumeFrom: Long,
         progress: (Long) -> Unit
     ): File {
         check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs())
         val part = File(target.parentFile, "${target.name}.part")
         try {
             val digest = MessageDigest.getInstance("SHA-256")
-            var total = 0L
-            part.outputStream().use { output ->
+            var total = resumeFrom.coerceAtLeast(0L)
+            if (total > 0L) {
+                // Seed the digest from the retained prefix so the final hash still covers every byte.
+                part.inputStream().buffered().use { existing ->
+                    val buffer = ByteArray(64 * 1024)
+                    var seeded = 0L
+                    while (seeded < total) {
+                        currentCoroutineContext().ensureActive()
+                        val read =
+                            existing.read(
+                                buffer,
+                                0,
+                                minOf(buffer.size.toLong(), total - seeded).toInt()
+                            )
+                        if (read < 0) {
+                            throw ResourceContentException("Partial file is shorter than its offset")
+                        }
+                        digest.update(buffer, 0, read)
+                        seeded += read
+                    }
+                }
+            }
+            val fileOutput = FileOutputStream(part, total > 0L)
+            try {
+                val output = fileOutput.buffered()
                 val buffer = ByteArray(64 * 1024)
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val read = input.read(buffer)
                     if (read < 0) break
                     total += read
-                    if (total > resource.bytes) throw IOException("Resource exceeds expected size")
+                    if (total > resource.bytes) {
+                        throw ResourceContentException("Resource exceeds expected size")
+                    }
                     digest.update(buffer, 0, read)
                     output.write(buffer, 0, read)
                     progress(total)
                 }
-                output.fd.sync()
+                output.flush()
+                fileOutput.fd.sync()
+            } finally {
+                fileOutput.close()
             }
             if (total != resource.bytes || !hex(digest.digest()).equals(resource.sha256, true)) {
-                throw IOException("Resource checksum mismatch")
+                throw ResourceContentException("Resource checksum mismatch")
             }
             currentCoroutineContext().ensureActive()
             // Same-directory rename on Android/Linux replaces an old invalid target atomically.
             if (!part.renameTo(target)) throw IOException("Cannot finalize downloaded resource")
             return target
-        } finally {
+        } catch (e: ResourceContentException) {
+            // Only unusable content is discarded; interrupted transfers stay resumable.
             part.delete()
+            throw e
         }
     }
 

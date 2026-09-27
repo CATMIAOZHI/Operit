@@ -5,8 +5,10 @@ import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
 import android.media.MediaRecorder
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.OperitPaths
+import com.ai.assistance.operit.util.ResourceDownloadException
 import com.k2fsa.sherpa.ncnn.*
 import com.ai.assistance.operit.api.speech.SpeechPrerollStore
 import java.io.File
@@ -113,7 +115,10 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                         AppLogger.e(TAG, "Failed to create sherpa-ncnn recognizer")
                         _recognitionState.value = SpeechService.RecognitionState.ERROR
                         _recognitionError.value =
-                            SpeechService.RecognitionError(-1, "Failed to initialize recognizer")
+                            SpeechService.RecognitionError(
+                                -1,
+                                context.getString(R.string.speech_error_engine_unavailable)
+                            )
                         false
                     }
                 }
@@ -123,8 +128,17 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Failed to initialize sherpa-ncnn", e)
                 _recognitionState.value = SpeechService.RecognitionState.ERROR
+                // Download failures already carry a localized reason; any other engine error
+                // must not surface a raw English string to the user.
                 _recognitionError.value =
-                    SpeechService.RecognitionError(-1, e.message ?: "Unknown error")
+                    SpeechService.RecognitionError(
+                        -1,
+                        if (e is ResourceDownloadException) {
+                            e.message ?: context.getString(R.string.speech_error_engine_unavailable)
+                        } else {
+                            context.getString(R.string.speech_error_engine_unavailable)
+                        }
+                    )
                 false
             }
         }
@@ -261,7 +275,11 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             if (minBufferSize <= 0) {
                 AppLogger.e(TAG, "AudioRecord.getMinBufferSize returned invalid size: $minBufferSize")
                 _recognitionState.value = SpeechService.RecognitionState.ERROR
-                _recognitionError.value = SpeechService.RecognitionError(-2, "Invalid AudioRecord buffer size")
+                _recognitionError.value =
+                        SpeechService.RecognitionError(
+                                -2,
+                                context.getString(R.string.speech_error_microphone_unavailable)
+                        )
                 return@withLock false
             }
 
@@ -278,7 +296,11 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                 AppLogger.e(TAG, "AudioRecord is not initialized (state=${recordInstance?.state})")
                 clearAndReleaseAudioRecord()
                 _recognitionState.value = SpeechService.RecognitionState.ERROR
-                _recognitionError.value = SpeechService.RecognitionError(-3, "AudioRecord not initialized")
+                _recognitionError.value =
+                        SpeechService.RecognitionError(
+                                -3,
+                                context.getString(R.string.speech_error_microphone_unavailable)
+                        )
                 return@withLock false
             }
             try {
@@ -287,7 +309,11 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                 AppLogger.e(TAG, "AudioRecord.startRecording failed", e)
                 clearAndReleaseAudioRecord()
                 _recognitionState.value = SpeechService.RecognitionState.ERROR
-                _recognitionError.value = SpeechService.RecognitionError(-4, e.message ?: "AudioRecord start failed")
+                _recognitionError.value =
+                        SpeechService.RecognitionError(
+                                -4,
+                                context.getString(R.string.speech_error_microphone_unavailable)
+                        )
                 return@withLock false
             }
             _recognitionState.value = SpeechService.RecognitionState.RECOGNIZING
@@ -531,7 +557,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             _recognitionError.value =
                     SpeechService.RecognitionError(
                             -10,
-                            "Batch recognition not supported in this provider"
+                            context.getString(R.string.speech_error_batch_not_supported)
                     )
             _recognitionState.value = SpeechService.RecognitionState.ERROR
         }

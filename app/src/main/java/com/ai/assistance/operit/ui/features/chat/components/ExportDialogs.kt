@@ -5,6 +5,9 @@ import android.graphics.BitmapFactory
 import android.net.Uri
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.OnDemandResources
+import com.ai.assistance.operit.util.ResourceDownloadException
+import com.ai.assistance.operit.ui.components.resourceDownloadProgressText
+import com.ai.assistance.operit.ui.components.resourceDownloadFraction
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -660,16 +663,25 @@ fun ExportProgressDialog(progress: Float, status: String, onCancel: () -> Unit) 
                 Spacer(modifier = Modifier.height(16.dp))
 
                 LinearProgressIndicator(
-                    progress = { download?.let { it.downloaded.toFloat() / it.total } ?: progress },
+                    progress = { progress },
                     modifier = Modifier.fillMaxWidth()
                 )
 
                 Spacer(modifier = Modifier.height(8.dp))
 
+                if (download != null) {
+                    // The download gets its own bar so the export bar never jumps or stalls at 100%.
+                    LinearProgressIndicator(
+                        progress = { resourceDownloadFraction(download) },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                }
+
                 Text(
                         download?.let {
                             stringResource(R.string.resource_download_title, it.name) + "\n" +
-                                stringResource(R.string.resource_download_size, it.downloaded / 1024 / 1024, it.total / 1024 / 1024)
+                                resourceDownloadProgressText(it)
                         } ?: status,
                         style = MaterialTheme.typography.bodyMedium,
                         textAlign = TextAlign.Center
@@ -870,9 +882,14 @@ suspend fun exportAndroidApp(
         throw e
     } catch (e: Exception) {
         AppLogger.e("ExportDialogs", "导出失败", e)
-        onComplete(false, null, context.getString(R.string.export_failed_with_reason, e.message ?: ""))
+        onComplete(false, null, exportFailureMessage(context, e))
     }
 }
+
+/** Download failures already carry a user-facing reason; other failures keep the export prefix. */
+private fun exportFailureMessage(context: Context, e: Exception): String =
+    if (e is ResourceDownloadException) e.message ?: context.getString(R.string.resource_download_failed_generic)
+    else context.getString(R.string.export_failed_with_reason, e.message ?: "")
 
 /** 处理Windows应用导出 */
 suspend fun exportWindowsApp(
@@ -997,7 +1014,10 @@ suspend fun exportWindowsApp(
             } catch (e: Exception) {
                 if (e is CancellationException) throw e
                 AppLogger.e("ExportDialogs", "Windows应用导出过程失败", e)
-                onComplete(false, null, context.getString(R.string.export_process_failed, e.message ?: ""))
+                val message =
+                    if (e is ResourceDownloadException) e.message
+                    else context.getString(R.string.export_process_failed, e.message ?: "")
+                onComplete(false, null, message)
             } finally {
                 // 7. 清理临时文件
                 try {
@@ -1012,7 +1032,7 @@ suspend fun exportWindowsApp(
         throw e
     } catch (e: Exception) {
         AppLogger.e("ExportDialogs", "Windows应用导出失败", e)
-        onComplete(false, null, context.getString(R.string.export_failed_with_reason, e.message ?: ""))
+        onComplete(false, null, exportFailureMessage(context, e))
     }
 }
 

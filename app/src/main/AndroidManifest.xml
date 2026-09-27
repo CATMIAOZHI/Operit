@@ -129,6 +129,13 @@
             android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <activity
+            android:name=".ui.components.ResourceDownloadConfirmActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleTop"
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
+
+        <activity
             android:name=".core.tools.defaultTool.websession.userscript.install.UserscriptImportPickerActivity"
             android:excludeFromRecents="true"
             android:exported="false"

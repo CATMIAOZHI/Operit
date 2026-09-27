@@ -137,6 +137,8 @@ class MCPStarter(private val context: Context) {
     enum class PluginInitStatus {
         SUCCESS,
         TERMINAL_SERVICE_UNAVAILABLE,
+        /** The terminal environment itself is missing, i.e. its download was declined or failed. */
+        TERMINAL_RESOURCE_UNAVAILABLE,
         NODEJS_MISSING,
         BRIDGE_FAILED,
         OTHER_ERROR
@@ -151,7 +153,9 @@ class MCPStarter(private val context: Context) {
         fun onAllPluginsStarted(
             successCount: Int,
             totalCount: Int,
-            status: PluginInitStatus = PluginInitStatus.SUCCESS
+            status: PluginInitStatus = PluginInitStatus.SUCCESS,
+            /** User-facing reason when [status] alone cannot explain the failure. */
+            message: String? = null
         ) {
         }
 
@@ -464,7 +468,15 @@ class MCPStarter(private val context: Context) {
             // Initialize bridge only if requested (for single plugin start)
             if (initBridgeFirst) {
                 if (!initBridge()) {
+                    val missingResource =
+                        com.ai.assistance.operit.util.OnDemandResources.consumeUbuntuFailure()
                     when {
+                        missingResource != null -> {
+                            statusCallback(
+                                StartStatus.ResourceUnavailable(missingResource)
+                            )
+                        }
+
                         !isTerminalServiceConnected() -> {
                             statusCallback(StartStatus.TerminalServiceUnavailable(context.getString(R.string.plugin_terminal_service_unavailable)))
                         }
@@ -597,9 +609,18 @@ class MCPStarter(private val context: Context) {
                         return@launch
                     }
                     if (!initBridge()) {
+                        // The Ubuntu rootfs carries pnpm, so a missing environment looks exactly
+                        // like a missing pnpm; report the download cause when we know it.
+                        val missingResource =
+                            com.ai.assistance.operit.util.OnDemandResources.consumeUbuntuFailure()
                         val status =
-                            if (pnpmInstalled == false) PluginInitStatus.NODEJS_MISSING else PluginInitStatus.BRIDGE_FAILED
-                        progressListener.onAllPluginsStarted(0, 0, status)
+                            when {
+                                missingResource != null ->
+                                    PluginInitStatus.TERMINAL_RESOURCE_UNAVAILABLE
+                                pnpmInstalled == false -> PluginInitStatus.NODEJS_MISSING
+                                else -> PluginInitStatus.BRIDGE_FAILED
+                            }
+                        progressListener.onAllPluginsStarted(0, 0, status, missingResource)
                         return@launch
                     }
                 }
@@ -1365,6 +1386,10 @@ class MCPStarter(private val context: Context) {
         ) : StartStatus()
 
         data class PnpmMissing(
+            val message: String = ""
+        ) : StartStatus()
+
+        data class ResourceUnavailable(
             val message: String = ""
         ) : StartStatus()
     }
