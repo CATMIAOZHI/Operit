@@ -12,6 +12,9 @@ import com.ai.assistance.operit.data.preferences.ApiPreferences
  *
  * 资源映射仍由实际 reasoning_effort 值（ApiPreferences.THINKING_QUALITY_EFFORTS）驱动，
  * 但协议值与用户可见文案分离，以便界面随 locale 正确本地化。
+ *
+ * [ThinkingRequestSummary.NotSent] 表示请求里没有携带显式档位，由服务端或模型自己决定，
+ * 所以文案是“自动”。它不代表思考被关闭——关闭走 [ThinkingRequestSummary.Disabled]。
  */
 @StringRes
 fun thinkingEffortLabelRes(effort: String): Int? =
@@ -38,7 +41,7 @@ fun thinkingRequestSummaryLabel(summary: ThinkingRequestSummary): String =
             summary.value.takeIf { it.isNotBlank() } ?: stringResource(R.string.custom)
         ThinkingRequestSummary.Enabled -> stringResource(R.string.enabled)
         ThinkingRequestSummary.Disabled -> stringResource(R.string.disabled)
-        ThinkingRequestSummary.NotSent -> stringResource(R.string.thinking_strength_not_sent)
+        ThinkingRequestSummary.NotSent -> stringResource(R.string.thinking_strength_auto)
     }
 
 @StringRes

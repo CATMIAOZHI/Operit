@@ -5,9 +5,13 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ModelProtocol
+import com.ai.assistance.operit.data.model.ModelProtocolSettings
 import com.ai.assistance.operit.data.model.ParameterCategory
 import com.ai.assistance.operit.data.model.ParameterValueType
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.StreamLogger
@@ -23,6 +27,8 @@ import okio.Buffer
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.mockito.Mockito
@@ -364,6 +370,167 @@ class ProviderReasoningBoundaryTest {
                 val reasoning = provider.buildRequest().optJSONObject("reasoning")
                 assertEquals(expected, reasoning?.optString("effort")?.takeIf { it.isNotEmpty() })
             }
+        }
+    }
+
+    /**
+     * The Zen free tier splits its models across two transports, so its thinking menu and its
+     * request body have to agree on the same effort. Muse Spark is the model where the user saw the
+     * disagreement: the menu reported the level its catalog entry allows while the body still
+     * carried the raw level.
+     */
+    @Test
+    fun zenFreeMenuMatchesTheResponsesBodyItBuilds() = runBlocking {
+        val model = "muse-spark-1.3-contributor-free"
+        val declared = listOf("minimal", "low", "medium", "high", "xhigh")
+        val config =
+            ModelConfigSummary(
+                id = "zen",
+                name = "Zen Free",
+                apiProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+                apiEndpoint = OpenCodeZenFree.CHAT_ENDPOINT,
+                modelProtocolSettings =
+                    mapOf(
+                        model to
+                            ModelProtocolSettings(
+                                ModelProtocol.RESPONSES,
+                                reasoningEfforts = declared,
+                            )
+                    ),
+            )
+
+        for (
+            level in
+                ApiPreferences.MIN_THINKING_QUALITY_LEVEL..ApiPreferences.MAX_THINKING_QUALITY_LEVEL
+        ) {
+            val expected =
+                listOf("low", "medium", "high", "xhigh", "xhigh")[
+                    level - ApiPreferences.MIN_THINKING_QUALITY_LEVEL]
+            val chosenEffort =
+                ThinkingRequestSemantics.defaultReasoningEffort(
+                    ApiProviderType.OPENCODE_ZEN_FREE,
+                    level,
+                )!!
+            val provider =
+                object : OpenAIResponsesProvider(
+                    responsesApiEndpoint = OpenCodeZenFree.RESPONSES_ENDPOINT,
+                    apiKeyProvider = SingleApiKeyProvider("test-key"),
+                    modelName = model,
+                    client = OkHttpClient(),
+                    responsesProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+                    catalogReasoningEfforts = declared,
+                ) {
+                    override fun resolveResponsesReasoningEffort(context: Context) = chosenEffort
+
+                    fun buildRequest(): JSONObject {
+                        val requestBody =
+                            createRequestBody(
+                                context = Mockito.mock(Context::class.java),
+                                chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                                modelParameters = emptyList(),
+                                enableThinking = true,
+                                stream = false,
+                                availableTools = null,
+                                preserveThinkInHistory = false,
+                            )
+                        val buffer = Buffer()
+                        requestBody.writeTo(buffer)
+                        return JSONObject(buffer.readUtf8())
+                    }
+                }
+
+            withoutAndroidLoggingOnCurrentThread {
+                val bodyEffort =
+                    provider
+                        .buildRequest()
+                        .optJSONObject("reasoning")
+                        ?.optString("effort")
+                        ?.takeIf { it.isNotEmpty() }
+                // Absolute expectation first: the menu and the body both have to produce it.
+                assertEquals(expected, bodyEffort)
+                assertEquals(
+                    ThinkingRequestSummary.Effort(expected),
+                    ThinkingRequestSemantics.resolve(config, model, level, emptyList()),
+                )
+            }
+        }
+    }
+
+    /**
+     * The function path marks its requests so Zen's free models never pick the chat slider up. The
+     * chat transport learned to send reasoning_effort with the same change, so both transports have
+     * to stay out of that fallback.
+     */
+    @Test
+    fun zenFreeFunctionSuppressionKeepsTheChatSliderOutOfBothBodies() = runBlocking {
+        val declared = listOf("low", "medium", "high", "xhigh", "max")
+        val chatProvider =
+            object : OpenAIProvider(
+                apiEndpoint = OpenCodeZenFree.CHAT_ENDPOINT,
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "space-bunny-free",
+                client = OkHttpClient(),
+                providerType = ApiProviderType.OPENCODE_ZEN_FREE,
+                catalogReasoningEfforts = declared,
+            ) {
+                override fun resolveOpenAiChatReasoningEffort(context: Context) = "max"
+
+                fun buildRequest(modelParameters: List<ModelParameter<*>>): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = Mockito.mock(Context::class.java),
+                            chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                            modelParameters = modelParameters,
+                            enableThinking = true,
+                            stream = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+        val responsesProvider =
+            object : OpenAIResponsesProvider(
+                responsesApiEndpoint = OpenCodeZenFree.RESPONSES_ENDPOINT,
+                apiKeyProvider = SingleApiKeyProvider("test-key"),
+                modelName = "muse-spark-1.3-contributor-free",
+                client = OkHttpClient(),
+                responsesProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+                catalogReasoningEfforts = declared,
+            ) {
+                override fun resolveResponsesReasoningEffort(context: Context) = "max"
+
+                fun buildRequest(modelParameters: List<ModelParameter<*>>): JSONObject {
+                    val requestBody =
+                        createRequestBody(
+                            context = Mockito.mock(Context::class.java),
+                            chatHistory = listOf(PromptTurn(PromptTurnKind.USER, "hello")),
+                            modelParameters = modelParameters,
+                            enableThinking = true,
+                            stream = false,
+                            availableTools = null,
+                            preserveThinkInHistory = false,
+                        )
+                    val buffer = Buffer()
+                    requestBody.writeTo(buffer)
+                    return JSONObject(buffer.readUtf8())
+                }
+            }
+        val functionalParameters =
+            buildFunctionalReasoningRequest(
+                ApiProviderType.OPENCODE_ZEN_FREE,
+                "space-bunny-free",
+                emptyList(),
+                5,
+            ).modelParameters
+
+        withoutAndroidLoggingOnCurrentThread {
+            // A chat request without the function wrapper carries the slider's effort ...
+            assertEquals("max", chatProvider.buildRequest(emptyList()).optString("reasoning_effort"))
+            assertNotNull(responsesProvider.buildRequest(emptyList()).optJSONObject("reasoning"))
+            // ... and the function wrapper keeps it out of both transports.
+            assertEquals("", chatProvider.buildRequest(functionalParameters).optString("reasoning_effort"))
+            assertNull(responsesProvider.buildRequest(functionalParameters).optJSONObject("reasoning"))
         }
     }
 

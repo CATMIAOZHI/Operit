@@ -228,6 +228,12 @@ private fun buildFunctionalReasoningParameters(
         ApiProviderType.OPENAI_GENERIC ->
             listOf(functionalAutomaticReasoningSuppressionParameter())
 
+        // The Zen free tier carries reasoning_effort on its OpenAI-compatible models, so the chat
+        // slider would otherwise reach function requests through the provider's automatic effort.
+        // There is no function-level mapping for it yet, so keep the provider from inventing one.
+        ApiProviderType.OPENCODE_ZEN_FREE ->
+            listOf(functionalAutomaticReasoningSuppressionParameter())
+
         ApiProviderType.OPENAI_RESPONSES ->
             if (supportsOpenAiReasoningEffortModel(modelName)) {
                 listOf(
