@@ -304,6 +304,21 @@ class MemoryLearningBatchTest {
         assertEquals("approved",repo.decide(context,change.id,true,"user","retry").status)
         assertEquals(stored,notes.load().markdown)
     }
+    @Test fun anEditStillMatchesADocumentAnOlderVersionWroteWithAMark() = runBlocking {
+        val context=context()
+        val notes=MemoryNotesRepository(context,"space")
+        notes.save("port 22\n\nsecond note",notes.load().version)
+        // A version that predates the write point could store the mark, so its file is written that way.
+        val file=java.io.File(context.filesDir,"memory_notes").listFiles()!!.single().resolve("memory.md")
+        file.writeText("port\u202E 22\n\nsecond note")
+        // The note the document already holds is recognised, so it is not appended a second time.
+        notes.mutate("add","port 22")
+        assertEquals("port 22\n\nsecond note",notes.load().markdown)
+        // And a replacement whose old_text spans the mark is still found exactly once.
+        file.writeText("port\u202E 22\n\nsecond note")
+        notes.mutate("replace","port 2202","port\u202E 22")
+        assertEquals("port 2202\n\nsecond note",notes.load().markdown)
+    }
     @Test fun aRangeEnqueuedWhileABatchRunsSurvivesItsExport() = runBlocking {
         val context=context()
         val running=MemoryLearningJournal(context,"space","chat")
