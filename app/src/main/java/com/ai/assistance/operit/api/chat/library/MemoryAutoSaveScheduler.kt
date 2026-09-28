@@ -61,7 +61,15 @@ class MemoryAutoSaveScheduler(
                 AppLogger.d(TAG, "长期记忆自动保存轮询器已启动")
                 while (isActive) {
                     delay(LOOP_TICK_MS)
-                    runOnce()
+                    // One transient failure must not end the loop: the coroutine has no restart path,
+                    // so an uncaught exception here would silently disable this path for the session.
+                    try {
+                        runOnce()
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "长期记忆自动保存本轮执行失败，等待下一轮", e)
+                    }
                 }
             }
     }
@@ -91,10 +99,6 @@ class MemoryAutoSaveScheduler(
         val profileIds = preferencesManager.memorySpaceListFlow.first()
         if (profileIds.isEmpty()) return
 
-        val toolHandler = AIToolHandler.getInstance(context)
-        val memoryService =
-            EnhancedAIService.getAIServiceForFunction(context, FunctionType.MEMORY)
-        val chatContentDao = AppDatabase.getDatabase(context).chatContentDao()
         val nowMs = System.currentTimeMillis()
 
         for (profileId in profileIds) {
@@ -124,6 +128,13 @@ class MemoryAutoSaveScheduler(
                 scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
                 continue
             }
+
+            // The tool handle and the memory service are only resolved once there is real work, so an
+            // idle tick does not construct them for every memory space on every minute.
+            val toolHandler = AIToolHandler.getInstance(context)
+            val memoryService =
+                EnhancedAIService.getAIServiceForFunction(context, FunctionType.MEMORY)
+            val chatContentDao = AppDatabase.getDatabase(context).chatContentDao()
 
             AppLogger.d(
                 TAG,

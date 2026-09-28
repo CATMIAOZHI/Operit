@@ -346,7 +346,7 @@ class ChatMemoryWindowPlannerTest {
     }
 
     @Test
-    fun `plan with inclusive range ignores an assistant reply whose user turn is outside`() {
+    fun `plan with inclusive range carries the outside user turn as context for a leading reply`() {
         val shanghai = ZoneId.of("Asia/Shanghai")
         val range =
             ChatMemoryRebuildTimeScope.inclusiveDates(
@@ -360,6 +360,61 @@ class ChatMemoryWindowPlannerTest {
                     listOf(
                         message("user", "yesterday", range.startInclusiveMs - 1),
                         message("ai", "today reply", range.startInclusiveMs),
+                    ),
+                windowMessageCount = 16,
+                timeScope = range
+            )
+
+        // The reply is inside the range and is real content, but the extractor needs the user turn it
+        // answers. Carrying that turn in as context keeps the reply learnable without counting it.
+        assertEquals(listOf("yesterday", "today reply"), windows.single().messages.map { it.content })
+        assertEquals(1, windows.single().sourceMessageCount)
+    }
+
+    @Test
+    fun `plan with inclusive range keeps a reply-only range learnable`() {
+        val shanghai = ZoneId.of("Asia/Shanghai")
+        val range =
+            ChatMemoryRebuildTimeScope.inclusiveDates(
+                LocalDate.of(2026, 3, 2),
+                LocalDate.of(2026, 3, 2),
+                shanghai
+            )
+        val windows =
+            plan(
+                messages =
+                    listOf(
+                        message("user", "yesterday", range.startInclusiveMs - 2),
+                        message("ai", "late reply", range.endExclusiveMs + 1),
+                        message("ai", "today reply", range.startInclusiveMs),
+                        message("ai", "another today reply", range.endExclusiveMs - 1),
+                    ),
+                windowMessageCount = 16,
+                timeScope = range
+            )
+
+        assertEquals(
+            listOf("yesterday", "today reply", "another today reply"),
+            windows.single().messages.map { it.content }
+        )
+        assertEquals(2, windows.single().sourceMessageCount)
+    }
+
+    @Test
+    fun `plan with inclusive range ignores a leading reply when no user turn precedes it`() {
+        val shanghai = ZoneId.of("Asia/Shanghai")
+        val range =
+            ChatMemoryRebuildTimeScope.inclusiveDates(
+                LocalDate.of(2026, 3, 2),
+                LocalDate.of(2026, 3, 2),
+                shanghai
+            )
+        val windows =
+            plan(
+                messages =
+                    listOf(
+                        message("ai", "opening reply", range.startInclusiveMs),
+                        message("ai", "opening reply two", range.startInclusiveMs + 1),
                     ),
                 windowMessageCount = 16,
                 timeScope = range

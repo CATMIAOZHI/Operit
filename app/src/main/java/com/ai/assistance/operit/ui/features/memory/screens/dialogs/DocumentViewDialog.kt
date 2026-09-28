@@ -91,7 +91,7 @@ fun DocumentViewDialog(
                             onPerformSearch()
                             keyboardController?.hide()
                         }) {
-                            Icon(Icons.Default.Search, contentDescription = "Search")
+                            Icon(Icons.Default.Search, contentDescription = stringResource(R.string.memory_search_hint2))
                         }
                     },
                     keyboardOptions = KeyboardOptions.Default.copy(

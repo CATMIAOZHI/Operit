@@ -3294,7 +3294,8 @@
     <string name="memory_space_delete_warning">Delete “%1$s” and all memories in it? This cannot be undone.</string>
     <string name="memory_auto_update">Auto-save memory (master)</string>
     <string name="memory_auto_update_desc">Global master switch for automatic learning. Off stops automatic graph, notes and skill extraction. On follows the individual paths in Memory library → Automatic saving. Manual extraction is unaffected.</string>
-    <string name="memory_auto_update_runtime_status">Graph candidates: %1$d, next graph check in %2$d minute(s)</string>
+    <string name="memory_auto_update_runtime_status">Graph auto-save: %1$d candidate(s) pending, next check in about %2$d minute(s)</string>
+    <string name="memory_auto_update_runtime_paused">Graph auto-save is off; %1$d pending candidate(s) are kept and will not run automatically</string>
     <string name="chat_summarizing_memory">Summarizing memory...</string>
     <string name="chat_input_processing_collect_failed">Failed to collect input processing state: %1$s</string>
     <string name="chat_input_hint">Type a message...</string>
@@ -6268,7 +6269,9 @@
     <string name="memory_search_simulation_lexical_tokens">Lexical (%1$d): %2$s</string>
     <string name="memory_search_simulation_top_candidates">Candidates (showing top %1$d / %2$d)</string>
     <string name="memory_search_simulation_candidate_title">%1$d. [%2$s] %3$s</string>
-    <string name="memory_search_simulation_candidate_scores">k:%1$.4f t:%2$.4f r:%3$.4f s:%4$.4f e:%5$.4f total:%6$.4f token:%7$d</string>
+    <string name="memory_search_simulation_pass">kept</string>
+    <string name="memory_search_simulation_drop">dropped</string>
+    <string name="memory_search_simulation_candidate_scores">Keyword %1$.4f · Tag %2$.4f · Reverse containment %3$.4f · Vector %4$.4f · Edge %5$.4f · Total %6$.4f · matched tokens %7$d</string>
     <string name="memory_embedding_cloud_title">Cloud Embedding Model</string>
     <string name="memory_embedding_cloud_enable">Enable cloud embedding model</string>
     <string name="memory_embedding_cloud_endpoint">Embedding API endpoint</string>

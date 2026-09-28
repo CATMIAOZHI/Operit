@@ -42,7 +42,9 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var discardTarget by remember { mutableStateOf<String?>(null) }
-    val dirty = selected?.let { it.status == "pending" && (body != it.body || description != it.description) } == true
+    // A typed review reason is part of the draft too, so leaving must not drop it silently.
+    val dirty = selected?.let { it.status == "pending" &&
+        (body != it.body || description != it.description || reason.isNotBlank()) } == true
     fun leave(target: String) {
         if (busy) return
         if (dirty) discardTarget = target

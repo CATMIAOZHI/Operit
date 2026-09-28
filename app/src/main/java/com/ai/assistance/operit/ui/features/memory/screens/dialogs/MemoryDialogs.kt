@@ -16,6 +16,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -30,6 +31,7 @@ import com.ai.assistance.operit.data.model.Memory
 import com.ai.assistance.operit.ui.features.memory.screens.graph.model.Edge
 import java.text.SimpleDateFormat
 import java.util.Locale
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -42,6 +44,9 @@ fun MemoryInfoDialog(
     val scrollState = rememberScrollState()
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
     var confirmingDelete by remember { mutableStateOf(false) }
+    // A raw UUID and the internal source key are developer details, so they stay available but are
+    // not shown to every user who just wants to read their memory.
+    var showTechnical by remember { mutableStateOf(false) }
 
     AlertDialog(
             onDismissRequest = onDismiss,
@@ -57,14 +62,15 @@ fun MemoryInfoDialog(
                     Text(memory.content)
                     HorizontalDivider()
                     Text("${stringResource(R.string.memory_folder)}: ${memory.folderPath?.ifEmpty { stringResource(R.string.memory_uncategorized) }}", style = MaterialTheme.typography.bodySmall)
-                    Text("${stringResource(R.string.memory_uuid)}: ${memory.uuid}", style = MaterialTheme.typography.bodySmall)
-                    Text("${stringResource(R.string.memory_source)}: ${memory.source}", style = MaterialTheme.typography.bodySmall)
+                    Text("${stringResource(R.string.memory_source)}: ${memorySourceText(memory.source)}", style = MaterialTheme.typography.bodySmall)
                     Text(
-                            "${stringResource(R.string.memory_importance)}: ${String.format("%.2f", memory.importance)}",
+                            "${stringResource(R.string.memory_importance)}: " +
+                                stringResource(R.string.memory_detail_percent, (memory.importance * 100).roundToInt()),
                             style = MaterialTheme.typography.bodySmall
                     )
                     Text(
-                            "${stringResource(R.string.memory_credibility)}: ${String.format("%.2f", memory.credibility)}",
+                            "${stringResource(R.string.memory_credibility)}: " +
+                                stringResource(R.string.memory_detail_percent, (memory.credibility * 100).roundToInt()),
                             style = MaterialTheme.typography.bodySmall
                     )
                     Text(
@@ -75,6 +81,14 @@ fun MemoryInfoDialog(
                             "${stringResource(R.string.memory_updated_at)}: ${dateFormat.format(memory.updatedAt)}",
                             style = MaterialTheme.typography.bodySmall
                     )
+                    TextButton(onClick = { showTechnical = !showTechnical }) {
+                        Text(stringResource(if (showTechnical) R.string.memory_technical_hide
+                            else R.string.memory_technical_show))
+                    }
+                    if (showTechnical) {
+                        Text("${stringResource(R.string.memory_uuid)}: ${memory.uuid}",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
                 }
             },
             confirmButton = {
@@ -100,6 +114,13 @@ fun MemoryInfoDialog(
         onDismiss = { confirmingDelete = false },
         onConfirm = { confirmingDelete = false; onDelete() }
     )
+}
+
+/** Turns the stored source key into something a user can read, keeping unknown values verbatim. */
+@Composable
+private fun memorySourceText(source: String): String = when (source) {
+    "user_input" -> stringResource(R.string.memory_source_manual)
+    else -> source
 }
 
 /** Shared shape for the one-off delete confirmations that the list screens already had. */

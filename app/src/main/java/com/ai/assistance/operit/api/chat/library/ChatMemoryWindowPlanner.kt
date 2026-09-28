@@ -29,10 +29,22 @@ internal object ChatMemoryWindowPlanner {
         val windows = mutableListOf<Window>()
         val pendingSourceMessages = mutableListOf<ChatMessage>()
         val pendingContextMessages = mutableListOf<ChatMessage>()
+        // A time-ranged rebuild can start in the middle of a turn, so the replies at the very start of
+        // the range have no user message of their own inside it. The user turn that prompted them sits
+        // just before the range, and carrying it in as context is what lets those replies be learned
+        // instead of dropped: every window needs a user message for the extractor to work from.
+        val carriedUserTurn =
+            (timeScope as? ChatMemoryRebuildTimeScope.InclusiveLocalRange)?.let { range ->
+                messages
+                    .filter { it.sender == "user" && it.content.isNotBlank() && it.timestamp < range.startInclusiveMs }
+                    .maxByOrNull { it.timestamp }
+            }
         var currentTurnUser: ChatMessage? = null
 
         fun emitWindow() {
-            if (pendingSourceMessages.isEmpty() || currentTurnUser == null) return
+            // A window opened by carried context has source replies but no user turn of its own, so
+            // the reply count is the only reliable emptiness signal here.
+            if (pendingSourceMessages.isEmpty()) return
             windows += Window(
                 messages = pendingContextMessages.toList() + pendingSourceMessages.toList(),
                 sourceMessageCount = pendingSourceMessages.size
@@ -64,7 +76,15 @@ internal object ChatMemoryWindowPlanner {
 
                 "ai", "assistant" -> {
                     if (message.content.isBlank()) return@forEach
-                    val turnUser = currentTurnUser ?: return@forEach
+                    val turnUser = currentTurnUser ?: run {
+                        // Without a carried user turn there is no query to attach, and a window the
+                        // extractor would skip anyway is worse than an honest gap.
+                        val carried = carriedUserTurn ?: return@forEach
+                        if (pendingSourceMessages.isEmpty() && pendingContextMessages.isEmpty()) {
+                            beginWindow(contextUser = carried)
+                        }
+                        carried
+                    }
                     if (pendingSourceMessages.size >= boundedWindowSize) {
                         // A group chat can have more assistant replies than the selected window
                         // size. Repeat only the prompting user turn as context for the next
