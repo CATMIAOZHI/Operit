@@ -111,7 +111,10 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
     private fun edit(current: Snapshot, action: String, content: String, oldText: String): String =
         applyEdit(current.markdown, action, content, oldText)
 
-    private fun write(text: String): Snapshot {
+    private fun write(markdown: String): Snapshot {
+        // memory.md is injected into later system prompts, so this single write point is where a
+        // hidden character must not survive, whichever caller produced the text.
+        val text = stripInvisibleCharacters(markdown)
         if (text.length > MAX_CHARS) throw NotesException(Failure.FULL)
         file.parentFile!!.mkdirs()
         val temp = File.createTempFile(".memory-", ".tmp", file.parentFile)

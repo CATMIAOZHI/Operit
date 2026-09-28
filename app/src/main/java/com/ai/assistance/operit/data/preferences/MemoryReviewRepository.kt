@@ -185,9 +185,11 @@ class MemoryReviewRepository internal constructor(
             // proposal's baseline is kept so the applied change still matches the unchanged target on disk.
             val index = pending.indexOfFirst { sameTarget(it, change) }
             if (index < 0) {
-                // The queue limit is enforced here as well, so a batch cannot pile up proposals that
-                // the export is then guaranteed to reject after the model has already done its work.
-                require(pending.size < PENDING_LIMIT || autoApprovalEnabled()) {
+                // The export stage checks the store's undecided total, so this must count the same
+                // rows: a batch that fills its own slots on top of an existing backlog would be
+                // rejected only after the model had already done all of its work.
+                val undecided = read().count { it.status in setOf("pending", "applying") }
+                require(undecided + pending.size < PENDING_LIMIT || autoApprovalEnabled()) {
                     "Pending review limit reached; the user must review the existing proposals before more can be added"
                 }
                 return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
@@ -447,6 +449,9 @@ internal fun stripInvisibleCharacters(text: String): String = text.filterNot { c
     val code = character.code
     code in 0x200B..0x200F || code in 0x202A..0x202E || code in 0x2060..0x2064 ||
         code in 0x2066..0x2069 || code == 0xFEFF || code in 0xE0000..0xE007F ||
+        // The Arabic letter mark and the other invisible joiners are the bidi tricks of
+        // "Trojan Source" payloads, and none of them carries meaning on their own.
+        code == 0x061C || code == 0x00AD || code == 0x034F || code == 0x180E ||
         code == 0x7F || (code < 0x20 && character != '\n' && character != '\t')
 }
 

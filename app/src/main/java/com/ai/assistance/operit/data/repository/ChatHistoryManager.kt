@@ -3281,7 +3281,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatIds.forEach { id ->
             // Housekeeping must never turn a completed deletion into a reported failure.
             runCatching {
-                com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.foregroundStarted(id)
+                // Cancel only: marking a deleted conversation as a live turn would leave the
+                // coordinator permanently "busy" because it can never report the turn's end.
+                com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.forgetChat(id)
                 com.ai.assistance.operit.api.chat.library.MemoryLearningJournal.deleteChat(context,id)
                 com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,id).delete()
             }.onFailure { AppLogger.w(TAG, "Failed to drop learning state of deleted chat $id", it) }

@@ -17,7 +17,26 @@ class MemoryLearningActions(
 ) {
     private val skills = LearnedSkillRepository(context)
     private val reviews = MemoryReviewRepository(context,profileId,stagedChanges)
-    private val readVersions = mutableMapOf<String,String>()
+    /**
+     * Versions this space has already read, kept across instances because the foreground package tool
+     * builds a new [MemoryLearningActions] for every call and a per-instance map would leave it with
+     * nothing to compare: the caller would have to copy a 64-character hash back by hand. A stale
+     * entry is harmless, because every write still compares it with the version on disk and refuses
+     * the change when the target moved on.
+     */
+    private companion object {
+        private const val READ_VERSION_LIMIT = 128
+        private val readVersions = java.util.Collections.synchronizedMap(
+            object : LinkedHashMap<String,String>(READ_VERSION_LIMIT,0.75f,true) {
+                override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String,String>?) =
+                    size > READ_VERSION_LIMIT
+            })
+    }
+    private fun readVersion(target: String): String? = readVersions["$profileId\u0000$target"]
+    private fun rememberVersion(target: String, version: String) {
+        readVersions["$profileId\u0000$target"] = version
+    }
+    private fun forgetVersion(target: String) { readVersions.remove("$profileId\u0000$target") }
     suspend fun execute(action: String, args: Map<String,String>): JSONObject {
         fun arg(name:String) = args[name].orEmpty()
         val name = arg("name")
@@ -34,7 +53,7 @@ class MemoryLearningActions(
                 val content = staged?.body ?: disk
                 // The version stays the on-disk one so a revision inside the batch keeps passing its check.
                 val version = LearnedSkillRepository.version(disk)
-                readVersions[if(user) "user" else "memory"] = version
+                rememberVersion(if(user) "user" else "memory", version)
                 JSONObject().put("content",content).put("version",version).put("staged",staged!=null).apply {
                     if (user) {
                         val sections = UserProfileSections.parse(content)
@@ -52,7 +71,7 @@ class MemoryLearningActions(
                 val key = if(user) "user" else "memory"
                 // The version this run already read is the authority; an explicit argument is only a
                 // fallback, so the reviewer never has to copy a 64-character hash by hand.
-                check((readVersions[key] ?: arg("version"))==LearnedSkillRepository.version(disk)) {
+                check((readVersion(key) ?: arg("version"))==LearnedSkillRepository.version(disk)) {
                     "Read the current document with memory_read before changing it"
                 }
                 val operation = arg("operation")
@@ -86,7 +105,7 @@ class MemoryLearningActions(
                     reviews.proposeNotes(before,after,if(operation=="add") content else "",sourceChatId,onCreated)
                 }
                 val applied = reviews.applyAutomaticDecision(context, change)
-                if (stagedChanges==null) readVersions.remove(key)
+                if (stagedChanges==null) forgetVersion(key)
                 reviews.toModelJson(applied)
             }
             "skill_list" -> {
@@ -109,19 +128,19 @@ class MemoryLearningActions(
                 if (created != null) {
                     LearnedSkillRepository.validatePath(path)
                     val content = if(path=="SKILL.md") created.body else created.files[path]
-                    readVersions["$name/$path"] = "draft"
+                    rememberVersion("$name/$path", "draft")
                     return JSONObject().put("content", content.orEmpty()).put("version","draft")
                         .put("exists",content!=null).put("staged",true)
                         .put("files",JSONArray(listOf("SKILL.md")+created.files.keys))
                         .put("directory_version","")
                 }
                 val snapshot = skills.read(name,path)
-                readVersions["$name/$path"] = snapshot.version
+                rememberVersion("$name/$path", snapshot.version)
                 val staged = stagedSkillFile(stagedChanges,name,path)
                 JSONObject().put("content",staged?.body ?: snapshot.text).put("version",snapshot.version)
                     .put("exists",snapshot.exists).put("files",JSONArray(skills.files(name)))
                     .put("staged",staged!=null)
-                    .put("directory_version",skills.readDirectory(name).also { readVersions["$name/"] = it.version }.version)
+                    .put("directory_version",skills.readDirectory(name).also { rememberVersion("$name/", it.version) }.version)
             }
             "skill_create" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
@@ -155,10 +174,10 @@ class MemoryLearningActions(
                     "Background deletion is limited to enabled learned skills in this space"
                 }
                 val before=skills.readDirectory(name)
-                check((readVersions["$name/"] ?: arg("version"))==before.version) {
+                check((readVersion("$name/") ?: arg("version"))==before.version) {
                     "Call skill_read with this name before proposing deletion, then retry"
                 }
-                reviews.toJson(reviews.applyAutomaticDecision(context,
+                reviews.toModelJson(reviews.applyAutomaticDecision(context,
                     reviews.proposeSkillDeletion(name,before,sourceChatId,onCreated)))
             }
             "skill_write","skill_patch","skill_remove_file" -> {
@@ -167,7 +186,7 @@ class MemoryLearningActions(
                 val content = stripInvisibleCharacters(arg("content"))
                 stagedSkillCreate(stagedChanges,name)?.let { created ->
                     LearnedSkillRepository.validatePath(path)
-                    check(readVersions["$name/$path"]=="draft") {
+                    check(readVersion("$name/$path")=="draft") {
                         "Call skill_read with this name and path before editing the draft file"
                     }
                     val before = if(path=="SKILL.md") created.body else created.files[path].orEmpty()
@@ -189,7 +208,7 @@ class MemoryLearningActions(
                     "This batch already deletes the whole skill; do not edit its files."
                 }
                 val before = skills.read(name,path)
-                check((readVersions["$name/$path"] ?: arg("version"))==before.version) {
+                check((readVersion("$name/$path") ?: arg("version"))==before.version) {
                     "Call skill_read with this name and path before editing the file"
                 }
                 val remove = action=="skill_remove_file"
@@ -204,7 +223,7 @@ class MemoryLearningActions(
                 }
                 val change = reviews.proposeSkillFile(name,path,before,text,remove,automatic,sourceChatId,onCreated)
                 val applied = reviews.applyAutomaticDecision(context,change)
-                if (stagedChanges==null) readVersions.remove("$name/$path")
+                if (stagedChanges==null) forgetVersion("$name/$path")
                 reviews.toModelJson(applied)
             }
             else -> error("Unknown learning action")

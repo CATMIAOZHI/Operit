@@ -206,6 +206,38 @@ class MemoryLearningBatchTest {
         MemoryLearningJournal.deleteChat(context,"chat-gone")
         assertEquals(setOf("space" to "chat-kept"),MemoryLearningJournal.pending(context).toSet())
     }
+    @Test fun aRangeEnqueuedWhileABatchRunsKeepsItsPendingMarker() = runBlocking {
+        val context=context()
+        val running=MemoryLearningJournal(context,"space","chat")
+        running.enqueue(true,false,10)
+        // A turn arrives while the batch is talking to the model, so the same range is enqueued again
+        // with a wider horizon. The batch that started earlier must not clear that newer marker.
+        MemoryLearningJournal(context,"space","chat").enqueue(true,false,20)
+        running.complete(listOf("notes"),LearningCursor(7),false,emptyList())
+        val restored=MemoryLearningJournal(context,"space","chat")
+        assertTrue(restored.pending("notes"))
+        assertEquals(20,restored.horizon())
+    }
+    @Test fun aQuietBatchStillClearsItsOwnPendingMarker() = runBlocking {
+        val context=context()
+        val journal=MemoryLearningJournal(context,"space","chat")
+        journal.enqueue(true,false,10)
+        // Nothing was enqueued after this range, so draining it must stop the retries.
+        journal.complete(listOf("notes"),LearningCursor(7),false,emptyList())
+        assertFalse(MemoryLearningJournal(context,"space","chat").pending("notes"))
+    }
+    @Test fun aTurnThatArrivesDuringTheBatchSurvivesItsExport() = runBlocking {
+        val context=context()
+        val running=MemoryLearningJournal(context,"space","chat")
+        running.enqueue(true,true,10)
+        // The later instance stands in for the per-turn enqueue of the foreground conversation.
+        MemoryLearningJournal(context,"space","chat").enqueue(false,true,30)
+        running.complete(listOf("notes"),LearningCursor(7),false,emptyList())
+        val restored=MemoryLearningJournal(context,"space","chat")
+        assertTrue(restored.pending("skills"))
+        assertEquals(30,restored.horizon())
+        assertEquals(7,restored.cursor("notes").messageId)
+    }
     @Test fun abandoningARangeStopsRetriesAndKeepsTheCursor() = runBlocking {
         val context=context()
         val journal=MemoryLearningJournal(context,"space","chat")

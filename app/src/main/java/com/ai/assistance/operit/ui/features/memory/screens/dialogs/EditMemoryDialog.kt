@@ -133,9 +133,13 @@ fun EditMemoryDialog(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         OutlinedTextField(
-                            value = source,
-                            onValueChange = { source = it },
+                            // The stored value is an internal key, so it is shown translated and the
+                            // user cannot type a new one and break how the source is read back.
+                            value = memorySourceText(source),
+                            onValueChange = {},
+                            readOnly = true,
                             label = { Text(stringResource(R.string.memory_source)) },
+                            supportingText = { Text(stringResource(R.string.memory_source_readonly)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -188,46 +192,6 @@ fun EditMemoryDialog(
                         }
                     }
                 }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FolderSelector(
-    allFolderPaths: List<String>,
-    selectedPath: String,
-    onPathSelected: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
-    ) {
-        OutlinedTextField(
-            value = selectedPath,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(stringResource(R.string.memory_folder_label2)) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor()
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            allFolderPaths.forEach { path ->
-                DropdownMenuItem(
-                    text = { Text(path) },
-                    onClick = {
-                        onPathSelected(path)
-                        expanded = false
-                    }
-                )
             }
         }
     }

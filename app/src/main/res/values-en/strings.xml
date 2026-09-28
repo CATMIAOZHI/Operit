@@ -3296,6 +3296,8 @@
     <string name="memory_auto_update_desc">Global master switch for automatic learning. Off stops automatic graph, notes and skill extraction. On follows the individual paths in Memory library → Automatic saving. Manual extraction is unaffected.</string>
     <string name="memory_auto_update_runtime_status">Graph auto-save: %1$d candidate(s) pending, next check in about %2$d minute(s)</string>
     <string name="memory_auto_update_runtime_paused">Graph auto-save is off; %1$d pending candidate(s) are kept and will not run automatically</string>
+    <string name="memory_auto_update_runtime_paused_master">The master switch is off, so automatic graph, notes and skill extraction are all paused; %1$d pending candidate(s) are kept</string>
+    <string name="memory_auto_update_runtime_abandoned">%1$d of them were abandoned after repeated failures and will not run again</string>
     <string name="chat_summarizing_memory">Summarizing memory...</string>
     <string name="chat_input_processing_collect_failed">Failed to collect input processing state: %1$s</string>
     <string name="chat_input_hint">Type a message...</string>

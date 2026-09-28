@@ -123,6 +123,9 @@
     <string name="memory_graph_empty">Nothing saved here yet. Use the plus button below, or let the AI extract from your chats.</string>
     <string name="memory_graph_empty_search">No memory matched this search. Try another keyword.</string>
     <string name="memory_source_manual">Added manually</string>
+    <string name="memory_source_ai_created">Added by the AI</string>
+    <string name="memory_source_merged">Merged memories</string>
+    <string name="memory_source_readonly">Recorded by the app; it cannot be edited here</string>
     <string name="memory_detail_percent">%1$d%%</string>
     <string name="memory_technical_show">Show technical details</string>
     <string name="memory_technical_hide">Hide technical details</string>
@@ -139,6 +142,8 @@
     <string name="memory_tag_remove">Remove this tag</string>
     <string name="memory_more_actions">More</string>
     <string name="memory_move_selected">Move to folder</string>
+    <string name="memory_move_selected_hint">Move the %1$d selected memories to:</string>
+    <string name="memory_move_confirm">Move</string>
     <string name="memory_delete_selected">Delete selected</string>
     <string name="memory_linking_stop">Stop linking</string>
     <string name="memory_box_select_stop">Stop selecting</string>

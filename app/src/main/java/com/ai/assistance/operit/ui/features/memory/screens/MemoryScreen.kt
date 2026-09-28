@@ -76,6 +76,7 @@ import com.ai.assistance.operit.ui.features.memory.screens.dialogs.DocumentViewD
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EditMemoryDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.LinkMemoryDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryInfoDialog
+import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MoveMemoriesToFolderDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EdgeInfoDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EditEdgeDialog
 import com.ai.assistance.operit.ui.features.memory.viewmodel.MemoryViewModel
@@ -221,6 +222,7 @@ private fun MemoryGraphPage(activeProfileId: String) {
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
     var showFolderNavigator by remember { mutableStateOf(false) }
+    var showMoveTargetPicker by remember { mutableStateOf(false) }
 
 
     LaunchedEffect(activeProfileId) { selectedProfileId = activeProfileId }
@@ -344,7 +346,9 @@ private fun MemoryGraphPage(activeProfileId: String) {
                 // 框选模式下的操作：移动或删除选中的记忆
                 if (uiState.isBoxSelectionMode) {
                     ExtendedFloatingActionButton(
-                        onClick = { viewModel.moveSelectedMemoriesToFolder(uiState.selectedFolderPath) },
+                        // A batch move asks for its target first: moving straight into the folder the
+                        // user is browsing clears folders without ever saying so.
+                        onClick = { showMoveTargetPicker = true },
                         icon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
                         text = { Text(stringResource(R.string.memory_move_selected)) },
                         containerColor = MaterialTheme.colorScheme.secondaryContainer
@@ -683,6 +687,18 @@ private fun MemoryGraphPage(activeProfileId: String) {
                         }
                     )
                 }
+            }
+
+            if (showMoveTargetPicker) {
+                MoveMemoriesToFolderDialog(
+                    allFolderPaths = uiState.folderPaths,
+                    selectedCount = uiState.boxSelectedNodeIds.size,
+                    onDismiss = { showMoveTargetPicker = false },
+                    onConfirm = { target ->
+                        showMoveTargetPicker = false
+                        viewModel.moveSelectedMemoriesToFolder(target)
+                    }
+                )
             }
 
             if (uiState.isEditing) {
