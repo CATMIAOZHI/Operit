@@ -183,7 +183,11 @@ fun MoveMemoriesToFolderDialog(
     onConfirm: (String) -> Unit
 ) {
     val uncategorized = stringResource(R.string.memory_uncategorized)
-    val options = remember(allFolderPaths, uncategorized) { listOf(uncategorized) + allFolderPaths }
+    // The folder list already reports an empty path as "uncategorized", so the extra option must not
+    // show up twice.
+    val options = remember(allFolderPaths, uncategorized) {
+        listOf(uncategorized) + allFolderPaths.filterNot { it == uncategorized }
+    }
     var target by remember { mutableStateOf(options.first()) }
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -202,7 +206,8 @@ fun MoveMemoriesToFolderDialog(
             }
         },
         confirmButton = {
-            Button(onClick = { onConfirm(target) }) {
+            // Nothing selected means nothing to move, so the button must not look like it works.
+            Button(enabled = selectedCount > 0, onClick = { onConfirm(target) }) {
                 Text(stringResource(R.string.memory_move_confirm))
             }
         },

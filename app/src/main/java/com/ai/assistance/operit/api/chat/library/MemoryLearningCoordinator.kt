@@ -524,6 +524,7 @@ object MemoryLearningCoordinator {
             // The rejection counter is keyed by the action and the target it was aimed at: three
             // recoverable mistakes on three different files must not close a whole operation.
             var repeatKey = actionName
+            var repeatTarget = ""
             try {
                 if(tool.name==FINISH) {
                     session.finished=true
@@ -531,8 +532,9 @@ object MemoryLearningCoordinator {
                 } else {
                     val json = JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
                     val params = json.keys().asSequence().associateWith { json.get(it).toString() }
-                    repeatKey = actionName + "|" + listOf("target","name","path","section")
-                        .joinToString("|") { params[it].orEmpty() }
+                    val parts = listOf("target","name","path","section").map { params[it].orEmpty() }
+                    repeatKey = actionName + "|" + parts.joinToString("|")
+                    repeatTarget = parts.filter { it.isNotBlank() }.joinToString(" ")
                     val result = session.actions.execute(actionName,params)
                     session.clearRepeatFailure(repeatKey)
                     session.roundNotice()?.let { result.put("notice",it) }
@@ -551,7 +553,9 @@ object MemoryLearningCoordinator {
                     // Retrying the same rejected call cannot succeed and would spend the whole round
                     // budget, which discards the batch and its staged changes. The action is closed
                     // for this batch instead, so the reviewer submits what it already has.
-                    val message = "$actionName was rejected $repeats times and is closed for this batch. " +
+                    // Only this target is closed, so the message must say which one.
+                    val target = repeatTarget.takeIf { it.isNotBlank() }?.let { " on $it" }.orEmpty()
+                    val message = "$actionName$target was rejected $repeats times and is closed for this batch. " +
                         "Stop retrying it, submit what already qualifies and call $FINISH." +
                         (notice?.let { " $it" } ?: "")
                     ToolResult(toolName=tool.name,success=true,result=StringResultData(message))

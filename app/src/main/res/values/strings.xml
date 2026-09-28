@@ -3178,7 +3178,7 @@
     <string name="memory_auto_update_runtime_status">图谱自动提取：待处理候选 %1$d 条，距离下次检查约 %2$d 分钟</string>
     <string name="memory_auto_update_runtime_paused">图谱自动提取未开启；待处理候选 %1$d 条会保留，不会自动执行</string>
     <string name="memory_auto_update_runtime_paused_master">自动保存记忆的总开关已关闭，图谱、笔记和技能的自动提取都已暂停；待处理候选 %1$d 条会保留</string>
-    <string name="memory_auto_update_runtime_abandoned">其中 %1$d 条已放弃（重试已达上限），不会再自动执行</string>
+    <string name="memory_auto_update_runtime_abandoned">另有 %1$d 条候选已放弃（重试已达上限），不会再自动执行</string>
     <string name="chat_summarizing_memory">正在总结记忆...</string>
     <string name="chat_input_processing_collect_failed">输入处理状态收集失败: %1$s</string>
     <string name="chat_input_hint">输入消息...</string>

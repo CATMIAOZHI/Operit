@@ -1728,29 +1728,38 @@ class MessageProcessingDelegate(
                 val finalizeMessageStartTime = messageTimingNow()
                 val deferTurnCompleteToAsyncJob =
                     if (cancellationToPropagate == null) {
-                        finalizeMessageAndNotify(
-                            chatId = chatId,
-                            activeChatId = activeChatId,
-                            aiMessageProvider = { aiMessage },
-                            isWaifuModeEnabled = isWaifuModeEnabled,
-                            skipFinalAutoRead = didStreamAutoRead && !isWaifuModeEnabled,
-                            syncWaifuMessageMetrics = { sourceMessage ->
-                                syncWaifuMessageMetricsHandler?.invoke(sourceMessage)
-                            },
-                            calculateNextWindowSize = calculateNextWindowSize,
-                            finalContentTransform = { replayContent ->
-                                // The stream-collection exit already merged the tool-boundary
-                                // snapshot; reuse it so the raw replay cache (preferred by
-                                // resolveFinalContent when no revision event exists) can never
-                                // replace the merged content with a shorter unmerged prefix.
-                                boundaryMergedContent.get()
-                                    ?: preferToolBoundarySnapshot(
-                                        toolBoundaryContentSnapshot.get(),
-                                        replayContent,
-                                    )
-                            },
-                            turnOptions = turnOptions
-                        )
+                        try {
+                            finalizeMessageAndNotify(
+                                chatId = chatId,
+                                activeChatId = activeChatId,
+                                aiMessageProvider = { aiMessage },
+                                isWaifuModeEnabled = isWaifuModeEnabled,
+                                skipFinalAutoRead = didStreamAutoRead && !isWaifuModeEnabled,
+                                syncWaifuMessageMetrics = { sourceMessage ->
+                                    syncWaifuMessageMetricsHandler?.invoke(sourceMessage)
+                                },
+                                calculateNextWindowSize = calculateNextWindowSize,
+                                finalContentTransform = { replayContent ->
+                                    // The stream-collection exit already merged the tool-boundary
+                                    // snapshot; reuse it so the raw replay cache (preferred by
+                                    // resolveFinalContent when no revision event exists) can never
+                                    // replace the merged content with a shorter unmerged prefix.
+                                    boundaryMergedContent.get()
+                                        ?: preferToolBoundarySnapshot(
+                                            toolBoundaryContentSnapshot.get(),
+                                            replayContent,
+                                        )
+                                },
+                                turnOptions = turnOptions
+                            )
+                        } finally {
+                            // The finalizer rethrows a cancellation raised while it was finishing, and
+                            // that would skip the cleanup below: this conversation would then stay
+                            // marked as generating for the rest of the process lifetime, which blocks
+                            // both its background extraction and a manual one.
+                            com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator
+                                .foregroundEnded(context, chatId)
+                        }
                     } else {
                         AppLogger.d(TAG, "取消回合不执行消息收尾: chatId=$activeChatId")
                         false
