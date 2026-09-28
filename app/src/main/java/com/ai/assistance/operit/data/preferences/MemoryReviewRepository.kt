@@ -211,10 +211,17 @@ class MemoryReviewRepository internal constructor(
         }
         mutex.withLock {
             val items = read().toMutableList()
+            // A row stored before the write points stripped invisible characters can describe the same
+            // edit with a different body, so both sides are normalized before they are compared;
+            // otherwise the same change is staged twice instead of matching its own earlier proposal.
+            val body = stripInvisibleCharacters(change.body)
+            val addition = stripInvisibleCharacters(change.addition)
             items.find { it.status in setOf("pending", "applying") &&
-                it.kind == change.kind && it.title == change.title && it.body == change.body &&
+                it.kind == change.kind && it.title == change.title &&
+                stripInvisibleCharacters(it.body) == body &&
                 it.description == change.description && it.baseVersion == change.baseVersion &&
-                it.addition == change.addition && it.path==change.path && it.operation==change.operation &&
+                stripInvisibleCharacters(it.addition) == addition &&
+                it.path==change.path && it.operation==change.operation &&
                 it.automatic==change.automatic && it.files==change.files }?.let { return@withLock it }
             // Old pending items must not block newly enabled automatic saving.
             require(items.count { it.status in setOf("pending", "applying") } < PENDING_LIMIT || autoApprovalEnabled()) {

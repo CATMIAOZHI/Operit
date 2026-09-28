@@ -30,6 +30,16 @@ class MemoryLearningBatchTest {
         whenever(prefs.edit()).thenReturn(editor)
         whenever(editor.putString(any(),any())).thenReturn(editor)
     }
+    /** Leaves a row exactly as an approval that was killed between its write and its decision. */
+    private fun reopenApproval(context: Context, id: String) {
+        val store=java.io.File(context.filesDir,"memory_reviews").listFiles()!!.single()
+        val items=org.json.JSONArray(store.readText())
+        for (i in 0 until items.length()) {
+            val row=items.getJSONObject(i)
+            if (row.optString("id")==id) row.put("status","applying")
+        }
+        store.writeText(items.toString())
+    }
     @Test fun journalPersistsSeparateCoverageAndReplaysProposalIdsOnce() = runBlocking {
         val context=context()
         val journal=MemoryLearningJournal(context,"space","chat")
@@ -256,8 +266,41 @@ class MemoryLearningBatchTest {
         assertEquals("approved",repo.decide(context,change.id,true,"user","first").status)
         val stored=notes.load().markdown
         assertFalse(stored.contains('\u202E'))
-        // An approval interrupted between the write and the decision is retried: the same proposal must
-        // not append a second copy of its own text.
+        // An approval interrupted between the write and the decision is retried for real here: the row
+        // is put back to applying, so the retry runs the append instead of stopping at the decided row.
+        reopenApproval(context,change.id)
+        assertEquals("approved",repo.decide(context,change.id,true,"user","retry").status)
+        // The retry recognises its own text in the document and does not append a second copy.
+        assertEquals(stored,notes.load().markdown)
+    }
+    @Test fun aReplacementWithHiddenCharactersFinishesInsteadOfConflicting() = runBlocking {
+        val context=context()
+        val notes=MemoryNotesRepository(context,"space")
+        val repo=MemoryReviewRepository(context,"space")
+        val change=repo.proposeNotes(notes.load(),"alpha\u202E gamma","")
+        assertEquals("approved",repo.decide(context,change.id,true,"user","first").status)
+        val stored=notes.load().markdown
+        assertFalse(stored.contains('\u202E'))
+        // The comparison against the file and the version check both read the stripped body, so the
+        // retry finishes the row instead of failing its version check forever.
+        reopenApproval(context,change.id)
+        assertEquals("approved",repo.decide(context,change.id,true,"user","retry").status)
+        assertEquals(stored,notes.load().markdown)
+    }
+    @Test fun aRowStagedBeforeTheProposalBoundaryStrippedDoesNotAppendTwice() = runBlocking {
+        val context=context()
+        val notes=MemoryNotesRepository(context,"space")
+        val repo=MemoryReviewRepository(context,"space")
+        // A row staged before the proposal boundary stripped its text still carries the mark, so it is
+        // built through propose() rather than proposeNotes().
+        val change=repo.propose(MemoryReviewChange("","notes","memory.md","",
+            addition="legacy note with a bidi mark \u202E inside"))
+        assertEquals("approved",repo.decide(context,change.id,true,"user","first").status)
+        val stored=notes.load().markdown
+        assertFalse(stored.contains('\u202E'))
+        // The edit is judged on the stored characters, so the retry recognises the note it already
+        // holds instead of appending a second copy of it.
+        reopenApproval(context,change.id)
         assertEquals("approved",repo.decide(context,change.id,true,"user","retry").status)
         assertEquals(stored,notes.load().markdown)
     }
@@ -268,14 +311,21 @@ class MemoryLearningBatchTest {
         // The later instance stands in for the per-turn enqueue of the foreground conversation: it
         // widens the horizon and asks for skills just as this batch finishes draining notes.
         MemoryLearningJournal(context,"space","chat").enqueue(false,true,30)
-        running.complete(listOf("notes"),LearningCursor(7),false,emptyList())
-        running.export()
+        running.complete(listOf("notes"),LearningCursor(7),false,
+            listOf(MemoryReviewChange("proposal-id","notes","memory.md","proposal",sourceChatId="chat")))
+        assertEquals(emptyList<String>(),running.export())
         val restored=MemoryLearningJournal(context,"space","chat")
-        // The newer range survives the older batch's write and its export releases only its own batch.
+        // The newer range survives the older batch's write: the path it drained still reports the
+        // enqueue that landed while it ran, skills keep their marker, and the horizon is merged
+        // instead of the stale copy overwriting the newer one.
         assertEquals(30,restored.horizon())
         assertEquals(7,restored.cursor("notes").messageId)
+        assertTrue(restored.pending("notes"))
         assertTrue(restored.pending("skills"))
-        assertTrue(restored.export().isEmpty())
+        // The batch reached the review store, and its export released the barrier, so the next batch
+        // can write instead of failing the check that guards a pending export.
+        assertEquals(listOf("proposal-id"),MemoryReviewRepository(context,"space").list().map { it.id })
+        restored.complete(listOf("skills"),LearningCursor(9),false,emptyList())
     }
     @Test fun abandoningARangeStopsRetriesAndKeepsTheCursor() = runBlocking {
         val context=context()
