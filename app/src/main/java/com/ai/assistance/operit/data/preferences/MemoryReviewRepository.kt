@@ -266,9 +266,13 @@ class MemoryReviewRepository internal constructor(
 
     suspend fun proposeUser(before: String, after: String, sourceChatId: String = "",
         onCreated: () -> Unit = {}): MemoryReviewChange {
-        require(after.length <= UserProfileDocumentRepository.MAX_CONTENT_CHARS) { "user.md exceeds the character limit" }
+        // The stored document is stripped at its write point, so the proposal must carry the same
+        // bytes: otherwise a retry after an interrupted apply compares two different strings and
+        // either appends twice or fails its version check forever.
+        val text = stripInvisibleCharacters(after)
+        require(text.length <= UserProfileDocumentRepository.MAX_CONTENT_CHARS) { "user.md exceeds the character limit" }
         return propose(MemoryReviewChange(id="", kind="user",
-            title="user.md",body=after,before=before,baseVersion=LearnedSkillRepository.version(before),
+            title="user.md",body=text,before=before,baseVersion=LearnedSkillRepository.version(before),
             sourceChatId=sourceChatId),onCreated)
     }
     suspend fun proposeSkillDeletion(name: String, before: LearnedSkillRepository.Snapshot, sourceChatId: String="",
@@ -278,10 +282,16 @@ class MemoryReviewRepository internal constructor(
     suspend fun proposeNotes(
         before: MemoryNotesRepository.Snapshot, after: String, addition: String = "", sourceChatId: String = "",
         onCreated: () -> Unit = {}
-    ): MemoryReviewChange = propose(MemoryReviewChange(
-        id = hash("notes:${before.version}:$after"), kind = "notes", title = "memory.md", body = after,
-        before = before.markdown, baseVersion = before.version, addition = addition, sourceChatId = sourceChatId
-    ), onCreated)
+    ): MemoryReviewChange {
+        // Same reason as user.md: the proposal holds the text that will actually be stored, so an
+        // interrupted apply can be retried and is recognised as already done.
+        val text = stripInvisibleCharacters(after)
+        val added = stripInvisibleCharacters(addition)
+        return propose(MemoryReviewChange(
+            id = hash("notes:${before.version}:$text"), kind = "notes", title = "memory.md", body = text,
+            before = before.markdown, baseVersion = before.version, addition = added, sourceChatId = sourceChatId
+        ), onCreated)
+    }
 
     suspend fun audit(id: String, note: String, reviewer: String): MemoryReviewChange = withContext(Dispatchers.IO) {
         require(note.isNotBlank() && note.length <= 2000)

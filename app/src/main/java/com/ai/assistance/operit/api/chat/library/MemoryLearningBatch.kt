@@ -46,6 +46,11 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
     private fun readState(): JSONObject = if (file.exists()) JSONObject(file.readText()) else
         JSONObject().put("profile",profile).put("chat",chat).put("horizon",0)
     private fun reload() { state = readState() }
+    /**
+     * These read the cached copy without reloading on purpose: a batch compares the generation it
+     * started from with the one on disk when it finishes, so adding a reload here would silently
+     * disable that protection and let an old batch clear a newer range's pending marker.
+     */
     fun cursor(path: String) = LearningCursor.parse(state.optJSONObject(path))
     fun pending(path: String) = state.optBoolean("pending_$path")
     fun horizon() = state.optLong("horizon")
@@ -152,8 +157,9 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
             throw e
         } catch (e: Exception) {
             // A full review queue or a store that cannot be written will not accept the same batch
-            // later either, so the barrier is released and the range is left for a later trigger
-            // instead of blocking this conversation forever.
+            // later either, so the barrier is released and the range is dropped instead of blocking
+            // this conversation forever. The cursor has already moved past it, so it will not be read
+            // again; the caller records the dropped batch in the extraction log.
             synchronized(lock) {
                 reload()
                 state.remove("export")
