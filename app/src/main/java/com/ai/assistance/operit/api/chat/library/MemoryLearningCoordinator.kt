@@ -139,6 +139,17 @@ object MemoryLearningCoordinator {
             if (!batchStartedAt.containsKey(id)) cancelReview(id)
         }
     }
+    /**
+     * Stops every review of a conversation that no longer exists. It must not go through
+     * [foregroundStarted]: that one also records a live turn, and a deleted conversation never
+     * reports its end, so the entry would keep every other conversation waiting.
+     */
+    fun forgetChat(chatId: String?) {
+        chatId?.let { id ->
+            prepared.keys.removeAll { it.first == id }
+            cancelReview(id)
+        }
+    }
     private fun cancelReview(id: String) {
         jobs.remove(id)?.let { job ->
             cancellingJobs[id] = job
@@ -169,7 +180,11 @@ object MemoryLearningCoordinator {
             lifecycle(profileId).withLock {
                 check(profileId !in deletedProfiles) { "Memory space was deleted" }
                 val journal=MemoryLearningJournal(context,profileId,chatId)
-                journal.export()
+                // A pending batch that cannot be imported is reported instead of disappearing;
+                // the restart below re-reviews the whole chat, so nothing is lost either way.
+                journal.export().forEach { detail ->
+                    recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),detail)
+                }
                 journal.enqueue(true,true,AppDatabase.getDatabase(context).chatContentDao().learningSourceHorizon(chatId),
                     restart=true)
             }
@@ -295,7 +310,11 @@ object MemoryLearningCoordinator {
             // would retry it on every later turn, and this is not a failure worth logging. A finished
             // batch that was never exported is applied first so nothing already reviewed is lost.
             val journal=MemoryLearningJournal(context,profileId,chatId)
-            journal.export()
+            // Nothing here is kept by design, but a batch that could not be applied still belongs in
+            // the extraction log rather than vanishing with the abandoned range.
+            journal.export().forEach { detail ->
+                recordUnreviewable(context,profileId,chatId,listOf("notes","skills"),detail)
+            }
             journal.abandon(listOf("notes","skills"))
             if (manual) error(context.getString(R.string.memory_extraction_not_reviewable))
             return
@@ -310,6 +329,11 @@ object MemoryLearningCoordinator {
         MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
             settings.shouldIncludeThinking()).use { source ->
             repeat(3) {
+                // The machine can become busy again between batches, so the pause this run promised is
+                // checked here too: without it three batches run back to back and a conversation
+                // sharing the same local model waits for all of them. A manual review is the user's
+                // explicit request, so it is never paused.
+                if (!manual && foreground.isNotEmpty()) return
                 val paths=listOfNotNull("notes".takeIf { notes && journal.pending(it) },
                     "skills".takeIf { skills && journal.pending(it) })
                 if (paths.isEmpty()) return
@@ -346,7 +370,9 @@ object MemoryLearningCoordinator {
                 }
                 if (batch.text.isBlank()) {
                     journal.complete(selected,batch.next,batch.more,emptyList())
-                    journal.export()
+                    journal.export().forEach { detail ->
+                        recordUnreviewable(context,profileId,chatId,selected,detail)
+                    }
                 } else reviewBatch(context,profileId,chatId,selected,batch,config.contextWindow,journal)
             }
         }
@@ -493,16 +519,22 @@ object MemoryLearningCoordinator {
             session.evidenceBytes.addAndGet(tool.parameters.sumOf {
                 it.value.toByteArray(Charsets.UTF_8).size.toLong()
             })
+            val args = tool.parameters.associate { it.name to it.value }
+            val actionName = args["action"].orEmpty()
+            // The rejection counter is keyed by the action and the target it was aimed at: three
+            // recoverable mistakes on three different files must not close a whole operation.
+            var repeatKey = actionName
             try {
                 if(tool.name==FINISH) {
                     session.finished=true
                     ToolResult(toolName=tool.name,success=true,result=StringResultData("Review finished"))
                 } else {
-                    val args = tool.parameters.associate { it.name to it.value }
                     val json = JSONObject(args["arguments"].orEmpty().ifBlank { "{}" })
                     val params = json.keys().asSequence().associateWith { json.get(it).toString() }
-                    val result = session.actions.execute(args["action"].orEmpty(),params)
-                    session.clearRepeatFailure(args["action"].orEmpty())
+                    repeatKey = actionName + "|" + listOf("target","name","path","section")
+                        .joinToString("|") { params[it].orEmpty() }
+                    val result = session.actions.execute(actionName,params)
+                    session.clearRepeatFailure(repeatKey)
                     session.roundNotice()?.let { result.put("notice",it) }
                     val resultText = result.toString()
                     session.evidenceBytes.addAndGet(resultText.toByteArray(Charsets.UTF_8).size.toLong())
@@ -510,17 +542,16 @@ object MemoryLearningCoordinator {
                 }
             } catch(e: CancellationException) { throw e }
             catch(e: Exception) {
-                val action = tool.parameters.find { it.name=="action" }?.value.orEmpty()
-                session.addFailure(learningFailureDetail(action,e))
+                session.addFailure(learningFailureDetail(actionName,e))
                 // A run of rejected tool calls is exactly when the reviewer needs to know the budget is
                 // nearly gone, so the pacing hint rides on the error too.
                 val notice = session.roundNotice()
-                val repeats = session.recordRepeatFailure(action)
+                val repeats = session.recordRepeatFailure(repeatKey)
                 if (repeats >= LEARNING_REPEAT_FAILURE_LIMIT) {
                     // Retrying the same rejected call cannot succeed and would spend the whole round
                     // budget, which discards the batch and its staged changes. The action is closed
                     // for this batch instead, so the reviewer submits what it already has.
-                    val message = "$action was rejected $repeats times and is closed for this batch. " +
+                    val message = "$actionName was rejected $repeats times and is closed for this batch. " +
                         "Stop retrying it, submit what already qualifies and call $FINISH." +
                         (notice?.let { " $it" } ?: "")
                     ToolResult(toolName=tool.name,success=true,result=StringResultData(message))

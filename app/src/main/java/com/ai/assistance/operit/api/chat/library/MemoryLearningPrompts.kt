@@ -103,8 +103,9 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             user must clear that list before more are accepted.
             No fabricated successful testing. If nothing qualifies, do not invent a change.
             If an operation is outside this run's scope, do not retry it; continue the enabled work or finish.
-            If the same operation is rejected twice, the reason will not change by resending it: fix the
-            input or drop that change and continue with the rest.
+            If the same operation on the same target is rejected, the reason will not change by resending
+            it: fix the input or drop that change. Repeating it $LEARNING_REPEAT_FAILURE_LIMIT times closes
+            that operation for this batch, so switch to the rest of the work instead.
             Call $finish after reviewing all provided source, even when no changes qualify. This is mandatory.
             A final summary alone does not confirm completion. At most $LEARNING_ROUND_LIMIT model rounds and $LEARNING_TOOL_CALL_LIMIT tool calls.
             Once within two rounds of that limit, stop exploring: submit the best complete change you

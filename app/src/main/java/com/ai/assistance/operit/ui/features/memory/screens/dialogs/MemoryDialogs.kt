@@ -26,6 +26,11 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.ui.text.style.TextOverflow
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.Memory
 import com.ai.assistance.operit.ui.features.memory.screens.graph.model.Edge
@@ -118,9 +123,95 @@ fun MemoryInfoDialog(
 
 /** Turns the stored source key into something a user can read, keeping unknown values verbatim. */
 @Composable
-private fun memorySourceText(source: String): String = when (source) {
+internal fun memorySourceText(source: String): String = when (source) {
     "user_input" -> stringResource(R.string.memory_source_manual)
+    "ai_created" -> stringResource(R.string.memory_source_ai_created)
+    "merged_from_memory" -> stringResource(R.string.memory_source_merged)
     else -> source
+}
+
+/** Folder dropdown shared by the memory editor and the batch move, so both name folders the same way. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun FolderSelector(
+    allFolderPaths: List<String>,
+    selectedPath: String,
+    onPathSelected: (String) -> Unit
+) {
+    var expanded by remember { mutableStateOf(false) }
+
+    ExposedDropdownMenuBox(
+        expanded = expanded,
+        onExpandedChange = { expanded = !expanded }
+    ) {
+        OutlinedTextField(
+            value = selectedPath,
+            onValueChange = {},
+            readOnly = true,
+            label = { Text(stringResource(R.string.memory_folder_label2)) },
+            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+            modifier = Modifier
+                .fillMaxWidth()
+                .menuAnchor()
+        )
+        ExposedDropdownMenu(
+            expanded = expanded,
+            onDismissRequest = { expanded = false }
+        ) {
+            allFolderPaths.forEach { path ->
+                DropdownMenuItem(
+                    text = { Text(path, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                    onClick = {
+                        onPathSelected(path)
+                        expanded = false
+                    }
+                )
+            }
+        }
+    }
+}
+
+/**
+ * A batch move needs a stated target. Without one the action silently drops the folder of every
+ * selected memory while the user is looking at "all memories", which reads as data loss.
+ */
+@Composable
+fun MoveMemoriesToFolderDialog(
+    allFolderPaths: List<String>,
+    selectedCount: Int,
+    onDismiss: () -> Unit,
+    onConfirm: (String) -> Unit
+) {
+    val uncategorized = stringResource(R.string.memory_uncategorized)
+    val options = remember(allFolderPaths, uncategorized) { listOf(uncategorized) + allFolderPaths }
+    var target by remember { mutableStateOf(options.first()) }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.memory_move_selected)) },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(
+                    text = stringResource(R.string.memory_move_selected_hint, selectedCount),
+                    style = MaterialTheme.typography.bodyMedium
+                )
+                FolderSelector(
+                    allFolderPaths = options,
+                    selectedPath = target,
+                    onPathSelected = { target = it }
+                )
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(target) }) {
+                Text(stringResource(R.string.memory_move_confirm))
+            }
+        },
+        dismissButton = {
+            OutlinedButton(onClick = onDismiss) {
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
 }
 
 /** Shared shape for the one-off delete confirmations that the list screens already had. */

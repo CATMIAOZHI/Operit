@@ -98,14 +98,17 @@ class UserProfileDocumentRepository private constructor(private val context: Con
     }
 
     suspend fun save(markdown: String) {
-        require(markdown.length <= MAX_CONTENT_CHARS) {
+        // user.md is injected into later system prompts, so hidden characters are dropped before the
+        // text reaches the file or the in-memory state and the two cannot drift apart.
+        val text = stripInvisibleCharacters(markdown)
+        require(text.length <= MAX_CONTENT_CHARS) {
             "user.md exceeds the $MAX_CONTENT_CHARS character limit"
         }
         initialize()
         writeMutex.withLock {
-            if (contentState.value == markdown) return@withLock
-            writeAtomically(userFile, markdown)
-            contentState.value = markdown
+            if (contentState.value == text) return@withLock
+            writeAtomically(userFile, text)
+            contentState.value = text
             LearningPromptSnapshotRepository.markChanged(context, "user")
         }
     }
@@ -115,14 +118,15 @@ class UserProfileDocumentRepository private constructor(private val context: Con
     }
 
     suspend fun saveIfUnchanged(markdown: String, expected: String) {
-        require(markdown.length <= MAX_CONTENT_CHARS)
+        val text = stripInvisibleCharacters(markdown)
+        require(text.length <= MAX_CONTENT_CHARS)
         initialize()
         writeMutex.withLock {
             val current = userFile.readText(StandardCharsets.UTF_8)
-            if (current == markdown) return@withLock
+            if (current == text) return@withLock
             check(current == expected) { "user.md changed since review; reload first" }
-            writeAtomically(userFile, markdown)
-            contentState.value = markdown
+            writeAtomically(userFile, text)
+            contentState.value = text
             LearningPromptSnapshotRepository.markChanged(context, "user")
         }
     }

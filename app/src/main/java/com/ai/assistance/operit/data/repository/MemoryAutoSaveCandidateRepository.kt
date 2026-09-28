@@ -90,6 +90,26 @@ class MemoryAutoSaveCandidateRepository(
         return getPendingAndFailedCandidates().size
     }
 
+    /**
+     * Candidates that used up every attempt. They are no longer queued, and without this count the
+     * fact that a turn will never be extracted would be invisible.
+     */
+    fun countAbandonedCandidates(): Int {
+        return candidateBox
+            .query(
+                MemoryAutoSaveCandidate_.status
+                    .equal(MemoryAutoSaveCandidate.STATUS_PENDING)
+                    .or(
+                        MemoryAutoSaveCandidate_.status.equal(
+                            MemoryAutoSaveCandidate.STATUS_FAILED
+                        )
+                    )
+            )
+            .build()
+            .find()
+            .count { it.attemptCount >= MAX_ATTEMPTS }
+    }
+
     fun markProcessing(candidateIds: List<Long>) {
         if (candidateIds.isEmpty()) return
         val now = Date()

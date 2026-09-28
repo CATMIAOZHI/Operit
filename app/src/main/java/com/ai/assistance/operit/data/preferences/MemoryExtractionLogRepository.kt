@@ -59,7 +59,16 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
         }
     }
     suspend fun list(): List<MemoryExtractionLog> = withContext(Dispatchers.IO) {
-        mutex.withLock { read().sortedByDescending { it.startedAt } }
+        mutex.withLock {
+            // Same expiry rule as save(), applied while reading: without it a row interrupted by an
+            // app exit keeps reading as "running" until some later run happens to rewrite the file.
+            val now = System.currentTimeMillis()
+            read().map { record ->
+                if (record.finishedAt <= 0 && now - record.startedAt > STALE_RUNNING_MS)
+                    record.copy(status = "interrupted", finishedAt = record.startedAt)
+                else record
+            }.sortedByDescending { it.startedAt }
+        }
     }
     suspend fun save(log: MemoryExtractionLog) = withContext(Dispatchers.IO) {
         mutex.withLock {

@@ -123,6 +123,9 @@
     <string name="memory_graph_empty">这里还没有记忆。点右下角的加号新建，或让 AI 从对话里自动提取。</string>
     <string name="memory_graph_empty_search">没有找到匹配的记忆，换个关键词试试。</string>
     <string name="memory_source_manual">手动添加</string>
+    <string name="memory_source_ai_created">AI 自动添加</string>
+    <string name="memory_source_merged">记忆合并</string>
+    <string name="memory_source_readonly">来源由应用记录，不能手动修改</string>
     <string name="memory_detail_percent">%1$d%%</string>
     <string name="memory_technical_show">显示技术信息</string>
     <string name="memory_technical_hide">隐藏技术信息</string>
@@ -139,6 +142,8 @@
     <string name="memory_tag_remove">删除这个标签</string>
     <string name="memory_more_actions">更多</string>
     <string name="memory_move_selected">移动到文件夹</string>
+    <string name="memory_move_selected_hint">把选中的 %1$d 条记忆移动到：</string>
+    <string name="memory_move_confirm">移动</string>
     <string name="memory_delete_selected">删除选中</string>
     <string name="memory_linking_stop">结束连接模式</string>
     <string name="memory_box_select_stop">结束框选</string>
