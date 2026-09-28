@@ -8470,6 +8470,7 @@
     <string name="artifact_detail_ai_requirement_label">What do you want the AI to do this time?</string>
 
     <string name="workspace_attachment_attached">Current conversation has attached workspace.</string>
+    <string name="workspace_attachment_path">Workspace path: %1$s</string>
     <string name="workspace_attachment_environment">Workspace environment: %1$s</string>
     <string name="artifact_publish_node_updated">Node「%1$s」updated</string>
     <string name="artifact_project_node_view_title">Node View</string>
