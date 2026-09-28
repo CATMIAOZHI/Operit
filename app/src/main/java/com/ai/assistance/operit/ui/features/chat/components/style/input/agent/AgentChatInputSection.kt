@@ -2411,14 +2411,23 @@ private fun AgentExtraSettingsPopup(
     val buildMemoryAutoSaveDetail: suspend () -> String = {
         val pendingCandidateCount =
             MemoryAutoSaveCandidateRepository(context, currentProfileId).countPendingAndFailedCandidates()
-        val minutesUntilNextSave =
-            MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(currentProfileId)
-                ?: MemorySearchSettingsPreferences(context, currentProfileId).loadAutoSaveIntervalMinutes().toLong()
-        context.getString(
-            R.string.memory_auto_update_runtime_status,
-            pendingCandidateCount,
-            minutesUntilNextSave
-        )
+        // The countdown describes the graph path alone, so it must not be shown while that path is
+        // switched off: the numbers would read as work that is about to happen when nothing will run.
+        val api = ApiPreferences.getInstance(context)
+        val graphEnabled =
+            api.enableMemoryAutoUpdateFlow.first() && api.enableLegacyMemoryExtractionFlow.first()
+        if (!graphEnabled) {
+            context.getString(R.string.memory_auto_update_runtime_paused, pendingCandidateCount)
+        } else {
+            val minutesUntilNextSave =
+                MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(currentProfileId)
+                    ?: MemorySearchSettingsPreferences(context, currentProfileId).loadAutoSaveIntervalMinutes().toLong()
+            context.getString(
+                R.string.memory_auto_update_runtime_status,
+                pendingCandidateCount,
+                minutesUntilNextSave
+            )
+        }
     }
 
     Popup(

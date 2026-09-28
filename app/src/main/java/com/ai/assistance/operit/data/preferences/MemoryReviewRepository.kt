@@ -32,8 +32,8 @@ internal fun parseSkillDrafts(value: Any?, chatId: String): List<SkillDraft> {
     return (0 until array.length()).mapNotNull { i ->
         val obj = array.opt(i) as? JSONObject ?: return@mapNotNull null
         val name = (obj.opt("name") as? String)?.trim().orEmpty()
-        val description = (obj.opt("description") as? String)?.trim().orEmpty()
-        val body = stripSkillFrontmatter((obj.opt("body") as? String)?.trim().orEmpty())
+        val description = stripInvisibleCharacters((obj.opt("description") as? String)?.trim().orEmpty())
+        val body = stripSkillFrontmatter(stripInvisibleCharacters((obj.opt("body") as? String)?.trim().orEmpty()))
         if (!Regex("[a-z][a-z0-9-]{2,63}").matches(name) ||
             description.length !in 1..LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS ||
             description.contains('\n') ||
@@ -89,6 +89,8 @@ class MemoryReviewRepository internal constructor(
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
+        /** How many undecided proposals may wait for review. */
+        internal const val PENDING_LIMIT = 30
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
         /** A skill's directory entry and its files are one target, so a batch cannot stage both. */
@@ -146,6 +148,18 @@ class MemoryReviewRepository internal constructor(
         .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
         .put("files", JSONObject(d.files))
 
+    /**
+     * What a learning run is told about its own proposal. The full before/after snapshots stay on
+     * disk for the review UI, but returning them to the model is pure waste: one rewrite of a nearly
+     * full document is about twelve thousand characters, several of which exhaust a batch's evidence
+     * budget and discard everything it had already staged. A target is read back with memory_read or
+     * skill_read when the text itself is needed.
+     */
+    fun toModelJson(d: MemoryReviewChange): JSONObject = JSONObject().put("id", d.id).put("kind", d.kind)
+        .put("title", d.title).put("description", d.description).put("status", d.status)
+        .put("path", d.path).put("operation", d.operation).put("characters", d.body.length)
+        .apply { if (d.files.isNotEmpty()) put("files", JSONArray(d.files.keys.toList())) }
+
     private fun readFiles(obj: JSONObject): Map<String, String> =
         obj.optJSONObject("files")?.let { files ->
             files.keys().asSequence().associateWith { files.getString(it) }
@@ -171,11 +185,20 @@ class MemoryReviewRepository internal constructor(
             // proposal's baseline is kept so the applied change still matches the unchanged target on disk.
             val index = pending.indexOfFirst { sameTarget(it, change) }
             if (index < 0) {
+                // The queue limit is enforced here as well, so a batch cannot pile up proposals that
+                // the export is then guaranteed to reject after the model has already done its work.
+                require(pending.size < PENDING_LIMIT || autoApprovalEnabled()) {
+                    "Pending review limit reached; the user must review the existing proposals before more can be added"
+                }
                 return@withContext change.copy(id = java.util.UUID.randomUUID().toString()).also { pending.add(it) }
             }
             val previous = pending[index]
             check(previous.kind == change.kind) {
-                "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
+                if (previous.kind == "skill_delete")
+                    "This batch already stages a deletion of ${change.title}. Revise an installed skill with " +
+                        "skill_write on its SKILL.md instead of deleting and recreating it, or finish this " +
+                        "batch and create the skill in a later review."
+                else "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
                     "${previous.kind} instead of ${change.kind}."
             }
             // The replacement carries the whole target text, so an accumulated notes addition must not
@@ -192,7 +215,7 @@ class MemoryReviewRepository internal constructor(
                 it.addition == change.addition && it.path==change.path && it.operation==change.operation &&
                 it.automatic==change.automatic && it.files==change.files }?.let { return@withLock it }
             // Old pending items must not block newly enabled automatic saving.
-            require(items.count { it.status in setOf("pending", "applying") } < 30 || autoApprovalEnabled()) {
+            require(items.count { it.status in setOf("pending", "applying") } < PENDING_LIMIT || autoApprovalEnabled()) {
                 "Pending review limit reached"
             }
             val created = change.copy(id = java.util.UUID.randomUUID().toString())
@@ -209,7 +232,7 @@ class MemoryReviewRepository internal constructor(
             val items = read().toMutableList()
             val ids = items.mapTo(mutableSetOf()) { it.id }
             val additions = changes.filter { ids.add(it.id) }
-            require(items.count { it.status in setOf("pending","applying") } + additions.size <= 30 ||
+            require(items.count { it.status in setOf("pending","applying") } + additions.size <= PENDING_LIMIT ||
                 autoApprovalEnabled()) { "Pending review limit reached; review existing proposals before continuing" }
             items.addAll(additions)
             write(items)
@@ -329,7 +352,10 @@ class MemoryReviewRepository internal constructor(
                         val notes = MemoryNotesRepository(context, profileId)
                         if (change.addition.isNotEmpty()) notes.mutate("add", change.addition)
                         else if (notes.load().markdown != change.body) notes.save(change.body, change.baseVersion)
-                        if (reviewer=="user") LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
+                        // The learner's own writes invalidate a frozen prefix too: memory.md is part of
+                        // the prefix, so the library must offer the refresh instead of silently serving
+                        // the older text. Skill catalog changes are marked the same way below.
+                        LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
                     } else if(change.kind=="user") {
                         UserProfileDocumentRepository.getInstance(context).saveIfUnchanged(change.body,change.before)
                     } else if(change.kind=="skill_delete") {
@@ -359,7 +385,7 @@ class MemoryReviewRepository internal constructor(
                     write(items)
                     throw e
                 } catch (e: Exception) {
-                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user")) {
+                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user", "notes")) {
                         // Import returned no success: keep the proposal editable/rejectable.
                         items[index] = change.copy(status = "pending", reason = e.javaClass.simpleName)
                         write(items)
@@ -390,15 +416,16 @@ class MemoryReviewRepository internal constructor(
             val markdown = "---\nname: ${skill.name}\ndescription: ${JSONObject.quote(skill.description)}\n---\n\n${skill.body}\n"
             val manager = SkillManager.getInstance(context)
             // Retry after installation but before the decision journal was finalized.
-            validateDraftFiles(draft.files)
+            val files = draft.files.mapValues { (_, text) -> stripInvisibleCharacters(text) }
+            validateDraftFiles(files)
             val installed = manager.getAvailableSkills()[draft.title]?.directory
             if (manager.readSkillContent(draft.title) == markdown && installed != null &&
-                draft.files.all { (path, text) -> File(installed,path).let { it.isFile && it.readText()==text } }) return
+                files.all { (path, text) -> File(installed,path).let { it.isFile && it.readText()==text } }) return
             ZipOutputStream(zip.outputStream()).use { stream ->
                 stream.putNextEntry(ZipEntry("SKILL.md"))
                 stream.write(markdown.toByteArray())
                 stream.closeEntry()
-                draft.files.forEach { (path, text) ->
+                files.forEach { (path, text) ->
                     stream.putNextEntry(ZipEntry(path))
                     stream.write(text.toByteArray())
                     stream.closeEntry()
@@ -408,6 +435,19 @@ class MemoryReviewRepository internal constructor(
             check(result.installedDir != null) { result.message }
         } finally { zip.delete() }
     }
+}
+
+/**
+ * Invisible and bidirectional control characters never carry meaning in stored text, and they are
+ * how injected instructions hide inside distilled material. Skills and memory documents are both
+ * loaded into later sessions, so the characters are dropped at every write instead of only being
+ * called out in the prompt.
+ */
+internal fun stripInvisibleCharacters(text: String): String = text.filterNot { character ->
+    val code = character.code
+    code in 0x200B..0x200F || code in 0x202A..0x202E || code in 0x2060..0x2064 ||
+        code in 0x2066..0x2069 || code == 0xFEFF || code in 0xE0000..0xE007F ||
+        code == 0x7F || (code < 0x20 && character != '\n' && character != '\t')
 }
 
 /** A bounded, reviewable package; paths obey the same policy as installed skill files. */

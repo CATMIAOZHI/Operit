@@ -12,6 +12,15 @@ class MemoryAutoSaveCandidateRepository(
     context: Context,
     profileId: String
 ) {
+    companion object {
+        /**
+         * How often one candidate is retried before it is left alone. A broken model configuration or
+         * an oversized window fails identically every time, so retrying it forever only keeps the
+         * queue growing and re-runs the same failing extraction every polling tick.
+         */
+        const val MAX_ATTEMPTS = 5
+    }
+
     private val store = ObjectBoxManager.get(context, profileId)
     private val candidateBox: Box<MemoryAutoSaveCandidate> = store.boxFor()
 
@@ -65,6 +74,7 @@ class MemoryAutoSaveCandidateRepository(
             )
             .build()
             .find()
+            .filter { it.attemptCount < MAX_ATTEMPTS }
             .sortedBy { it.createdAt.time }
     }
 

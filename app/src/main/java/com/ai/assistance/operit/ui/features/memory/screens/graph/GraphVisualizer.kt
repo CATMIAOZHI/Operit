@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.Saver
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
@@ -37,7 +39,12 @@ import kotlin.math.pow
 import kotlin.math.sin
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.text.style.TextOverflow
 import com.ai.assistance.operit.util.AppLogger
+
+/** Viewport state has to survive leaving the page and a rotation, or the user loses their place. */
+private val OffsetSaver: Saver<Offset, List<Float>> =
+    Saver(save = { listOf(it.x, it.y) }, restore = { Offset(it[0], it[1]) })
 
 // 辅助函数：判断两个矩形是否相交
 private fun Rect.intersects(other: Rect): Boolean {
@@ -158,6 +165,9 @@ private fun getNodeLayoutMetrics(
         val textLayoutResult = textMeasurer.measure(
             text = AnnotatedString(node.label),
             style = textStyle,
+            // A very long title would otherwise grow the box into a column that wrecks the layout.
+            maxLines = 3,
+            overflow = TextOverflow.Ellipsis,
             constraints = Constraints(maxWidth = maxTextWidth)
         )
         val paddingX = 14f * baseScale
@@ -221,7 +231,6 @@ fun GraphVisualizer(
     onEdgeClick: (Edge) -> Unit,
     onNodesSelected: (Set<String>) -> Unit // 新增：框选完成后的回调
 ) {
-    AppLogger.d("GraphVisualizer", "Recomposing. isBoxSelectionMode: $isBoxSelectionMode")
     val textMeasurer = rememberTextMeasurer()
     val colorScheme = MaterialTheme.colorScheme
     val nodePalette = remember(colorScheme) {
@@ -242,8 +251,8 @@ fun GraphVisualizer(
         }
     }
     var nodePositions by remember { mutableStateOf(mapOf<String, Offset>()) }
-    var scale by remember { mutableStateOf(1f) }
-    var offset by remember { mutableStateOf(Offset.Zero) }
+    var scale by rememberSaveable { mutableStateOf(1f) }
+    var offset by rememberSaveable(stateSaver = OffsetSaver) { mutableStateOf(Offset.Zero) }
     var selectionRect by remember { mutableStateOf<Rect?>(null) } // 用于绘制选择框
     var previousNodeIds by remember { mutableStateOf<Set<String>>(emptySet()) }
     var previousEdgeSignatures by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -371,8 +380,11 @@ fun GraphVisualizer(
                     } else {
                         (70f + clusterSize * 4f).coerceAtMost(200f)
                     }
-                    val randomAngle = (Math.random() * 2.0 * Math.PI).toFloat()
-                    val randomRadius = (Math.random() * scatterRadius).toFloat()
+                    // Deterministic scatter: reopening the page or rotating rebuilds the same layout
+                    // instead of reshuffling every node the user had just located.
+                    val seed = node.id.hashCode()
+                    val randomAngle = (seed.mod(360) / 180.0 * Math.PI).toFloat()
+                    val randomRadius = scatterRadius * (((seed ushr 9) and 0xFF) / 255f)
                     val jitter = Offset(cos(randomAngle), sin(randomAngle)) * randomRadius
                     newPositions[node.id] = basePosition + jitter
                 }

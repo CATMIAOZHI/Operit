@@ -9,6 +9,12 @@ import com.ai.assistance.operit.data.preferences.LearnedSkillRepository
  */
 internal const val LEARNING_ROUND_LIMIT = 20
 internal const val LEARNING_TOOL_CALL_LIMIT = 60
+/**
+ * How often one action may fail in a row before it is closed for the rest of the batch. Retrying a
+ * rejected call cannot succeed, and a batch that spends its rounds on it is discarded along with
+ * everything it already staged.
+ */
+internal const val LEARNING_REPEAT_FAILURE_LIMIT = 3
 
 internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, skills: Boolean, finish: String): String =
     buildString {
@@ -87,14 +93,18 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             so only the last version is submitted. A version that differs from your earlier read means the target
             changed outside this batch, so read it again before changing it.
             Submit a new skill's main body in skill_create. Its staged SKILL.md reads as body only;
-            skill_write/skill_patch can revise that body, and companion files can be read and written immediately.
+            skill_write/skill_patch can revise that body, and companion files can be read and written
+            before installation once this batch has read them.
             All files of a new skill form ONE proposal and are installed together. Limit companion files to
             20 files, 120000 characters total, and 24000 characters per file.
             skill_delete on a new draft withdraws it and all its files; nothing is installed or deleted on disk.
             skill_delete on an installed skill supersedes earlier file edits in this batch.
-            If auto-approval is disabled, changes remain pending for review.
+            If auto-approval is disabled, changes remain pending for review, up to 30 at a time; the
+            user must clear that list before more are accepted.
             No fabricated successful testing. If nothing qualifies, do not invent a change.
             If an operation is outside this run's scope, do not retry it; continue the enabled work or finish.
+            If the same operation is rejected twice, the reason will not change by resending it: fix the
+            input or drop that change and continue with the rest.
             Call $finish after reviewing all provided source, even when no changes qualify. This is mandatory.
             A final summary alone does not confirm completion. At most $LEARNING_ROUND_LIMIT model rounds and $LEARNING_TOOL_CALL_LIMIT tool calls.
             Once within two rounds of that limit, stop exploring: submit the best complete change you

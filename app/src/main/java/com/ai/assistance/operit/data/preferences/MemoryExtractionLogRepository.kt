@@ -36,7 +36,13 @@ data class MemoryExtractionLog(
 /** Separate from approval history: bounded operational records, without conversation contents. */
 class MemoryExtractionLogRepository internal constructor(root: File, profileId: String) {
     constructor(context: Context, profileId: String) : this(File(context.filesDir, "memory_extraction_logs"), profileId)
-    companion object { private val locks = ConcurrentHashMap<String, Mutex>() }
+    companion object {
+        private val locks = ConcurrentHashMap<String, Mutex>()
+        /** Bounds one record's text so a run of tool errors cannot bloat the whole file. */
+        private const val DETAIL_LIMIT_CHARS = 4_000
+        /** A record still marked running after this long was interrupted by an app exit. */
+        private const val STALE_RUNNING_MS = 6 * 60 * 60_000L
+    }
     private val file = File(root, MessageDigest.getInstance("SHA-256").digest(profileId.toByteArray())
         .joinToString("") { "%02x".format(it) } + ".json")
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
@@ -58,10 +64,16 @@ class MemoryExtractionLogRepository internal constructor(root: File, profileId: 
     suspend fun save(log: MemoryExtractionLog) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = JSONArray()
-            (read().filterNot { it.id == log.id } + log).sortedByDescending { it.startedAt }.take(500).forEach {
+            val now = System.currentTimeMillis()
+            (read().filterNot { it.id == log.id } + log).map { record ->
+                if (record.finishedAt <= 0 && now - record.startedAt > STALE_RUNNING_MS)
+                    record.copy(status = "interrupted", finishedAt = record.startedAt)
+                else record
+            }.sortedByDescending { it.startedAt }.take(500).forEach {
                 data.put(JSONObject().put("id", it.id).put("startedAt", it.startedAt).put("finishedAt", it.finishedAt)
                     .put("sourceChatId", it.sourceChatId).put("graph", it.graph).put("notes", it.notes)
-                    .put("skills", it.skills).put("status", it.status).put("proposals", it.proposals).put("detail", it.detail)
+                    .put("skills", it.skills).put("status", it.status).put("proposals", it.proposals)
+                    .put("detail", it.detail.take(DETAIL_LIMIT_CHARS))
                     .put("runId", it.runId).put("childChatId", it.childChatId)
                     .put("modelRounds", it.modelRounds).put("toolCalls", it.toolCalls)
                     .put("reviewable", it.reviewable))

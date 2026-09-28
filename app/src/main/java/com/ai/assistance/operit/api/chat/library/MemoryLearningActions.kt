@@ -50,17 +50,27 @@ class MemoryLearningActions(
                 val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val key = if(user) "user" else "memory"
-                val expected = if(background) readVersions[key] else arg("version")
-                check(expected==LearnedSkillRepository.version(disk)) { "Read the current document before changing it" }
+                // The version this run already read is the authority; an explicit argument is only a
+                // fallback, so the reviewer never has to copy a 64-character hash by hand.
+                check((readVersions[key] ?: arg("version"))==LearnedSkillRepository.version(disk)) {
+                    "Read the current document with memory_read before changing it"
+                }
                 val operation = arg("operation")
                 val section = arg("section")
+                val content = stripInvisibleCharacters(arg("content"))
                 val base = stagedDocument(stagedChanges, user)?.body ?: disk
                 val after = if (user && section.isNotBlank()) {
                     val sections = UserProfileSections.parse(base)
                     sections.with(section, editText(sections.get(section), operation,
-                        arg("content"), arg("old_text"))).markdown()
-                } else if (user) editText(base,operation,arg("content"),arg("old_text"))
-                else notesEdit(base,operation,arg("content"),arg("old_text"))
+                        content, arg("old_text"))).markdown()
+                } else if (user) editText(base,operation,content,arg("old_text"))
+                else notesEdit(base,operation,content,arg("old_text"))
+                // Emptying a whole document is never what a review meant to express, and it is the
+                // one edit whose result cannot be told apart from a lost file afterwards.
+                require(disk.isBlank() || after.isNotBlank()) {
+                    "Refusing to empty ${if (user) "user.md" else "memory.md"}; remove the wrong entries " +
+                        "instead of the whole document"
+                }
                 val change = if(user) {
                     require(after.length<=UserProfileDocumentRepository.MAX_CONTENT_CHARS) {
                         "user.md would exceed its character limit; remove or replace existing text in this batch before adding"
@@ -73,11 +83,11 @@ class MemoryLearningActions(
                     require(after.length<=MemoryNotesRepository.MAX_CHARS) {
                         MemoryNotesRepository.OVERFLOW_MESSAGE
                     }
-                    reviews.proposeNotes(before,after,if(operation=="add") arg("content") else "",sourceChatId,onCreated)
+                    reviews.proposeNotes(before,after,if(operation=="add") content else "",sourceChatId,onCreated)
                 }
                 val applied = reviews.applyAutomaticDecision(context, change)
                 if (stagedChanges==null) readVersions.remove(key)
-                reviews.toJson(applied)
+                reviews.toModelJson(applied)
             }
             "skill_list" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
@@ -124,13 +134,13 @@ class MemoryLearningActions(
                 }
                 // Frontmatter is composed for you, so a supplied header is stripped before the
                 // length check; otherwise this would accept a draft the installer rejects.
-                val body = stripSkillFrontmatter(arg("content").trim())
+                val body = stripSkillFrontmatter(stripInvisibleCharacters(arg("content").trim()))
                 validateDraftBody(body)
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
                     .put("description",arg("description")).put("body",body)),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
                 check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
-                reviews.toJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated,
+                reviews.toModelJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated,
                     stagedSkillCreate(stagedChanges,name)?.files.orEmpty())))
             }
             "skill_delete" -> {
@@ -145,8 +155,8 @@ class MemoryLearningActions(
                     "Background deletion is limited to enabled learned skills in this space"
                 }
                 val before=skills.readDirectory(name)
-                check((if(background) readVersions["$name/"] else arg("version"))==before.version) {
-                    "Read the skill and use its directory_version before proposing deletion"
+                check((readVersions["$name/"] ?: arg("version"))==before.version) {
+                    "Call skill_read with this name before proposing deletion, then retry"
                 }
                 reviews.toJson(reviews.applyAutomaticDecision(context,
                     reviews.proposeSkillDeletion(name,before,sourceChatId,onCreated)))
@@ -154,12 +164,15 @@ class MemoryLearningActions(
             "skill_write","skill_patch","skill_remove_file" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 skillActionBlock(action,path)?.let { error(it) }
+                val content = stripInvisibleCharacters(arg("content"))
                 stagedSkillCreate(stagedChanges,name)?.let { created ->
                     LearnedSkillRepository.validatePath(path)
-                    check(readVersions["$name/$path"]=="draft") { "Read this draft file before editing it" }
+                    check(readVersions["$name/$path"]=="draft") {
+                        "Call skill_read with this name and path before editing the draft file"
+                    }
                     val before = if(path=="SKILL.md") created.body else created.files[path].orEmpty()
-                    val text = if(action=="skill_patch") editText(before,"replace",arg("content"),arg("old_text"))
-                        else arg("content")
+                    val text = if(action=="skill_patch") editText(before,"replace",content,arg("old_text"))
+                        else content
                     val updated = if(path=="SKILL.md") {
                         val body=stripSkillFrontmatter(text.trim())
                         validateDraftBody(body)
@@ -170,28 +183,29 @@ class MemoryLearningActions(
                         validateDraftFiles(files)
                         created.copy(files=files)
                     }
-                    return reviews.toJson(reviews.applyAutomaticDecision(context,reviews.propose(updated)))
+                    return reviews.toModelJson(reviews.applyAutomaticDecision(context,reviews.propose(updated)))
                 }
                 check(stagedChanges?.none { it.kind=="skill_delete" && it.title==name } != false) {
                     "This batch already deletes the whole skill; do not edit its files."
                 }
                 val before = skills.read(name,path)
-                val expected = if(background) readVersions["$name/$path"] else arg("version")
-                check(expected==before.version) { "Read this file before editing it" }
+                check((readVersions["$name/$path"] ?: arg("version"))==before.version) {
+                    "Call skill_read with this name and path before editing the file"
+                }
                 val remove = action=="skill_remove_file"
                 // A revision patches the version this batch staged, not the untouched file on disk.
-                val content = if(action=="skill_patch") editText(stagedSkillFile(stagedChanges,name,path)?.body ?: before.text,"replace",arg("content"),arg("old_text"))
-                    else arg("content")
+                val text = if(action=="skill_patch") editText(stagedSkillFile(stagedChanges,name,path)?.body ?: before.text,"replace",content,arg("old_text"))
+                    else content
                 val automatic = background && !remove && name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()
                 if (background) check(name in skills.owned(profileId) &&
                     MemorySearchSettingsPreferences(context,profileId).mayReviseLearnedSkills()) {
                     "Background revision is limited to enabled learned skills in this space"
                 }
-                val change = reviews.proposeSkillFile(name,path,before,content,remove,automatic,sourceChatId,onCreated)
+                val change = reviews.proposeSkillFile(name,path,before,text,remove,automatic,sourceChatId,onCreated)
                 val applied = reviews.applyAutomaticDecision(context,change)
                 if (stagedChanges==null) readVersions.remove("$name/$path")
-                reviews.toJson(applied)
+                reviews.toModelJson(applied)
             }
             else -> error("Unknown learning action")
         }

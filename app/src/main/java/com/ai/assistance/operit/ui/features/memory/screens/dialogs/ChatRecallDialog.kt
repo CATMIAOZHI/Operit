@@ -25,10 +25,16 @@ import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
 
+/** A mistyped filter, reported as its own message instead of as a failure of the read. */
+private class RecallFilterError(message: String) : IllegalArgumentException(message)
+
 @Composable
 fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val recallError = stringResource(R.string.chat_recall_error)
+    // A mistyped filter is not a read failure, so it must not be reported as one.
+    val filterRoleInvalid = stringResource(R.string.chat_recall_filter_role_invalid)
+    val filterTimeInvalid = stringResource(R.string.chat_recall_filter_time_invalid)
     val draftExtracted = stringResource(R.string.skill_draft_extracted)
     val extractionTimeout = stringResource(R.string.memory_extraction_timeout)
     val repo = remember { ChatRecallRepository(context) }
@@ -82,14 +88,17 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
             message=null
             try { block() }
             catch(e: CancellationException) { throw e }
+            catch(e: RecallFilterError) { message=e.message }
             catch(e: Exception) { message=recallError }
             finally { busy=false }
         }
     }
     suspend fun load(append: Boolean) {
         val next = if(append) offset+20 else 0
-        val start=parseRecallTime(after,false); val end=parseRecallTime(before,true)
-        require(start<=end && role in setOf("","user","ai"))
+        val start=try { parseRecallTime(after,false) } catch(e: Exception) { throw RecallFilterError(filterTimeInvalid) }
+        val end=try { parseRecallTime(before,true) } catch(e: Exception) { throw RecallFilterError(filterTimeInvalid) }
+        if(role.isNotBlank() && role !in setOf("user","ai")) throw RecallFilterError(filterRoleInvalid)
+        if(start>end) throw RecallFilterError(filterTimeInvalid)
         if(browsingSession && sourceChat!=null) {
             val page=repo.session(sourceChat!!,next,role,start,end)
             full=if(append) (full.orEmpty()+page).distinctBy { it.messageId } else page
@@ -183,7 +192,9 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                     items(sessions,key={ "s:${it.chatId}" }) { item ->
                         Column(Modifier.fillMaxWidth().clickable(enabled=!busy) {
                             run {
-                                val page=repo.session(item.chatId,0,role,parseRecallTime(after,false),parseRecallTime(before,true))
+                                val page=repo.session(item.chatId,0,role,
+                                    runCatching { parseRecallTime(after,false) }.getOrDefault(0),
+                                    runCatching { parseRecallTime(before,true) }.getOrDefault(Long.MAX_VALUE))
                                 pushPage(); sourceChat=item.chatId; browsingSession=true
                                 full=page; hits=emptyList(); sessions=emptyList(); offset=0; more=page.size==20
                             }

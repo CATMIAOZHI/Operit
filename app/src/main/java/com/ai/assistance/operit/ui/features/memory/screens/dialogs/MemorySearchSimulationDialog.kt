@@ -211,7 +211,10 @@ private fun CandidatesCard(result: MemorySearchDebugInfo) {
                 style = MaterialTheme.typography.titleSmall
             )
             candidates.forEachIndexed { index, candidate ->
-                val marker = if (candidate.passedThreshold) "PASS" else "DROP"
+                val marker = stringResource(
+                    if (candidate.passedThreshold) R.string.memory_search_simulation_pass
+                    else R.string.memory_search_simulation_drop
+                )
                 Text(
                     text = stringResource(
                         R.string.memory_search_simulation_candidate_title,

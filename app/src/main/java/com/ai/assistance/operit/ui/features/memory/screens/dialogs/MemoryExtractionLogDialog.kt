@@ -16,6 +16,10 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.preferences.MemoryExtractionLog
 import com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository
+import com.ai.assistance.operit.api.chat.library.MemoryLearningJournal
+import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -31,27 +35,43 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
     var titles by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loaded by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
+    // Waiting work is invisible otherwise: a range can be pending for a long time before it runs.
+    var pendingCount by remember { mutableStateOf(0) }
     var opening by remember { mutableStateOf(false) }
     var openError by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    LaunchedEffect(repo) {
+    // This page stays composed after the user navigates away or backgrounds the app, so the refresh
+    // must not keep querying the database every three seconds behind another screen.
+    val isCurrentScreen = LocalIsCurrentScreen.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(repo, isCurrentScreen, lifecycleOwner) {
         while (true) {
-            try {
-                logs = repo.list()
-                val dao = AppDatabase.getDatabase(context).chatDao()
-                // Titles are append-only from the caller's point of view, so only resolve ids
-                // that are new since the previous refresh instead of re-reading every row.
-                val missing = logs.map { it.sourceChatId }.distinct()
-                    .filter { it.isNotBlank() && it !in titles }
-                if (missing.isNotEmpty()) {
-                    titles = titles + missing.associateWith { dao.getChatById(it)?.title.orEmpty() }
+            val visible = isCurrentScreen &&
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (visible) {
+                try {
+                    logs = repo.list()
+                    pendingCount = MemoryLearningJournal.pending(context).count { it.first == profileId }
+                    val dao = AppDatabase.getDatabase(context).chatDao()
+                    // Titles are append-only from the caller's point of view, so only resolve ids
+                    // that are new since the previous refresh instead of re-reading every row.
+                    val missing = logs.map { it.sourceChatId }.distinct()
+                        .filter { it.isNotBlank() && it !in titles }
+                    if (missing.isNotEmpty()) {
+                        titles = titles + missing.associateWith { dao.getChatById(it)?.title.orEmpty() }
+                    }
+                    loaded = true
+                    error = false
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    error = true
                 }
-                loaded = true
-                error = false
-            } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = true }
-            delay(3000)
+            }
+            // An off-screen pass only reads two in-memory flags, so returning to this page refreshes
+            // immediately instead of waiting for a long background tick.
+            delay(if (visible) 3000 else 1000)
         }
     }
     MemoryLibraryPage(stringResource(R.string.memory_extraction_logs), profileId, onDismiss) {
@@ -59,6 +79,9 @@ fun MemoryExtractionLogDialog(profileId: String, onDismiss: () -> Unit) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(stringResource(R.string.memory_extraction_logs_hint), style = MaterialTheme.typography.bodySmall)
                 if (error) Text(stringResource(R.string.memory_notes_io_error), color = MaterialTheme.colorScheme.error)
+                if (pendingCount > 0) Text(
+                    stringResource(R.string.memory_extraction_pending_count, pendingCount),
+                    style = MaterialTheme.typography.bodySmall)
                 openError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 if (opening) LinearProgressIndicator(Modifier.fillMaxWidth())
                 LazyColumn(Modifier.weight(1f), state = listState, verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -116,5 +139,6 @@ private fun memoryExtractionStatusResource(status: String): Int = when (status) 
     "timeout" -> R.string.memory_extraction_timeout
     "failed" -> R.string.memory_extraction_failed
     "cancelled" -> R.string.memory_extraction_cancelled
+    "interrupted" -> R.string.memory_extraction_interrupted
     else -> R.string.memory_extraction_running
 }

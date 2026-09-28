@@ -64,9 +64,20 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
             if (notes) state.put("notes",LearningCursor().json())
             if (skills) state.put("skills",LearningCursor().json())
         }
+        // The age of the oldest pending marker is what lets a chatty device dispatch a range that
+        // has waited far too long, so it is set only when the range first becomes pending.
+        if ((notes && !state.optBoolean("pending_notes")) || (skills && !state.optBoolean("pending_skills")))
+            state.put("enqueued_at",System.currentTimeMillis())
         if (notes) state.put("pending_notes",true)
         if (skills) state.put("pending_skills",true)
         save()
+    }
+    /** True while pending work has been waiting at least [millis]. */
+    fun pendingForAtLeast(millis: Long): Boolean {
+        if (!pending("notes") && !pending("skills") && !state.has("export")) return false
+        val since = state.optLong("enqueued_at",0)
+        if (since <= 0) return false
+        return System.currentTimeMillis()-since >= millis
     }
     fun complete(paths: List<String>, next: LearningCursor, more: Boolean, changes: List<MemoryReviewChange>) {
         check(!state.has("export")) { "Previous batch must be exported first" }
@@ -85,7 +96,18 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
     suspend fun export(): List<String> {
         val array = state.optJSONArray("export") ?: return emptyList()
         val changes = (0 until array.length()).map { reviews.fromJson(array.getJSONObject(it)) }
-        reviews.importCompletedBatch(changes)
+        try {
+            reviews.importCompletedBatch(changes)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A full review queue or a store that cannot be written will not accept the same batch
+            // later either, so the barrier is released and the range is left for a later trigger
+            // instead of blocking this conversation forever.
+            state.remove("export")
+            abandon(listOf("notes","skills"))
+            return listOf(learningFailureDetail("import",e))
+        }
         val failures = mutableListOf<String>()
         for (change in changes) {
             currentCoroutineContext().ensureActive()
