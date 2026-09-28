@@ -1725,6 +1725,7 @@
     <string name="confirm_edit_and_resend_confirm">确认编辑并重发</string>
     <string name="confirm_revert_tool_calls_warning">被删除的轮次调用过工具，这些对话被删除后 AI 不再记得它们，重新回答时可能重复操作或误判已有文件，表现可能下降。</string>
     <string name="workspace_attachment_attached">当前对话已附着工作区。</string>
+    <string name="workspace_attachment_path">工作区路径：%1$s</string>
     <string name="workspace_attachment_environment">工作区环境：%1$s</string>
     <string name="multi_select">多选</string>
 

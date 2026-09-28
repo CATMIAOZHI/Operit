@@ -192,6 +192,7 @@ object AIMessageManager {
                     WorkspaceAttachmentProcessor.generateWorkspaceAttachment(
                         context,
                         workspaceEnv,
+                        normalizedWorkspacePath,
                     ) +
                     "</workspace_attachment>"
             } else {
