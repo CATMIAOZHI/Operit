@@ -37,7 +37,10 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
         internal fun applyEdit(current: String, action: String, content: String, oldText: String): String =
             when (action) {
                 "add" -> {
-                    val entry = content.trim()
+                    // The document is stripped at its write point, so the edit has to be judged on the
+                    // same characters: a carried invisible character can never match what is stored and
+                    // would append a second copy of text the notes already hold.
+                    val entry = stripInvisibleCharacters(content).trim()
                     if (entry.isEmpty()) throw NotesException(Failure.EMPTY)
                     // Match whole paragraphs, not prefixes such as "port 22" inside "port 2202".
                     val document = "\n\n${current.trim().replace("\r\n", "\n")}\n\n"
@@ -45,14 +48,19 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
                     else listOf(current.trimEnd(), entry).filter { it.isNotEmpty() }.joinToString("\n\n")
                 }
                 "replace", "remove" -> {
-                    if (oldText.isBlank()) throw NotesException(Failure.EMPTY)
-                    val first = current.indexOf(oldText)
-                    if (first < 0 || current.indexOf(oldText, first + 1) >= 0) {
+                    // Same reason as above: old_text is matched against the stored text, so it must be
+                    // stripped too or an edit that is legal on disk is rejected as not found or as
+                    // ambiguous, and the replacement writes the mark back in.
+                    val old = stripInvisibleCharacters(oldText)
+                    val text = stripInvisibleCharacters(content)
+                    if (old.isBlank()) throw NotesException(Failure.EMPTY)
+                    val first = current.indexOf(old)
+                    if (first < 0 || current.indexOf(old, first + 1) >= 0) {
                         throw NotesException(Failure.NOT_UNIQUE)
                     }
-                    if (action == "replace" && content.isBlank()) throw NotesException(Failure.EMPTY)
+                    if (action == "replace" && text.isBlank()) throw NotesException(Failure.EMPTY)
                     current.replaceRange(
-                        first, first + oldText.length, if (action == "remove") "" else content
+                        first, first + old.length, if (action == "remove") "" else text
                     ).trim()
                 }
                 else -> throw NotesException(Failure.INVALID)
