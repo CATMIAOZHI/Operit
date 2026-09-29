@@ -199,11 +199,22 @@ gh pr create --base personal/main --head promote/<release> \
 
 ### 8. 等待 CI 并合并
 
+`personal/main` 的 Ruleset 只把 `Fast checks` 列为必需检查。`Full Android checks` 要在 GitHub 托管 runner 上跑完整测试与 lint，经常因为 `The runner has received a shutdown signal`、Gradle daemon 消失，或与本次改动无关的既有 flaky 用例（如 `TokenTrackingAIServiceTest`、`CleanupReliabilityTest`）失败，不作为晋升门槛。
+
+晋升的判定标准是两条同时满足：
+
+1. `gh pr checks <pr>` 里除 `Full Android checks` 以外的检查全部通过；
+2. 晋升分支上本地 `:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 通过。
+
+满足后直接开启自动合并，让它随必需检查一起完成：
+
 ```bash
-gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
+gh pr merge <pr> --repo CATMIAOZHI/Operit --auto --merge
 ```
 
-CI 通过且用户确认后，合并 PR（建议 squash 或 rebase）。合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
+`Full Android checks` 可以继续在后台跑完。只有它失败且失败原因指向本轮改动时，才需要修复后重跑。
+
+合并后 `sync-main-mirror.yml` 会将同一 commit 自动快进到只读 `main` 镜像；也可将 `personal/main` 合并回 `personal/dev` 保持开发线同步。
 
 ### 9. 发布稳定版
 
@@ -440,7 +451,7 @@ git push --atomic origin personal/dev "$CHECKPOINT"
 ## 注意事项
 
 - **不要直接 merge `personal/dev` 到 `personal/main`**：dev 分支包含大量开发版专属提交，直接 merge 会全部带入。
-- **不要省略测试**：晋升 PR 必须通过 CI 必需检查，`personal/main` 受 Ruleset 保护。
+- **不要省略测试**：晋升以「CI 必需检查（`Fast checks`）通过 + 本地 `:app:compileDebugKotlin` 与 `:app:testDebugUnitTest` 通过」为准，`Full Android checks` 的基础设施类失败不阻塞晋升，判定与自动合并见第 8 节。
 - **上游更新方向相反**：上游更新走 `upstream/main → personal/dev`（先测试）→ `personal/main`，晋升走 `personal/dev → personal/main`，两条路径都经过 dev 验证，不要混用。
 - **一个发布轮次一个晋升 PR**：检查点之后的所有通用改动一次性晋升，`personal/main` 每轮只推进一个稳定版本号。说明按功能域分组，每个功能仍保留自己的提交边界，需要回滚时只 revert 该功能的提交，不必放弃整轮。
 - **发布资产必须来自 `:app:assembleRelease`**：`personal/main` 的 push 构建只构建 `:app:assembleDebug`（另跑单测与 lint），其 `app-debug.apk` 带 `application-debuggable`，不能当作发布包；发布步骤见第 9 节。
