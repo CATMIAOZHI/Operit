@@ -2,6 +2,7 @@ package com.ai.assistance.operit.core.tools
 
 import com.ai.assistance.operit.data.model.ToolParameter
 import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
 internal data class ToolRepairArgument(val name: String, val value: JsonElement)
@@ -19,10 +20,13 @@ internal data class ToolCallRepairRule(
 )
 
 internal object ToolCallRepairRules {
+    private val repeatedTerminalSeparator = Regex("""^super_admin::+terminal$""")
+
     // Name normalization precedes canonical-name rules. One pass, no retry loop.
     val ordered = listOf(
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_SEPARATOR) { call ->
-            if (call.targetName == "super_admin::terminal")
+            // Any run of separators is the same typo; every other name stays untouched.
+            if (repeatedTerminalSeparator.matches(call.targetName))
                 call.copy(targetName = "super_admin:terminal") else null
         },
         ToolCallRepairRule(ToolCallRepairRouter.REDUNDANT_PACKAGE_NAME) { call ->
@@ -55,5 +59,53 @@ internal object ToolCallRepairRules {
                 call.arguments.filterNot { it.name == "timeout" }
             })
         },
+        ToolCallRepairRule(ToolCallRepairRouter.MEMORY_ARGUMENT_ALIAS) { call ->
+            if (call.targetName !in MEMORY_REVIEW_TOOLS) return@ToolCallRepairRule null
+            val action = (call.arguments.singleOrNull { it.name == MEMORY_ACTION_FIELD }?.value
+                as? JsonPrimitive)?.content
+            if (action == null || action !in MEMORY_CONTENT_ACTIONS) return@ToolCallRepairRule null
+            val field = call.arguments.singleOrNull { it.name == MEMORY_ARGUMENT_FIELD }
+                ?: return@ToolCallRepairRule null
+            val raw = (field.value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                ?: return@ToolCallRepairRule null
+            val renamed = renameMemoryArgumentAlias(raw) ?: return@ToolCallRepairRule null
+            call.copy(arguments = call.arguments.map {
+                if (it.name == MEMORY_ARGUMENT_FIELD) it.copy(value = JsonPrimitive(renamed)) else it
+            })
+        },
     )
+}
+
+private const val MEMORY_ACTION_FIELD = "action"
+private const val MEMORY_ARGUMENT_FIELD = "arguments"
+private const val MEMORY_ALIASED_KEY = "new_text"
+private const val MEMORY_CANONICAL_KEY = "content"
+
+/**
+ * Both model-visible entry points carry the same contract: `action` plus one opaque `arguments`
+ * object, executed by the same [com.ai.assistance.operit.api.chat.library.MemoryLearningActions].
+ * `memory_review` is deliberately absent: its parameters are flat, with no `arguments` object.
+ */
+private val MEMORY_REVIEW_TOOLS = setOf("memory_learning_action", "learning_manage")
+
+/** Only these actions read the argument object's `content`, so only these gain from the rename. */
+private val MEMORY_CONTENT_ACTIONS = setOf(
+    "memory_change", "skill_create", "skill_write", "skill_patch", "skill_remove_file",
+)
+
+/**
+ * The review tool takes one opaque argument object, so a model can reach for the old_text/new_text
+ * pair that diff-style editors use. `content` is the only key the tool reads, and an edit sent as
+ * `new_text` is applied as an empty replacement, which deletes the matched text instead of
+ * rewriting it. Sending both keys is ambiguous, so nothing is rewritten in that case, and the same
+ * strict object parse the proxy path uses rejects duplicate keys instead of collapsing them.
+ */
+private fun renameMemoryArgumentAlias(raw: String): String? {
+    val target = ToolCallRepairRouter.parseStrictJsonObject(raw) ?: return null
+    if (target.containsKey(MEMORY_CANONICAL_KEY)) return null
+    val alias = target[MEMORY_ALIASED_KEY] as? JsonPrimitive ?: return null
+    if (!alias.isString) return null
+    return JsonObject(target.map { (key, value) ->
+        if (key == MEMORY_ALIASED_KEY) MEMORY_CANONICAL_KEY to value else key to value
+    }.toMap()).toString()
 }
