@@ -34,29 +34,37 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
          * extraction tool both route through this, so the two cannot drift apart or disagree on
          * which edits are legal.
          */
-        internal fun applyEdit(current: String, action: String, content: String, oldText: String): String =
-            when (action) {
+        internal fun applyEdit(current: String, action: String, content: String, oldText: String): String {
+            // The document is stripped at its write point, so every side of the comparison is judged on
+            // the characters that will be stored. A document an older version wrote with a carried
+            // invisible character would otherwise never match the edit that describes it, which either
+            // rejects a legal edit or appends a second copy of a note the document already holds.
+            val stored = stripInvisibleCharacters(current)
+            val text = stripInvisibleCharacters(content)
+            val old = stripInvisibleCharacters(oldText)
+            return when (action) {
                 "add" -> {
-                    val entry = content.trim()
+                    val entry = text.trim()
                     if (entry.isEmpty()) throw NotesException(Failure.EMPTY)
                     // Match whole paragraphs, not prefixes such as "port 22" inside "port 2202".
-                    val document = "\n\n${current.trim().replace("\r\n", "\n")}\n\n"
-                    if (document.contains("\n\n${entry.replace("\r\n", "\n")}\n\n")) current
-                    else listOf(current.trimEnd(), entry).filter { it.isNotEmpty() }.joinToString("\n\n")
+                    val document = "\n\n${stored.trim().replace("\r\n", "\n")}\n\n"
+                    if (document.contains("\n\n${entry.replace("\r\n", "\n")}\n\n")) stored
+                    else listOf(stored.trimEnd(), entry).filter { it.isNotEmpty() }.joinToString("\n\n")
                 }
                 "replace", "remove" -> {
-                    if (oldText.isBlank()) throw NotesException(Failure.EMPTY)
-                    val first = current.indexOf(oldText)
-                    if (first < 0 || current.indexOf(oldText, first + 1) >= 0) {
+                    if (old.isBlank()) throw NotesException(Failure.EMPTY)
+                    val first = stored.indexOf(old)
+                    if (first < 0 || stored.indexOf(old, first + 1) >= 0) {
                         throw NotesException(Failure.NOT_UNIQUE)
                     }
-                    if (action == "replace" && content.isBlank()) throw NotesException(Failure.EMPTY)
-                    current.replaceRange(
-                        first, first + oldText.length, if (action == "remove") "" else content
+                    if (action == "replace" && text.isBlank()) throw NotesException(Failure.EMPTY)
+                    stored.replaceRange(
+                        first, first + old.length, if (action == "remove") "" else text
                     ).trim()
                 }
                 else -> throw NotesException(Failure.INVALID)
             }
+        }
     }
 
     data class Snapshot(val markdown: String, val version: String)
@@ -111,7 +119,10 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
     private fun edit(current: Snapshot, action: String, content: String, oldText: String): String =
         applyEdit(current.markdown, action, content, oldText)
 
-    private fun write(text: String): Snapshot {
+    private fun write(markdown: String): Snapshot {
+        // memory.md is injected into later system prompts, so this single write point is where a
+        // hidden character must not survive, whichever caller produced the text.
+        val text = stripInvisibleCharacters(markdown)
         if (text.length > MAX_CHARS) throw NotesException(Failure.FULL)
         file.parentFile!!.mkdirs()
         val temp = File.createTempFile(".memory-", ".tmp", file.parentFile)

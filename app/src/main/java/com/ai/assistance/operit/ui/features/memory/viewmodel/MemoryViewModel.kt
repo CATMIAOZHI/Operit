@@ -568,13 +568,24 @@ class MemoryViewModel(
         }
     }
 
-    /** 新建记忆 */
-    fun createMemory(title: String, content: String, contentType: String = "text/plain") {
+    /** 新建记忆。文件夹、标签、来源和分数都要落到新记忆上，否则用户在弹窗里的选择会被静默丢弃。 */
+    fun createMemory(
+        title: String,
+        content: String,
+        contentType: String = "text/plain",
+        source: String = "user_input",
+        folderPath: String? = null,
+        tags: List<String> = emptyList(),
+        credibility: Float = 0.8f,
+        importance: Float = 0.5f
+    ) {
         viewModelScope.launch {
             _uiState.update { it.copy(isLoading = true) }
             try {
-                val currentFolder = _uiState.value.selectedFolderPath
-                repository.createMemory(title, content, contentType, folderPath = currentFolder)
+                val currentFolder = folderPath ?: _uiState.value.selectedFolderPath
+                repository.createMemory(title, content, contentType, source = source,
+                    folderPath = currentFolder, tags = tags, credibility = credibility,
+                    importance = importance)
                 val updatedGraph = refreshGraph()
                 loadFolderPaths()
                 _uiState.update {

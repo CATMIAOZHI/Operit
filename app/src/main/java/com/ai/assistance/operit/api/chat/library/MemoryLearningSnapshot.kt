@@ -11,11 +11,13 @@ internal object MemoryLearningSnapshot {
     data class Snapshot(val text: String, val contextWindow: Int)
     suspend fun build(context: Context, messages: List<Pair<String, String>>, instructionBytes: Int, includeThinking: Boolean = false): Snapshot {
         val config = EnhancedAIService.getModelConfigForFunction(context, FunctionType.MEMORY)
-        val window = modelWindowTokens(config)
+        val window = modelWindowTokens(config, instructionBytes)
         // UTF-8 bytes are deliberately conservative, leaving most of the window for instructions,
         // tools and responses. A character limit alone badly underestimates Chinese and code.
         val sourceBudget = sourceBudget(window, instructionBytes)
-        require(sourceBudget >= 256) { "Memory review instructions leave insufficient context for source evidence" }
+        require(sourceBudget >= MIN_SOURCE_BYTES) {
+            "Memory review instructions leave insufficient context for source evidence"
+        }
         return Snapshot(digest(messages, sourceBudget, includeThinking), window)
     }
 
@@ -29,28 +31,41 @@ internal object MemoryLearningSnapshot {
      * API supports. Both are user-entered and neither is validated against the other, so the larger
      * usable one wins; the chat's own mode switch does not apply here.
      *
-     * A length that cannot even hold the instructions and a response is not a candidate, and then the
-     * conservative fallback applies instead of an error, so no configuration a review used to run
-     * under can start failing.
+     * [instructionBytes] is the real size of this run's instructions, so the requirement is derived
+     * from them instead of a fixed floor: the prompts grow, and a hardcoded floor would either reject
+     * a window that already fits or claim a fallback that cannot hold the batch.
      */
-    internal fun modelWindowTokens(config: ModelConfigData): Int {
+    internal fun modelWindowTokens(config: ModelConfigData, instructionBytes: Int = 0): Int {
         fun positive(value: Float) = value.takeIf { it.isFinite() && it > 0f } ?: 0f
         val length = listOf(positive(config.contextLength), positive(config.maxContextLength))
             .filter { it * 1000f >= MIN_WINDOW_TOKENS }
             .maxOrNull() ?: 0f
         var window = if (length > 0f) (length.toDouble() * 1000).coerceAtMost(2_000_000.0).toInt()
-            else FALLBACK_WINDOW_TOKENS
+            else maxOf(FALLBACK_WINDOW_TOKENS, minimumWindowTokens(instructionBytes))
         val provider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: config.apiProviderType
         if (provider == ApiProviderType.LLAMA_CPP) window = minOf(window, config.llamaContextSize)
         if (provider == ApiProviderType.MNN) window = minOf(window, 2048)
-        // A review needs room for instructions, evidence and a response.
-        require(window >= MIN_WINDOW_TOKENS) { "Memory review requires a configured context window of at least $MIN_WINDOW_TOKENS tokens" }
+        // A review needs room for its own instructions, the minimum evidence and a response.
+        val required = minimumWindowTokens(instructionBytes)
+        require(window >= required) {
+            "Memory review needs a context window of at least $required tokens for its instructions and evidence"
+        }
         return window
     }
 
+    /**
+     * Smallest window that holds this run's instructions plus [MIN_SOURCE_BYTES] of source, using the
+     * same byte accounting as [evidenceBudget] so the two can never disagree.
+     */
+    internal fun minimumWindowTokens(instructionBytes: Int): Int =
+        maxOf(MIN_WINDOW_TOKENS,
+            ((instructionBytes + MIN_SOURCE_BYTES) / EVIDENCE_WINDOW_FRACTION).toInt() + 1)
+
     /** Smallest window a review can work in. */
     private const val MIN_WINDOW_TOKENS = 4096
-    /** Used instead of an error when no configured length can hold a review. */
+    /** Smallest source a batch needs to be worth reviewing. */
+    internal const val MIN_SOURCE_BYTES = 256
+    /** Used when no configured length can hold a review. */
     private const val FALLBACK_WINDOW_TOKENS = 8192
 
     /**

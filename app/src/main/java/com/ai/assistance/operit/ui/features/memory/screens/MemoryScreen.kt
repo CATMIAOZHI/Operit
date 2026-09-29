@@ -16,13 +16,16 @@ import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.DriveFileMove
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.SelectAll
 import androidx.compose.material.icons.filled.UploadFile
 import androidx.compose.material3.Card
@@ -32,6 +35,7 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FloatingActionButton
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -47,13 +51,19 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateMap
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.HorizontalDivider
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.core.tools.AIToolHandler
@@ -66,6 +76,7 @@ import com.ai.assistance.operit.ui.features.memory.screens.dialogs.DocumentViewD
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EditMemoryDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.LinkMemoryDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryInfoDialog
+import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MoveMemoriesToFolderDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EdgeInfoDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.EditEdgeDialog
 import com.ai.assistance.operit.ui.features.memory.viewmodel.MemoryViewModel
@@ -113,7 +124,7 @@ fun MemorySearchBar(
         IconButton(onClick = onMenuClick) {
             Icon(
                 Icons.Default.Folder, 
-                contentDescription = "Toggle Folders",
+                contentDescription = stringResource(R.string.memory_a11y_open_folders),
                 tint = MaterialTheme.colorScheme.primary
             )
         }
@@ -146,7 +157,6 @@ fun MemoryScreen() {
     val profileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
     val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
     val scope = rememberCoroutineScope()
-    var menuExpanded by remember { mutableStateOf(false) }
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var pageProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
     val destination = page
@@ -160,22 +170,31 @@ fun MemoryScreen() {
         }
     } else {
         Column(Modifier.fillMaxSize()) {
-            Box(Modifier.padding(horizontal = 16.dp, vertical = 8.dp)) {
-                OutlinedButton(onClick = { menuExpanded = true }) {
-                    Text(profileNames[activeProfileId] ?: activeProfileId)
-                }
-                DropdownMenu(expanded = menuExpanded, onDismissRequest = { menuExpanded = false }) {
-                    profileList.forEach { id ->
-                        DropdownMenuItem(
-                            text = { Text(profileNames[id] ?: id) },
-                            onClick = {
-                                menuExpanded = false
-                                scope.launch { preferencesManager.setActiveMemorySpace(id) }
-                            }
-                        )
+            // The same selector as the folder panel, so creating, renaming and deleting a memory
+            // space are reachable from here too instead of only from inside the panel.
+            ProfileSelector(
+                profileList = profileList,
+                profileNameMap = profileNames,
+                selectedProfileId = activeProfileId,
+                onProfileSelected = { id ->
+                    scope.launch { preferencesManager.setActiveMemorySpace(id) }
+                },
+                onMemorySpaceCreate = { name ->
+                    scope.launch {
+                        val id = preferencesManager.createMemorySpace(name)
+                        preferencesManager.setActiveMemorySpace(id)
                     }
+                },
+                onMemorySpaceRename = { id, name ->
+                    scope.launch {
+                        val space = preferencesManager.getMemorySpaceFlow(id).first()
+                        preferencesManager.updateMemorySpace(space.copy(name = name))
+                    }
+                },
+                onMemorySpaceDelete = { id ->
+                    scope.launch { preferencesManager.deleteMemorySpace(id) }
                 }
-            }
+            )
             MemoryLibraryNavigation {
                 pageProfileId = activeProfileId
                 page = it
@@ -203,6 +222,7 @@ private fun MemoryGraphPage(activeProfileId: String) {
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
     var showFolderNavigator by remember { mutableStateOf(false) }
+    var showMoveTargetPicker by remember { mutableStateOf(false) }
 
 
     LaunchedEffect(activeProfileId) { selectedProfileId = activeProfileId }
@@ -228,6 +248,15 @@ private fun MemoryGraphPage(activeProfileId: String) {
         val message = uiState.message ?: return@LaunchedEffect
         Toast.makeText(context, message, Toast.LENGTH_SHORT).show()
         viewModel.clearMessage()
+    }
+
+    // Failures used to be swallowed, and a leftover message then showed up inside the search
+    // settings dialog as if the vector rebuild had failed. Showing it here and consuming it
+    // immediately fixes both.
+    LaunchedEffect(uiState.error) {
+        val message = uiState.error ?: return@LaunchedEffect
+        Toast.makeText(context, message, Toast.LENGTH_LONG).show()
+        viewModel.clearError()
     }
 
     val filePickerLauncher = rememberLauncherForActivityResult(
@@ -314,67 +343,72 @@ private fun MemoryGraphPage(activeProfileId: String) {
                 horizontalAlignment = Alignment.End,
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                // 只有在框选模式下才显示"确认删除"按钮
+                // 框选模式下的操作：移动或删除选中的记忆
                 if (uiState.isBoxSelectionMode) {
-                    FloatingActionButton(
+                    ExtendedFloatingActionButton(
+                        // A batch move asks for its target first: moving straight into the folder the
+                        // user is browsing clears folders without ever saying so.
+                        onClick = { showMoveTargetPicker = true },
+                        icon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
+                        text = { Text(stringResource(R.string.memory_move_selected)) },
+                        containerColor = MaterialTheme.colorScheme.secondaryContainer
+                    )
+                    ExtendedFloatingActionButton(
                         onClick = { viewModel.showBatchDeleteConfirm() },
-                        containerColor = MaterialTheme.colorScheme.errorContainer,
-                        modifier = Modifier.size(48.dp)
-                    ) {
-                        Icon(Icons.Default.Delete, contentDescription = "Delete Selected")
+                        icon = { Icon(Icons.Default.Delete, contentDescription = null) },
+                        text = { Text(stringResource(R.string.memory_delete_selected)) },
+                        containerColor = MaterialTheme.colorScheme.errorContainer
+                    )
+                }
+
+                // 次要操作收进「更多」，避免一列无文字按钮让人不知道每个是做什么的。
+                var moreExpanded by remember { mutableStateOf(false) }
+                Box {
+                    ExtendedFloatingActionButton(
+                        onClick = { moreExpanded = true },
+                        icon = { Icon(Icons.Default.MoreVert, contentDescription = null) },
+                        text = { Text(stringResource(R.string.memory_more_actions)) },
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant
+                    )
+                    DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.memory_a11y_import_document)) },
+                            onClick = {
+                                moreExpanded = false
+                                filePickerLauncher.launch(
+                                    arrayOf(
+                                        "text/*",
+                                        "application/pdf",
+                                        "application/msword",
+                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+                                    )
+                                )
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (uiState.isLinkingMode)
+                                R.string.memory_linking_stop else R.string.memory_a11y_toggle_linking)) },
+                            onClick = {
+                                moreExpanded = false
+                                viewModel.toggleLinkingMode(!uiState.isLinkingMode)
+                            }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(if (uiState.isBoxSelectionMode)
+                                R.string.memory_box_select_stop else R.string.memory_a11y_toggle_box_selection)) },
+                            onClick = {
+                                moreExpanded = false
+                                viewModel.toggleBoxSelectionMode(!uiState.isBoxSelectionMode)
+                            }
+                        )
                     }
                 }
 
-                // 框选模式切换按钮
-                FloatingActionButton(
-                    onClick = {
-                        com.ai.assistance.operit.util.AppLogger.d(
-                            "MemoryScreen",
-                            "Box selection button clicked. Current mode: ${uiState.isBoxSelectionMode}, toggling to ${!uiState.isBoxSelectionMode}"
-                        )
-                        viewModel.toggleBoxSelectionMode(!uiState.isBoxSelectionMode)
-                    },
-                    containerColor = if (uiState.isBoxSelectionMode) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.secondaryContainer,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(Icons.Default.SelectAll, contentDescription = "Toggle Box Selection Mode")
-                }
-
-                FloatingActionButton(
-                    onClick = {
-                        com.ai.assistance.operit.util.AppLogger.d(
-                            "MemoryScreen",
-                            "Linking button clicked. Current mode: ${uiState.isLinkingMode}, toggling to ${!uiState.isLinkingMode}"
-                        )
-                        viewModel.toggleLinkingMode(!uiState.isLinkingMode)
-                    },
-                    containerColor = if (uiState.isLinkingMode) MaterialTheme.colorScheme.secondary else MaterialTheme.colorScheme.primaryContainer,
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(Icons.Default.Link, contentDescription = "Toggle Linking Mode")
-                }
-                FloatingActionButton(
-                    onClick = {
-                        filePickerLauncher.launch(
-                            arrayOf(
-                                "text/*",
-                                "application/pdf",
-                                "application/msword",
-                                "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                            )
-                        )
-                    },
-                    modifier = Modifier.size(48.dp),
-                    containerColor = MaterialTheme.colorScheme.tertiaryContainer
-                ) {
-                    Icon(Icons.Default.UploadFile, contentDescription = "Import Document")
-                }
-                FloatingActionButton(
+                ExtendedFloatingActionButton(
                     onClick = { viewModel.startEditing(null) },
-                    modifier = Modifier.size(48.dp)
-                ) {
-                    Icon(Icons.Default.Add, contentDescription = "Create Memory")
-                }
+                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
+                    text = { Text(stringResource(R.string.memory_a11y_create_memory)) }
+                )
             }
         }
     ) { padding ->
@@ -421,6 +455,21 @@ private fun MemoryGraphPage(activeProfileId: String) {
                     if (uiState.isLoading) {
                         CircularProgressIndicator(modifier = Modifier.align(Alignment.Center))
                     }
+
+                    // An empty graph is indistinguishable from a broken one without a word here, and
+                    // "no match" reads differently from "nothing saved yet".
+                    if (!uiState.isLoading && uiState.graph.nodes.isEmpty()) {
+                        Text(
+                            text = stringResource(
+                                if (uiState.searchQuery.isNotBlank()) R.string.memory_graph_empty_search
+                                else R.string.memory_graph_empty
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.align(Alignment.Center).padding(32.dp)
+                        )
+                    }
                 }
             }
             // 左侧文件夹导航 (Overlay)
@@ -429,7 +478,10 @@ private fun MemoryGraphPage(activeProfileId: String) {
                 enter = slideInHorizontally(initialOffsetX = { -it }),
                 exit = slideOutHorizontally(targetOffsetX = { -it })
             ) {
-                FolderNavigator(
+                Box(Modifier.fillMaxSize()) {
+                    // Dim what the panel covers; the panel's own surface hides the dim underneath it.
+                    Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.32f)))
+                    FolderNavigator(
                     folderPaths = uiState.folderPaths,
                     selectedFolderPath = uiState.selectedFolderPath,
                     onFolderSelected = { folderPath -> viewModel.selectFolder(folderPath) },
@@ -473,7 +525,15 @@ private fun MemoryGraphPage(activeProfileId: String) {
                         }
                     },
                     onDismissRequest = { showFolderNavigator = false }
-                )
+                    )
+                    // Only the strip beside the panel dismisses it, so taps inside the panel keep
+                    // working and taps on the graph close the panel instead of hitting a node.
+                    Box(
+                        Modifier.align(Alignment.TopEnd).fillMaxHeight().fillMaxWidth()
+                            .padding(start = 250.dp)
+                            .clickable { showFolderNavigator = false }
+                    )
+                }
             }
 
             // 对话框层
@@ -490,6 +550,8 @@ private fun MemoryGraphPage(activeProfileId: String) {
                     onSave = { config, cloudConfig, autoSaveIntervalMinutes ->
                         viewModel.saveSearchSettings(config, cloudConfig, autoSaveIntervalMinutes)
                         viewModel.searchMemories()
+                        // Saving used to leave the dialog open, which reads as "did it save?".
+                        viewModel.showSearchSettingsDialog(false)
                     },
                     onRebuild = { viewModel.rebuildVectorIndex() },
                     onSimulateSearch = { viewModel.openSearchSimulationDialog() }
@@ -509,17 +571,36 @@ private fun MemoryGraphPage(activeProfileId: String) {
             }
 
             if (uiState.isDocumentViewOpen && uiState.selectedMemory != null) {
-                var memoryTitle by remember { mutableStateOf(uiState.selectedMemory!!.title) }
-                val chunkStates = remember {
+                val documentMemoryId = uiState.selectedMemory!!.id
+                // A rotation recreates this composition, so the title and the edited chunks are saved;
+                // keying them by document id keeps one document's drafts out of another's.
+                var memoryTitle by rememberSaveable(documentMemoryId) {
+                    mutableStateOf(uiState.selectedMemory!!.title)
+                }
+                val chunkStates = rememberSaveable(documentMemoryId,
+                    saver = listSaver<SnapshotStateMap<Long, String>, Any>(
+                        save = { map -> map.entries.flatMap { listOf(it.key, it.value) } },
+                        restore = { flat -> mutableStateMapOf<Long, String>().apply {
+                            var index = 0
+                            while (index + 1 < flat.size) {
+                                put(flat[index] as Long, flat[index + 1] as String)
+                                index += 2
+                            }
+                        } }
+                    )) {
                     mutableStateMapOf<Long, String>().apply {
                         uiState.selectedDocumentChunks.forEach { put(it.id, it.content) }
                     }
                 }
-                // 当chunks列表变化时，同步状态
+                var draftsSeeded by rememberSaveable(documentMemoryId) { mutableStateOf(false) }
+                // 当chunks列表变化时，同步状态；已有草稿时不覆盖，避免旋转或重载吃掉未保存的编辑。
                 LaunchedEffect(uiState.selectedDocumentChunks) {
-                    chunkStates.clear()
-                    uiState.selectedDocumentChunks.forEach { chunk ->
-                        chunkStates[chunk.id] = chunk.content
+                    if (!draftsSeeded && uiState.selectedDocumentChunks.isNotEmpty()) {
+                        chunkStates.clear()
+                        uiState.selectedDocumentChunks.forEach { chunk ->
+                            chunkStates[chunk.id] = chunk.content
+                        }
+                        draftsSeeded = true
                     }
                 }
 
@@ -608,6 +689,18 @@ private fun MemoryGraphPage(activeProfileId: String) {
                 }
             }
 
+            if (showMoveTargetPicker) {
+                MoveMemoriesToFolderDialog(
+                    allFolderPaths = uiState.folderPaths,
+                    selectedCount = uiState.boxSelectedNodeIds.size,
+                    onDismiss = { showMoveTargetPicker = false },
+                    onConfirm = { target ->
+                        showMoveTargetPicker = false
+                        viewModel.moveSelectedMemoriesToFolder(target)
+                    }
+                )
+            }
+
             if (uiState.isEditing) {
                 EditMemoryDialog(
                     memory = uiState.editingMemory,
@@ -615,8 +708,10 @@ private fun MemoryGraphPage(activeProfileId: String) {
                     onDismiss = { viewModel.cancelEditing() },
                     onSave = { memory, title, content, contentType, source, credibility, importance, folderPath, tags ->
                         if (memory == null) {
-                            // 创建新记忆的逻辑（如果需要的话）
-                             viewModel.createMemory(title, content, contentType)
+                            // 新建时同样落盘弹窗里选择的文件夹、标签和分数。
+                             viewModel.createMemory(title, content, contentType, source = source,
+                                 folderPath = folderPath, tags = tags, credibility = credibility,
+                                 importance = importance)
                         } else {
                             viewModel.updateMemory(
                                 memory = memory,
@@ -667,7 +762,7 @@ private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (Stri
         ),
         R.string.memory_group_learning to listOf(
             Triple("learned", R.string.memory_learned_skills, R.string.memory_nav_learned),
-            Triple("skills", R.string.memory_extraction_skills, R.string.memory_nav_skills),
+            Triple("skills", R.string.memory_all_skills, R.string.memory_nav_skills),
             Triple("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs)
         ),
         R.string.memory_group_review to listOf(

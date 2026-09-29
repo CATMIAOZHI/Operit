@@ -60,10 +60,12 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                 stringResource(R.string.memory_skills_path_desc), skills) {
                 prefs.setExtractSkills(it); skills = it
             }
-            LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval) {
+            LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval,
+                stringResource(R.string.memory_interval_unit_turns)) {
                 prefs.setMemoryReviewInterval(it); memoryInterval = it
             }
-            LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval) {
+            LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval,
+                stringResource(R.string.memory_interval_unit_iterations)) {
                 prefs.setSkillReviewInterval(it); skillInterval = it
             }
             ListItem(
@@ -97,14 +99,15 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun LearningIntervalSetting(title: String, value: Int, onChange: (Int) -> Unit) {
+private fun LearningIntervalSetting(title: String, value: Int, unit: String, onChange: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ListItem(headlineContent = { Text(title) }, trailingContent = {
         Box {
-            TextButton(onClick = { expanded = true }) { Text(value.toString()) }
+            // A bare number does not say whether the interval counts turns, replies or tool calls.
+            TextButton(onClick = { expanded = true }) { Text("$value $unit") }
             DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
                 listOf(5, 10, 20, 50).forEach { interval ->
-                    DropdownMenuItem(text = { Text(interval.toString()) }, onClick = {
+                    DropdownMenuItem(text = { Text("$interval $unit") }, onClick = {
                         onChange(interval); expanded = false
                     })
                 }

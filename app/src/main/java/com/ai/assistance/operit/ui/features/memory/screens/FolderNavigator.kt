@@ -42,7 +42,7 @@ data class FolderExpandedState(
  * database keyed by the stable space id.
  */
 @Composable
-private fun ProfileSelector(
+internal fun ProfileSelector(
     profileList: List<String>,
     profileNameMap: Map<String, String>,
     selectedProfileId: String,

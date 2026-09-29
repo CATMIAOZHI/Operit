@@ -2202,7 +2202,9 @@ class MemoryRepository(private val context: Context, profileId: String) {
         contentType: String = "text/plain",
         source: String = "user_input",
         folderPath: String = "",
-        tags: List<String>? = null
+        tags: List<String>? = null,
+        credibility: Float = 0.8f,
+        importance: Float = 0.5f
     ): Memory? = withContext(Dispatchers.IO) {
         val normalizedTags = tags
             ?.map { it.trim() }
@@ -2215,7 +2217,10 @@ class MemoryRepository(private val context: Context, profileId: String) {
             contentType = contentType,
             source = source,
             folderPath = normalizeFolderPath(folderPath)
-        )
+        ).apply {
+            this.credibility = credibility.coerceIn(0.0f, 1.0f)
+            this.importance = importance.coerceIn(0.0f, 1.0f)
+        }
         saveMemory(memory)
 
         if (!normalizedTags.isNullOrEmpty()) {
@@ -2493,10 +2498,13 @@ class MemoryRepository(private val context: Context, profileId: String) {
      * @param currentFolderPath 当前选中的文件夹路径（用于判断跨文件夹连接），null表示显示全部
      */
     private fun buildGraphFromMemories(memories: List<Memory>, currentFolderPath: String? = null): Graph {
-        val memoryUuids = memories.map { it.uuid }.toSet()
+        // A folder placeholder is bookkeeping used to keep a folder in the list; showing it as a
+        // memory node makes the user think their data was polluted.
+        val visible = memories.filterNot(::isFolderPlaceholderMemory)
+        val memoryUuids = visible.map { it.uuid }.toSet()
 
         val nodes =
-                memories.map { memory ->
+                visible.map { memory ->
                     Node(
                             id = memory.uuid,
                             label = memory.title,
@@ -2514,7 +2522,7 @@ class MemoryRepository(private val context: Context, profileId: String) {
                 }
 
         val edges = mutableListOf<Edge>()
-        memories.forEach { memory ->
+        visible.forEach { memory ->
             // 关键：重置关系缓存，确保获取最新的连接信息
             memory.links.reset()
             memory.links.forEach { link ->

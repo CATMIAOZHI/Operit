@@ -15,10 +15,20 @@ class MemoryAutoApprovalTest {
     private fun context(enabled: Boolean? = null): Context {
         val context = mock<Context>()
         val prefs = mock<SharedPreferences>()
+        val editor = mock<SharedPreferences.Editor>()
         whenever(context.applicationContext).thenReturn(context)
         whenever(context.filesDir).thenReturn(folder.root)
         whenever(context.getSharedPreferences(any(), any())).thenReturn(prefs)
         whenever(prefs.getBoolean(any(), any())).thenAnswer { enabled ?: it.getArgument<Boolean>(1) }
+        // The library records a prompt-prefix revision whenever it writes notes, so the editor has to
+        // be chainable here; a plain mock returns null and the putString call would blow up.
+        whenever(prefs.edit()).thenReturn(editor)
+        whenever(editor.putString(any(), any())).thenReturn(editor)
+        whenever(editor.putBoolean(any(), any())).thenReturn(editor)
+        whenever(editor.putLong(any(), any())).thenReturn(editor)
+        whenever(editor.putStringSet(any(), any())).thenReturn(editor)
+        whenever(editor.remove(any())).thenReturn(editor)
+        whenever(editor.clear()).thenReturn(editor)
         return context
     }
 

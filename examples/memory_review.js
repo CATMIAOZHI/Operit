@@ -33,15 +33,15 @@
         {"name": "query", "type": "string", "required": false, "description": {"zh": "搜索文字（最多200字）", "en": "Search text (up to 200 characters)"}},
         {"name": "message_id", "type": "string", "required": false, "description": {"zh": "查看上下文的消息 ID", "en": "Message ID for context"}},
         {"name": "session_id", "type": "string", "required": false, "description": {"zh": "读取完整会话或限定搜索；query/session_id都省略则浏览最近会话", "en": "Read a session or restrict search; omit query/session_id to browse recent sessions"}},
-        {"name": "mode", "type": "string", "required": false, "description": {"zh": "message：分段读取单条完整消息；否则查看锚点附近", "en": "message: read a full message in chunks; otherwise read around the anchor"}},
-        {"name": "char_offset", "type": "number", "required": false, "description": {"zh": "单条消息字符偏移", "en": "Character offset within a message"}},
+        {"name": "mode", "type": "string", "required": false, "description": {"zh": "message：分段读取单条完整消息；省略（默认）则查看锚点附近", "en": "message: read one full message in chunks; omit (default) to read around the anchor"}},
+        {"name": "char_offset", "type": "number", "required": false, "description": {"zh": "单条消息字符偏移，只在 mode=message 时使用，与 offset 不同", "en": "Character offset within one message; only for mode=message, and unlike offset it is not paging"}},
         {"name": "window", "type": "number", "required": false, "description": {"zh": "上下文窗口，1至50，默认5", "en": "Context window, 1-50, default 5"}},
         {"name": "role", "type": "string", "required": false, "description": {"zh": "user/ai，留空为全部", "en": "user/ai; empty for all"}},
         {"name": "profile", "type": "string", "required": false, "description": {"zh": "角色卡名称筛选", "en": "Character card name filter"}},
         {"name": "after", "type": "string", "required": false, "description": {"zh": "开始时间：ISO日期或7d/24h", "en": "Since: ISO date or 7d/24h"}},
         {"name": "before", "type": "string", "required": false, "description": {"zh": "结束时间：ISO日期或7d/24h", "en": "Until: ISO date or 7d/24h"}},
         {"name": "literal", "type": "boolean", "required": false, "description": {"zh": "true为字面包含；默认全文关键词检索", "en": "true for literal matching; default full-text keyword search"}},
-        {"name": "offset", "type": "number", "required": false, "description": {"zh": "分页偏移", "en": "Page offset"}}
+        {"name": "offset", "type": "number", "required": false, "description": {"zh": "结果分页偏移（不是消息内偏移；消息内偏移是 char_offset）", "en": "Paging offset across results (not an in-message offset; use char_offset for that)"}}
       ]
     },
     {

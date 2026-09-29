@@ -21,6 +21,9 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository
+import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -35,19 +38,29 @@ internal fun SystemPromptRebuildNotice(chatId: String?, busy: Boolean) {
     var refreshing by remember(chatId) { mutableStateOf(false) }
     val latestBusy by rememberUpdatedState(busy)
     val scope = rememberCoroutineScope()
-    LaunchedEffect(repository) {
+    // The chat screen stays composed behind other pages, so the snapshot file must not be re-read
+    // every second while it is off-screen or the app is in the background.
+    val isCurrentScreen = LocalIsCurrentScreen.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    LaunchedEffect(repository, isCurrentScreen, lifecycleOwner) {
         while (true) {
-            try {
-                val status = repository.status(context)
-                if (!refreshing) {
-                    pending = status.needsRebuild
-                    if (!pending) showInfo = false
+            val visible = isCurrentScreen &&
+                lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.STARTED)
+            if (visible) {
+                try {
+                    val status = repository.status(context)
+                    if (!refreshing) {
+                        pending = status.needsRebuild
+                        if (!pending) showInfo = false
+                    }
+                } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                    throw cancelled
+                } catch (_: Exception) {
+                    // A read failure is not evidence that the system prefix changed.
                 }
-            } catch (cancelled: kotlinx.coroutines.CancellationException) {
-                throw cancelled
-            } catch (_: Exception) {
-                // A read failure is not evidence that the system prefix changed.
             }
+            // Off-screen passes only read two in-memory flags, so the tick stays at one second in both
+            // states; coming back to the chat then shows a pending refresh instead of a long lag.
             delay(1000)
         }
     }

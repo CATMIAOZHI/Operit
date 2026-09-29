@@ -99,6 +99,7 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -2408,17 +2409,45 @@ private fun AgentExtraSettingsPopup(
         inputMenuTogglesBySlot[InputMenuToggleSlots.GENERAL].orEmpty() + defaultInputMenuToggles
     val scope = rememberCoroutineScope()
 
+    // The detail is finished inside a suspend lambda, which cannot read resources, so the strings are
+    // resolved here and later formatted with the locale those resources use.
+    val memoryAutoSaveLocale = LocalConfiguration.current.locales[0]
+    val memoryAutoSaveStatusText = stringResource(R.string.memory_auto_update_runtime_status)
+    val memoryAutoSavePausedText = stringResource(R.string.memory_auto_update_runtime_paused)
+    val memoryAutoSavePausedMasterText =
+        stringResource(R.string.memory_auto_update_runtime_paused_master)
+    val memoryAutoSaveAbandonedText = stringResource(R.string.memory_auto_update_runtime_abandoned)
+
     val buildMemoryAutoSaveDetail: suspend () -> String = {
-        val pendingCandidateCount =
-            MemoryAutoSaveCandidateRepository(context, currentProfileId).countPendingAndFailedCandidates()
-        val minutesUntilNextSave =
-            MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(currentProfileId)
-                ?: MemorySearchSettingsPreferences(context, currentProfileId).loadAutoSaveIntervalMinutes().toLong()
-        context.getString(
-            R.string.memory_auto_update_runtime_status,
-            pendingCandidateCount,
-            minutesUntilNextSave
-        )
+        val candidates = MemoryAutoSaveCandidateRepository(context, currentProfileId)
+        val pendingCandidateCount = candidates.countPendingAndFailedCandidates()
+        // The countdown describes the graph path alone, so it must not be shown while that path is
+        // switched off: the numbers would read as work that is about to happen when nothing will run.
+        val api = ApiPreferences.getInstance(context)
+        val masterEnabled = api.enableMemoryAutoUpdateFlow.first()
+        val graphEnabled = masterEnabled && api.enableLegacyMemoryExtractionFlow.first()
+        val detail = when {
+            // The master switch stops notes and skills as well, so it must not read as a graph-only
+            // pause; the graph path has its own way of being off.
+            !masterEnabled -> memoryAutoSavePausedMasterText.format(
+                memoryAutoSaveLocale, pendingCandidateCount)
+            !graphEnabled -> memoryAutoSavePausedText.format(
+                memoryAutoSaveLocale, pendingCandidateCount)
+            else -> {
+                val minutesUntilNextSave =
+                    MemoryAutoSaveScheduler.getInstance()?.getMinutesUntilNextRun(currentProfileId)
+                        ?: MemorySearchSettingsPreferences(context, currentProfileId).loadAutoSaveIntervalMinutes().toLong()
+                memoryAutoSaveStatusText.format(
+                    memoryAutoSaveLocale,
+                    pendingCandidateCount,
+                    minutesUntilNextSave
+                )
+            }
+        }
+        // Abandoned candidates are silently skipped by the queue, so the count is the only signal.
+        val abandoned = candidates.countAbandonedCandidates()
+        if (abandoned > 0) detail + " " + memoryAutoSaveAbandonedText.format(memoryAutoSaveLocale, abandoned)
+        else detail
     }
 
     Popup(

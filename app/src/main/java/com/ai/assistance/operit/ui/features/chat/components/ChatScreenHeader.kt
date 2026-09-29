@@ -138,10 +138,24 @@ fun ChatScreenHeader(
                 currentChat?.takeIf { it.chatKind == ChatKind.SUBAGENT.name }?.id,
             onSelect = { run ->
                 showSubagentManager = false
+                val isMemoryLearningRun = run.externalOwnerType ==
+                    com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.OWNER_TYPE
                 if (isHiddenReadingAuditRun) {
                     ReadingCompanionAudit.carryReturnChat(
                         fromAuditChildChatId = currentChat?.id.orEmpty(),
                         toAuditChildChatId = run.childChatId,
+                    )
+                    actualViewModel.switchChatLocally(
+                        run.childChatId,
+                        scrollToBottom = false,
+                    )
+                } else if (isMemoryLearningRun) {
+                    // A memory extraction run is not a chat the user started. Opening it here used to
+                    // replace the global current chat; it now uses the same read-only temporary view
+                    // as the memory library, and returns to the chat the user came from.
+                    com.ai.assistance.operit.core.chat.AuditChatNavigation.rememberReturnChat(
+                        run.childChatId,
+                        currentChat?.id,
                     )
                     actualViewModel.switchChatLocally(
                         run.childChatId,

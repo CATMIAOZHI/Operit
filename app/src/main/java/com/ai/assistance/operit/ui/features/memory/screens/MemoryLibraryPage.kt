@@ -37,7 +37,7 @@ fun MemoryLibraryPage(
                 },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.chat_recall_back))
+                        Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.memory_a11y_back))
                     }
                 }
             )

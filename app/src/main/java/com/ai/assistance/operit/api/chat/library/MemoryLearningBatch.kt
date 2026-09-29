@@ -36,19 +36,36 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
     private val root = File(context.filesDir, "memory_learning_progress")
     private val file = File(root, java.util.UUID.nameUUIDFromBytes("$profile\u0000$chat".toByteArray()).toString()+".json")
     private val reviews = MemoryReviewRepository(context,profile)
-    private var state = if (file.exists()) JSONObject(file.readText()) else
+    /**
+     * One lock per journal file. A batch now spans turns, so the per-turn [enqueue] of another instance
+     * can land while a review is running; every change re-reads inside this lock so a stale snapshot
+     * can never overwrite what the other side just wrote.
+     */
+    private val lock = locks.computeIfAbsent(file.absolutePath) { Any() }
+    private var state = readState()
+    private fun readState(): JSONObject = if (file.exists()) JSONObject(file.readText()) else
         JSONObject().put("profile",profile).put("chat",chat).put("horizon",0)
+    private fun reload() { state = readState() }
+    /**
+     * These read the cached copy without reloading on purpose: a batch compares the generation it
+     * started from with the one on disk when it finishes, so adding a reload here would silently
+     * disable that protection and let an old batch clear a newer range's pending marker.
+     */
     fun cursor(path: String) = LearningCursor.parse(state.optJSONObject(path))
     fun pending(path: String) = state.optBoolean("pending_$path")
     fun horizon() = state.optLong("horizon")
     fun rewind(messageId: Long) {
-        listOf("notes","skills").forEach {
-            val old=cursor(it)
-            if (old.messageId>messageId || old.messageId==messageId && old.byteOffset>0)
-                state.put(it,LearningCursor(messageId).json())
+        synchronized(lock) {
+            reload()
+            listOf("notes","skills").forEach {
+                val old=cursor(it)
+                if (old.messageId>messageId || old.messageId==messageId && old.byteOffset>0)
+                    state.put(it,LearningCursor(messageId).json())
+            }
+            save()
         }
-        save()
     }
+    /** Callers hold [lock]. */
     private fun save() {
         root.mkdirs()
         val temp = File.createTempFile(".learning-", ".tmp", root)
@@ -59,33 +76,101 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
         com.ai.assistance.operit.data.preferences.syncDirectory(file.parentFile!!)
     }
     fun enqueue(notes: Boolean, skills: Boolean, horizon: Long, restart: Boolean = false) {
-        state.put("horizon",maxOf(horizon,horizon()))
-        if (restart) {
-            if (notes) state.put("notes",LearningCursor().json())
-            if (skills) state.put("skills",LearningCursor().json())
+        synchronized(lock) {
+            reload()
+            state.put("horizon",maxOf(horizon,horizon()))
+            if (restart) {
+                if (notes) state.put("notes",LearningCursor().json())
+                if (skills) state.put("skills",LearningCursor().json())
+            }
+            // The age of the oldest pending marker is what lets a chatty device dispatch a range that
+            // has waited far too long, so it is set only when the range first becomes pending.
+            if ((notes && !state.optBoolean("pending_notes")) || (skills && !state.optBoolean("pending_skills")))
+                state.put("enqueued_at",System.currentTimeMillis())
+            if (notes) state.put("pending_notes",true)
+            if (skills) state.put("pending_skills",true)
+            // Marks that a range was added. A batch that started before this enqueue must not clear the
+            // new range's pending marker when it finishes, and the counters are the only way to tell.
+            state.put("generation",state.optInt("generation",0)+1)
+            save()
         }
-        if (notes) state.put("pending_notes",true)
-        if (skills) state.put("pending_skills",true)
-        save()
+    }
+    /** True while pending work has been waiting at least [millis]. */
+    fun pendingForAtLeast(millis: Long): Boolean {
+        synchronized(lock) {
+            reload()
+            if (!pending("notes") && !pending("skills") && !state.has("export")) return false
+            var since = state.optLong("enqueued_at",0)
+            if (since <= 0) {
+                // Journals written before this field existed carry no age. Stamping them now keeps the
+                // age backstop working instead of leaving them to wait behind a busy device forever.
+                since = System.currentTimeMillis()
+                state.put("enqueued_at",since)
+                save()
+            }
+            return System.currentTimeMillis()-since >= millis
+        }
     }
     fun complete(paths: List<String>, next: LearningCursor, more: Boolean, changes: List<MemoryReviewChange>) {
-        check(!state.has("export")) { "Previous batch must be exported first" }
-        paths.forEach { state.put(it,next.json()).put("pending_$it",more) }
-        state.put("export",JSONArray().apply { changes.forEach { put(reviews.toJson(it)) } })
-        save()
+        synchronized(lock) {
+            val reviewedGeneration = state.optInt("generation",0)
+            reload()
+            check(!state.has("export")) { "Previous batch must be exported first" }
+            // A range enqueued while this batch was running is newer than what it reviewed, so its
+            // pending marker survives instead of being cleared by this write.
+            val newerEnqueued = state.optInt("generation",0) > reviewedGeneration
+            paths.forEach {
+                state.put(it,next.json()).put("pending_$it",more || (newerEnqueued && state.optBoolean("pending_$it")))
+            }
+            state.put("export",JSONArray().apply { changes.forEach { put(reviews.toJson(it)) } })
+            save()
+        }
     }
     /**
      * Stops retrying a range that can never be reviewed, keeping each cursor where it is so the next
      * normal trigger covers the same range again once the cause is gone.
      */
     fun abandon(paths: List<String>) {
-        paths.forEach { state.put("pending_$it",false) }
-        save()
+        synchronized(lock) {
+            val reviewedGeneration = state.optInt("generation",0)
+            reload()
+            val newerEnqueued = state.optInt("generation",0) > reviewedGeneration
+            paths.forEach {
+                state.put("pending_$it",newerEnqueued && state.optBoolean("pending_$it"))
+            }
+            save()
+        }
     }
     suspend fun export(): List<String> {
-        val array = state.optJSONArray("export") ?: return emptyList()
+        // The import below can suspend, so the journal is only locked for the read and the release.
+        val captured = synchronized(lock) {
+            val reviewedGeneration = state.optInt("generation",0)
+            reload()
+            reviewedGeneration to state.optJSONArray("export")
+        }
+        val reviewedGeneration = captured.first
+        val array = captured.second ?: return emptyList()
         val changes = (0 until array.length()).map { reviews.fromJson(array.getJSONObject(it)) }
-        reviews.importCompletedBatch(changes)
+        try {
+            reviews.importCompletedBatch(changes)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // A full review queue or a store that cannot be written will not accept the same batch
+            // later either, so the barrier is released and the range is dropped instead of blocking
+            // this conversation forever. The cursor has already moved past it, so it will not be read
+            // again; the caller records the dropped batch in the extraction log.
+            synchronized(lock) {
+                reload()
+                state.remove("export")
+                val newerEnqueued = state.optInt("generation",0) > reviewedGeneration
+                listOf("notes","skills").forEach {
+                    state.put("pending_$it",newerEnqueued && state.optBoolean("pending_$it"))
+                }
+                save()
+            }
+            return listOf(learningFailureDetail("import",e))
+        }
         val failures = mutableListOf<String>()
         for (change in changes) {
             currentCoroutineContext().ensureActive()
@@ -97,11 +182,17 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
             catch (e: Exception) { failures += learningFailureDetail("apply ${change.id}",e) }
         }
         // Failed writes remain visible in the review UI; evidence has still been reviewed.
-        state.remove("export")
-        save()
+        synchronized(lock) {
+            reload()
+            // Only this call's batch is released: a batch staged in the meantime keeps its proposals.
+            if (state.optJSONArray("export")?.toString() == array.toString()) state.remove("export")
+            save()
+        }
         return failures
     }
     companion object {
+        /** One lock per journal file, shared by every instance in this process. */
+        private val locks = java.util.concurrent.ConcurrentHashMap<String,Any>()
         fun deleteSpace(context: Context, profile: String) {
             File(context.filesDir,"memory_learning_progress").listFiles()?.filter { it.extension=="json" }
                 ?.forEach { if (JSONObject(it.readText()).getString("profile")==profile) it.delete() }

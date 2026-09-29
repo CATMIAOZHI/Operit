@@ -10,6 +10,10 @@ import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Cancel
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.listSaver
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.snapshots.SnapshotStateList
+import androidx.compose.runtime.toMutableStateList
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -41,17 +45,22 @@ fun EditMemoryDialog(
 ) {
     val defaultFolder = stringResource(R.string.memory_uncategorized)
     val scrollState = rememberScrollState()
-    var title by remember { mutableStateOf(memory?.title ?: "") }
-    var content by remember { mutableStateOf(memory?.content ?: "") }
-    var contentType by remember { mutableStateOf(memory?.contentType ?: "text/plain") }
-    var source by remember { mutableStateOf(memory?.source ?: "user_input") }
-    var credibility by remember { mutableStateOf(memory?.credibility ?: 0.8f) }
-    var importance by remember { mutableStateOf(memory?.importance ?: 0.5f) }
-    var folderPath by remember { mutableStateOf(memory?.folderPath ?: defaultFolder) }
-    val tags = remember { mutableStateListOf<String>() }
-    
+    // Saved so a rotation cannot throw away what the user was typing.
+    var title by rememberSaveable { mutableStateOf(memory?.title ?: "") }
+    var content by rememberSaveable { mutableStateOf(memory?.content ?: "") }
+    var contentType by rememberSaveable { mutableStateOf(memory?.contentType ?: "text/plain") }
+    var source by rememberSaveable { mutableStateOf(memory?.source ?: "user_input") }
+    var credibility by rememberSaveable { mutableStateOf(memory?.credibility ?: 0.8f) }
+    var importance by rememberSaveable { mutableStateOf(memory?.importance ?: 0.5f) }
+    var folderPath by rememberSaveable { mutableStateOf(memory?.folderPath ?: defaultFolder) }
+    val tags = rememberSaveable(saver = listSaver<SnapshotStateList<String>, String>(
+        save = { it.toList() },
+        restore = { it.toMutableStateList() }
+    )) { mutableStateListOf<String>() }
+
     LaunchedEffect(memory) {
-        memory?.tags?.let {
+        // Only seeds an empty list, so restored edits are not overwritten on recomposition.
+        if (tags.isEmpty()) memory?.tags?.let {
             tags.clear()
             tags.addAll(it.map { tag -> tag.name })
         }
@@ -124,9 +133,13 @@ fun EditMemoryDialog(
                         Spacer(modifier = Modifier.height(16.dp))
 
                         OutlinedTextField(
-                            value = source,
-                            onValueChange = { source = it },
+                            // The stored value is an internal key, so it is shown translated and the
+                            // user cannot type a new one and break how the source is read back.
+                            value = memorySourceText(source),
+                            onValueChange = {},
+                            readOnly = true,
                             label = { Text(stringResource(R.string.memory_source)) },
+                            supportingText = { Text(stringResource(R.string.memory_source_readonly)) },
                             modifier = Modifier.fillMaxWidth(),
                             singleLine = true
                         )
@@ -184,46 +197,6 @@ fun EditMemoryDialog(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun FolderSelector(
-    allFolderPaths: List<String>,
-    selectedPath: String,
-    onPathSelected: (String) -> Unit
-) {
-    var expanded by remember { mutableStateOf(false) }
-
-    ExposedDropdownMenuBox(
-        expanded = expanded,
-        onExpandedChange = { expanded = !expanded }
-    ) {
-        OutlinedTextField(
-            value = selectedPath,
-            onValueChange = {},
-            readOnly = true,
-            label = { Text(stringResource(R.string.memory_folder_label2)) },
-            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
-            modifier = Modifier
-                .fillMaxWidth()
-                .menuAnchor()
-        )
-        ExposedDropdownMenu(
-            expanded = expanded,
-            onDismissRequest = { expanded = false }
-        ) {
-            allFolderPaths.forEach { path ->
-                DropdownMenuItem(
-                    text = { Text(path) },
-                    onClick = {
-                        onPathSelected(path)
-                        expanded = false
-                    }
-                )
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun TagsEditor(
@@ -251,7 +224,7 @@ private fun TagsEditor(
                             onClick = { onTagsChanged(tags - tag) },
                             modifier = Modifier.size(18.dp)
                         ) {
-                            Icon(Icons.Default.Cancel, contentDescription = "Remove tag")
+                            Icon(Icons.Default.Cancel, contentDescription = stringResource(R.string.memory_tag_remove))
                         }
                     }
                 )
@@ -279,7 +252,7 @@ private fun TagsEditor(
                         newTagText = ""
                     }
                 }) {
-                    Icon(Icons.Default.Add, contentDescription = "Add tag")
+                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.memory_tag_add))
                 }
             }
         )
