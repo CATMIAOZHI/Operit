@@ -3,14 +3,23 @@
 聊天工具批次在权限检查之前应用确定的修复规则：
 
 - `read_file` 出现 `start_line` 或 `end_line` 时，改为 `read_file_part`。
-- `super_admin::terminal` 精确修正为 `super_admin:terminal`。
+- `super_admin` 命名空间下重复冒号的 `terminal`（如 `super_admin::terminal`、
+  `super_admin:::terminal`）精确修正为 `super_admin:terminal`；其他名字不动。
 - 仅对 `super_admin:terminal`，将有效整数毫秒 `timeout` 改名为 `timeoutMs`。
   两者值相同时移除重复别名，冲突时不改；支持范围为 3000 到 Int.MAX_VALUE 毫秒。
 - `proxy` / `package_proxy` 外层的 `package_name` 与目标包名前缀完全相同时移除重复字段。
+- 代理调用没有声明 `tool_name`（缺失或空白）时，如果 `params` 末尾并入了目标名，
+  且只可能是 `<对象>, {"tool_name":"x"}` 或 `<对象>, "tool_name":"x"}` 这两种形态之一，
+  则还原出工具名与参数对象。参数对象的边界按字符串感知的花括号配对判定（命令里含 `{`、`}`
+  不影响），并且必须是一个不含同名键的合法对象，否则不改。
+- `memory_learning_action` / `learning_manage` 的 `arguments` 里出现 `new_text`、没有 `content`，且 action
+  属于读取 `content` 的 `memory_change` / `skill_create` / `skill_write` / `skill_patch` /
+  `skill_remove_file` 时，将 `new_text` 改名为 `content`。
 - 支持直接调用和代理调用，保留代理外壳；`package_proxy` 仍只接受带包名的工具。
 - 保留参数值、调用 ID、原始响应与调用位置；不补全缺失参数、不修正路径。
   代理参数需要改名时重新编码 JSON，保留值及类型；只改工具名时保留原始 JSON 文本。
-- 格式无效、重复的外层参数或 JSON 任意层级重复键不自动修复。
+- 格式无效、重复的外层参数或 JSON 任意层级重复键不自动修复；嵌套的 `arguments`
+  文本与代理 `params` 共用同一套严格解析，重复键会拒绝修复而不是静默折叠。
 
 新增规则在 `ToolCallRepairRules.ordered` 注册唯一 ID 和纯转换函数，未命中返回 null。
 规则按顺序只执行一遍，可组合（例如先修正工具名，再改超时参数名），不循环重试。

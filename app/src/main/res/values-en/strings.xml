@@ -8835,9 +8835,11 @@
     <string name="tool_repairs_total">%1$d repair records</string>
     <string name="tool_repairs_empty">No tool call repairs yet</string>
     <string name="tool_repairs_line_range">Line range redirected to the partial file reader</string>
-    <string name="tool_repairs_separator">Corrected the terminal tool name to use a single colon</string>
+    <string name="tool_repairs_separator">Corrected repeated colons in the terminal tool name</string>
     <string name="tool_repairs_timeout">Normalized terminal timeout to timeoutMs</string>
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
+    <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
+    <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
     <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
     <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>
