@@ -8797,6 +8797,9 @@
     <string name="collapse_process_hide">收起回复过程</string>
     <string name="collapse_process_duration_seconds">用时 %1$d秒</string>
     <string name="collapse_process_duration_minutes">用时 %1$d分钟 %2$d秒</string>
+    <string name="collapse_process_duration_hours">用时 %1$d时%2$d分%3$d秒</string>
+    <string name="duration_compact_minutes">%1$d分%2$d秒</string>
+    <string name="duration_compact_hours">%1$d时%2$d分%3$d秒</string>
     <string name="tool_errors_title">工具调用问题</string>
     <string name="tool_errors_app_logs">应用日志</string>
     <string name="tool_errors_scope">记录 AI 对话与子代理的执行失败和未声明参数，即使工具返回成功。保留原始参数；取消和拒绝授权不计入。从此版本开始记录。</string>
