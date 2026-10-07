@@ -8844,6 +8844,7 @@
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>
+    <string name="tool_repairs_memory_finish">Routed an empty finish action to the separate finish tool</string>
     <string name="tool_repairs_invalid_record">Invalid record format; tap to view the raw record</string>
     <string name="tool_repairs_refresh">Refresh</string>
     <string name="tool_errors_totals">%1$d records · %2$d tools</string>

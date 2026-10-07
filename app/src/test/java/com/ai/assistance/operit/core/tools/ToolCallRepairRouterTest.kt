@@ -8,6 +8,36 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ToolCallRepairRouterTest {
+    @Test fun terminalSecondsCompatibilityConvertsAndChecksCanonicalConflict() {
+        for (seconds in listOf(3,60,90,300)) {
+            val result = ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "$seconds"))!!.invocation
+            assertEquals("${seconds*1000}",result.tool.parameters.single().value)
+            assertNull(ToolCallRepairRouter.route(result))
+        }
+        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "301")))
+        assertNull(ToolCallRepairRouter.route(call("super_admin:terminal","timeout" to "60","timeoutMs" to "60")))
+        assertEquals(listOf(ToolParameter("timeoutMs","60000")),ToolCallRepairRouter.route(
+            call("super_admin:terminal","timeout" to "60","timeoutMs" to "60000"))!!.invocation.tool.parameters)
+        val proxy = ToolCallRepairRouter.route(call("proxy","tool_name" to "super_admin:terminal",
+            "params" to """{"timeout":90}"""))!!.invocation
+        assertEquals(90000,JSONObject(proxy.tool.parameters.last().value).getInt("timeoutMs"))
+    }
+
+    @Test fun finishAliasRequiresEmptyInputAndRetainsIdentityAndTerminalSemantics() {
+        val original = call("memory_learning_action","action" to "memory_learning_finish","arguments" to "{}")
+        val result = ToolCallRepairRouter.route(original)!!.invocation
+        assertEquals("memory_learning_finish",result.tool.name)
+        assertTrue(result.tool.parameters.isEmpty())
+        assertEquals(original.callId,result.callId)
+        assertEquals(result.tool.name,ToolCallRepairRouter.terminalToolName(original))
+        assertNull(ToolCallRepairRouter.route(result))
+        for (raw in listOf("""{"name":"x"}""","null","", """{"a":1,"a":2}""")) {
+            assertNull(ToolCallRepairRouter.route(call("memory_learning_action",
+                "action" to "memory_learning_finish","arguments" to raw)))
+        }
+        assertNull(ToolCallRepairRouter.route(call("memory_learning_action","action" to "memory_learning_finish","extra" to "x")))
+        assertNull(ToolCallRepairRouter.route(call("learning_manage","action" to "memory_learning_finish","arguments" to "{}")))
+    }
     private fun call(name: String, vararg params: Pair<String, String>) =
         ToolInvocation(AITool(name, params.map { ToolParameter(it.first, it.second) }),
             rawText = "original provider response", responseLocation = 4..12,

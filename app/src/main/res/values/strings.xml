@@ -8820,6 +8820,7 @@
     <string name="tool_repairs_package">移除与目标工具包一致的重复 package_name</string>
     <string name="tool_repairs_flattened_proxy">从 params 文本中还原出被并入的 tool_name</string>
     <string name="tool_repairs_memory_argument">将记忆工具误写的 new_text 参数改为 content</string>
+    <string name="tool_repairs_memory_finish">将误放在 action 中的结束操作改为独立结束工具</string>
     <string name="tool_repairs_invalid_record">记录格式无效，点击查看原始记录</string>
     <string name="tool_repairs_refresh">刷新</string>
     <string name="tool_errors_totals">%1$d 条记录 · %2$d 个工具</string>

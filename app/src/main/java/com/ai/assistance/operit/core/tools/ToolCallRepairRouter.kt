@@ -14,6 +14,12 @@ internal object ToolCallRepairRouter {
     const val REDUNDANT_PACKAGE_NAME = "redundant_proxy_package_name"
     const val PROXY_FLATTENED_TOOL_NAME = "proxy_flattened_tool_name"
     const val MEMORY_ARGUMENT_ALIAS = "memory_argument_alias"
+    const val MEMORY_FINISH_ALIAS = "memory_finish_alias"
+
+    fun terminalToolName(invocation: ToolInvocation): String =
+        if (invocation.tool.name == "memory_learning_action")
+            route(invocation)?.invocation?.tool?.name ?: invocation.tool.name
+        else invocation.tool.name
 
     data class Repair(
         val original: ToolInvocation,

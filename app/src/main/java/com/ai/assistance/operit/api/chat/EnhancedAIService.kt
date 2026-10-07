@@ -2172,7 +2172,9 @@ class EnhancedAIService private constructor(
         }
 
         val terminalInvocations =
-            toolInvocations.filter { invocation -> invocation.tool.name in context.terminalToolNames }
+            toolInvocations.filter { invocation ->
+                com.ai.assistance.operit.core.tools.ToolCallRepairRouter.terminalToolName(invocation) in context.terminalToolNames
+            }
         if (terminalInvocations.isNotEmpty() && toolInvocations.size != 1) {
             AppLogger.w(TAG, "Terminal result turn must contain exactly one tool call")
             finalizeAssistantResponse(
@@ -2316,7 +2318,9 @@ class EnhancedAIService private constructor(
                 }
                 if (
                     turnSignal == ToolTurnSignal.COMPLETE ||
-                    toolInvocations.singleOrNull()?.tool?.name in context.terminalToolNames
+                    toolInvocations.singleOrNull()?.let {
+                        com.ai.assistance.operit.core.tools.ToolCallRepairRouter.terminalToolName(it)
+                    } in context.terminalToolNames
                 ) {
                     finalizeAssistantResponse(
                         context = context,
