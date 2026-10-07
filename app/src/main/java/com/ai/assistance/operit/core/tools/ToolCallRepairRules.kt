@@ -24,6 +24,21 @@ internal object ToolCallRepairRules {
 
     // Name normalization precedes canonical-name rules. One pass, no retry loop.
     val ordered = listOf(
+        ToolCallRepairRule(ToolCallRepairRouter.MEMORY_FINISH_ALIAS) { call ->
+            if (call.targetName != "memory_learning_action" || call.proxyParameters != null ||
+                call.arguments.any { it.name !in setOf("action","arguments") } ||
+                call.arguments.groupBy { it.name }.any { it.value.size != 1 } ||
+                (call.arguments.singleOrNull { it.name == "action" }?.value as? JsonPrimitive)?.content != "memory_learning_finish")
+                return@ToolCallRepairRule null
+            val field = call.arguments.singleOrNull { it.name == "arguments" }
+            if (field != null) {
+                val raw = (field.value as? JsonPrimitive)?.takeIf { it.isString }?.content
+                    ?: return@ToolCallRepairRule null
+                if (ToolCallRepairRouter.parseStrictJsonObject(raw)?.isEmpty() != true)
+                    return@ToolCallRepairRule null
+            }
+            call.copy(targetName = "memory_learning_finish", arguments = emptyList())
+        },
         ToolCallRepairRule(ToolCallRepairRouter.TERMINAL_SEPARATOR) { call ->
             // Any run of separators is the same typo; every other name stays untouched.
             if (repeatedTerminalSeparator.matches(call.targetName))
@@ -46,15 +61,27 @@ internal object ToolCallRepairRules {
             if (call.targetName != "super_admin:terminal") return@ToolCallRepairRule null
             val alias = call.arguments.singleOrNull { it.name == "timeout" }
                 ?: return@ToolCallRepairRule null
-            val timeout = (alias.value as? JsonPrimitive)?.content?.toLongOrNull()
-                ?.takeIf { it in 3_000..Int.MAX_VALUE.toLong() } ?: return@ToolCallRepairRule null
+            val rawTimeout = (alias.value as? JsonPrimitive)?.content?.toLongOrNull()
+                ?: return@ToolCallRepairRule null
+            // Legacy millisecond aliases remain unchanged. Small integral values have an explicit
+            // seconds compatibility range; the ambiguous gap is deliberately not guessed.
+            val timeout = when (rawTimeout) {
+                in 3..300 -> rawTimeout * 1_000
+                in 3_000..Int.MAX_VALUE.toLong() -> rawTimeout
+                else -> return@ToolCallRepairRule null
+            }
             val canonical = call.arguments.filter { it.name == "timeoutMs" }
             if (canonical.size > 1 || (canonical.size == 1 &&
                 (canonical.single().value as? JsonPrimitive)?.content?.toLongOrNull() != timeout)) {
                 return@ToolCallRepairRule null
             }
             call.copy(arguments = if (canonical.isEmpty()) {
-                call.arguments.map { if (it.name == "timeout") it.copy(name = "timeoutMs") else it }
+                call.arguments.map {
+                    if (it.name != "timeout") it else it.copy(name = "timeoutMs",
+                        value = if (rawTimeout == timeout) it.value
+                            else if ((it.value as JsonPrimitive).isString) JsonPrimitive(timeout.toString())
+                            else JsonPrimitive(timeout))
+                }
             } else {
                 call.arguments.filterNot { it.name == "timeout" }
             })

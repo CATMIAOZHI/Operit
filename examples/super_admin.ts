@@ -270,6 +270,9 @@ const superAdmin = (function () {
      */
     async function terminal_wait(params: { sessionId?: string, timeoutMs?: string } = {}): Promise<any> {
         try {
+            if (Object.prototype.hasOwnProperty.call(params, "command")) {
+                throw new Error("terminal_wait only waits; command was not executed. Use super_admin:terminal to execute a command.");
+            }
             const timeoutMs = params.timeoutMs;
             let timeout = DEFAULT_WAIT_TIMEOUT_MS;
             if (timeoutMs !== undefined) {
