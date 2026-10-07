@@ -3028,7 +3028,7 @@ open class OpenAIProvider(
                     "【发送消息】准备构建请求体，模型参数数量: ${modelParameters.size}，已启用参数: ${modelParameters.count { it.isEnabled }}"
                 )
                 // 直接传递原始历史记录给createRequestBody，让具体的Provider决定如何处理（例如Deepseek需要保留<think>标签）
-                val requestBody = createRequestBody(
+                val requestBody = withContext(Dispatchers.IO) { createRequestBody(
                     context,
                     currentHistory,
                     modelParameters,
@@ -3036,7 +3036,7 @@ open class OpenAIProvider(
                     effectiveStream,
                     availableTools,
                     preserveThinkInHistory
-                )
+                ) }
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
