@@ -587,9 +587,11 @@ internal fun ChatMessageLocatorDialog(
     onToggleFavoriteMessage: ((Long, Boolean) -> Unit)?,
     onJumpToMessage: (Long) -> Unit,
 ) {
-    val visibleLocatorEntries = locatorVisibleEntries(locatorEntries)
+    val visibleLocatorEntries = remember(locatorEntries) { locatorVisibleEntries(locatorEntries) }
     val currentVisiblePosition =
-        locatorCurrentVisiblePosition(locatorEntries, currentMessageTimestamp)
+        remember(locatorEntries, currentMessageTimestamp) {
+            locatorCurrentVisiblePosition(locatorEntries, currentMessageTimestamp)
+        }
     // The row that stands for the reading position; a hidden row maps to the closest visible one.
     val currentVisibleEntry = visibleLocatorEntries.getOrNull(currentVisiblePosition)
     val currentMessageIndex = currentVisibleEntry?.messageIndex ?: -1
@@ -612,7 +614,7 @@ internal fun ChatMessageLocatorDialog(
         if (normalizedSearchQuery.isBlank()) {
             visibleLocatorEntries
         } else {
-            locatorVisibleEntries(searchEntries)
+            remember(searchEntries) { locatorVisibleEntries(searchEntries) }
         }
     val dialogIsLoading = isLoading || isLoadingSearchEntries
     val dialogLoadFailed =
@@ -622,22 +624,23 @@ internal fun ChatMessageLocatorDialog(
             searchLoadFailed
         }
     val indexedEntries =
-        activeLocatorEntries.mapIndexed { index, preview ->
-            ChatMessageLocatorEntry(index = preview.messageIndex ?: index, preview = preview)
+        remember(activeLocatorEntries) {
+            activeLocatorEntries.mapIndexed { index, preview ->
+                ChatMessageLocatorEntry(index = preview.messageIndex ?: index, preview = preview)
+            }
         }
     val filteredEntries =
-        if (dialogIsLoading) {
-            indexedEntries
-        } else {
-            indexedEntries.filter { entry ->
-                val isFavorite =
+        remember(indexedEntries, dialogIsLoading, favoritesOnly, favoriteOverrides) {
+            if (dialogIsLoading || !favoritesOnly) {
+                indexedEntries
+            } else {
+                indexedEntries.filter { entry ->
                     favoriteOverrides[entry.preview.timestamp] ?: entry.preview.isFavorite
-                val matchesFavorite = !favoritesOnly || isFavorite
-                matchesFavorite
+                }
             }
         }
     val maxMessageLength =
-        remember(activeLocatorEntries) {
+        remember(activeLocatorEntries, hiddenPlaceholderText) {
             activeLocatorEntries.maxOfOrNull { messageContentLength(it, hiddenPlaceholderText) }
                 ?.coerceAtLeast(1) ?: 1
         }
