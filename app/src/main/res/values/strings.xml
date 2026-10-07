@@ -9038,4 +9038,7 @@
     <string name="resource_download_failed_space">存储空间不足，请清理后重试</string>
     <string name="resource_download_failed_generic">下载失败，请重试</string>
     <string name="plugin_terminal_resource_required">需要先下载 Ubuntu 终端环境（约 64 MB）</string>
+    <string name="terminal_task_start_desc">启动终端任务：%1$s</string>
+    <string name="terminal_task_poll_desc">查看终端任务：%1$s</string>
+    <string name="terminal_task_cancel_desc">取消终端任务：%1$s</string>
 </resources>

@@ -9064,4 +9064,7 @@
     <string name="resource_download_failed_space">Not enough free storage. Free some space and retry.</string>
     <string name="resource_download_failed_generic">Download failed. Please retry.</string>
     <string name="plugin_terminal_resource_required">The Ubuntu terminal environment must be downloaded first (about 64 MB)</string>
+    <string name="terminal_task_start_desc">Start terminal task: %1$s</string>
+    <string name="terminal_task_poll_desc">Check terminal task: %1$s</string>
+    <string name="terminal_task_cancel_desc">Cancel terminal task: %1$s</string>
 </resources>
