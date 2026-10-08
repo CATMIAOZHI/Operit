@@ -82,7 +82,7 @@
     <string name="action_retry">重试</string>
     <string name="common_collapse">收起</string>
     <string name="common_expand_more">展开更多</string>
-    <string name="nav_packages">包管理</string>
+    <string name="nav_packages">扩展管理</string>
     <string name="nav_memory_base">记忆库</string>
     <string name="nav_assistant_config">助手配置</string>
     <string name="nav_terminal">终端</string>
@@ -147,7 +147,7 @@
     <string name="floating_thinking_2">思考中...</string>
     <string name="floating_didnt_hear_clearly">没有听清</string>
     <string name="floating_hello">你好</string>
-    <string name="nav_help">使用手册</string>
+    <string name="nav_help">使用帮助</string>
 
     <!-- Color Picker -->
     <string name="colorpicker_select_primary">选择主色</string>
@@ -924,12 +924,12 @@
     <string name="settings_model_prompts">模型提示词设置</string>
     <string name="settings_model_prompts_desc">自定义AI助手的系统提示词，包括自我介绍和语气风格，使AI更符合您的预期</string>
     <string name="settings_configure_prompts">配置提示词</string>
-    <string name="settings_theme_appearance">主题和外观</string>
+    <string name="settings_theme_appearance">主题外观</string>
     <string name="settings_theme_appearance_desc">个性化应用外观，包括深色/浅色模式和自定义配色方案</string>
     <string name="settings_customize_theme">自定义主题</string>
     <string name="settings_global_display">显示与行为</string>
     <string name="settings_global_display_subtitle">管理显示样式、自动化行为与截图等全局选项</string>
-    <string name="settings_data_backup">数据备份与恢复</string>
+    <string name="settings_data_backup">备份与恢复</string>
     <string name="settings_data_backup_desc">导入、导出或删除聊天记录和记忆库数据，方便备份和恢复重要信息</string>
     <string name="settings_manage_backup">管理备份</string>
     <string name="settings_chat_history_management">聊天记录管理</string>
@@ -954,7 +954,7 @@
     <string name="settings_enable_summary_desc">当上下文过长时自动生成对话总结，节省Token消耗</string>
     <string name="settings_enable_summary_by_message_count">按消息条数触发总结</string>
     <string name="settings_enable_summary_by_message_count_desc">当新消息数量达到阈值时触发总结</string>
-    <string name="settings_summary_message_count_threshold">消息条数阈值</string>
+    <string name="settings_summary_message_count_threshold">触发总结的消息数</string>
     <string name="settings_summary_message_count_threshold_subtitle">触发总结的新消息数量(1-20条)</string>
     <string name="settings_summary_custom_rules">自定义总结规则</string>
     <string name="settings_summary_custom_rules_desc">总结对话时发送的额外规则，留空为不添加</string>
@@ -1078,7 +1078,7 @@
     <string name="tag_count_locked_status">已选择 %1$d / 上限 %2$d</string>
     
     <!-- Package Manager Screen -->
-    <string name="packages">包管理</string>
+    <string name="packages">扩展管理</string>
     <string name="skills">技能</string>
     <string name="quick_plugin_creator_title">快速创作你的插件</string>
     <string name="quick_plugin_creator_desc">内置和市场都找不到想要的插件？创作你自己想要的！</string>
@@ -1164,7 +1164,7 @@
     <string name="back_to_list">返回列表</string>
     
     <!-- Language Settings -->
-    <string name="language_settings">语言设置</string>
+    <string name="language_settings">界面语言</string>
     <string name="language_settings_desc">更改应用界面显示语言</string>
     <string name="change_language">更改语言</string>
     <string name="select_language">选择语言</string>
@@ -2123,7 +2123,7 @@
     <string name="tool_test_center_desc">测试AI工具的可用性和功能状态</string>
     <string name="tool_file_manager">文件管理器</string>
     <string name="tool_file_manager_desc">浏览和管理设备文件，支持多种操作</string>
-    <string name="tool_tts">文本转语音</string>
+    <string name="tool_tts">文字朗读</string>
     <string name="tool_tts_desc">将文本转换为语音，支持调整语速和音调</string>
     <string name="tts_title">文本转语音演示</string>
     <string name="tts_input_text">输入文本</string>
@@ -2177,7 +2177,7 @@
     <string name="ui_debugger_description">点击右下角的按钮启动悬浮窗进行UI调试</string>
     <string name="ui_debugger_launch_floating">启动悬浮窗</string>
     <string name="ui_debugger_start_float">启动悬浮窗</string>
-    <string name="tool_ffmpeg_toolbox">FFmpeg工具箱</string>
+    <string name="tool_ffmpeg_toolbox">FFmpeg 工具箱</string>
     <string name="tool_ffmpeg_toolbox_desc">强大的音视频处理工具，支持转换、裁剪、合并等功能</string>
     <string name="tool_stream_markdown_demo">流式Markdown演示</string>
     <string name="tool_stream_markdown_demo_desc">高性能流式Markdown渲染演示，支持实时字符流动效果</string>
@@ -2212,7 +2212,7 @@
     <string name="shell_executor_execute_failed">执行命令失败: %s</string>
     <string name="tool_log_viewer">日志查看器</string>
     <string name="tool_log_viewer_desc">实时捕获并查看系统和应用日志，支持过滤和搜索</string>
-    <string name="tool_sql_viewer">SQL 查看器</string>
+    <string name="tool_sql_viewer">SQL 工具</string>
     <string name="tool_sql_viewer_desc">查看应用数据库表并执行 SQL 命令</string>
     <string name="tool_token_config_desc">打开 API 密钥获取与配置页面，便于快速完成模型接入</string>
     <string name="screen_title_sql_viewer">SQL 查看器</string>
@@ -2634,7 +2634,7 @@
     <string name="logcat_no_logs">暂无日志数据</string>
     <string name="logcat_permission_required">需要读取日志权限</string>
     <string name="logcat_logs_saved">日志已保存到 %s</string>
-    <string name="logcat_export_title">应用日志导出</string>
+    <string name="logcat_export_title">应用日志</string>
     <string name="logcat_management">应用日志管理</string>
     <string name="logcat_description">您可以将应用运行期间的所有内部日志导出到一个文件，用于调试和问题分析。</string>
     <string name="logcat_save_to_file">保存日志到文件</string>
@@ -3466,7 +3466,7 @@
     <string name="settings_user_preferences_subtitle">编辑和预览 user.md</string>
     <string name="settings_language_subtitle">界面语言切换</string>
     <string name="settings_theme_subtitle">主题和外观定制</string>
-    <string name="layout_adjustment">布局调整</string>
+    <string name="layout_adjustment">界面布局</string>
     <string name="layout_adjustment_subtitle">调整界面元素位置和边距</string>
     <string name="settings_model_params_subtitle">模型参数和API配置</string>
     <string name="settings_functional_model_subtitle">功能模型专项配置</string>
@@ -3533,7 +3533,7 @@
     <string name="settings_external_http_chat">外部 HTTP 调用</string>
     <string name="settings_external_http_chat_subtitle">监听 0.0.0.0 的 HTTP 聊天接口、端口和 Bearer Token</string>
     <string name="settings_data_backup_subtitle">聊天记录备份管理</string>
-    <string name="settings_token_usage_stats">Token使用统计</string>
+    <string name="settings_token_usage_stats">用量与费用</string>
     <string name="settings_function_label">功能</string>
     <string name="settings_model_label">模型</string>
     <string name="settings_no_token_records">暂无功能模块的Token使用记录。</string>
@@ -3542,8 +3542,9 @@
     <string name="settings_usage_summary">使用统计</string>
     <string name="settings_total_chats">对话</string>
     <string name="settings_total_messages">消息</string>
-    <string name="settings_total_tokens">总Token数</string>
-    <string name="settings_total_cost">总费用</string>
+    <string name="settings_total_tokens">总 Token</string>
+    <string name="settings_total_cost">估算费用</string>
+    <string name="token_stats_cost_estimate_hint">按模型定价估算，不代表实际账单</string>
     <string name="settings_total_requests">总请求次数</string>
     <string name="settings_model_usage_distribution">模型使用分布</string>
     <string name="settings_model_details">模型详情</string>
@@ -3580,9 +3581,9 @@
     <string name="settings_reset">重置</string>
     <string name="settings_token_stats_reset_failed">重置统计失败，请重试</string>
     <string name="settings_edit_pricing">编辑定价</string>
-    <string name="settings_input_tokens">输入Token</string>
-    <string name="settings_output_tokens">输出Token</string>
-    <string name="settings_cached_tokens_label">缓存Token</string>
+    <string name="settings_input_tokens">输入 Token</string>
+    <string name="settings_output_tokens">输出 Token</string>
+    <string name="settings_cached_tokens_label">缓存 Token</string>
     <string name="settings_price_format">¥%.2f/1M</string>
     <string name="settings_cost">费用</string>
 
@@ -4093,7 +4094,7 @@
     <string name="api_endpoint_placeholder">例如: https://api.openai.com/v1/chat/completions</string>
     <string name="actual_request_url">实际请求地址: %s</string>
     <string name="endpoint_completion_hint">提示: 如果您输入的是基础URL，系统将自动补全路径。如需禁用，请在URL末尾添加#号。</string>
-    <string name="api_key">API密钥</string>
+    <string name="api_key">API 密钥</string>
     <string name="api_key_placeholder_default">使用默认Key, 可直接输入</string>
     <string name="api_key_placeholder_custom">输入API密钥</string>
     <string name="model_name">模型名称</string>
@@ -4104,7 +4105,7 @@
     <string name="get_models_list_failed">获取模型列表失败: %s</string>
     <string name="default_config_no_models_list">使用默认配置时无法获取模型列表</string>
     <string name="fill_endpoint_and_key">请先填写API端点和密钥</string>
-    <string name="api_provider">API提供商</string>
+    <string name="api_provider">API 提供商</string>
     <string name="select_api_provider">点击选择API提供商</string>
     <string name="select">选择</string>
     <string name="default_config_model_restriction">使用默认配置时，只能使用deepseek-v4-flash模型</string>
@@ -4134,7 +4135,7 @@
     <string name="enable_google_search_desc">启用后，Gemini 将使用 Google 搜索来增强回答（可能产生额外费用）</string>
     <string name="enable_claude_1h_prompt_cache">启用 Claude 1 小时提示缓存</string>
     <string name="enable_claude_1h_prompt_cache_desc">启用后，Claude 和 Claude 兼容供应商的提示缓存 TTL 将使用 1 小时</string>
-    <string name="enable_tool_call">模型支持ToolCall</string>
+    <string name="enable_tool_call">原生 ToolCall</string>
     <string name="enable_tool_call_desc">关闭时，会使用软件内工具调用机制，也可以完成工具调用。开启后，将会使用API的专用接口进行原生工具调用（需要模型支持）</string>
     <string name="enable_deepseek_reasoning">启用 DeepSeek 推理模式</string>
     <string name="enable_deepseek_reasoning_desc">启用后，&lt;think&gt;标签内的内容将作为reasoning_content发送给DeepSeek模型，用于支持DeepSeek-R1等推理模型的工具调用</string>
@@ -7604,7 +7605,7 @@
     <string name="visit_web_wait_time_value">%1$d 秒</string>
     <string name="enable_enter_to_send">回车发送</string>
     <string name="enable_enter_to_send_description">开启后，聊天输入框按回车会直接发送，键盘发送键也会显示为发送。</string>
-    <string name="tool_collapse_mode_title">折叠工具</string>
+    <string name="tool_collapse_mode_title">工具记录折叠</string>
     <string name="tool_collapse_mode_desc">设置消息中工具调用分组的默认折叠范围</string>
     <string name="tool_collapse_mode_read_only">折叠多个只读工具</string>
     <string name="tool_collapse_mode_all">折叠多个任意工具</string>
@@ -8814,7 +8815,7 @@
     <string name="tool_errors_week">近 7 天</string>
     <string name="tool_errors_fortnight">近 14 天</string>
     <string name="tool_errors_month">近 30 天</string>
-    <string name="tool_repairs_title">工具调用修复</string>
+    <string name="tool_repairs_title">工具调用修复记录</string>
     <string name="tool_repairs_scope">记录工具执行前的自动路由修复，不代表执行成功。</string>
     <string name="tool_repairs_total">共 %1$d 条修复记录</string>
     <string name="tool_repairs_empty">暂无工具调用修复记录</string>
@@ -8854,7 +8855,7 @@
     <string name="floating_voice_answering">正在回答…</string>
     <string name="floating_voice_starting">正在启动语音…</string>
     <string name="screen_ocr_capturing">正在截取屏幕…</string>
-    <string name="model_protocol_title">协议处理</string>
+    <string name="model_protocol_title">API 协议</string>
     <string name="model_protocol_desc">仅应用到当前模型，默认继承提供商配置。</string>
     <string name="model_protocol_inherit">继承提供商</string>
     <string name="model_protocol_chat">Chat Completions（标准）</string>
@@ -8865,7 +8866,7 @@
     <string name="model_protocol_deepseek">DeepSeek（思考参数与回传）</string>
     <string name="model_protocol_kimi">Kimi（思考参数与回传）</string>
     <string name="model_protocol_mimo">MiMo（思考参数与回传）</string>
-    <string name="model_protocol_endpoint">此模型的端点（可选）</string>
+    <string name="model_protocol_endpoint">此模型的 API 地址（可选）</string>
     <string name="model_protocol_endpoint_desc">留空使用提供商地址，并按协议转换标准路径；非标准地址可在此单独填写。</string>
     <string name="model_protocol_auto_configure">自动配置协议</string>
     <string name="model_protocol_auto_desc">按提供商和模型匹配本地目录，不联网刷新。更新匹配模型的协议，保留手填端点；未匹配的设置不变。</string>

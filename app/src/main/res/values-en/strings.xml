@@ -76,7 +76,7 @@
     <string name="nav_settings">Settings</string>
     <string name="nav_tool_permissions">Tool Permissions</string>
     <string name="nav_about">About</string>
-    <string name="nav_packages">Packages</string>
+    <string name="nav_packages">Extensions</string>
     <string name="nav_assistant_config">Assistant Config</string>
     <string name="nav_terminal">Terminal</string>
     <string name="nav_toolbox">Toolbox</string>
@@ -160,7 +160,7 @@
     <string name="floating_hello">Hello</string>
 
 
-    <string name="nav_help">User Manual</string>
+    <string name="nav_help">Help</string>
 
     <!-- Color Picker -->
     <string name="colorpicker_select_primary">Select primary color</string>
@@ -973,7 +973,7 @@
     <string name="settings_customize_theme">Customize Theme</string>
     <string name="settings_global_display">Display &amp; Behavior</string>
     <string name="settings_global_display_subtitle">Manage global options for display style, automation behavior, and screenshots</string>
-    <string name="settings_data_backup">Data Backup and Recovery</string>
+    <string name="settings_data_backup">Backup and Restore</string>
     <string name="settings_data_backup_desc">Import, export, or delete chat history and memory library data for easy backup and recovery of important information</string>
     <string name="settings_chat_history_management">Chat History Management</string>
     <string name="settings_chat_history_management_subtitle">View stats and batch organize your conversations</string>
@@ -998,7 +998,7 @@
     <string name="settings_enable_summary_desc">Automatically generate conversation summaries when context is too long to save Token consumption</string>
     <string name="settings_enable_summary_by_message_count">Trigger summary by message count</string>
     <string name="settings_enable_summary_by_message_count_desc">Trigger summary when new message count reaches threshold</string>
-    <string name="settings_summary_message_count_threshold">Message Count Threshold</string>
+    <string name="settings_summary_message_count_threshold">Messages Before Summary</string>
     <string name="settings_summary_message_count_threshold_subtitle">Number of new messages to trigger summary (1-20)</string>
     <string name="settings_summary_custom_rules">Custom Summary Rules</string>
     <string name="settings_summary_custom_rules_desc">Extra rules sent when summarizing the conversation. Leave blank for none</string>
@@ -1122,7 +1122,7 @@
     <string name="tag_count_locked_status">Selected %1$d / Limit %2$d</string>
     
     <!-- Package Manager Screen -->
-    <string name="packages">Packages</string>
+    <string name="packages">Extensions</string>
     <string name="skills">Skills</string>
     <string name="show_to_ai_short">AI</string>
     <string name="package_manager">Package Manager</string>
@@ -1186,7 +1186,7 @@
     <string name="back_to_list">Back to List</string>
     
     <!-- Language Settings -->
-    <string name="language_settings">Language Settings</string>
+    <string name="language_settings">Interface Language</string>
     <string name="language_settings_desc">Change the display language of the application</string>
     <string name="change_language">Change Language</string>
     <string name="select_language">Select Language</string>
@@ -2038,7 +2038,7 @@
     <string name="tool_test_center_desc">Test the availability and functionality of AI tools</string>
     <string name="tool_file_manager">File Manager</string>
     <string name="tool_file_manager_desc">Browse and manage device files with various operations support</string>
-    <string name="tool_tts">Text-to-Speech</string>
+    <string name="tool_tts">Read Aloud</string>
     <string name="tool_tts_desc">Convert text to speech with adjustable speed and pitch</string>
     <string name="tts_title">Text-to-Speech Demo</string>
     <string name="tts_input_text">Input Text</string>
@@ -2127,7 +2127,7 @@
     <string name="shell_executor_execute_failed">Command execution failed: %s</string>
     <string name="tool_log_viewer">Log Viewer</string>
     <string name="tool_log_viewer_desc">Real-time capture and view system and application logs with filtering and search support</string>
-    <string name="tool_sql_viewer">SQL Viewer</string>
+    <string name="tool_sql_viewer">SQL Tool</string>
     <string name="tool_sql_viewer_desc">Browse built-in tables and run SQL commands</string>
     <string name="tool_token_config_desc">Open the API key acquisition and configuration page for quick model setup</string>
     <string name="screen_title_sql_viewer">SQL Viewer</string>
@@ -2607,7 +2607,7 @@
     <string name="logcat_no_logs">No log data</string>
     <string name="logcat_permission_required">Log read permission required</string>
     <string name="logcat_logs_saved">Logs saved to %s</string>
-    <string name="logcat_export_title">App Log Export</string>
+    <string name="logcat_export_title">App Logs</string>
     <string name="logcat_management">App Log Management</string>
     <string name="logcat_description">You can export all internal logs during app runtime to a file for debugging and issue analysis.</string>
     <string name="logcat_save_to_file">Save logs to file</string>
@@ -3581,7 +3581,7 @@
     <string name="settings_user_preferences_subtitle">Edit and preview user.md</string>
     <string name="settings_language_subtitle">Interface language switching</string>
     <string name="settings_theme_subtitle">Theme and appearance customization</string>
-    <string name="layout_adjustment">Layout Adjustment</string>
+    <string name="layout_adjustment">Interface Layout</string>
     <string name="layout_adjustment_subtitle">Adjust UI element positions and margins</string>
     <string name="settings_model_params_subtitle">Model parameters and API configuration</string>
     <string name="settings_functional_model_subtitle">Functional model specific configuration</string>
@@ -3645,7 +3645,7 @@
     <string name="clear_cookies_success">Cookies cleared</string>
     <string name="clear_cookies_failed">Failed to clear cookies</string>
     <string name="settings_data_backup_subtitle">Chat history backup management</string>
-    <string name="settings_token_usage_stats">Token Usage Statistics</string>
+    <string name="settings_token_usage_stats">Usage and Costs</string>
     <string name="settings_function_label">Function</string>
     <string name="settings_model_label">Model</string>
     <string name="settings_no_token_records">No token usage records for functional modules yet.</string>
@@ -3655,7 +3655,8 @@
     <string name="settings_total_chats">Chats</string>
     <string name="settings_total_messages">Messages</string>
     <string name="settings_total_tokens">Total Tokens</string>
-    <string name="settings_total_cost">Total Cost</string>
+    <string name="settings_total_cost">Estimated Cost</string>
+    <string name="token_stats_cost_estimate_hint">Estimated using model pricing, not your actual bill</string>
     <string name="settings_total_requests">Total Requests</string>
     <string name="settings_model_usage_distribution">Model Usage Distribution</string>
     <string name="settings_request_count">Request Count</string>
@@ -4210,7 +4211,7 @@
     <string name="enable_google_search_desc">When enabled, Gemini will use Google Search to enhance responses (may incur additional charges)</string>
     <string name="enable_claude_1h_prompt_cache">Enable Claude 1-hour prompt cache</string>
     <string name="enable_claude_1h_prompt_cache_desc">When enabled, Claude and Claude-compatible providers use a 1-hour prompt cache TTL</string>
-    <string name="enable_tool_call">Model supports ToolCall</string>
+    <string name="enable_tool_call">Native ToolCall</string>
     <string name="enable_tool_call_desc">When disabled, uses the built-in tool invocation mechanism which also supports tool calls. When enabled, uses the API\'s dedicated native interface (requires model support)</string>
     <string name="enable_deepseek_reasoning">Enable DeepSeek Reasoning Mode</string>
     <string name="enable_deepseek_reasoning_desc">When enabled, content within &lt;think&gt; tags will be sent as reasoning_content to DeepSeek models, supporting tool invocation for reasoning models like DeepSeek-R1</string>
@@ -7135,7 +7136,7 @@
     <string name="visit_web_wait_time_title">Visit Web Wait Time</string>
     <string name="visit_web_wait_time_description">Controls how long visit_web waits before returning after page content is extracted. Set to 0 seconds to return immediately.</string>
     <string name="visit_web_wait_time_value">%1$d s</string>
-    <string name="tool_collapse_mode_title">Collapse Tools</string>
+    <string name="tool_collapse_mode_title">Collapse Tool Records</string>
     <string name="tool_collapse_mode_desc">Set the default collapse scope for tool-call groups in messages</string>
     <string name="tool_collapse_mode_read_only">Collapse Multiple Read-only Tools</string>
     <string name="tool_collapse_mode_all">Collapse Multiple Tool Calls</string>
@@ -8838,7 +8839,7 @@
     <string name="tool_errors_week">Last 7 days</string>
     <string name="tool_errors_fortnight">Last 14 days</string>
     <string name="tool_errors_month">Last 30 days</string>
-    <string name="tool_repairs_title">Tool call repairs</string>
+    <string name="tool_repairs_title">Tool Call Repair History</string>
     <string name="tool_repairs_scope">Automatic routing repairs before execution; these do not indicate successful execution.</string>
     <string name="tool_repairs_total">%1$d repair records</string>
     <string name="tool_repairs_empty">No tool call repairs yet</string>
@@ -8878,7 +8879,7 @@
     <string name="floating_voice_answering">Responding…</string>
     <string name="floating_voice_starting">Starting voice chat…</string>
     <string name="screen_ocr_capturing">Capturing screen…</string>
-    <string name="model_protocol_title">Protocol handling</string>
+    <string name="model_protocol_title">API Protocol</string>
     <string name="model_protocol_desc">Applies only to this model. Inherits the provider by default.</string>
     <string name="model_protocol_inherit">Inherit provider</string>
     <string name="model_protocol_chat">Chat Completions (standard)</string>
@@ -8889,7 +8890,7 @@
     <string name="model_protocol_deepseek">DeepSeek (thinking controls and replay)</string>
     <string name="model_protocol_kimi">Kimi (thinking controls and replay)</string>
     <string name="model_protocol_mimo">MiMo (thinking controls and replay)</string>
-    <string name="model_protocol_endpoint">Model endpoint (optional)</string>
+    <string name="model_protocol_endpoint">API URL for This Model (Optional)</string>
     <string name="model_protocol_endpoint_desc">Leave blank to use the provider URL with the standard path adjusted for this protocol. Enter custom endpoints here.</string>
     <string name="model_protocol_auto_configure">Auto-configure protocols</string>
     <string name="model_protocol_auto_desc">Matches the provider and model in the local catalog without a network refresh. Updates matched protocols, keeps custom endpoints, and leaves unmatched settings unchanged.</string>
