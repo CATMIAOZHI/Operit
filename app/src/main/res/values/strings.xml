@@ -1,5 +1,9 @@
 <resources>
-    <string name="logcat_flush_incomplete">现有日志已保存至 %1$s；部分日志尚未写入或写入失败，导出可能不完整。</string>
+    <string name="logcat_flush_incomplete">现有日志已保存至 %1$s；日志可能不完整，原因也已记录在压缩包的 export-status.txt 中。</string>
+    <string name="logcat_export_pending">开始导出时的日志仍有 %1$d 条未完成写入。</string>
+    <string name="logcat_export_dropped">日志队列曾因繁忙或线程中断丢弃 %1$d 条记录，无法恢复。</string>
+    <string name="logcat_export_write_failed">本次日志记录期间发生过文件写入失败。</string>
+    <string name="logcat_export_interrupted">等待日志写入的操作被中断。</string>
     <string name="local_llm_removed">此版本已移除手机本地大模型推理。请选择云端或远程服务；原模型文件保留在 Download/Operit/models，可通过文件管理器自行清理。</string>
     <string name="openai_error_repetition_truncation">模型因重复输出被服务端截断，已丢弃异常响应并停止本轮工具执行。</string>
     <string name="openai_retry_repetition_truncation">模型出现重复输出，已丢弃异常响应，正在重新请求一次。</string>
