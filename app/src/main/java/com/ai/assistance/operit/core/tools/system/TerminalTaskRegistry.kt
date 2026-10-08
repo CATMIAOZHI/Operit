@@ -19,6 +19,9 @@ internal class TerminalTaskRegistry(
         val output: String,
         val outputTruncated: Boolean,
         val terminationReason: String?,
+        val exitCode: Int?,
+        val sessionExitCode: Int?,
+        val screen: String?,
     )
 
     private class Run(val id: String, val sessionId: String) {
@@ -28,6 +31,9 @@ internal class TerminalTaskRegistry(
         var output = ""
         var truncated = false
         var reason: String? = null
+        var exitCode: Int? = null
+        var sessionExitCode: Int? = null
+        var screen: String? = null
     }
 
     private val runs = linkedMapOf<String, Run>()
@@ -49,11 +55,15 @@ internal class TerminalTaskRegistry(
                         synchronized(this@TerminalTaskRegistry) {
                             val text = if (event.isCompleted) {
                                 event.outputChunk.ifEmpty { run.output }
-                            } else if (run.output.isEmpty()) event.outputChunk
+                            } else if (event.outputChunk.isEmpty()) run.output
+                            else if (run.output.isEmpty()) event.outputChunk
                             else run.output + "\n" + event.outputChunk
                             run.truncated = run.truncated || text.length > outputLimit
                             run.output = text.takeLast(outputLimit)
+                            event.screen?.let { run.screen = it.takeLast(12_000) }
                             if (event.isCompleted) {
+                                run.exitCode = event.exitCode
+                                run.sessionExitCode = event.sessionExitCode
                                 run.reason = event.terminationReason
                                 run.status = when (event.terminationReason) {
                                     null -> "completed"
@@ -111,7 +121,8 @@ internal class TerminalTaskRegistry(
         if (yieldMs > 0) withTimeoutOrNull(yieldMs.coerceAtMost(30_000L)) { run.done.await() }
         return synchronized(this) {
             Snapshot(run.id, run.sessionId, run.status, run.output.takeLast(12_000),
-                run.truncated || run.output.length > 12_000, run.reason)
+                run.truncated || run.output.length > 12_000, run.reason,
+                run.exitCode, run.sessionExitCode, run.screen)
         }
     }
 
