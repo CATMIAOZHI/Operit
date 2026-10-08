@@ -8475,7 +8475,7 @@
     <string name="artifact_detail_continue_develop_hint">Development will continue based on this version, with strong reminders about directory restrictions, types synchronization, and compilation methods.</string>
     <string name="artifact_detail_ai_requirement_label">What do you want the AI to do this time?</string>
 
-    <string name="workspace_attachment_attached">Current conversation has attached workspace.</string>
+    <string name="workspace_attachment_attached">This conversation has an attached workspace. The following is the latest workspace information and replaces previously recorded workspace paths and environments; this alone does not require a new conversation. The workspace is the default working directory, not an access boundary. Outside operations remain subject to user authorization, tool review, and actual filesystem permissions.</string>
     <string name="workspace_attachment_path">Workspace path: %1$s</string>
     <string name="workspace_attachment_environment">Workspace environment: %1$s</string>
     <string name="artifact_publish_node_updated">Node「%1$s」updated</string>

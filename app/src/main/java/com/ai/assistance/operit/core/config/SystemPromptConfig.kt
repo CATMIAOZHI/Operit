@@ -551,9 +551,10 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
               """
               WORKSPACE GUIDELINES:
               - The current workspace root is `$workspacePath`${if (shouldShowEnv) " (environment=$envLabel)" else ""}.
-              - Treat this exact path as the base path for all workspace file operations.
-              - When using tools to read, write, search, list, move, or delete workspace files, do not use relative paths; always use absolute paths rooted at `$workspacePath`.
-              ${if (shouldShowEnv) "- When operating on workspace files via tools, always pass `environment=\"$envLabel\"` together with the workspace path." else ""}
+              - The workspace is the default base directory, not a filesystem permission boundary. Operations outside it are subject to user authorization, tool permission review, and actual filesystem access; do not refuse solely because a target is outside the workspace.
+              - When a later user message includes a workspace attachment, use its latest path and environment instead of the workspace path and environment recorded here. A workspace switch alone does not require a new conversation or a system prompt refresh.
+              - Use absolute target paths for file tools. Resolve project-relative targets against the latest workspace root; use the actual absolute path for targets outside it.
+              ${if (shouldShowEnv) "- For workspace file tools that accept an environment parameter, pass the latest workspace environment (initially \"$envLabel\"). For other targets, select the environment where that target actually resides." else ""}
               - Relative paths are only for file contents or project-internal references, not for tool parameters.
               - Terminal mount note: common mounts include `$externalStoragePath -> /sdcard`, `$externalStoragePath -> $externalStoragePath`, and app sandbox `$appFilesPath -> same path`.
               - If the workspace is under mounted paths, execute workspace files directly in the Linux terminal environment; do not copy files before execution.
@@ -563,9 +564,10 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
               """
               工作区指南：
               - 当前工作区根目录是 `$workspacePath`${if (shouldShowEnv) "（environment=$envLabel）" else ""}。
-              - 所有工作区文件操作都要把这个精确路径当作根路径。
-              - 使用工具读取、写入、搜索、列目录、移动或删除工作区文件时，不要使用相对路径，必须使用以 `$workspacePath` 为根的绝对路径。
-              ${if (shouldShowEnv) "- 通过工具操作工作区文件时，每次都必须同时传入 `environment=\"$envLabel\"` 和对应的工作区路径。" else ""}
+              - 工作区是默认工作目录，不是文件访问的权限边界。区外操作仍须符合用户授权、工具权限审核和实际文件系统权限；不要仅因目标位于工作区外而拒绝操作。
+              - 后续用户消息若附带工作区信息，以其中最新的路径和环境替代此处记录的工作区路径和环境。仅切换工作区不需要新开对话或刷新系统提示词。
+              - 文件工具使用目标的绝对路径。项目相对位置以最新工作区根目录解析；区外目标使用其实际绝对路径。
+              ${if (shouldShowEnv) "- 对支持 environment 参数的工作区文件工具，传入最新工作区环境（初始为 \"$envLabel\"）；其他目标按其实际所在环境选择。" else ""}
               - 相对路径只用于文件内容里的项目内部引用，不用于工具参数。
               - 终端挂载说明：常见挂载包括 `$externalStoragePath -> /sdcard`、`$externalStoragePath -> $externalStoragePath`，以及应用沙箱 `$appFilesPath -> 同路径`。
               - 若工作区位于已挂载路径中，直接在 Linux 终端环境中执行工作区文件；无需先复制再执行。
