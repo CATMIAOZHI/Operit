@@ -1725,7 +1725,7 @@
     <string name="confirm_edit_and_resend_message">将删除此消息之后的所有消息，并把已编辑的内容作为新的提问重新发送。AI 写入磁盘的文件改动不会被撤销，需要你自行处理。此操作不可撤销，确定继续吗？</string>
     <string name="confirm_edit_and_resend_confirm">确认编辑并重发</string>
     <string name="confirm_revert_tool_calls_warning">被删除的轮次调用过工具，这些对话被删除后 AI 不再记得它们，重新回答时可能重复操作或误判已有文件，表现可能下降。</string>
-    <string name="workspace_attachment_attached">当前对话已附着工作区。</string>
+    <string name="workspace_attachment_attached">当前对话已附着工作区。以下是最新工作区信息，替代此前记录的工作区路径和环境，无需因此新开对话。工作区是默认工作目录，不是访问权限边界；区外操作仍须符合用户授权、工具审核和实际文件系统权限。</string>
     <string name="workspace_attachment_path">工作区路径：%1$s</string>
     <string name="workspace_attachment_environment">工作区环境：%1$s</string>
     <string name="multi_select">多选</string>
