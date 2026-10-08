@@ -685,12 +685,12 @@ open class OpenAIProvider(
                 preserveThinkInHistory,
             )
         if (
-            automaticReasoningRequestParameters.suppressAutomaticReasoning ||
-                !supportsOpenAiChatReasoningEffort()
+            !automaticReasoningRequestParameters.suppressAutomaticReasoning &&
+                supportsOpenAiChatReasoningEffort()
         ) {
-            return createJsonRequestBody(requestJson.toString())
+            applyOpenAiChatReasoning(context, requestJson, enableThinking)
         }
-        applyOpenAiChatReasoning(context, requestJson, enableThinking)
+        logRequestBodyForDebugging("AIService", "Request body: ") { requestJson }
         return createJsonRequestBody(requestJson.toString())
     }
 
@@ -862,10 +862,7 @@ open class OpenAIProvider(
             OpenCodeZenFree.ensureAnonymousRequestShape(finalRequestObject)
         }
 
-        // 使用分块日志函数记录请求体（省略过长的 tools 字段），可用 AppLogger.logRequestBodies 关闭
-        logRequestBodyForDebugging("AIService", "Request body: ") {
-            finalRequestObject
-        }
+        // The concrete provider logs once after applying its final reasoning parameters.
         return finalRequestObject
     }
 
@@ -2831,9 +2828,13 @@ open class OpenAIProvider(
         onTokensUpdated: suspend (input: Int, cachedInput: Int, output: Int) -> Unit,
         context: Context,
         onUsageReported: (suspend (com.ai.assistance.operit.data.stats.ProviderUsageSnapshot, attempt: Int) -> Unit)? = null,
-        attemptNumber: Int = 1
+        attemptNumber: Int = 1,
+        requestTraceId: String = "unknown",
+        requestStartedAtMs: Long = streamNowMs(),
     ) {
         val state = StreamingState()
+        val responseStartedAtMs = streamNowMs()
+        var firstPayloadLogged = false
         // 只认 data: 有效载荷的进度时间戳：OkHttp 的 readTimeout 会被任意字节（空行、注释心跳）
         // 重置，覆盖不了“连接活着但不再产生数据”的死连接。
         val progress = StreamProgress()
@@ -2855,6 +2856,13 @@ open class OpenAIProvider(
                     state.streamedReasoningContentLength > 0 ||
                     state.accumulatedToolCalls.isNotEmpty() ||
                     state.imageBuffers.isNotEmpty()
+            if (hasPayload && !firstPayloadLogged) {
+                firstPayloadLogged = true
+                val now = streamNowMs()
+                AppLogger.d("AIService",
+                    "[req=$requestTraceId] First stream payload (text/reasoning/tool/image): " +
+                        "sinceRequestMs=${now - requestStartedAtMs}, sinceResponseHeadersMs=${now - responseStartedAtMs}")
+            }
             if (hasPayload && progress.stallTimeoutMs.get() != STREAM_STALL_TIMEOUT_MS) {
                 progress.stallTimeoutMs.set(STREAM_STALL_TIMEOUT_MS)
             }
@@ -3114,7 +3122,9 @@ open class OpenAIProvider(
                                 onTokensUpdated,
                                 context,
                                 onUsageReported,
-                                attemptNumber
+                                attemptNumber,
+                                requestTraceId,
+                                executeStartNs / 1_000_000L,
                             )
                         } else {
                             AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】开始读取非流式响应")
