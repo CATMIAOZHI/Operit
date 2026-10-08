@@ -16,10 +16,30 @@ class TerminalTaskRegistryTest {
 
     @Test fun `bridge JSON preserves timeout and output semantics`() {
         val result = TerminalTaskResultData("run", "session", "timed_out", "tail", false,
-            "execution_timeout", "tail_snapshot", true)
+            "execution_timeout", "tail_snapshot", true, null, null, null)
         val json = Json.parseToJsonElement(result.toJson()).jsonObject
         assertEquals("true", json.getValue("timedOut").jsonPrimitive.content)
         assertEquals("tail_snapshot", json.getValue("outputMode").jsonPrimitive.content)
+        assertEquals("null", json.getValue("exitCode").toString())
+    }
+
+    @Test fun `dynamic screens replace each other without polluting log or hiding nonzero exit`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val registry = TerminalTaskRegistry(scope)
+            val id = registry.start("session", 1000) { id -> flow {
+                emit(event(id, "log"))
+                emit(event(id, "").copy(screen = "10%"))
+                emit(event(id, "").copy(screen = "20%"))
+                emit(event(id, "log", true).copy(exitCode = 2))
+            } }
+            val result = registry.poll(id, 1000)
+            assertEquals("log", result.output)
+            assertEquals("20%", result.screen)
+            assertEquals("completed", result.status)
+            assertEquals(2, result.exitCode)
+            assertNull(result.sessionExitCode)
+        } finally { scope.cancel() }
     }
 
     @Test fun `yield and cancelled poll leave collector alive and final result is repeatable`() = runBlocking {

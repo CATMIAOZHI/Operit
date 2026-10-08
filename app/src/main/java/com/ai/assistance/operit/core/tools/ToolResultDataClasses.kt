@@ -294,8 +294,13 @@ data class TerminalTaskResultData(
     val terminationReason: String? = null,
     val outputMode: String,
     val timedOut: Boolean,
+    val exitCode: Int?,
+    val sessionExitCode: Int?,
+    val screen: String?,
 ) : ToolResultData() {
-    override fun toString(): String = "Terminal task $runId: $status\n$output"
+    override fun toString(): String =
+        "Terminal task $runId: $status; exitCode=$exitCode; sessionExitCode=$sessionExitCode\n$output" +
+            (screen?.let { "\nCurrent terminal screen:\n$it" }.orEmpty())
 }
 
 /** 终端命令流式事件数据 */
