@@ -110,7 +110,7 @@
     <string name="memory_extraction_source_deleted">Conversation deleted; this range will not be reviewed</string>
     <string name="memory_extraction_not_reviewable">Branch and hidden conversations are not reviewed</string>
     <string name="memory_extraction_window_too_small">The context window of the model used for memory extraction is too small. Raise it for the MEMORY model in the model settings.</string>
-    <string name="memory_extraction_export_blocked">The pending review limit was reached; resolve the review list before extraction continues</string>
+    <string name="memory_extraction_export_blocked">Changes could not be saved to review history and are retained for retry. See the reason below; if the pending review list is full, resolve it first.</string>
     <string name="memory_extraction_cancelled">Extraction cancelled</string>
     <string name="memory_extraction_interrupted">Interrupted by app exit</string>
     <string name="memory_extraction_source_unreadable">This conversation\'s messages can no longer be read, so this range will not be reviewed</string>

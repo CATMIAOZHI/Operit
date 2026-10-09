@@ -30,11 +30,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
 
 class OpenAIVoiceProvider(
     private val context: Context,
-    private val endpointUrl: String,
+    endpointUrl: String,
     private val apiKey: String,
     private val model: String,
     initialVoiceId: String
 ) : VoiceService {
+    private val endpointUrl = resolveOpenAiSpeechEndpoint(endpointUrl)
 
     companion object {
         private const val TAG = "OpenAIVoiceProvider"
@@ -94,7 +95,7 @@ class OpenAIVoiceProvider(
             if (!endpointUrl.startsWith("http://") && !endpointUrl.startsWith("https://")) {
                 throw TtsException(context.getString(R.string.openai_tts_error_url_invalid_scheme))
             }
-            if (!endpointUrl.contains("/audio/speech")) {
+            if (!isOpenAiSpeechEndpoint(endpointUrl)) {
                 throw TtsException(context.getString(R.string.openai_tts_error_url_invalid_path))
             }
             if (apiKey.isBlank()) {

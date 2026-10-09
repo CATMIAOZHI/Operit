@@ -7504,7 +7504,7 @@
     <!-- OpenAIVoiceProvider -->
     <string name="openai_tts_error_url_not_set">OpenAI TTS URL not set, please enter the complete interface address (e.g., https://xxx/v1/audio/speech).</string>
     <string name="openai_tts_error_url_invalid_scheme">OpenAI TTS URL must start with http:// or https://.</string>
-    <string name="openai_tts_error_url_invalid_path">OpenAI TTS URL must contain /v1/audio/speech (please fill in complete to audio/speech).</string>
+    <string name="openai_tts_error_url_invalid_path">The speech URL must end with /audio/speech. A service root URL or /v1 is completed automatically; enter the full URL for custom paths.</string>
     <string name="openai_tts_error_api_key_not_set">API Key not set, please fill in settings.</string>
     <string name="openai_tts_error_model_not_set">OpenAI TTS model not set, please fill in settings (e.g., tts-1).</string>
     <string name="openai_tts_error_voice_not_set">OpenAI TTS voice not set, please fill in settings (e.g., alloy).</string>
@@ -8846,6 +8846,7 @@
     <string name="tool_repairs_line_range">Line range redirected to the partial file reader</string>
     <string name="tool_repairs_separator">Corrected repeated colons in the terminal tool name</string>
     <string name="tool_repairs_timeout">Normalized terminal timeout to timeoutMs</string>
+    <string name="tool_repairs_proxy_yield">Moved terminal yieldMs into tool parameters</string>
     <string name="tool_repairs_package">Removed redundant package_name matching the target package</string>
     <string name="tool_repairs_flattened_proxy">Recovered the tool_name that was folded into the params text</string>
     <string name="tool_repairs_memory_argument">Renamed the memory tool\'s new_text argument to content</string>

@@ -143,34 +143,14 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
     }
     suspend fun export(): List<String> {
         // The import below can suspend, so the journal is only locked for the read and the release.
-        val captured = synchronized(lock) {
-            val reviewedGeneration = state.optInt("generation",0)
+        val array = synchronized(lock) {
             reload()
-            reviewedGeneration to state.optJSONArray("export")
-        }
-        val reviewedGeneration = captured.first
-        val array = captured.second ?: return emptyList()
+            state.optJSONArray("export")
+        } ?: return emptyList()
         val changes = (0 until array.length()).map { reviews.fromJson(array.getJSONObject(it)) }
-        try {
-            reviews.importCompletedBatch(changes)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            // A full review queue or a store that cannot be written will not accept the same batch
-            // later either, so the barrier is released and the range is dropped instead of blocking
-            // this conversation forever. The cursor has already moved past it, so it will not be read
-            // again; the caller records the dropped batch in the extraction log.
-            synchronized(lock) {
-                reload()
-                state.remove("export")
-                val newerEnqueued = state.optInt("generation",0) > reviewedGeneration
-                listOf("notes","skills").forEach {
-                    state.put("pending_$it",newerEnqueued && state.optBoolean("pending_$it"))
-                }
-                save()
-            }
-            return listOf(learningFailureDetail("import",e))
-        }
+        // Keep the durable export on failure. The caller stops this attempt and reports the error;
+        // a later trigger can import the same IDs without regenerating or losing the reviewed batch.
+        reviews.importCompletedBatch(changes)
         val failures = mutableListOf<String>()
         for (change in changes) {
             currentCoroutineContext().ensureActive()
