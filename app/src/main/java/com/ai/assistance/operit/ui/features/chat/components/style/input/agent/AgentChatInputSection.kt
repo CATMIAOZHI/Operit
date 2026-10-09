@@ -32,7 +32,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.outlined.Block
@@ -919,12 +919,17 @@ fun AgentChatInputSection(
                             ),
                         shape = RoundedCornerShape(14.dp),
                         trailingIcon = {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                            com.ai.assistance.operit.ui.features.chat.components.style.input.common.DraftVoiceInputButton(
+                                actualViewModel, userMessage, onUserMessageChange,
+                                !isProcessing || allowTextInputWhileProcessing)
                             IconButton(onClick = { showFullscreenInput.value = true }) {
                                 Icon(
                                     imageVector = Icons.Default.Fullscreen,
                                     contentDescription = stringResource(R.string.chat_fullscreen_input),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
+                            }
                             }
                         },
                         enabled = !isProcessing || allowTextInputWhileProcessing,
@@ -1120,14 +1125,14 @@ fun AgentChatInputSection(
                                             showCancelAction -> Icons.Default.Close
                                             showQueueAction -> Icons.Default.Add
                                             canSendMessage -> Icons.AutoMirrored.Filled.Send
-                                            else -> Icons.Default.Mic
+                                            else -> Icons.Default.Headset
                                         },
                                     contentDescription =
                                         when {
                                             showCancelAction -> context.getString(R.string.cancel)
                                             showQueueAction -> context.getString(R.string.chat_queue_add_message)
                                             canSendMessage -> context.getString(R.string.send)
-                                            else -> context.getString(R.string.voice_input)
+                                            else -> context.getString(R.string.voice_conversation_entry)
                                         },
                                     tint = actionButtonIconTint,
                                     modifier = Modifier.size(18.dp),
@@ -1219,12 +1224,17 @@ fun AgentChatInputSection(
                                 ),
                             shape = RoundedCornerShape(14.dp),
                             trailingIcon = {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                com.ai.assistance.operit.ui.features.chat.components.style.input.common.DraftVoiceInputButton(
+                                    actualViewModel, userMessage, onUserMessageChange,
+                                    !isProcessing || allowTextInputWhileProcessing)
                                 IconButton(onClick = { showFullscreenInput.value = true }) {
                                     Icon(
                                         imageVector = Icons.Default.Fullscreen,
                                         contentDescription = stringResource(R.string.chat_fullscreen_input),
                                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                                     )
+                                }
                                 }
                             },
                             enabled = !isProcessing || allowTextInputWhileProcessing,
@@ -1420,14 +1430,14 @@ fun AgentChatInputSection(
                                                 showCancelAction -> Icons.Default.Close
                                                 showQueueAction -> Icons.Default.Add
                                                 canSendMessage -> Icons.AutoMirrored.Filled.Send
-                                                else -> Icons.Default.Mic
+                                                else -> Icons.Default.Headset
                                             },
                                         contentDescription =
                                             when {
                                                 showCancelAction -> context.getString(R.string.cancel)
                                                 showQueueAction -> context.getString(R.string.chat_queue_add_message)
                                                 canSendMessage -> context.getString(R.string.send)
-                                                else -> context.getString(R.string.voice_input)
+                                                else -> context.getString(R.string.voice_conversation_entry)
                                             },
                                         tint = actionButtonIconTint,
                                         modifier = Modifier.size(18.dp),
