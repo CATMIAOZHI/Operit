@@ -110,7 +110,7 @@
     <string name="memory_extraction_source_deleted">对话已删除，这段内容不会再提取</string>
     <string name="memory_extraction_not_reviewable">分支或隐藏对话不做记忆提取</string>
     <string name="memory_extraction_window_too_small">记忆提取的模型上下文窗口过小，请在「模型配置」里把 MEMORY（记忆）用的模型上下文调大</string>
-    <string name="memory_extraction_export_blocked">待审批的改动已达上限，先处理审批列表再继续提取</string>
+    <string name="memory_extraction_export_blocked">改动尚未存入审批记录，已保留等待重试。请查看下方原因；若待审批已满，请先处理审批列表。</string>
     <string name="memory_extraction_cancelled">提取已取消</string>
     <string name="memory_extraction_interrupted">被应用退出中断</string>
     <string name="memory_extraction_source_unreadable">这段对话的消息已无法读取，不会再提取</string>
