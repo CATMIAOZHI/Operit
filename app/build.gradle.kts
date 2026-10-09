@@ -186,8 +186,9 @@ android {
         applicationId = "com.rainy.operitry"
         minSdk = 26
         targetSdk = 34
-        // Dev/beta releases keep this code; increment only for a new base version.
-        versionCode = 100204
+        // Bound to the baseline version, not to the ry release counter: bump by one only when the
+        // baseline itself moves. Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
+        versionCode = 100205
         versionName = "1.12.2-ry.6"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
