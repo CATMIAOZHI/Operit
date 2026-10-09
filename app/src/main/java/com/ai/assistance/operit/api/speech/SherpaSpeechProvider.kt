@@ -36,6 +36,7 @@ import kotlin.math.max
  */
 @SuppressLint("MissingPermission")
 class SherpaSpeechProvider(private val context: Context) : SpeechService {
+    override val supportsContinuousRecognition = true
     companion object {
         private const val TAG = "SherpaSpeechProvider"
     }
@@ -95,9 +96,11 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
     private var currentVolume = 0f
 
     private val initializeMutex = Mutex()
+    @Volatile private var closed = false
     private val recognitionMutex = Mutex()
 
     override suspend fun initialize(): Boolean {
+        if (closed) return false
         if (isInitialized.value) return true
         return initializeMutex.withLock {
             if (isInitialized.value) return@withLock true
@@ -106,6 +109,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             try {
                 withContext(Dispatchers.IO) {
                     createRecognizer()
+                    if (closed) return@withContext false
                     if (recognizer != null) {
                         AppLogger.d(TAG, "sherpa-ncnn initialized successfully")
                         _isInitialized.value = true
@@ -145,7 +149,10 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
     }
 
     private suspend fun createRecognizer() {
+        check(!closed) { "Speech service closed" }
         val localModelDir = OnDemandResources.ensureSpeech(context)
+        OnDemandResources.withLegacySpeechFiles {
+        check(!closed) { "Speech service closed" }
 
         val featConfig = getFeatureExtractorConfig(sampleRate = 16000.0f, featureDim = 80)
 
@@ -191,6 +198,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                         config = recognizerConfig,
                         assetManager = null // Force using newFromFile
                 )
+        }
     }
 
     /**
@@ -519,12 +527,14 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
     }
 
     override fun shutdown() {
+        closed = true
         runBlocking {
             try {
                 cancelRecognition()
             } catch (_: Exception) {
             }
             withContext(Dispatchers.IO) {
+                OnDemandResources.withLegacySpeechFiles {
                 try {
                     recognizer?.release()
                 } catch (_: Exception) {
@@ -535,6 +545,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                 } catch (_: Exception) {
                 }
                 vad = null
+                }
             }
             _isInitialized.value = false
             _recognitionState.value = SpeechService.RecognitionState.UNINITIALIZED

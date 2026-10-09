@@ -3,9 +3,14 @@ package com.ai.assistance.operit.api.speech
 import android.media.MediaRecorder
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.map
 
 /** 语音识别服务接口 定义与不同语音识别引擎进行交互的标准方法 */
 interface SpeechService {
+    /** Only streaming engines can keep decoding across multiple endpoints. */
+    val supportsContinuousRecognition: Boolean get() = false
+    val speechActivityFlow: Flow<Boolean>
+        get() = recognitionResultFlow.map { it.text.isNotBlank() }
     /** 当前识别引擎状态枚举 */
     enum class RecognitionState {
         /** 未初始化 */

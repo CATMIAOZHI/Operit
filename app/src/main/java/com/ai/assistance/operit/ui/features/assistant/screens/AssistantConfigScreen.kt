@@ -59,6 +59,7 @@ fun AssistantConfigScreen() {
     val wakePhraseRegexEnabled by wakePrefs.wakePhraseRegexEnabledFlow.collectAsState(initial = WakeWordPreferences.DEFAULT_WAKE_PHRASE_REGEX_ENABLED)
     val wakeRecognitionMode by wakePrefs.wakeRecognitionModeFlow.collectAsState(initial = WakeWordPreferences.WakeRecognitionMode.STT)
     val personalWakeTemplates by wakePrefs.personalWakeTemplatesFlow.collectAsState(initial = emptyList())
+    val voiceInterruptionEnabled by wakePrefs.voiceInterruptionEnabledFlow.collectAsState(initial = false)
     val inactivityTimeoutSeconds by wakePrefs.voiceCallInactivityTimeoutSecondsFlow.collectAsState(
         initial = WakeWordPreferences.DEFAULT_VOICE_CALL_INACTIVITY_TIMEOUT_SECONDS
     )
@@ -457,6 +458,15 @@ fun AssistantConfigScreen() {
                                 }
                             )
                         }
+
+                        CompactSwitchRow(
+                            title = stringResource(R.string.voice_duplex),
+                            description = stringResource(R.string.voice_duplex_hint),
+                            checked = voiceInterruptionEnabled,
+                            onCheckedChange = { enabled ->
+                                coroutineScope.launch { wakePrefs.saveVoiceInterruptionEnabled(enabled) }
+                            }
+                        )
 
                         // Timeout Input
                         OutlinedTextField(
