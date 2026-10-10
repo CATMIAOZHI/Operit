@@ -9,6 +9,7 @@
     <string name="voice_draft_button">Voice to text</string>
     <string name="voice_draft_hint">Transcription fills the message box. Nothing is sent automatically.</string>
     <string name="voice_draft_finish">Finish recording</string>
+    <string name="voice_draft_fill_message_box">Fill the message box</string>
     <string name="voice_draft_permission">Allow microphone access to use voice to text.</string>
     <string name="voice_model_guide_title">Which should I choose?</string>
     <string name="voice_model_guide_asr">Try SenseVoice first if unsure. Choose Paraformer for a smaller download.</string>

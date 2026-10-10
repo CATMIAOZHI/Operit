@@ -9,6 +9,7 @@
     <string name="voice_draft_button">语音转文字</string>
     <string name="voice_draft_hint">识别后填入输入框，不会自动发送。</string>
     <string name="voice_draft_finish">完成录音</string>
+    <string name="voice_draft_fill_message_box">填入输入框</string>
     <string name="voice_draft_permission">请允许使用麦克风，才能语音转文字。</string>
     <string name="voice_model_delete_size">删除 · 可释放 %1$s</string>
     <string name="voice_model_delete_title">删除 %1$s？</string>

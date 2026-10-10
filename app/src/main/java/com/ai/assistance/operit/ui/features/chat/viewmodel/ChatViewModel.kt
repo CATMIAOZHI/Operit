@@ -622,6 +622,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         apiConfigDelegate.toggleThinkingMode()
     }
 
+    fun setThinkingMode(enabled: Boolean) {
+        apiConfigDelegate.setThinkingMode(enabled)
+    }
     fun updateThinkingQualityLevel(level: Int) {
         apiConfigDelegate.updateThinkingQualityLevel(level)
     }
