@@ -52,6 +52,11 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.composerPredictionSemantics
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionLayout
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionViewport
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.visibleComposerPrediction
 import com.ai.assistance.operit.R
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -98,6 +103,7 @@ fun ClassicChatInputSection(
     actualViewModel: ChatViewModel,
     userMessage: TextFieldValue,
     onUserMessageChange: (TextFieldValue) -> Unit,
+    composerPrediction: String? = null,
     enableEnterToSend: Boolean = false,
     onSendMessage: () -> Unit,
     onQueueMessage: () -> Unit,
@@ -180,6 +186,11 @@ fun ClassicChatInputSection(
     }
     val modernTextStyle = chatComposerTextStyle(agent = false)
     val mentionVisualTransformation = rememberMentionVisualTransformation(modernTextStyle)
+    val composerLayout = remember { ComposerPredictionLayout() }
+    val composerTransformation = rememberComposerPredictionTransformation(
+        userMessage, composerPrediction,
+        mentionVisualTransformation,
+    )
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
 
@@ -692,6 +703,9 @@ fun ClassicChatInputSection(
                     modifier = Modifier
                         .weight(1f)
                         .heightIn(min = 24.dp)
+                        .composerPredictionSemantics(userMessage, composerPrediction,
+                            enabled = classicInputEnabled,
+                            onAccept = actualViewModel::acceptComposerPrediction)
                         .onPreviewKeyEvent { keyEvent ->
                             if (!enableEnterToSend) {
                                 false
@@ -708,8 +722,9 @@ fun ClassicChatInputSection(
                         },
                     textStyle = modernTextStyle.copy(color = MaterialTheme.colorScheme.onSurface),
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                    visualTransformation = mentionVisualTransformation,
-                    maxLines = 5,
+                    visualTransformation = composerTransformation,
+                    maxLines = if (visibleComposerPrediction(userMessage, composerPrediction) == null) 5 else Int.MAX_VALUE,
+                    onTextLayout = { composerLayout.result = it },
                     minLines = 1,
                     keyboardOptions =
                     KeyboardOptions(imeAction = if (enableEnterToSend) ImeAction.Send else ImeAction.Default),
@@ -725,7 +740,7 @@ fun ClassicChatInputSection(
                             modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
                             contentAlignment = Alignment.CenterStart,
                         ) {
-                            if (userMessage.text.isEmpty()) {
+                            if (userMessage.text.isEmpty() && visibleComposerPrediction(userMessage, composerPrediction) == null) {
                                 Text(
                                     text =
                                         if (isWorkspaceOpen) {
@@ -737,7 +752,10 @@ fun ClassicChatInputSection(
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 )
                             }
-                            innerTextField()
+                            ComposerPredictionViewport(
+                                userMessage, composerPrediction, composerLayout, modernTextStyle, 5,
+                                classicInputEnabled, actualViewModel::acceptComposerPrediction, innerTextField,
+                            )
                         }
                     },
                 )
@@ -974,6 +992,10 @@ fun ClassicChatInputSection(
             if (showFullscreenInput.value) {
                 FullscreenInputDialog(
                     value = userMessage,
+                    composerPrediction = composerPrediction,
+                    onAcceptPrediction = { expected ->
+                        if (actualViewModel.acceptComposerPrediction(expected)) actualViewModel.userMessage.value else null
+                    },
                     onValueChange = onUserMessageChange,
                     onDismiss = { showFullscreenInput.value = false },
                     onConfirm = { showFullscreenInput.value = false }

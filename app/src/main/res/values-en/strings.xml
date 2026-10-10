@@ -9074,4 +9074,8 @@
     <string name="terminal_task_start_desc">Start terminal task: %1$s</string>
     <string name="terminal_task_poll_desc">Check terminal task: %1$s</string>
     <string name="terminal_task_cancel_desc">Cancel terminal task: %1$s</string>
+    <string name="composer_predictions">Composer Predictions</string>
+    <string name="composer_predictions_description">After an AI reply, predict a possible next message. Double-tap the gray text to adopt it; typing hides it. Uses extra API calls through the current chat model and may incur charges.</string>
+    <string name="composer_prediction_adopt">Adopt predicted message</string>
+    <string name="token_stats_category_composer_prediction">Composer prediction</string>
 </resources>

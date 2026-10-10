@@ -493,8 +493,20 @@ class EnhancedAIService private constructor(
         val learningToolIterations: AtomicInteger = AtomicInteger(0),
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
-        var modelExecutionSnapshot: ModelExecutionSnapshot? = null
+        var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
+        var composerPredictionAllowed: Boolean = true,
     )
+
+    @Volatile
+    private var completedComposerPrediction: com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot? = null
+
+    /** Consumed only by the persisted successful-turn boundary, never by an intermediate EOF. */
+    fun takeComposerPredictionSnapshot(sourceTurnId: String): com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot? {
+        val snapshot = completedComposerPrediction ?: return null
+        if (snapshot.sourceTurnId != sourceTurnId) return null
+        completedComposerPrediction = null
+        return snapshot
+    }
 
     private val activeExecutionContexts = ConcurrentHashMap<Int, MessageExecutionContext>()
     internal fun collaborationHistorySnapshot(): List<PromptTurn> {
@@ -1198,6 +1210,7 @@ class EnhancedAIService private constructor(
                 ?: chatId?.takeIf { it.isNotBlank() }
                 ?: providerSessionId
 
+        completedComposerPrediction = null
         val eventChannel = MutableSharedStream<TextStreamEvent>(replay = Int.MAX_VALUE)
         val wrappedStream = stream {
             val responseCollector = this
@@ -1569,6 +1582,7 @@ class EnhancedAIService private constructor(
                 AppLogger.d(TAG, "sendMessage流被取消")
                 throw e
             } catch (e: Exception) {
+                execContext.composerPredictionAllowed = false
                 // 用户取消导致的 Socket closed 是预期行为，不应作为错误处理
                 if (e.message?.contains("Socket closed", ignoreCase = true) == true) {
                     if (isExecutionContextActive(execContext)) {
@@ -2067,6 +2081,39 @@ class EnhancedAIService private constructor(
         notifyReplyOverride: Boolean? = null,
         memorySpaceIdOverride: String? = null
     ) {
+        // Capture before teardown from the effective final request history, including the final
+        // assistant. Re-running preparation here would execute hooks/memory work a second time.
+        try {
+            val modelSnapshot = context.modelExecutionSnapshot
+            val finalTurn = context.conversationHistory.lastOrNull()
+            if (context.composerPredictionAllowed && !isSubTask && !chatId.isNullOrBlank() && !context.toolTimingScopeId.isNullOrBlank() &&
+                modelSnapshot != null && finalTurn?.kind == PromptTurnKind.ASSISTANT &&
+                finalTurn.metadata[com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA] != true &&
+                ChatUtils.removeThinkingContentWindow(finalTurn.content, 0).length > 0 &&
+                com.ai.assistance.operit.data.preferences.DisplayPreferencesManager.getInstance(this@EnhancedAIService.context)
+                    .composerPredictionsEnabled.first()
+            ) {
+                try {
+                    val config = modelSnapshot.config
+                    completedComposerPrediction = com.ai.assistance.operit.api.chat.prediction.ComposerPredictionSnapshot(
+                        chatId = chatId,
+                        sourceTurnId = context.toolTimingScopeId,
+                        history = com.ai.assistance.operit.api.chat.prediction.freezePredictionHistory(context.conversationHistory),
+                        modelConfig = com.ai.assistance.operit.api.chat.prediction.freezePredictionConfig(config),
+                        modelParameters = com.ai.assistance.operit.api.chat.prediction.freezePredictionParameters(modelSnapshot.modelParameters),
+                    )
+                } catch (_: IllegalArgumentException) {
+                    // Unknown hook-owned mutable metadata cannot safely cross the isolation boundary.
+                    completedComposerPrediction = null
+                }
+            }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            // Auxiliary capture must not turn a successfully completed main request into a failure.
+            completedComposerPrediction = null
+        }
+
         // Mark conversation as complete
         context.turnInputInbox?.seal()
         context.isConversationActive.set(false)

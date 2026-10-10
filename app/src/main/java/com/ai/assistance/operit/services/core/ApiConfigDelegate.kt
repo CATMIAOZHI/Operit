@@ -44,8 +44,25 @@ data class ChatContextSettings(
 
 data class EffectiveChatConfigTarget(
     val configId: String,
-    val isResolved: Boolean
+    val isResolved: Boolean,
+    val modelIndex: Int = 0,
 )
+
+internal fun resolveEffectiveChatConfigTarget(
+    card: com.ai.assistance.operit.data.model.CharacterCard?,
+    global: com.ai.assistance.operit.data.preferences.FunctionConfigMapping,
+): EffectiveChatConfigTarget {
+    val lockedConfigId = card?.takeIf {
+        CharacterCardChatModelBindingMode.normalize(it.chatModelBindingMode) ==
+            CharacterCardChatModelBindingMode.FIXED_CONFIG
+    }?.chatModelConfigId?.trim()?.takeIf { it.isNotEmpty() }
+    return EffectiveChatConfigTarget(
+        configId = lockedConfigId ?: global.configId,
+        modelIndex = if (lockedConfigId != null) requireNotNull(card).chatModelIndex.coerceAtLeast(0)
+            else global.modelIndex,
+        isResolved = true,
+    )
+}
 
 /** 委托类，负责管理用户偏好配置和API密钥 */
 class ApiConfigDelegate(
@@ -173,37 +190,25 @@ class ApiConfigDelegate(
     val effectiveChatConfigTarget: StateFlow<EffectiveChatConfigTarget> =
             activePromptManager.activePromptFlow
                 .flatMapLatest { prompt ->
-                    when (prompt) {
-                        is ActivePrompt.CharacterCard ->
-                            combine(
-                                characterCardManager.getCharacterCardFlow(prompt.id),
-                                activeConfigId
-                            ) { card, globalConfigId ->
-                                val lockedConfigId =
-                                    card?.takeIf {
-                                        CharacterCardChatModelBindingMode.normalize(
-                                            it.chatModelBindingMode
-                                        ) == CharacterCardChatModelBindingMode.FIXED_CONFIG
-                                    }
-                                        ?.chatModelConfigId
-                                        ?.trim()
-                                        ?.takeIf { it.isNotEmpty() }
-                                lockedConfigId ?: globalConfigId
-                            }
-
-                        is ActivePrompt.CharacterGroup -> activeConfigId
+                    val globalMapping = functionalConfigManager.functionConfigMappingWithIndexFlow.map {
+                        it[FunctionType.CHAT] ?: com.ai.assistance.operit.data.preferences.FunctionConfigMapping()
                     }
-                }
-                .map { configId ->
-                    EffectiveChatConfigTarget(configId = configId, isResolved = true)
+                    when (prompt) {
+                        is ActivePrompt.CharacterCard -> combine(
+                            characterCardManager.getCharacterCardFlow(prompt.id), globalMapping,
+                        ) { card, mapping -> resolveEffectiveChatConfigTarget(card, mapping) }
+                        is ActivePrompt.CharacterGroup -> globalMapping.map {
+                            resolveEffectiveChatConfigTarget(null, it)
+                        }
+                    }
                 }
                 .stateIn(
                     configScope,
                     kotlinx.coroutines.flow.SharingStarted.Eagerly,
                     EffectiveChatConfigTarget(
                         configId = FunctionalConfigManager.DEFAULT_CONFIG_ID,
-                        isResolved = false
-                    )
+                        isResolved = false,
+                    ),
                 )
 
     private val effectiveChatConfigId: StateFlow<String> =
@@ -216,7 +221,7 @@ class ApiConfigDelegate(
                 )
 
     @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
-    private val effectiveChatConfig: StateFlow<ModelConfigData> =
+    val effectiveChatConfig: StateFlow<ModelConfigData> =
             effectiveChatConfigId
                 .flatMapLatest { configId -> modelConfigManager.getModelConfigFlow(configId) }
                 .stateIn(

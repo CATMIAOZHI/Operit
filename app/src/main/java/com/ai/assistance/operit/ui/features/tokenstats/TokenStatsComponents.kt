@@ -867,6 +867,7 @@ internal fun TokenStatCategory.labelRes(): Int =
         TokenStatCategory.PERMISSION_REVIEWER -> R.string.token_stats_category_permission_reviewer
         TokenStatCategory.PERMISSION_RISK_SCORER ->
             R.string.token_stats_category_permission_risk_scorer
+        TokenStatCategory.COMPOSER_PREDICTION -> R.string.token_stats_category_composer_prediction
         TokenStatCategory.OTHER -> R.string.token_stats_category_other
     }
 

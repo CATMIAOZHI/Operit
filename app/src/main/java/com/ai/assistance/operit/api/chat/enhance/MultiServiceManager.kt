@@ -141,6 +141,24 @@ class MultiServiceManager(private val context: Context) {
         }
     }
 
+    /** A fresh provider, never entered into foreground caches or shared cancellation state.
+     * Registry-backed throttles and the factory's usage ledger still apply.
+     * The caller owns cancellation and must close this lease in finally.
+     */
+    suspend fun acquireIsolatedService(
+        modelConfig: ModelConfigData,
+        modelParameters: List<ModelParameter<*>>,
+    ): ServiceLease {
+        val service = createServiceFromConfig(modelConfig, 0, allowPluginProviders = false)
+        return ServiceLease(
+            closeAction = { service.release() },
+            service = service,
+            modelConfig = modelConfig,
+            modelIndex = 0,
+            modelParameters = modelParameters.toList(),
+        )
+    }
+
     private suspend fun getOrCreateServiceForFunctionLocked(functionType: FunctionType): ManagedService {
         serviceInstances[functionType]?.let {
             return it
@@ -342,7 +360,11 @@ class MultiServiceManager(private val context: Context) {
     }
 
     /** 根据配置创建AIService实例 */
-    private suspend fun createServiceFromConfig(config: ModelConfigData, modelIndex: Int): AIService {
+    private suspend fun createServiceFromConfig(
+        config: ModelConfigData,
+        modelIndex: Int,
+        allowPluginProviders: Boolean = true,
+    ): AIService {
         // 使用公共函数计算有效索引
         val actualIndex = getValidModelIndex(config.modelName, modelIndex)
         
@@ -363,7 +385,9 @@ class MultiServiceManager(private val context: Context) {
         val rawService = AIServiceFactory.createService(
             config = configWithSelectedModel,
             modelConfigManager = modelConfigManager,
-            context = context
+            context = context,
+            allowPluginProviders = allowPluginProviders,
+            useSnapshotApiKeys = !allowPluginProviders,
         )
 
         val requestLimitPerMinute = config.requestLimitPerMinute.coerceAtLeast(0)

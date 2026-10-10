@@ -1563,6 +1563,7 @@ private fun ChatInputBottomBar(
     val waifuPreferences = remember(context) { WaifuPreferences.getInstance(context) }
 
     val userMessage by actualViewModel.userMessage.collectAsState()
+    val composerPrediction by actualViewModel.composerPredictionText.collectAsState()
     val attachments by actualViewModel.attachments.collectAsState()
     val attachmentPanelState by actualViewModel.attachmentPanelState.collectAsState()
     val replyToMessage by actualViewModel.replyToMessage.collectAsState()
@@ -1954,6 +1955,7 @@ private fun ChatInputBottomBar(
             AgentChatInputSection(
                 actualViewModel = actualViewModel,
                 userMessage = userMessage,
+                composerPrediction = composerPrediction,
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
                 enableEnterToSend = enableEnterToSend,
                 onSendMessage = sendMessage,
@@ -2044,6 +2046,7 @@ private fun ChatInputBottomBar(
             ClassicChatInputSection(
                 actualViewModel = actualViewModel,
                 userMessage = userMessage,
+                composerPrediction = composerPrediction,
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
                 enableEnterToSend = enableEnterToSend,
                 onSendMessage = sendMessage,
