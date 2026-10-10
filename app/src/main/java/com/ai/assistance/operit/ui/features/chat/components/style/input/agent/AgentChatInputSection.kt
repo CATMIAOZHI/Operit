@@ -32,7 +32,6 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.filled.Whatshot
 import androidx.compose.material.icons.outlined.Block
@@ -47,6 +46,7 @@ import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.TipsAndUpdates
 import androidx.compose.material.icons.rounded.Psychology
+import androidx.compose.material.icons.rounded.GraphicEq
 import androidx.compose.material.icons.rounded.Save
 import androidx.compose.material.icons.rounded.Security
 import androidx.compose.material.icons.rounded.TipsAndUpdates
@@ -1125,7 +1125,7 @@ fun AgentChatInputSection(
                                             showCancelAction -> Icons.Default.Close
                                             showQueueAction -> Icons.Default.Add
                                             canSendMessage -> Icons.AutoMirrored.Filled.Send
-                                            else -> Icons.Default.Headset
+                                            else -> Icons.Rounded.GraphicEq
                                         },
                                     contentDescription =
                                         when {
@@ -1430,7 +1430,7 @@ fun AgentChatInputSection(
                                                 showCancelAction -> Icons.Default.Close
                                                 showQueueAction -> Icons.Default.Add
                                                 canSendMessage -> Icons.AutoMirrored.Filled.Send
-                                                else -> Icons.Default.Headset
+                                                else -> Icons.Rounded.GraphicEq
                                             },
                                         contentDescription =
                                             when {

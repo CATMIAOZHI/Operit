@@ -90,6 +90,7 @@ import com.ai.assistance.operit.ui.theme.liquidGlass
 import com.ai.assistance.operit.ui.theme.waterGlass
 import com.ai.assistance.operit.util.ChatUtils
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import android.net.Uri
 
 @Composable
@@ -684,7 +685,7 @@ fun ClassicChatInputSection(
                     }
                 } else {
 
-                Row(verticalAlignment = Alignment.Top) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                 BasicTextField(
                     value = userMessage,
                     onValueChange = onUserMessageChange,
@@ -740,9 +741,19 @@ fun ClassicChatInputSection(
                         }
                     },
                 )
-                    IconButton(
-                        onClick = { showFullscreenInput.value = true },
-                        modifier = Modifier.size(28.dp),
+                    Spacer(modifier = Modifier.width(4.dp))
+                    // A plain box rather than IconButton: IconButton enforces a 48dp minimum touch
+                    // target that would stretch the draft row past the text line and leave the icon
+                    // sitting below the line it belongs to.
+                    Box(
+                        modifier =
+                            Modifier
+                                .size(28.dp)
+                                .clip(CircleShape)
+                                .clickable(role = Role.Button) {
+                                    showFullscreenInput.value = true
+                                },
+                        contentAlignment = Alignment.Center,
                     ) {
                         Icon(
                             imageVector = Icons.Default.Fullscreen,
