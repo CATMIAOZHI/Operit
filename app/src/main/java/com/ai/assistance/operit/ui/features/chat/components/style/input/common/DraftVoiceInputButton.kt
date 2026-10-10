@@ -67,7 +67,9 @@ private fun DraftRecordingDialog(onDismiss: () -> Unit, onResult: (String) -> Un
     val view = LocalView.current
     val scope = rememberCoroutineScope()
     val latestResult by rememberUpdatedState(onResult)
-    var status by remember { mutableStateOf(context.getString(R.string.voice_preparing)) }
+    val preparingText = stringResource(R.string.voice_preparing)
+    val didNotHearText = stringResource(R.string.floating_didnt_hear_clearly)
+    var status by remember { mutableStateOf(preparingText) }
     var error by remember { mutableStateOf<String?>(null) }
     val manager = remember {
         SpeechInteractionManager(context, scope,
@@ -80,7 +82,7 @@ private fun DraftRecordingDialog(onDismiss: () -> Unit, onResult: (String) -> Un
             if (it.isFinal && it.text.isBlank() &&
                 (manager.isRecording || manager.isProcessingSpeech)) {
                 manager.stopListening(isCancel = true)
-                error = context.getString(R.string.floating_didnt_hear_clearly)
+                error = didNotHearText
                 return@collect
             }
             // Finalizes into our draft-only callback, never a chat send action.

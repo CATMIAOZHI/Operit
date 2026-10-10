@@ -189,7 +189,7 @@ android {
         // Bound to the baseline version, not to the ry release counter: bump by one only when the
         // baseline itself moves. Stable and dev must agree; see docs/agent/dev-to-main-promotion.md.
         versionCode = 100205
-        versionName = "1.12.2-ry.6"
+        versionName = "1.12.2-ry.7"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
