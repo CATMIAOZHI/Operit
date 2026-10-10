@@ -18,6 +18,44 @@ import org.junit.rules.TemporaryFolder
 import org.mockito.kotlin.*
 
 class MemoryLearningBatchTest {
+    @Test fun failedImportRetainsBatchAndRecoversWithoutDuplicatingIds() = runBlocking {
+        val context = context()
+        val journal = MemoryLearningJournal(context, "space", "chat")
+        journal.enqueue(true, false, 10)
+        journal.complete(listOf("notes"), LearningCursor(7), false,
+            listOf(MemoryReviewChange("retained-id", "notes", "memory.md", "proposal", sourceChatId="chat")))
+        // A regular file in place of the storage directory simulates an unavailable store.
+        val blocked = java.io.File(context.filesDir, "memory_reviews")
+        blocked.writeText("blocked")
+        try {
+            journal.export()
+            fail("Import must fail")
+        } catch (_: java.io.IOException) { }
+        assertTrue(MemoryLearningJournal.pending(context).contains("space" to "chat"))
+        assertTrue(blocked.delete())
+        val restored = MemoryLearningJournal(context, "space", "chat")
+        restored.export()
+        restored.export()
+        assertEquals(listOf("retained-id"), MemoryReviewRepository(context,"space").list().map { it.id })
+        assertEquals(7, restored.cursor("notes").messageId)
+        assertFalse(MemoryLearningJournal.pending(context).contains("space" to "chat"))
+    }
+    @Test fun newDraftCompanionCanBeCreatedButNotBlindlyOverwritten() = runBlocking {
+        val context = context()
+        val staged = mutableListOf(MemoryReviewChange("draft", "skill", "demo-skill",
+            "A repeatable procedure with prerequisites, steps and checks.", description="Demo skill"))
+        val actions = MemoryLearningActions(context,"space","chat",false,true,true,staged)
+        val args = mapOf("name" to "demo-skill", "path" to "scripts/example.py", "content" to "print(1)")
+        actions.execute("skill_write", args)
+        assertEquals("print(1)", staged.single().files["scripts/example.py"])
+        try {
+            actions.execute("skill_write", args + ("content" to "print(2)"))
+            fail("Existing draft file must be read")
+        } catch (e: IllegalStateException) { assertTrue(e.message!!.contains("skill_read")) }
+        actions.execute("skill_read", args)
+        actions.execute("skill_write", args + ("content" to "print(2)"))
+        assertEquals("print(2)", staged.single().files["scripts/example.py"])
+    }
     @get:Rule val folder=TemporaryFolder()
     private fun context(): Context=mock<Context>().also {
         whenever(it.filesDir).thenReturn(folder.root)

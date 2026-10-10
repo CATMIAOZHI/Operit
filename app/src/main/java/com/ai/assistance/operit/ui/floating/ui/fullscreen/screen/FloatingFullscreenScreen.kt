@@ -479,6 +479,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
                     state is com.ai.assistance.operit.data.model.InputProcessingState.Error -> state.message
                     viewModel.isRecording -> stringResource(R.string.floating_listening)
                     viewModel.isProcessingSpeech -> stringResource(R.string.floating_recognizing)
+                    viewModel.isPlaybackSuppressed -> viewModel.voiceStatus
                     viewModel.isVoiceCapturePausedForAi -> stringResource(R.string.floating_voice_answering)
                     viewModel.voiceStatus.isNotBlank() -> viewModel.voiceStatus
                     else -> stringResource(R.string.floating_voice_starting)
@@ -496,10 +497,20 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
             )
         }
         if (effectiveWaveActive && !viewModel.isEditMode) {
-            TextButton(
-                onClick = { viewModel.exitWaveMode(); floatContext.voiceMode = false },
-                modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp).heightIn(min = 48.dp),
-            ) { Text(stringResource(R.string.floating_return_to_text)) }
+            Row(modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) {
+                TextButton(onClick = { viewModel.toggleMicrophone() }, modifier = Modifier.heightIn(min = 48.dp)) {
+                    Text(stringResource(if (viewModel.microphoneMuted) R.string.voice_unmute else R.string.voice_mute))
+                }
+                if (viewModel.hasSpeechPlayback) {
+                    TextButton(onClick = { viewModel.stopSpeaking() }, modifier = Modifier.heightIn(min = 48.dp)) {
+                        Text(stringResource(R.string.voice_stop_playback))
+                    }
+                }
+                TextButton(
+                    onClick = { viewModel.exitWaveMode(); floatContext.voiceMode = false },
+                    modifier = Modifier.heightIn(min = 48.dp),
+                ) { Text(stringResource(R.string.voice_end_conversation)) }
+            }
         }
 
         // 编辑面板
@@ -509,6 +520,7 @@ fun FloatingFullscreenMode(floatContext: FloatContext) {
             onTextChange = { viewModel.editableText = it },
             onCancel = { viewModel.exitEditMode() },
             onSend = { viewModel.sendEditedMessage() },
+            canSend = viewModel.canSendEditedMessage,
             modifier = Modifier.align(Alignment.BottomCenter)
         )
         

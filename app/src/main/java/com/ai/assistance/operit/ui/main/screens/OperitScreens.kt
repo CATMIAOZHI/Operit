@@ -881,7 +881,8 @@ sealed class Screen(
         ) {
             SpeechServicesSettingsScreen(
                 onBackPressed = onGoBack,
-                onNavigateToTextToSpeech = { navigateTo(TextToSpeech) }
+                onNavigateToTextToSpeech = { navigateTo(TextToSpeech) },
+                onNavigateToSpeechToText = { navigateTo(SpeechToText) }
             )
         }
     }

@@ -15,6 +15,17 @@ Resolved on 2026-07-22 and verified by a full Nightly build.
 
 ## Why pin
 
+### Speech AAR
+
+`org.k2fsa:sherpa-onnx-static-link-onnxruntime:1.13.8@aar` is fetched from the official
+[v1.13.8 release](https://github.com/k2-fsa/sherpa-onnx/releases/tag/v1.13.8).
+SHA-256: `b22c3fc1b6a45666d28892bb2f7694beeb77a8362d7ebd77c1a5431ec9435471`.
+Size: 38,691,998 bytes. Gradle `verifySherpaRuntime` runs before `preBuild`.
+The AAR has arm64-v8a, armeabi-v7a, x86 and x86_64; the app currently selects arm64-v8a.
+All inspected ELF load segments have 16 KiB alignment. This does not certify the entire APK or
+other native dependencies. Unlike the ARM and x86_64 variants, x86 includes a separate ORT library.
+Model revision and license details are in [voice-modernization.md](../docs/agent/voice-modernization.md).
+
 - Reproducible builds: the same Operit commit always compiles identical native source.
 - Stable ccache hit rates: upstream ref movement no longer triggers mass recompilation.
 - Build integrity: no sudden build breakage from unrelated upstream changes.

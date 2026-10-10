@@ -55,7 +55,8 @@ class StandardTerminalCommandExecutor(private val context: Context) {
             ToolResult(tool.name, true, TerminalTaskResultData(
                 result.runId, result.sessionId, status, result.output,
                 result.outputTruncated, result.terminationReason,
-                outputMode = "tail_snapshot", timedOut = result.status == "timed_out"
+                outputMode = "tail_snapshot", timedOut = result.status == "timed_out",
+                exitCode = result.exitCode, sessionExitCode = result.sessionExitCode, screen = result.screen
             ))
         } catch (e: CancellationException) {
             startedId?.let { withContext(NonCancellable) { taskRegistry.cancel(it) } }

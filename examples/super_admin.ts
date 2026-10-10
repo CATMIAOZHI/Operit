@@ -16,8 +16,8 @@ METADATA
         {
             "name": "terminal",
             "description": {
-                "zh": "在持久 Ubuntu 会话执行命令。默认等待10秒，未结束返回 status=running 和 runId，命令继续运行；用 terminal_wait 查询、terminal_cancel 取消。yieldMs 是本次等待时间，不会中断命令；timeoutMs 是执行总上限，默认30分钟。复用会话保留目录和变量。输出为最近尾部快照，outputTruncated 表示截断；大日志请在命令中重定向到文件。completed 只表示回到提示符，不保证命令退出码为0，应检查输出。不要在复用会话直接 exit，需要时用 (命令; exit $?)。",
-                "en": "Run a command in a persistent Ubuntu shell. Waits 10s by default; status=running and runId mean it continues. Use terminal_wait to poll or terminal_cancel to cancel. yieldMs bounds only this wait; timeoutMs bounds execution (default 30 minutes). Preserves cwd and variables. Output is a recent tail snapshot with outputTruncated; redirect large logs to a file. completed means the shell prompt returned, not a verified zero exit code. Use an explicit subshell for exit."
+                "zh": "在持久 Ubuntu 会话执行命令，保留目录、变量和函数。默认等待10秒，未结束返回running和runId，用terminal_wait查询或terminal_cancel取消。yieldMs仅限制本次等待；timeoutMs是执行总上限，默认30分钟。output为日志尾部快照，screen为可替换的当前终端画面（可能包含先前输出），不要重复拼接。completed仅表示结束；exitCode为0才表示命令成功，非0为失败，null为未知。sessionExitCode仅表示会话进程退出码，不能当作命令码。大日志请重定向到文件。不要在复用会话直接exit，需要时用子Shell。",
+                "en": "Run in a persistent Ubuntu shell, preserving cwd, variables and functions. Waits 10s by default; running and runId mean it continues. Poll with terminal_wait or cancel with terminal_cancel. yieldMs bounds this wait; timeoutMs bounds execution (default 30 minutes). output is a log tail; screen is a replaceable current terminal display and may include earlier output. Do not concatenate snapshots. completed means ended; exitCode=0 means command success, nonzero means failure, null means unknown. sessionExitCode describes only the session process. Redirect large logs to a file. Use a subshell instead of exiting the persistent shell."
             },
             "parameters": [
                 {
@@ -61,8 +61,8 @@ METADATA
         {
             "name": "terminal_wait",
             "description": {
-                "zh": "查询 terminal 返回的 runId，短暂等待完成并返回最新输出尾部快照。仍运行就返回running，不会中断命令或排入检测命令。不传runId时查询指定sessionId或当前会话最近一次任务。进程重启或记录淘汰后ID失效，不要自动重跑命令。",
-                "en": "Poll a runId from terminal and return the latest tail snapshot. A running task stays alive; no probe command is queued. Without runId, polls the latest task in sessionId or the current chat session. IDs expire after app restart or completed-record eviction; do not automatically rerun commands."
+                "zh": "查询runId，返回日志尾部output和动态画面screen快照；不要重复拼接。running表示继续执行；completed后检查exitCode，null不能视为成功。查询不会中断命令或排入检测命令。不传runId时查询指定sessionId或当前会话最近任务。ID失效时不要自动重跑命令。",
+                "en": "Poll runId for output log tail and dynamic screen snapshots; do not concatenate repeats. running continues execution. After completed, inspect exitCode; null is not success. Polling never interrupts or queues a probe command. Without runId, polls the latest task in the specified/current session. Do not rerun automatically if an ID expires."
             },
             "parameters": [
                 {

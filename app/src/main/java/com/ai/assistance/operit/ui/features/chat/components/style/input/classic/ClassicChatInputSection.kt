@@ -23,7 +23,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Description
 import androidx.compose.material.icons.filled.Fullscreen
 import androidx.compose.material.icons.filled.Image
-import androidx.compose.material.icons.filled.Mic
+import androidx.compose.material.icons.filled.Headset
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
@@ -575,6 +575,8 @@ fun ClassicChatInputSection(
                                 innerTextField()
                             }
 
+                            com.ai.assistance.operit.ui.features.chat.components.style.input.common.DraftVoiceInputButton(
+                                actualViewModel, userMessage, onUserMessageChange, classicInputEnabled)
                             IconButton(
                                 onClick = { showFullscreenInput.value = true },
                                 modifier = Modifier.size(30.dp),
@@ -713,14 +715,14 @@ fun ClassicChatInputSection(
                             showCancelAction -> Icons.Default.Close
                             showQueueAction -> Icons.Default.Add
                             canSendMessage -> Icons.AutoMirrored.Filled.Send
-                            else -> Icons.Default.Mic
+                            else -> Icons.Default.Headset
                         },
                         contentDescription =
                         when {
                             showCancelAction -> context.getString(R.string.cancel)
                             showQueueAction -> context.getString(R.string.chat_queue_add_message)
                             canSendMessage -> context.getString(R.string.send)
-                            else -> context.getString(R.string.voice_input)
+                            else -> context.getString(R.string.voice_conversation_entry)
                         },
                         tint = iconTint,
                         modifier = Modifier.size(18.dp)

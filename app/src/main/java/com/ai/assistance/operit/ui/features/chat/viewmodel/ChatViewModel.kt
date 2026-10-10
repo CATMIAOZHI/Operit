@@ -3223,7 +3223,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     return@launch
                 }
 
-                val segments = TtsSegmenter.split(cleanMessage)
+                val segments = if (currentVoiceService.supportsLongText) listOf(cleanMessage)
+                    else TtsSegmenter.split(cleanMessage)
                 AppLogger.d(TAG, "speech[segments] count=${segments.size} lengths=${segments.joinToString(prefix = "[", postfix = "]") { it.length.toString() }}")
                 var isFirstSegment = true
                 for ((index, segment) in segments.withIndex()) {
@@ -3289,9 +3290,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             try {
                 logSpeechState("pauseSpeaking.request")
                 cancelSpeechControlsHide("pauseSpeaking")
-                speechPlaybackJob?.cancel()
-                speechPlaybackJob = null
-                logSpeechState("pauseSpeaking.cancelPlaybackJob")
+                // Cancelling speak closes the provider and discards queued audio. Pause must
+                // keep the owning job alive so resume can continue the same utterance.
                 val success = ensureActiveVoiceService()?.pause() == true
                 if (success) {
                     _isSpeechPaused.value = true

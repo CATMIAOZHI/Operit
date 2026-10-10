@@ -25,6 +25,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Call
@@ -106,6 +107,46 @@ internal data class DownloadGroup(
 
 /** Fixed, checksummed feature resources; nothing downloads until the user approves it. */
 object OnDemandResources {
+    private val legacySpeechFiles = Mutex()
+    internal suspend fun <T> withLegacySpeechFiles(action: suspend () -> T): T =
+        legacySpeechFiles.withLock { action() }
+    internal fun deleteVoiceModel(context: Context, id: String, deleteFiles: () -> Unit) {
+        deleteInactiveGroup(context, "voice-$id", deleteFiles)
+    }
+    private fun deleteInactiveGroup(context: Context, groupId: String, deleteFiles: () -> Unit) {
+        // Retry also starts through this monitor. Never unlink files beneath a live download.
+        synchronized(running) {
+            check(!isGroupActive(groupId)) { context.getString(R.string.voice_model_delete_busy) }
+            deleteFiles()
+            groups.remove(groupId)
+            dismiss(groupId)
+        }
+    }
+    internal suspend fun legacySpeechBytes(context: Context): Long = withContext(Dispatchers.IO) {
+        val directory = File(OperitPaths.sherpaNcnnModelsDir(context), SPEECH_DIRECTORY)
+        directory.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+    }
+    internal suspend fun deleteLegacySpeech(context: Context) = withContext(Dispatchers.IO) {
+        withLegacySpeechFiles {
+        com.ai.assistance.operit.api.speech.SpeechServiceFactory.withUnusedLegacyModel(context) {
+            deleteInactiveGroup(context, SPEECH_DIRECTORY) {
+                val directory = File(OperitPaths.sherpaNcnnModelsDir(context), SPEECH_DIRECTORY)
+                directory.listFiles()?.forEach {
+                    check(it.isFile && it.delete()) { context.getString(R.string.voice_model_delete_failed) }
+                }
+                check(!directory.exists() || directory.delete()) {
+                    context.getString(R.string.voice_model_delete_failed)
+                }
+            }
+        }
+        }
+    }
+    internal suspend fun ensureVoiceModel(context: Context, id: String, directory: File,
+                                         files: List<DownloadResource>): File {
+        ensureGroup(context, DownloadGroup("voice-$id", R.string.voice_local_models,
+            files.map { DownloadItem(File(directory, it.id), it) }))
+        return directory
+    }
     private const val CONFIRM_TIMEOUT_MS = 3 * 60 * 1000L
     private const val SPACE_SLACK_BYTES = 8L * 1024 * 1024
 
@@ -291,7 +332,7 @@ object OnDemandResources {
         mutableDownloads.update { it - id }
         scope.launch {
             try {
-                startDownload(context.applicationContext, group).await()
+                startDownload(context.applicationContext, group, retry = true).await()
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Throwable) {
@@ -470,8 +511,11 @@ object OnDemandResources {
             false
         }
 
-    private fun startDownload(context: Context, group: DownloadGroup): Deferred<Unit> =
+    private fun startDownload(context: Context, group: DownloadGroup, retry: Boolean = false): Deferred<Unit> =
         synchronized(running) {
+            if (retry && groups[group.id] !== group) {
+                throw CancellationException("Download was removed or replaced")
+            }
             val existing = running[group.id]
             if (existing != null && existing.isActive) {
                 existing

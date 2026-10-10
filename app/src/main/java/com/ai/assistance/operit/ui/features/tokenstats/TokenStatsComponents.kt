@@ -202,6 +202,12 @@ internal fun TokenStatsLifetimeCard(
                 )
             }
 
+            Text(
+                text = stringResource(R.string.token_stats_cost_estimate_hint),
+                style = MaterialTheme.typography.bodySmall,
+                color = colors.summaryCardContent.copy(alpha = 0.8f),
+            )
+
             if (unknownCostContributions > 0L) {
                 UnknownHint(
                     text = stringResource(

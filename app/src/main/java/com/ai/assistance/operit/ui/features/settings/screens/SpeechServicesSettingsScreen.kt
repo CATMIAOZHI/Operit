@@ -97,7 +97,8 @@ import androidx.compose.runtime.LaunchedEffect
 @Composable
 fun SpeechServicesSettingsScreen(
     onBackPressed: () -> Unit,
-    onNavigateToTextToSpeech: () -> Unit = {}
+    onNavigateToTextToSpeech: () -> Unit = {},
+    onNavigateToSpeechToText: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -320,26 +321,27 @@ fun SpeechServicesSettingsScreen(
         )
 
         try {
-            profilePrefs.updateTtsProfile(
-                activeTtsProfile.copy(
+            val nextTts = activeTtsProfile.copy(
                     serviceType = ttsServiceTypeInput,
                     httpConfig = httpConfigData,
                     vitsConfig = vitsConfigData,
                     cleanerRegexs = ttsCleanerRegexsState.toList(),
                     speechRate = ttsSpeechRateInput,
                     pitch = ttsPitchInput,
-                ),
-            )
+                )
+            if (nextTts != activeTtsProfile) {
+                profilePrefs.updateTtsProfile(nextTts)
+                VoiceServiceFactory.resetInstance()
+            }
 
-            profilePrefs.updateSttProfile(
-                activeSttProfile.copy(
+            val nextStt = activeSttProfile.copy(
                     serviceType = sttServiceTypeInput,
                     httpConfig = sttHttpConfigData,
-                ),
-            )
-
-            VoiceServiceFactory.resetInstance()
-            SpeechServiceFactory.resetInstance()
+                )
+            if (nextStt != activeSttProfile) {
+                profilePrefs.updateSttProfile(nextStt)
+                SpeechServiceFactory.resetInstance()
+            }
         } catch (error: Exception) {
             AppLogger.e("SpeechServicesSettings", "Failed to save speech service profile", error)
             val message = error.message ?: "Failed to save speech service profile"
@@ -348,7 +350,14 @@ fun SpeechServicesSettingsScreen(
         }
     }
 
-    LaunchedEffect(currentTtsProfileId, ttsServiceTypeInput) {
+    LaunchedEffect(currentTtsProfileId, ttsServiceTypeInput, activeTtsProfile.localModelId) {
+        if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX) {
+            val melo = activeTtsProfile.localModelId == "melo-int8"
+            simpleTtsVoices = (0 until if (melo) 1 else 174).map {
+                VoiceService.Voice(it.toString(), "${it + 1}", if (melo) "zh,en" else "zh", "")
+            }
+            return@LaunchedEffect
+        }
         if (ttsServiceTypeInput != VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) return@LaunchedEffect
         simpleTtsVoicesLoading = true
         simpleTtsVoicesError = null
@@ -493,6 +502,7 @@ fun SpeechServicesSettingsScreen(
                                     VoiceServiceFactory.VoiceServiceType.MIMO_TTS -> stringResource(R.string.speech_services_tts_type_mimo)
                                     VoiceServiceFactory.VoiceServiceType.DOUBAO_TTS -> stringResource(R.string.speech_services_tts_type_doubao)
                                     VoiceServiceFactory.VoiceServiceType.OPENAI_TTS -> stringResource(R.string.speech_services_tts_type_openai)
+                                    VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX -> stringResource(R.string.voice_local_engine)
                                     VoiceServiceFactory.VoiceServiceType.VITS_TTS -> stringResource(R.string.speech_services_tts_type_vits)
                                 },
                                 onValueChange = {},
@@ -520,6 +530,7 @@ fun SpeechServicesSettingsScreen(
                                                     VoiceServiceFactory.VoiceServiceType.MIMO_TTS -> stringResource(R.string.speech_services_tts_type_mimo)
                                                     VoiceServiceFactory.VoiceServiceType.DOUBAO_TTS -> stringResource(R.string.speech_services_tts_type_doubao)
                                                     VoiceServiceFactory.VoiceServiceType.OPENAI_TTS -> stringResource(R.string.speech_services_tts_type_openai)
+                                                    VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX -> stringResource(R.string.voice_local_engine)
                                                     VoiceServiceFactory.VoiceServiceType.VITS_TTS -> stringResource(R.string.speech_services_tts_type_vits)
                                                 },
                                                 fontWeight = if (ttsServiceTypeInput == type) FontWeight.Medium else FontWeight.Normal
@@ -560,12 +571,15 @@ fun SpeechServicesSettingsScreen(
                             }
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
-                                    text = stringResource(R.string.speech_services_tts_pitch_value, ttsPitchInput),
+                                    text = if (ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX)
+                                        stringResource(R.string.voice_pitch_unavailable)
+                                    else stringResource(R.string.speech_services_tts_pitch_value, ttsPitchInput),
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurface,
                                 )
                                 Slider(
                                     value = ttsPitchInput,
+                                    enabled = ttsServiceTypeInput != VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX,
                                     onValueChange = { ttsPitchInput = it },
                                     valueRange = 0.5f..2.0f,
                                     steps = 5,
@@ -575,7 +589,8 @@ fun SpeechServicesSettingsScreen(
 
                         Spacer(modifier = Modifier.height(12.dp))
 
-                        AnimatedVisibility(visible = ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) {
+                        AnimatedVisibility(visible = ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS ||
+                            ttsServiceTypeInput == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX) {
                             Column {
                                 Text(
                                     text = stringResource(R.string.speech_services_simple_tts_settings),
@@ -1989,6 +2004,7 @@ fun SpeechServicesSettingsScreen(
                         ) {
                             OutlinedTextField(
                                 value = when(sttServiceTypeInput) {
+                                    SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX -> stringResource(R.string.voice_local_engine)
                                     SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN -> stringResource(R.string.speech_services_stt_type_sherpa)
                                     SpeechServiceFactory.SpeechServiceType.OPENAI_STT -> stringResource(R.string.speech_services_stt_type_openai)
                                     SpeechServiceFactory.SpeechServiceType.DEEPGRAM_STT -> stringResource(R.string.speech_services_stt_type_deepgram)
@@ -2010,6 +2026,7 @@ fun SpeechServicesSettingsScreen(
                                         text = { 
                                             Text(
                                                 text = when(type) {
+                                                    SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX -> stringResource(R.string.voice_local_engine)
                                                     SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN -> stringResource(R.string.speech_services_stt_type_sherpa)
                                                     SpeechServiceFactory.SpeechServiceType.OPENAI_STT -> stringResource(R.string.speech_services_stt_type_openai)
                                                     SpeechServiceFactory.SpeechServiceType.DEEPGRAM_STT -> stringResource(R.string.speech_services_stt_type_deepgram)
@@ -2160,6 +2177,7 @@ fun SpeechServicesSettingsScreen(
                 if (selectedTabIndex == 0) item {
                     OutlinedButton(
                         onClick = onNavigateToTextToSpeech,
+                        enabled = !hasPendingChanges,
                         modifier = Modifier.fillMaxWidth(),
                     ) {
                         Icon(
@@ -2170,6 +2188,36 @@ fun SpeechServicesSettingsScreen(
                         Spacer(modifier = Modifier.width(8.dp))
                         Text(stringResource(R.string.speech_services_test_tts))
                     }
+                }
+                if (selectedTabIndex == 1) item {
+                    OutlinedButton(onClick = onNavigateToSpeechToText,
+                        enabled = !hasPendingChanges, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(R.string.voice_test_current))
+                    }
+                }
+
+                item {
+                    val targetRecognition = selectedTabIndex == 1
+                    val targetSttProfile = activeSttProfile
+                    val targetTtsProfile = activeTtsProfile
+                    LocalVoiceModelPicker(
+                        recognition = targetRecognition,
+                        legacySelected = sttServiceType == SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN,
+                        selected = if (selectedTabIndex == 1) {
+                            if (sttServiceType == SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX) activeSttProfile.localModelId else ""
+                        } else {
+                            if (ttsServiceType == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX) activeTtsProfile.localModelId else ""
+                        },
+                        enabled = !hasPendingChanges,
+                        onSelect = { id ->
+                                if (targetRecognition) {
+                                    profilePrefs.selectLocalVoiceModel(targetSttProfile.id, true, id)
+                                    SpeechServiceFactory.resetInstance()
+                                } else {
+                                    profilePrefs.selectLocalVoiceModel(targetTtsProfile.id, false, id)
+                                    VoiceServiceFactory.resetInstance()
+                                }
+                        })
                 }
 
                 item {
