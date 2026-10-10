@@ -335,14 +335,17 @@ class CollaborationCoordinator private constructor(context: Context) {
         }
         jobs[jobKey] = job
         job.invokeOnCompletion { cause ->
-            val needsTerminalStatus = synchronized(lock) {
-                if (jobs[jobKey] !== job) false else {
-                    jobs.remove(jobKey)
-                    deliveries.removeAll(inputs.map { it.id }.toSet())
-                    cause != null && state.find(agent.rootChatId, agent.path)?.status == CollaborationStatus.RUNNING
-                }
+            // A terminal notification must be enqueued while this job is still registered.
+            // Otherwise a caller could snapshot no job, an empty mailbox and an unreported status
+            // and give up while the notification is still on its way. `finish` re-enters this lock.
+            synchronized(lock) {
+                if (jobs[jobKey] !== job) return@synchronized
+                if (cause != null &&
+                    state.find(agent.rootChatId, agent.path)?.status == CollaborationStatus.RUNNING
+                ) finish(agent.rootChatId, agent.path, null, cause)
+                deliveries.removeAll(inputs.map { it.id }.toSet())
+                jobs.remove(jobKey)
             }
-            if (needsTerminalStatus) finish(agent.rootChatId, agent.path, null, cause)
         }
         job.start()
     }
@@ -528,8 +531,30 @@ class CollaborationCoordinator private constructor(context: Context) {
                     null -> null
                 }
             },
+            hasWaitableWork = { callerHasWaitableWork(caller) },
         )
         return CollaborationWaitResult(outcome, timeoutMs, limits.minWaitMs)
+    }
+
+    /**
+     * One lock snapshot of everything a wait could still observe. `finish()` enqueues its message
+     * before the job leaves [jobs] and `send()` enqueues before it starts a job, so an empty
+     * mailbox with no job, reservation or streaming peer turn means this wait cannot succeed.
+     */
+    private fun callerHasWaitableWork(caller: CollaborationAgent): Boolean = synchronized(lock) {
+        val mailboxEmpty = state.find(caller.rootChatId, caller.path)?.messages.isNullOrEmpty()
+        val peerChatIds = state.agents
+            .filter { it.rootChatId == caller.rootChatId && it.chatId != caller.chatId }
+            .mapTo(mutableSetOf()) { it.chatId }
+        hasWaitableWork(
+            rootChatId = caller.rootChatId,
+            ownKey = key(caller.rootChatId, caller.path),
+            mailboxEmpty = mailboxEmpty,
+            jobKeys = jobs.keys.toSet(),
+            reservationKeys = reservations.toSet(),
+            peerChatIds = peerChatIds,
+            streamingChatIds = core.activeStreamingChatIds.value,
+        )
     }
 
     companion object {

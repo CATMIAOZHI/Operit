@@ -15,8 +15,10 @@ Reference: local `codex`, OpenAI `main` commit
   Messages steer active turns at safe boundaries; queue-only messages do not wake
   idle agents. Follow-up tasks wake idle agents and cannot target root.
 - Interrupt ends the active turn without deleting the agent. Wait wakes on inbox
-  activity or user steering and respects a bounded timeout. Completion messages
-  are delivered to the parent, with sender and recipient identity.
+  activity or user steering and respects a bounded timeout; when no other agent can
+  reach the caller it returns an explicit idle result instead of idling to the
+  timeout. Completion messages are delivered to the parent, with sender and
+  recipient identity.
 - Context forking supports all, none and a positive turn count. Preserve parent
   model settings when inherited; expose explicit model selection consistently
   with Operit's configured models.
@@ -90,13 +92,22 @@ collaboration operations and the on-demand `list_agent_models` discovery tool.
 `send_message` queues input without waking an idle agent;
 `followup_task` starts an idle agent and reuses its identity and transcript.
 `interrupt_agent` stops the current turn without deleting that identity.
-`wait_agent` reports mailbox activity, user steering or timeout; messages are
-delivered through the model's actual turn inbox.
+`wait_agent` reports mailbox activity, user steering, an idle wait with nothing to
+observe, or timeout; messages are delivered through the model's actual turn inbox.
 Mailbox success requires a message already accepted by that execution inbox,
 not merely a durable mailbox entry. Wait reconciles and offers only its caller's
 pending messages before reporting readiness; the normal model boundary still
 owns draining, transcript persistence and acknowledgement. This prevents a
 successful wait result from reaching a model request without the message body.
+Reconciliation reads the caller's stored history, so the loop reconciles on its
+first pass and then at most once per second while pending input keeps its
+hundred-millisecond cadence; a wait that already has pending input returns before
+reconciling. Senders push their own deliveries, and this retry path is a fallback.
+Tool dispatch runs non-`task` calls serially in the model's call order, so a
+`spawn_agent` earlier in the same batch is registered before a following
+`wait_agent` starts. When the order is reversed the wait can report idle before
+that child exists; the tool description tells the model to call `wait_agent` again
+once the child is running instead of failing the turn.
 
 Agent-to-agent replies must use `send_message` addressed to the incoming sender;
 ordinary assistant prose or a handwritten envelope is not a delivery. A child's
@@ -147,7 +158,7 @@ The follow-up corrects portable behavior found by a fresh source-level audit:
 | Fork filtering | Keep system context, user inputs, final assistant text and checkpoints; remove agent communication, intermediate assistants, tools and reasoning. Count real user/NEW_TASK boundaries before filtering agent messages. |
 | Trusted message identity | Persist distinct collaboration task/event and intermediate assistant display modes; prompt filtering does not infer identity from user-controlled text. |
 | Full default fork | Retain parent prepared instructions, model and role-card tool access; do not append the general profile instructions unless a profile is explicitly selected. |
-| Wait | Distinguish mailbox activity, user steering and timeout; report minimum clamping; reject values above configured maximum. |
+| Wait | Distinguish mailbox activity, user steering, an idle tree with an empty caller mailbox, and timeout; report minimum clamping; reject values above configured maximum. The idle result is a deliberate deviation from Codex, whose wait is purely event-driven: `finish()` enqueues before it drops a job, `send()` enqueues before it starts one, and the completion callback of a resumed agent's job cancelled before its body runs enqueues the terminal notification inside the same lock region that removes the job, so one lock snapshot with no live job, reservation or streaming peer turn proves the wait cannot succeed. A first spawn cancelled before its agent is created has no notification to send; it reports through the spawn call. Reconciliation is throttled to one stored-history read per second per wait, while pending input still polls every hundred milliseconds. |
 | List | Include `agent_name` and `agent_status`. Per the user's context-budget preference, completed status is `{"completed": null}`: final text is delivered through the mailbox, not repeated on each list call. Durable final results remain stored. Existing Operit IDs/status fields remain available. |
 | Limits | Configure whole-tree active children, depth and wait durations. The v1 per-parent ten-task quota does not cap v2. Provider/model concurrency limits remain shared. |
 | Arguments | Reject unknown and duplicate parameters, including legacy `fork_context`, before any agent can be created. |
