@@ -631,17 +631,29 @@ class ApiConfigDelegate(
         configScope.launch {
             val newValue = !_enableThinkingMode.value
             apiPreferences.updateThinkingSettings(enableThinkingMode = newValue)
+            _enableThinkingMode.value = newValue
         }
     }
 
+    /**
+     * 直接设定思考模式。幂等：重复设定同一个值不会重复落盘，避免并发调用时互相取反。
+     */
+    fun setThinkingMode(enabled: Boolean) {
+        if (_enableThinkingMode.value == enabled) return
+        _enableThinkingMode.value = enabled
+        configScope.launch { apiPreferences.updateThinkingSettings(enableThinkingMode = enabled) }
+    }
+
     fun updateThinkingQualityLevel(level: Int) {
+        val clampedRequest = level.coerceIn(
+            ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+            ApiPreferences.MAX_THINKING_QUALITY_LEVEL
+        )
+        // 幂等：档位没变就不落盘，避免拖动/防抖重复写入同一份偏好
+        if (_thinkingQualityLevel.value == clampedRequest) return
         configScope.launch {
-            val clampedLevel = level.coerceIn(
-                ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
-                ApiPreferences.MAX_THINKING_QUALITY_LEVEL
-            )
-            apiPreferences.saveThinkingQualityLevel(clampedLevel)
-            _thinkingQualityLevel.value = clampedLevel
+            apiPreferences.saveThinkingQualityLevel(clampedRequest)
+            _thinkingQualityLevel.value = clampedRequest
         }
     }
 
