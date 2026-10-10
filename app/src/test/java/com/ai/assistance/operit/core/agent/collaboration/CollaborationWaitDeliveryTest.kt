@@ -84,4 +84,22 @@ class CollaborationWaitDeliveryTest {
         waiter.cancelAndJoin()
         assertTrue(waiter.isCancelled)
     }
+
+    @Test(timeout = 5_000) fun anEmptyTreeReturnsIdleInsteadOfWaitingOutTheTimeout() = runBlocking {
+        var deliveries = 0
+        val startedAt = System.currentTimeMillis()
+        val outcome = awaitCollaborationInput(5_000, { deliveries++ }, { null }, { false })
+        assertEquals(CollaborationWaitOutcome.IDLE, outcome)
+        // The queued-mailbox step still runs once before the wait can give up.
+        assertEquals(1, deliveries)
+        assertTrue(System.currentTimeMillis() - startedAt < 2_000)
+    }
+
+    @Test(timeout = 10_000) fun historyReconciliationIsThrottledWhileInputKeepsPolling() = runBlocking {
+        var deliveries = 0
+        val outcome = awaitCollaborationInput(1_500, { deliveries++ }, { null }, { true })
+        assertEquals(CollaborationWaitOutcome.TIMED_OUT, outcome)
+        // Immediate pass plus at most one per second; the unthrottled loop reaches ~15 here.
+        assertTrue("deliveries=$deliveries", deliveries in 1..3)
+    }
 }
