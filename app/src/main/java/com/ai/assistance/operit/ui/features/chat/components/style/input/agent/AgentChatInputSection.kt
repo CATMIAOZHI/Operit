@@ -57,7 +57,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
@@ -113,6 +112,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionTextField
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler
@@ -183,6 +184,7 @@ fun AgentChatInputSection(
     actualViewModel: ChatViewModel,
     userMessage: TextFieldValue,
     onUserMessageChange: (TextFieldValue) -> Unit,
+    composerPrediction: String? = null,
     enableEnterToSend: Boolean = false,
     onSendMessage: () -> Unit,
     onQueueMessage: () -> Unit,
@@ -372,6 +374,10 @@ fun AgentChatInputSection(
 
     val inputTextStyle = chatComposerTextStyle(agent = true)
     val mentionVisualTransformation = rememberMentionVisualTransformation(inputTextStyle)
+    val composerTransformation = rememberComposerPredictionTransformation(
+        userMessage, composerPrediction,
+        mentionVisualTransformation,
+    )
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
 
@@ -879,10 +885,12 @@ fun AgentChatInputSection(
                             .fillMaxWidth()
                             .padding(horizontal = 12.dp, vertical = 8.dp),
                 ) {
-                    OutlinedTextField(
+                    ComposerPredictionTextField(
                         value = userMessage,
+                        prediction = composerPrediction,
+                        onAcceptPrediction = actualViewModel::acceptComposerPrediction,
                         onValueChange = onUserMessageChange,
-                        visualTransformation = mentionVisualTransformation,
+                        visualTransformation = composerTransformation,
                         placeholder = {
                             Text(
                                 if (isWorkspaceOpen) {
@@ -893,7 +901,8 @@ fun AgentChatInputSection(
                                 style = inputTextStyle,
                             )
                         },
-                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).onPreviewKeyEvent(onEnterToSendKeyEvent),
+                        modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                            .onPreviewKeyEvent(onEnterToSendKeyEvent),
                         textStyle = inputTextStyle,
                         maxLines = 6,
                         minLines = 1,
@@ -1184,10 +1193,12 @@ fun AgentChatInputSection(
                                 .fillMaxWidth()
                                 .padding(horizontal = 12.dp, vertical = 8.dp),
                     ) {
-                        OutlinedTextField(
+                        ComposerPredictionTextField(
                             value = userMessage,
+                            prediction = composerPrediction,
+                            onAcceptPrediction = actualViewModel::acceptComposerPrediction,
                             onValueChange = onUserMessageChange,
-                            visualTransformation = mentionVisualTransformation,
+                            visualTransformation = composerTransformation,
                             placeholder = {
                                 Text(
                                     if (isWorkspaceOpen) {
@@ -1198,7 +1209,8 @@ fun AgentChatInputSection(
                                     style = inputTextStyle,
                                 )
                             },
-                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp).onPreviewKeyEvent(onEnterToSendKeyEvent),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 44.dp)
+                                .onPreviewKeyEvent(onEnterToSendKeyEvent),
                             textStyle = inputTextStyle,
                             maxLines = 6,
                             minLines = 1,
@@ -1536,6 +1548,10 @@ fun AgentChatInputSection(
             if (showFullscreenInput.value) {
                 FullscreenInputDialog(
                     value = userMessage,
+                    composerPrediction = composerPrediction,
+                    onAcceptPrediction = { expected ->
+                        if (actualViewModel.acceptComposerPrediction(expected)) actualViewModel.userMessage.value else null
+                    },
                     onValueChange = onUserMessageChange,
                     onDismiss = { showFullscreenInput.value = false },
                     onConfirm = { showFullscreenInput.value = false },

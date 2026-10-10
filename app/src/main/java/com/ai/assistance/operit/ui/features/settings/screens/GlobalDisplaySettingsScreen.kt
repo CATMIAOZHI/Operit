@@ -51,6 +51,9 @@ fun GlobalDisplaySettingsScreen(
     val enableReplyNotification by displayPreferencesManager.enableReplyNotification.collectAsState(initial = true)
     val enableReplyNotificationSound by displayPreferencesManager.enableReplyNotificationSound.collectAsState(initial = false)
     val enableReplyNotificationVibration by displayPreferencesManager.enableReplyNotificationVibration.collectAsState(initial = false)
+    val composerPredictionsEnabled by displayPreferencesManager.composerPredictionsEnabled.collectAsState(
+        initial = DisplayPreferencesManager.DEFAULT_COMPOSER_PREDICTIONS_ENABLED
+    )
     val enableEnterToSend by displayPreferencesManager.enableEnterToSend.collectAsState(initial = false)
     val enableNavigationAnimation by displayPreferencesManager.enableNavigationAnimation.collectAsState(initial = true)
     val startWithNewChat by displayPreferencesManager.startWithNewChat.collectAsState(initial = false)
@@ -333,6 +336,18 @@ fun GlobalDisplaySettingsScreen(
                 onCheckedChange = {
                     scope.launch {
                         displayPreferencesManager.saveDisplaySettings(enableEnterToSend = it)
+                    }
+                },
+                backgroundColor = componentBackgroundColor
+            )
+
+            DisplayToggleItem(
+                title = stringResource(R.string.composer_predictions),
+                subtitle = stringResource(R.string.composer_predictions_description),
+                checked = composerPredictionsEnabled,
+                onCheckedChange = {
+                    scope.launch {
+                        displayPreferencesManager.saveDisplaySettings(composerPredictionsEnabled = it)
                     }
                 },
                 backgroundColor = componentBackgroundColor

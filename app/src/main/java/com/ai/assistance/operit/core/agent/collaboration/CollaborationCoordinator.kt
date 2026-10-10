@@ -41,13 +41,32 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val stopGate = CollaborationStopGate()
 
     private fun key(root: String, path: String) = "$root:$path"
+    private val _composerPredictionRevision = kotlinx.coroutines.flow.MutableStateFlow(0L)
+    val composerPredictionRevision: kotlinx.coroutines.flow.StateFlow<Long> = _composerPredictionRevision
+
     private fun write(next: CollaborationState) {
         store.save(next)
         state = next
+        _composerPredictionRevision.value += 1L
     }
 
     fun isAgent(chatId: String?): Boolean = synchronized(lock) {
         state.agents.any { it.chatId == chatId && it.path != AgentPath.ROOT }
+    }
+
+    /** Read-only eligibility check; unlike list/caller, this never creates a collaboration root. */
+    fun blocksComposerPrediction(chatId: String): Boolean = synchronized(lock) {
+        val caller = state.agents.firstOrNull { it.chatId == chatId }
+        val root = caller?.rootChatId ?: chatId
+        composerPredictionBlockedByCollaboration(
+            rootChatId = root,
+            callerIsAgent = caller != null && caller.path != AgentPath.ROOT,
+            deleting = chatId in deleting,
+            stopping = stopGate.isStopping(root),
+            jobKeys = jobs.keys,
+            reservationKeys = reservations,
+            agents = state.agents,
+        )
     }
 
     fun reasoningEffort(chatId: String?): String? = synchronized(lock) {
@@ -214,6 +233,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                         jobs.remove(reservation)
                         reservations.remove(reservation)
                         pendingParents.remove(reservation)
+                        _composerPredictionRevision.value += 1L
                         val latest = state.find(parent.rootChatId, path)
                         if (latest != null && !stopGate.isStopping(latest.rootChatId) &&
                             latest.status != CollaborationStatus.INTERRUPTED && latest.chatId !in deleting &&
@@ -230,6 +250,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                     if (jobs[reservation] === job) jobs.remove(reservation)
                     reservations.remove(reservation)
                     pendingParents.remove(reservation)
+                    _composerPredictionRevision.value += 1L
                 }
             }
             synchronized(lock) {
@@ -325,6 +346,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 synchronized(lock) {
                     deliveries.removeAll(inputs.map { it.id }.toSet())
                     jobs.remove(jobKey)
+                    _composerPredictionRevision.value += 1L
                     val latest = state.find(agent.rootChatId, agent.path)
                     if (latest != null && !stopGate.isStopping(latest.rootChatId) &&
                         latest.status != CollaborationStatus.INTERRUPTED && latest.chatId !in deleting &&
@@ -345,6 +367,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 ) finish(agent.rootChatId, agent.path, null, cause)
                 deliveries.removeAll(inputs.map { it.id }.toSet())
                 jobs.remove(jobKey)
+                _composerPredictionRevision.value += 1L
             }
         }
         job.start()
