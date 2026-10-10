@@ -9,6 +9,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -20,6 +21,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -33,6 +35,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -46,19 +49,33 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.ApiPreferences
+import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
+
+private val ThinkingSliderTrackHeight = 50.dp
+private val ThinkingSliderThumbSlot = ThinkingSliderTrackHeight
+private val ThinkingSliderThumbSize = 34.dp
+private val ThinkingSliderRingWidth = 3.dp
 
 /**
  * The composer's quick control for how hard the model should think.
@@ -89,6 +106,12 @@ fun ThinkingStrengthControl(
         else stringResource(R.string.disabled)
     val chipShape = RoundedCornerShape(16.dp)
     val chipInteraction = remember { MutableInteractionSource() }
+    // The dial floats clear of the composer card instead of covering the draft, and leans towards
+    // the send side where the thumb already is. The lift moves the window itself; padding inside it
+    // would leave a strip of popup below the panel, and a tap landing there counts as an inside
+    // tap, so the popup would look stuck.
+    val popupOffset =
+        with(LocalDensity.current) { IntOffset(x = 48.dp.roundToPx(), y = -84.dp.roundToPx()) }
 
     Box(modifier = modifier) {
         Row(
@@ -117,6 +140,7 @@ fun ThinkingStrengthControl(
         if (visibility.targetState || visibility.currentState) {
             Popup(
                 alignment = Alignment.BottomEnd,
+                offset = popupOffset,
                 onDismissRequest = { visibility.targetState = false },
                 properties =
                     PopupProperties(
@@ -197,7 +221,6 @@ private fun ThinkingStrengthPopup(
     }
 
     Surface(
-        modifier = Modifier.padding(bottom = 6.dp),
         shape = RoundedCornerShape(16.dp),
         color = MaterialTheme.colorScheme.surface.copy(alpha = 0.96f),
         tonalElevation = 4.dp,
@@ -238,18 +261,36 @@ private fun ThinkingStrengthPopup(
                     val pressed by sliderInteraction.collectIsPressedAsState()
                     val scale by
                         animateFloatAsState(
-                            targetValue = if (pressed || state.isDragging) 1.35f else 1f,
+                            targetValue = if (pressed || state.isDragging) 1.12f else 1f,
                             animationSpec = spring(dampingRatio = 0.35f, stiffness = 900f),
                             label = "thinkingThumb",
                         )
+                    // The slot is as tall as the track: that is what puts the thumb's centre on the
+                    // stop circles at either end. The circle drawn inside it is smaller.
                     Box(
-                        modifier =
-                            Modifier.size(18.dp)
-                                .graphicsLayer {
-                                    scaleX = scale
-                                    scaleY = scale
-                                }
-                                .background(activeColor, CircleShape)
+                        modifier = Modifier.size(ThinkingSliderThumbSlot),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier =
+                                Modifier.size(ThinkingSliderThumbSize)
+                                    .graphicsLayer {
+                                        scaleX = scale
+                                        scaleY = scale
+                                    }
+                                    .background(MaterialTheme.colorScheme.surface, CircleShape)
+                                    .border(ThinkingSliderRingWidth, activeColor, CircleShape)
+                        )
+                    }
+                },
+                track = { state ->
+                    ThinkingSliderTrack(
+                        state = state,
+                        activeColor = activeColor,
+                        inactiveColor = MaterialTheme.colorScheme.surfaceVariant,
+                        activeDotColor = MaterialTheme.colorScheme.onPrimary.copy(alpha = 0.25f),
+                        inactiveDotColor =
+                            MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.32f),
                     )
                 },
             )
@@ -263,7 +304,7 @@ private fun ThinkingStrengthPopup(
             ) {
                 for (stop in minLevel..maxLevel) {
                     Box(
-                        modifier = Modifier.width(18.dp),
+                        modifier = Modifier.width(ThinkingSliderThumbSlot),
                         contentAlignment = Alignment.Center,
                     ) {
                         Text(
@@ -314,6 +355,68 @@ private fun ThinkingStrengthPopup(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+        }
+    }
+}
+
+/**
+ * The dial's track: a pill that spans the whole panel, a slimmer filled rail that grows out of the
+ * first stop, and one dot per level. The dots sit where the thumb's centre lands, so the geometry
+ * is shared with the slider rather than guessed. Colours come from the theme.
+ */
+@Composable
+@OptIn(ExperimentalMaterial3Api::class)
+private fun ThinkingSliderTrack(
+    state: SliderState,
+    activeColor: Color,
+    inactiveColor: Color,
+    activeDotColor: Color,
+    inactiveDotColor: Color,
+) {
+    val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
+    val span = state.valueRange.endInclusive - state.valueRange.start
+    val fraction =
+        if (span <= 0f) 0f
+        else ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f)
+    val stopCount = state.steps + 2
+
+    Canvas(modifier = Modifier.fillMaxWidth().height(ThinkingSliderTrackHeight)) {
+        val radius = size.height / 2f
+        val railRadius = size.height / 3f
+        val railInset = radius - railRadius
+        val width = size.width
+        // Mirroring happens here rather than on the layer, so the bleed below cannot be clipped.
+        fun mirrored(value: Float) = if (rtl) width - value else value
+
+        // The pill bleeds half a track height past the slot on both sides: that fills the panel and
+        // puts its end circles exactly on the first and last stops.
+        drawRoundRect(
+            color = inactiveColor,
+            topLeft = Offset(-radius, 0f),
+            size = Size(width + radius * 2f, size.height),
+            cornerRadius = CornerRadius(radius, radius),
+        )
+
+        val railStart = mirrored(-railRadius)
+        val railEnd = mirrored(width * fraction)
+        // Widened first, then anchored: growing a too-narrow rail towards +x would put the circle
+        // on the wrong side of the track in RTL.
+        val railWidth = abs(railEnd - railStart).coerceAtLeast(railRadius * 2f)
+        drawRoundRect(
+            color = activeColor,
+            topLeft = Offset(if (rtl) railStart - railWidth else railStart, railInset),
+            size = Size(railWidth, size.height - railInset * 2f),
+            cornerRadius = CornerRadius(railRadius, railRadius),
+        )
+
+        val dotRadius = size.height / 12f
+        for (index in 0 until stopCount) {
+            val stopFraction = index.toFloat() / (stopCount - 1).toFloat()
+            drawCircle(
+                color = if (stopFraction <= fraction + 0.001f) activeDotColor else inactiveDotColor,
+                radius = dotRadius,
+                center = Offset(mirrored(width * stopFraction), radius),
+            )
         }
     }
 }
