@@ -294,11 +294,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
         viewModelScope.launch {
             combine(
-                enableThinkingMode, thinkingQualityLevel, enableTools, toolPromptVisibility,
+                enableThinkingMode, thinkingQualityLevel,
+            ) { thinking, quality -> thinking to quality }
+                .distinctUntilChanged().drop(1).collect { onPredictionThinkingChanged() }
+        }
+        viewModelScope.launch {
+            combine(
+                enableTools, toolPromptVisibility,
                 disableUserPreferenceDescription,
-            ) { thinking, quality, tools, visibility, preferences ->
-                listOf(thinking, quality, tools, visibility, preferences)
+            ) { tools, visibility, preferences ->
+                listOf(tools, visibility, preferences)
             }.distinctUntilChanged().drop(1).collect { invalidateCurrentComposerPrediction() }
+        }
+    }
+
+    private fun onPredictionThinkingChanged() {
+        if (composerPredictionCoordinator.invalidateForThinkingChange()) {
+            composerPredictionContext = null
+            currentChatId.value?.let { messageProcessingDelegate.invalidateComposerPrediction(it) }
         }
     }
 
@@ -741,16 +754,16 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 切换思考模式的方法现在委托给ApiConfigDelegate
     fun toggleThinkingMode() {
-        invalidateCurrentComposerPrediction()
+        onPredictionThinkingChanged()
         apiConfigDelegate.toggleThinkingMode()
     }
 
     fun setThinkingMode(enabled: Boolean) {
-        invalidateCurrentComposerPrediction()
+        onPredictionThinkingChanged()
         apiConfigDelegate.setThinkingMode(enabled)
     }
     fun updateThinkingQualityLevel(level: Int) {
-        invalidateCurrentComposerPrediction()
+        onPredictionThinkingChanged()
         apiConfigDelegate.updateThinkingQualityLevel(level)
     }
 

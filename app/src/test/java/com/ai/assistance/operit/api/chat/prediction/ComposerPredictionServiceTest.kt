@@ -203,8 +203,9 @@ class ComposerPredictionServiceTest {
         assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "plugin-provider")))
         assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "MNN")))
         assertFalse(ComposerPredictionService.supports(config.copy(modelName = "gemini-3.1-flash-image")))
-        assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENCODE_ZEN_FREE")))
-        assertFalse(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENAI_CODEX")))
+        assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENCODE_ZEN_FREE", modelName = "mimo-v2.5-free")))
+        assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENCODE_ZEN_FREE", modelName = "muse-spark-1.3-contributor-free")))
+        assertTrue(ComposerPredictionService.supports(config.copy(apiProviderTypeId = "OPENAI_CODEX", modelName = "gpt-6-astra")))
         assertTrue(ComposerPredictionService.supports(config))
     }
 

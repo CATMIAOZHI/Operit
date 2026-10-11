@@ -61,6 +61,37 @@ class ComposerPredictionCoordinatorTest {
         assertEquals(1, calls)
     }
 
+    @Test fun thinkingChangesPreserveReadyTextAndAdoptionWithoutRequestingAgain() = runTest {
+        var calls = 0
+        val coordinator = ComposerPredictionCoordinator(this) { calls++; "Show an example" }
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        repeat(3) { assertFalse(coordinator.invalidateForThinkingChange()) }
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        assertEquals(1, calls)
+        assertEquals(ComposerPredictionCoordinator.Status.READY, coordinator.status)
+        assertEquals("Show an example", coordinator.text.value)
+        assertEquals("Show an example", coordinator.textForAdoption(null, true) { true })
+        // Other invalidations, such as a new message, must still clear the cached suggestion.
+        coordinator.invalidate()
+        assertNull(coordinator.text.value)
+    }
+
+    @Test fun thinkingChangesCancelAnUnfinishedPredictionAndIgnoreItsLateResult() = runTest {
+        val result = CompletableDeferred<String?>()
+        val coordinator = ComposerPredictionCoordinator(this) {
+            withContext(NonCancellable) { result.await() }
+        }
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        assertTrue(coordinator.invalidateForThinkingChange())
+        result.complete("Old thinking settings")
+        runCurrent()
+        assertEquals(ComposerPredictionCoordinator.Status.IDLE, coordinator.status)
+        assertNull(coordinator.text.value)
+    }
+
     @Test fun lateNonCooperativeResultCannotOverwriteNewTurn() = runTest {
         val oldResult = CompletableDeferred<String?>()
         val coordinator = ComposerPredictionCoordinator(this) { source ->

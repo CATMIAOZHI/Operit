@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.chat.components.style.input.common
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.selection.LocalTextSelectionColors
@@ -20,11 +21,22 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.takeOrElse
+import androidx.compose.ui.layout.LayoutCoordinates
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.VisualTransformation
 
-/** Native editor and Material decoration, exposing only the ghost's inner layout for hit testing. */
+private class PredictionEditorCoordinates {
+    var editor: LayoutCoordinates? = null
+    var trailing: LayoutCoordinates? = null
+
+    fun trailingBounds() = editor?.takeIf { it.isAttached }?.let { root ->
+        trailing?.takeIf { it.isAttached }?.let { root.localBoundingBoxOf(it) }
+    }
+}
+
+/** Native editor and Material decoration, keeping adoption gestures separate from trailing controls. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun ComposerPredictionTextField(
@@ -49,7 +61,7 @@ internal fun ComposerPredictionTextField(
     shape: Shape = if (outlined) OutlinedTextFieldDefaults.shape else TextFieldDefaults.shape,
     colors: TextFieldColors = if (outlined) OutlinedTextFieldDefaults.colors() else TextFieldDefaults.colors(),
 ) {
-    val layout = remember { ComposerPredictionLayout() }
+    val coordinates = remember { PredictionEditorCoordinates() }
     val ghost = visibleComposerPrediction(value, prediction)
     val focused by interactionSource.collectIsFocusedAsState()
     val textColor = textStyle.color.takeOrElse {
@@ -69,6 +81,12 @@ internal fun ComposerPredictionTextField(
                 .defaultMinSize(
                     minWidth = OutlinedTextFieldDefaults.MinWidth,
                     minHeight = OutlinedTextFieldDefaults.MinHeight,
+                )
+                .onGloballyPositioned { coordinates.editor = it }
+                .composerPredictionGesture(
+                    value, prediction, enabled && !readOnly,
+                    excludedBounds = { if (trailingIcon != null) coordinates.trailingBounds() else null },
+                    onAccept = onAcceptPrediction,
                 ),
             enabled = enabled,
             readOnly = readOnly,
@@ -81,11 +99,13 @@ internal fun ComposerPredictionTextField(
             maxLines = if (ghost == null) maxLines else Int.MAX_VALUE,
             minLines = minLines,
             interactionSource = interactionSource,
-            onTextLayout = { layout.result = it },
             decorationBox = { inner ->
                 val editor: @Composable () -> Unit = {
-                    ComposerPredictionViewport(value, prediction, layout, mergedTextStyle, maxLines,
-                        enabled && !readOnly, onAcceptPrediction, inner)
+                    ComposerPredictionViewport(value, prediction, mergedTextStyle, maxLines,
+                        inner)
+                }
+                val trailing: (@Composable () -> Unit)? = trailingIcon?.let { content ->
+                    { Box(Modifier.onGloballyPositioned { coordinates.trailing = it }) { content() } }
                 }
                 if (outlined) {
                     OutlinedTextFieldDefaults.DecorationBox(
@@ -96,7 +116,7 @@ internal fun ComposerPredictionTextField(
                         visualTransformation = visualTransformation,
                         interactionSource = interactionSource,
                         placeholder = placeholder,
-                        trailingIcon = trailingIcon,
+                        trailingIcon = trailing,
                         colors = colors,
                         container = {
                             OutlinedTextFieldDefaults.Container(
@@ -117,7 +137,7 @@ internal fun ComposerPredictionTextField(
                         visualTransformation = visualTransformation,
                         interactionSource = interactionSource,
                         placeholder = placeholder,
-                        trailingIcon = trailingIcon,
+                        trailingIcon = trailing,
                         colors = colors,
                         container = {
                             TextFieldDefaults.Container(

@@ -53,7 +53,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.composerPredictionSemantics
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionLayout
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.composerPredictionGesture
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPredictionViewport
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberComposerPredictionTransformation
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.visibleComposerPrediction
@@ -186,7 +186,6 @@ fun ClassicChatInputSection(
     }
     val modernTextStyle = chatComposerTextStyle(agent = false)
     val mentionVisualTransformation = rememberMentionVisualTransformation(modernTextStyle)
-    val composerLayout = remember { ComposerPredictionLayout() }
     val composerTransformation = rememberComposerPredictionTransformation(
         userMessage, composerPrediction,
         mentionVisualTransformation,
@@ -706,6 +705,9 @@ fun ClassicChatInputSection(
                         .composerPredictionSemantics(userMessage, composerPrediction,
                             enabled = classicInputEnabled,
                             onAccept = actualViewModel::acceptComposerPrediction)
+                        .composerPredictionGesture(userMessage, composerPrediction,
+                            enabled = classicInputEnabled,
+                            onAccept = actualViewModel::acceptComposerPrediction)
                         .onPreviewKeyEvent { keyEvent ->
                             if (!enableEnterToSend) {
                                 false
@@ -724,7 +726,6 @@ fun ClassicChatInputSection(
                     cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                     visualTransformation = composerTransformation,
                     maxLines = if (visibleComposerPrediction(userMessage, composerPrediction) == null) 5 else Int.MAX_VALUE,
-                    onTextLayout = { composerLayout.result = it },
                     minLines = 1,
                     keyboardOptions =
                     KeyboardOptions(imeAction = if (enableEnterToSend) ImeAction.Send else ImeAction.Default),
@@ -753,8 +754,8 @@ fun ClassicChatInputSection(
                                 )
                             }
                             ComposerPredictionViewport(
-                                userMessage, composerPrediction, composerLayout, modernTextStyle, 5,
-                                classicInputEnabled, actualViewModel::acceptComposerPrediction, innerTextField,
+                                userMessage, composerPrediction, modernTextStyle, 5,
+                                innerTextField,
                             )
                         }
                     },
