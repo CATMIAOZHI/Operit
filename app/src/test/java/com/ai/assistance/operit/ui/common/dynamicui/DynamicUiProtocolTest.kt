@@ -1,0 +1,65 @@
+package com.ai.assistance.operit.ui.common.dynamicui
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class DynamicUiProtocolTest {
+    private val create = """{"version":"v0.9","createSurface":{"surfaceId":"test","catalogId":"${DynamicUiProtocol.CATALOG}"}}"""
+    private fun components(content: String) =
+        """{"version":"v0.9","updateComponents":{"surfaceId":"test","components":[$content]}}"""
+    private val text = """{"id":"root","component":"Text","text":"Hello"}"""
+    private fun rejected(source: String) = assertTrue(runCatching { DynamicUiProtocol.parse(source, true) }.isFailure)
+
+    @Test fun completeCardAndPartialLastEvent() {
+        assertEquals(setOf("test"), DynamicUiProtocol.parse("$create\n${components(text)}", true).surfaceIds)
+        assertEquals(listOf(create), DynamicUiProtocol.parse("$create\n{\"version", false).lines)
+        rejected("$create\n{\"version")
+    }
+
+    @Test fun mergedCyclesAndMissingChildrenRejected() {
+        rejected("$create\n${components("""{"id":"root","component":"Column","children":["a"]},{"id":"a","component":"Column","children":["root"]}""")}")
+        rejected("$create\n${components("""{"id":"root","component":"Card","child":"missing"}""")}")
+    }
+
+    @Test fun repeatedChildrenAndBadWeightRejected() {
+        rejected("$create\n${components("""{"id":"root","component":"Column","children":["x","x"]}""")}")
+        rejected("$create\n${components("""{"id":"root","component":"Text","text":"x","weight":0}""")}")
+    }
+
+    @Test fun rejectUnsafeExpressionsAndSparseArrays() {
+        rejected("$create\n${components("""{"id":"root","component":"TextField","value":{"path":"/a/99999999"}}""")}")
+        rejected("$create\n${components("""{"id":"root","component":"Text","text":{"call":"openUrl"}}""")}")
+        rejected("$create\n${components("""{"id":"root","component":"TextField","validationRegexp":"(a+)+"}""")}")
+        rejected("$create\n${components("""{"id":"root","component":"Slider","min":0,"max":1000000000}""")}")
+    }
+
+    @Test fun exponentialDagRejected() {
+        val nodes = (0..10).flatMap { level ->
+            listOf("a", "b").map { suffix ->
+                """{"id":"n$level$suffix","component":"Column","children":["n${level + 1}a","n${level + 1}b"]}"""
+            }
+        } + """{"id":"root","component":"Card","child":"n0a"}""" +
+            """{"id":"n11a","component":"Text","text":"end"}""" +
+            """{"id":"n11b","component":"Text","text":"end"}"""
+        rejected("$create\n${components(nodes.joinToString(","))}")
+    }
+
+    @Test fun boundedStateAndSafeLinks() {
+        assertTrue(DynamicUiProtocol.safeUrl("https://example.com/a"))
+        assertFalse(DynamicUiProtocol.safeUrl("javascript:alert(1)"))
+        assertFalse(DynamicUiProtocol.safeUrl("https://user:secret@example.com"))
+        assertFalse(DynamicUiProtocol.safeUrl("file:///sdcard/x"))
+        assertTrue(runCatching { DynamicUiProtocol.toJson(List(129) { 0 }) }.isFailure)
+        assertEquals("""{"form":{"effort":"Medium"}}""",
+            DynamicUiProtocol.toJson(mapOf("form" to mapOf("effort" to "Medium"))).toString())
+    }
+
+    @Test fun malformedFieldUpdateIsReportedInsteadOfCrashingUi() {
+        var reported = false
+        updateCardField({ reported = true }) { throw IllegalStateException("Invalid parent container") }
+        assertTrue(reported)
+        assertTrue(runCatching {
+            updateCardField({}) { throw kotlinx.coroutines.CancellationException("disposed") }
+        }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+    }
+}

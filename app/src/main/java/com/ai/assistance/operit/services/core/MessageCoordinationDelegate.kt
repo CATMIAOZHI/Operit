@@ -392,6 +392,7 @@ class MessageCoordinationDelegate(
         chatId: String,
         messageText: String,
         attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
+        turnOptions: ChatTurnOptions = ChatTurnOptions(),
     ): Boolean {
         if (chatId.isBlank()) return false
         return sendMessageInternal(
@@ -399,6 +400,7 @@ class MessageCoordinationDelegate(
             chatIdOverride = chatId,
             messageTextOverride = messageText,
             attachmentsOverride = attachments,
+            turnOptions = turnOptions,
         )
     }
 

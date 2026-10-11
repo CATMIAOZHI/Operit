@@ -1629,7 +1629,7 @@ private fun ChatHistoryBatchSelectorCard(
                         placeholder = { Text(context.getString(R.string.select_card_or_unbind)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = dropdownExpanded) },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                             .fillMaxWidth(),
                         colors = ExposedDropdownMenuDefaults.textFieldColors()
                     )
@@ -1687,7 +1687,7 @@ private fun ChatHistoryBatchSelectorCard(
                         placeholder = { Text(context.getString(R.string.select_group_or_unbind)) },
                         trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = groupDropdownExpanded) },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                             .fillMaxWidth(),
                         colors = ExposedDropdownMenuDefaults.textFieldColors()
                     )
@@ -1758,7 +1758,7 @@ private fun ChatHistoryBatchSelectorCard(
                             Icon(Icons.Default.Folder, contentDescription = null)
                         },
                         modifier = Modifier
-                            .menuAnchor()
+                            .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                             .fillMaxWidth(),
                         colors = ExposedDropdownMenuDefaults.textFieldColors()
                     )
@@ -2044,7 +2044,7 @@ private fun ChatHistoryBatchSelectorCard(
                                     expanded = memoryWindowSizeMenuExpanded
                                 )
                             },
-                            modifier = Modifier.menuAnchor().fillMaxWidth(),
+                            modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth(),
                             colors = ExposedDropdownMenuDefaults.textFieldColors()
                         )
                         ExposedDropdownMenu(

@@ -281,6 +281,7 @@ android {
         compose = true
         aidl = true
         buildConfig = true
+        resValues = true
     }
     lint {
         baseline = file("lint-baseline.xml")
@@ -339,6 +340,11 @@ kotlin {
 }
 
 dependencies {
+    // Keep this alpha set in sync with compose-bom-alpha 2026.09.00.
+    implementation("androidx.a2ui.compose:compose-runtime:1.0.0-alpha01")
+    implementation("androidx.a2ui.compose:compose-ui:1.0.0-alpha01")
+    implementation("androidx.a2ui:a2ui-engine:1.0.0-alpha01")
+    implementation("androidx.compose.material3:material3-a2ui:1.0.0-alpha01")
     implementation(project(":chat-parser"))
     implementation(project(":chat-storage"))
     implementation(project(":memory-storage"))

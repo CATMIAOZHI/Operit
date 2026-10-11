@@ -669,7 +669,16 @@ private fun renderNodeContent(
             
             // 不使用 key()，让 Compose 根据位置自然识别组件
             // 这样可以保留内部状态（如"已复制"提示、Mermaid 渲染状态）
-            EnhancedCodeBlock(
+            if (language == "a2ui") {
+                com.ai.assistance.operit.ui.common.dynamicui.DynamicUiCard(
+                    source = codeLines.drop(1).let {
+                        if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it
+                    }.joinToString("\n"),
+                    closed = codeLines.size > 1 && codeLines.last().trim() == "```",
+                    streaming = LocalMarkdownRenderMode.current == MarkdownRenderMode.STREAMING,
+                    blockIndex = index,
+                )
+            } else EnhancedCodeBlock(
                 code = codeContent,
                 language = language,
                 modifier = Modifier.fillMaxWidth(),

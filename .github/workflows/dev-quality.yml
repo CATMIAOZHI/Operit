@@ -14,7 +14,7 @@ permissions:
 
 env:
   JAVA_VERSION: '21'
-  ANDROID_BUILD_TOOLS_VERSION: '35.0.0'
+  ANDROID_BUILD_TOOLS_VERSION: '37.0.0'
   ANDROID_CMAKE_VERSION: '3.31.6'
   MANUAL_DEPS_DIR: manual-deps
 
@@ -73,6 +73,7 @@ jobs:
             "platform-tools" \
             "platforms;android-34" \
             "platforms;android-36" \
+            "platforms;android-37.1" \
             "build-tools;$ANDROID_BUILD_TOOLS_VERSION" \
             "cmake;$ANDROID_CMAKE_VERSION"
 

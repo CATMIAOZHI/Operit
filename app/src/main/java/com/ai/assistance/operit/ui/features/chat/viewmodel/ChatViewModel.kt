@@ -1795,6 +1795,24 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         return accepted
     }
 
+    fun submitDynamicUi(
+        owner: com.ai.assistance.operit.ui.common.dynamicui.DynamicUiOwner,
+        text: String,
+    ): Boolean {
+        if (currentChatId.value != owner.chatId || displayedChatId.value != owner.chatId ||
+            isCurrentTranscriptReadOnly() || isChatBusy(owner.chatId) || text.length > 40_000) return false
+        val message = chatHistory.value.firstOrNull { it.timestamp == owner.timestamp } ?: return false
+        if (message.sender != "ai" || message.isVariantPreview ||
+            message.selectedVariantIndex != owner.variant || message.content != owner.content) return false
+        return messageCoordinationDelegate.trySendUserMessageToExistingChat(
+            promptFunctionType = PromptFunctionType.CHAT,
+            chatId = owner.chatId,
+            messageText = text,
+            attachments = emptyList(),
+            turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
+        )
+    }
+
     fun trySendQueuedTextMessage(
         text: String,
         chatId: String,
