@@ -2834,6 +2834,8 @@ open class OpenAIProvider(
     ) {
         val state = StreamingState()
         val responseStartedAtMs = streamNowMs()
+        var lastProgressLogAtMs = responseStartedAtMs
+        var maxChunkGapSinceLogMs = 0L
         var firstPayloadLogged = false
         // 只认 data: 有效载荷的进度时间戳：OkHttp 的 readTimeout 会被任意字节（空行、注释心跳）
         // 重置，覆盖不了“连接活着但不再产生数据”的死连接。
@@ -2879,6 +2881,7 @@ open class OpenAIProvider(
                 }
                 val nowMs = streamNowMs()
                 val idleMs = nowMs - progress.lastProgressAt.get()
+                maxChunkGapSinceLogMs = maxOf(maxChunkGapSinceLogMs, idleMs)
                 progress.lastProgressAt.set(nowMs)
                 // 记录此刻的非数据行累计值，停滞告警只报这一段窗口内的心跳行数
                 progress.nonDataLineCountAtLastData.set(progress.nonDataLineCount.get())
@@ -2893,12 +2896,15 @@ open class OpenAIProvider(
                 }
 
                 state.chunkCount++
-                // 每 10 个数据块记一次心跳；卡住时最后一条心跳里的块间隔就是现场
-                if (state.chunkCount % 10 == 0) {
+                // Limit diagnostic work by time, not model throughput. Keep the largest gap
+                // in this window so batching logs does not hide intermittent stalls.
+                if (nowMs - lastProgressLogAtMs >= 5_000L) {
                     AppLogger.d(
                         "AIService",
-                        "【发送消息】已接收 ${state.chunkCount} 个数据块，距上一块 ${idleMs}ms"
+                        "【发送消息】已接收 ${state.chunkCount} 个数据块，距上一块 ${idleMs}ms，窗口最大间隔 ${maxChunkGapSinceLogMs}ms"
                     )
+                    lastProgressLogAtMs = nowMs
+                    maxChunkGapSinceLogMs = 0L
                 }
 
                 try {
