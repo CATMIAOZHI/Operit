@@ -85,6 +85,7 @@ internal object DynamicUiProtocol {
             "Unsupported action", "Table too large", "Invalid table rows", "Cyclic or deeply nested components",
             "Too many rendered components", "Invalid data path", "Reserved or array-index data path",
             "JSON too deeply nested", "Object too large", "Too many local calculations",
+            "Local calculation count exceeds 128",
             "Unsupported expression or reserved field", "Array too large", "Text too long",
             "Unsupported function property", "Unsupported local function", "Function args must be an object",
             "Invalid function arguments", "Incorrect return type", "Decimal places must be 0 to 6",
@@ -278,14 +279,13 @@ internal object DynamicUiProtocol {
         else -> false
     }
 
-    private fun checkValue(value: JsonElement, depth: Int = 0, callDepth: Int = 0, callCount: IntArray = intArrayOf(0)) {
+    private fun checkValue(value: JsonElement, depth: Int = 0, callCount: IntArray = intArrayOf(0)) {
         require(depth <= 20) { "JSON too deeply nested" }
         when (value) {
             is JsonObject -> {
                 require(value.size <= 128) { "Object too large" }
-                val nextCallDepth = callDepth + if ("call" in value) 1 else 0
                 if ("call" in value) {
-                    require(nextCallDepth <= 6 && ++callCount[0] <= 128) { "Too many local calculations" }
+                    require(++callCount[0] <= 128) { "Local calculation count exceeds 128" }
                     CardFunctions.validate(value)
                 }
                 value.forEach { (key, child) ->
@@ -293,12 +293,12 @@ internal object DynamicUiProtocol {
                         "Unsupported expression or reserved field"
                     }
                     if (key == "path") validatePath(child.jsonPrimitive.content)
-                    checkValue(child, depth + 1, nextCallDepth, callCount)
+                    checkValue(child, depth + 1, callCount)
                 }
             }
             is JsonArray -> {
                 require(value.size <= 128) { "Array too large" }
-                value.forEach { checkValue(it, depth + 1, callDepth, callCount) }
+                value.forEach { checkValue(it, depth + 1, callCount) }
             }
             is JsonPrimitive -> require(value.content.length <= 8192) { "Text too long" }
         }

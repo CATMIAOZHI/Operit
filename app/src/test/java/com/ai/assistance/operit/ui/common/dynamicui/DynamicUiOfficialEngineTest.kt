@@ -16,6 +16,30 @@ import org.junit.Test
 
 /** Exercises the actual published AndroidX parser and processor, not a mock renderer. */
 class DynamicUiOfficialEngineTest {
+    @Test fun sevenLevelFormulaEvaluatesAndReactsThroughOfficialEngine() = runBlocking {
+        var formula = "${'$'}/number"
+        repeat(6) { formula = "add(a=1,b=$formula)" }
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(
+            "${'$'}/number = 1\nroot = Display(text=formatNumber(value=$formula,decimals=0))"
+        ), true)
+        val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
+        val job = launch(Dispatchers.Default) { processor.collectMessages() }
+        try {
+            val parser = A2uiJsonMessageParser(::JvmJsonReader)
+            batch.lines.forEach { processor.processInput(parser, it) }
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/ready", true))
+            val surface = withTimeout(5000) {
+                processor.activeSurfaces.first { it.isNotEmpty() }.first()
+            } as A2uiCoreSurfaceModel
+            withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
+            val payload = DynamicUiProtocol.toValue(batch.componentsBySurface.getValue("card").getValue("root").getValue("text"))
+            fun result() = surface.evaluatePayload("root", { surface.dataModel[it] }, A2uiDataPath("/"), payload)
+            assertEquals("7", result())
+            surface.dataModel.update(A2uiDataPath("/number"), 2)
+            assertEquals("8", result())
+        } finally { job.cancelAndJoin() }
+    }
+
     @Test fun derivedTableRowsReactThroughOfficialEvaluator() = runBlocking {
         val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/data.express")!!.readText()),true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
