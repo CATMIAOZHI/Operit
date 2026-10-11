@@ -41,6 +41,7 @@ internal constructor(
     private var activeState by mutableStateOf(false)
     private var statusState by mutableStateOf("")
     private var errorState by mutableStateOf<String?>(null)
+    private var failedTextState by mutableStateOf<String?>(null)
 
     internal val manager: SpeechInteractionManager by lazy {
         SpeechInteractionManager(
@@ -59,10 +60,11 @@ internal constructor(
     val isProcessing: Boolean get() = manager.isProcessingSpeech
 
     /** What has been recognised so far, partial results included. */
-    val liveText: String get() = manager.userMessage
+    val liveText: String get() = failedTextState ?: manager.userMessage
     val statusText: String get() = statusState
     val errorText: String? get() = errorState
     val volumeLevelFlow: StateFlow<Float> get() = manager.volumeLevelFlow
+    val recognitionStateFlow get() = manager.speechService.recognitionStateFlow
 
     internal fun bindInsert(block: (String) -> Unit) {
         insertText = block
@@ -71,9 +73,14 @@ internal constructor(
     /** Starts listening. Safe to call again to retry after a failure. */
     fun open() {
         errorState = null
+        failedTextState = null
         activeState = true
         manager.requestFocus(view)
-        manager.startListening(onStartFailure = { errorState = it })
+        manager.startListening(
+            onStartFailure = { errorState = it },
+            continuousMode = manager.speechService.supportsContinuousDictation ||
+                manager.speechService.supportsContinuousRecognition,
+        )
     }
 
     /** Stops the microphone and waits for the final transcription. */
@@ -83,7 +90,7 @@ internal constructor(
 
     /** Takes whatever has been recognised so far and closes, without waiting for the final pass. */
     fun confirmNow() {
-        val text = manager.userMessage
+        val text = liveText
         manager.stopListening(isCancel = true)
         activeState = false
         insertText(text)
@@ -99,6 +106,7 @@ internal constructor(
      * composer silently going back to normal.
      */
     fun fail(message: String) {
+        failedTextState = liveText
         manager.stopListening(isCancel = true)
         errorState = message
         activeState = true
@@ -159,7 +167,10 @@ fun rememberDraftVoiceController(
                 if (
                     it.isFinal &&
                         it.text.isBlank() &&
-                        (controller.isRecording || controller.isProcessing)
+                        controller.liveText.isBlank() &&
+                        (controller.isProcessing ||
+                            (controller.isRecording &&
+                                !controller.manager.speechService.supportsContinuousDictation))
                 ) {
                     controller.fail(didNotHearText)
                     return@collect
@@ -168,7 +179,7 @@ fun rememberDraftVoiceController(
                 controller.manager.handleRecognitionResult(
                     it.text,
                     it.isFinal,
-                    autoSendSilence = true,
+                    autoSendSilence = !controller.manager.speechService.supportsContinuousDictation,
                 )
             }
         }

@@ -9052,4 +9052,5 @@
     <string name="composer_predictions_description">AI 回复完成后，自动预测下一条可能发送的消息。双击灰色文字即可采纳，输入或添加附件时隐藏。开启后会使用当前聊天模型额外调用 API，可能产生费用或消耗账户额度。支持 Codex 登录和 Zen Free 等文本模型；插件提供商暂不支持。</string>
     <string name="composer_prediction_adopt">采纳预测消息</string>
     <string name="token_stats_category_composer_prediction">输入预测</string>
+    <string name="voice_dictation_cannot_keep_up">识别速度跟不上录音，请分短一些录制后重试。</string>
 </resources>

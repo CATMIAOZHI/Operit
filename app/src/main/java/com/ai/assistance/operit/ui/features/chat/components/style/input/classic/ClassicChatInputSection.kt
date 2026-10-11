@@ -84,7 +84,9 @@ import com.ai.assistance.operit.ui.features.chat.components.SimpleLinearProgress
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingMessageQueuePanel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ThinkingStrengthControl
-import com.ai.assistance.operit.ui.features.chat.components.style.input.common.VoiceLevelBars
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.VoiceRecordingWaveform
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberDraftVoiceController
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
@@ -575,12 +577,17 @@ fun ClassicChatInputSection(
                 ) {
 
                 if (dictation.isActive) {
+                    val recognitionState by dictation.recognitionStateFlow.collectAsState()
+                    val transcriptScroll = rememberScrollState()
+                    LaunchedEffect(dictation.liveText, transcriptScroll.maxValue) {
+                        transcriptScroll.scrollTo(transcriptScroll.maxValue)
+                    }
                     // An error keeps the panel open with nothing to stop: the microphone is already
                     // off, so the row offers another attempt instead.
-                    val dictationFailed =
-                        dictation.errorText != null && dictation.liveText.isBlank()
+                    val dictationFailed = dictation.errorText != null
                     Box(
-                        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+                        modifier = Modifier.fillMaxWidth().heightIn(max = 120.dp)
+                            .verticalScroll(transcriptScroll).padding(vertical = 4.dp),
                         contentAlignment = Alignment.CenterStart,
                     ) {
                         Text(
@@ -595,6 +602,14 @@ fun ClassicChatInputSection(
                                 } else {
                                     MaterialTheme.colorScheme.onSurface
                                 },
+                        )
+                    }
+
+                    if (dictationFailed && dictation.liveText.isNotBlank()) {
+                        Text(
+                            text = dictation.errorText.orEmpty(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.error,
                         )
                     }
 
@@ -619,8 +634,11 @@ fun ClassicChatInputSection(
                         if (dictationFailed) {
                             Spacer(modifier = Modifier.weight(1f))
                         } else {
-                            VoiceLevelBars(
+                            VoiceRecordingWaveform(
                                 volumeLevelFlow = dictation.volumeLevelFlow,
+                                isRecording = dictation.isRecording,
+                                isCapturing = recognitionState ==
+                                    com.ai.assistance.operit.api.speech.SpeechService.RecognitionState.RECOGNIZING,
                                 modifier =
                                     Modifier.weight(1f).height(22.dp).padding(horizontal = 8.dp),
                             )

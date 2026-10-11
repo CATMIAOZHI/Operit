@@ -147,7 +147,11 @@ class SpeechInteractionManager(
 
     // ===== 语音识别流程 =====
 
-    fun startListening(onStarted: (() -> Unit)? = null, onStartFailure: ((String) -> Unit)? = null) {
+    fun startListening(
+        continuousMode: Boolean = speechService.supportsContinuousRecognition,
+        onStarted: (() -> Unit)? = null,
+        onStartFailure: ((String) -> Unit)? = null,
+    ) {
         if (isPreparing || isRecording || isProcessingSpeech) return
         if (!hasFocus) {
             onStartFailure?.invoke(context.getString(R.string.floating_cannot_get_focus))
@@ -206,7 +210,7 @@ class SpeechInteractionManager(
                     }
                     ok = speechService.startRecognition(
                         languageCode = "zh-CN",
-                        continuousMode = speechService.supportsContinuousRecognition,
+                        continuousMode = continuousMode,
                         partialResults = true
                     )
                     attempt++
