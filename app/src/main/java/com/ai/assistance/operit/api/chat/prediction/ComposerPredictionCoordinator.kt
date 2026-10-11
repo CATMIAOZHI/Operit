@@ -4,6 +4,9 @@ import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -61,6 +64,13 @@ class ComposerPredictionCoordinator(
                     if (request != identity || !stillValid()) return@synchronized
                     _text.value = result
                     status = if (result == null) Status.EMPTY else Status.READY
+                }
+            } catch (_: TimeoutCancellationException) {
+                // A nested request timeout ends this attempt. Cancellation of the owning scope
+                // still propagates, and a late timeout must not change a newer request's state.
+                currentCoroutineContext().ensureActive()
+                synchronized(this@ComposerPredictionCoordinator) {
+                    if (request == identity) status = Status.FAILED
                 }
             } catch (cancelled: CancellationException) {
                 throw cancelled

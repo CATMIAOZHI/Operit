@@ -495,6 +495,20 @@ class EnhancedAIService private constructor(
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
         var composerPredictionAllowed: Boolean = true,
+        /**
+         * The tool definitions the most recent request actually sent. The auxiliary prediction
+         * request must declare the same ones, because the tools shape both the provider request and
+         * the way tool turns serialize, and a provider only reuses a prefix that is still the same.
+         */
+        var composerPredictionTools: List<ToolPrompt>? = null,
+        /**
+         * The parameter list the most recent request actually sent, after collaboration effort was
+         * folded in. Thinking intensity is part of what a provider matches its cache on, so the
+         * auxiliary prediction has to repeat these instead of falling back to its own defaults.
+         */
+        var composerPredictionParameters: List<ModelParameter<*>>? = null,
+        /** Whether the most recent request ran with thinking enabled. */
+        var composerPredictionEnableThinking: Boolean = false,
     )
 
     @Volatile
@@ -1342,6 +1356,9 @@ class EnhancedAIService private constructor(
                         toolsEnabled = toolsEnabled,
                         isolatedToolPrompts = isolatedToolPrompts,
                     )
+                    execContext.composerPredictionTools = availableTools
+                    execContext.composerPredictionParameters = modelParameters
+                    execContext.composerPredictionEnableThinking = enableThinking
                     val tAfterGetTools = messageTimingNow()
                     AppLogger.d(TAG, "sendMessage本地耗时: getAvailableToolsForFunction=${tAfterGetTools - tAfterGetService}ms")
 
@@ -2100,7 +2117,13 @@ class EnhancedAIService private constructor(
                         sourceTurnId = context.toolTimingScopeId,
                         history = com.ai.assistance.operit.api.chat.prediction.freezePredictionHistory(context.conversationHistory),
                         modelConfig = com.ai.assistance.operit.api.chat.prediction.freezePredictionConfig(config),
-                        modelParameters = com.ai.assistance.operit.api.chat.prediction.freezePredictionParameters(modelSnapshot.modelParameters),
+                        modelParameters = com.ai.assistance.operit.api.chat.prediction.freezePredictionParameters(
+                            context.composerPredictionParameters ?: modelSnapshot.modelParameters
+                        ),
+                        availableTools = com.ai.assistance.operit.api.chat.prediction.freezePredictionTools(context.composerPredictionTools),
+                        providerSessionId = context.providerSessionId,
+                        workspacePath = context.workspacePath,
+                        enableThinking = context.composerPredictionEnableThinking,
                     )
                 } catch (_: IllegalArgumentException) {
                     // Unknown hook-owned mutable metadata cannot safely cross the isolation boundary.
@@ -2618,6 +2641,9 @@ class EnhancedAIService private constructor(
             toolsEnabled = context.toolsEnabled,
             isolatedToolPrompts = context.isolatedToolPrompts,
         )
+        context.composerPredictionTools = availableTools
+        context.composerPredictionParameters = modelParameters
+        context.composerPredictionEnableThinking = enableThinking
  
         val currentTokens = estimatePreparedRequestWindow(
             serviceForFunction = serviceForFunction,

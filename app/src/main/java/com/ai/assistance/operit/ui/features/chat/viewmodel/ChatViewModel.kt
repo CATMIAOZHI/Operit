@@ -212,7 +212,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (messageProcessingDelegate.claimComposerPrediction(snapshot))
             ComposerPredictionService(context).predict(snapshot) else null
     }
-    val composerPredictionText: StateFlow<String?> = composerPredictionCoordinator.text
+    // Attachments only hide the cached suggestion; removing them must not spend another request.
+    val composerPredictionText: StateFlow<String?> by lazy {
+        combine(composerPredictionCoordinator.text, attachments) { text, pending ->
+            text.takeIf { pending.isEmpty() }
+        }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+    }
     // Wait for persisted preferences before requests; a saved opt-out must never race loading.
     private val composerPredictionsEnabled =
         com.ai.assistance.operit.data.preferences.DisplayPreferencesManager.getInstance(context)
@@ -304,6 +309,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     fun acceptComposerPrediction(expectedPrediction: String? = null): Boolean {
+        // Recheck at adoption as the UI may still contain a frame rendered before attachment change.
+        if (attachments.value.isNotEmpty()) return false
         val draft = userMessage.value
         val text = composerPredictionCoordinator.textForAdoption(
             expected = expectedPrediction,

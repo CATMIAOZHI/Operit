@@ -4,16 +4,17 @@ import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext
-import com.ai.assistance.operit.api.chat.llmprovider.SUPPRESS_AUTOMATIC_REASONING_API_NAME
 import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.data.stats.ProviderUsageSnapshot
 import com.ai.assistance.operit.data.stats.TokenStatCategory
+import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.AbstractStream
 import com.ai.assistance.operit.util.stream.StreamCollector
+import com.ai.assistance.operit.util.stream.StreamLogger
 import com.ai.assistance.operit.util.stream.stream
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
@@ -43,6 +44,20 @@ class ComposerPredictionServiceTest {
         assertEquals(3, history.size)
     }
 
+    /**
+     * Predictions now declare the completed turn's tools, so the model may answer with a tool call.
+     * Providers render one back as text in exactly this shape, and none of it may reach the composer.
+     */
+    @Test fun rejectsToolCallsRenderedBackAsText() {
+        listOf(
+            "\n<shell><command>ls</command></shell>",
+            "<tool_call name=\"shell\">ls</tool_call>",
+            "<function_call name=\"read_file\">{}</function_call>",
+            "function_call: shell",
+            "tool_call: shell",
+        ).forEach { assertNull(it, validatePrediction(it)) }
+    }
+
     @Test fun rejectsProtocolReasoningAndMultipleOrMeaninglessSuggestions() {
         listOf("", "NO_PREDICTION", "...", "null", "<think>Reasoning</think>",
             "<tool name=\"shell\">run</tool>", "{\"message\":\"next\"}",
@@ -54,29 +69,134 @@ class ComposerPredictionServiceTest {
         assertEquals("Thanks, can you compare costs?", validatePrediction("Thanks, can you compare costs?"))
     }
 
-    @Test fun stripsDangerousCustomParametersAndAlwaysBoundsTokens() {
-        val unsafe = listOf("tools", "messages", "max_output_tokens", "max_completion_tokens", "generationConfig", "n", "response_format", "previous_response_id")
+    @Test fun stripsDangerousCustomParametersAndCarriesTheTurnsOwnTokenCap() {
+        val unsafe = listOf("tools", "messages", "generationConfig", "n", "response_format", "previous_response_id")
         val params = unsafe.map { parameter(it, 99999) } + parameter("temperature", 1) +
-            parameter("top_p", 1).copy(isEnabled = false)
-        val result = predictionParameters(params, config)
-        assertEquals(setOf("temperature", "max_tokens", SUPPRESS_AUTOMATIC_REASONING_API_NAME), result.map { it.apiName }.toSet())
-        assertEquals(192, result.single { it.apiName == "max_tokens" }.currentValue)
+            parameter("top_p", 1).copy(isEnabled = false) + parameter("max_tokens", 32_000)
+        val result = predictionParameters(params)
+        assertEquals(setOf("temperature", "max_tokens"), result.map { it.apiName }.toSet())
+        assertEquals(32_000, result.single { it.apiName == "max_tokens" }.currentValue)
         assertEquals(99999, params.first().currentValue)
-        for (provider in listOf(ApiProviderType.GOOGLE, ApiProviderType.ANTHROPIC, ApiProviderType.CLAUDE_ACCOUNT, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.ALIYUN, ApiProviderType.SILICONFLOW, ApiProviderType.DOUBAO, ApiProviderType.NVIDIA, ApiProviderType.OPENROUTER, ApiProviderType.NOUS_PORTAL)) {
-            val native = config.copy(apiProviderType = provider, apiProviderTypeId = provider.name)
-            assertFalse(predictionParameters(params, native).any { it.apiName == SUPPRESS_AUTOMATIC_REASONING_API_NAME })
-        }
+        // The filter reads no provider field, so it cannot vary by provider; the wire effect of the
+        // surviving cap is covered for the OpenAI chat and Responses adapters in
+        // ComposerPredictionRequestBodyTest.
     }
 
-    @Test fun disablesSearchAndForegroundIdentityButRetainsUnexpectedToolDetection() {
-        val original = config.copy(enableGoogleSearch = true, enableToolCall = true,
-            customHeaders = """{"x-opencode-session":"foreground","Authorization":"custom"}""")
+    /** A turn that set no cap must not have one invented for it; the provider's default applies. */
+    @Test fun inventsNoOutputCapWhenTheCompletedTurnHadNone() {
+        assertEquals(emptyList<ModelParameter<*>>(), predictionParameters(emptyList()))
+        val names = predictionParameters(listOf(parameter("temperature", 1))).map { it.apiName }
+        assertEquals(listOf("temperature"), names)
+    }
+
+    /**
+     * The completed turn's thinking controls decide what its provider cached against. A prediction
+     * that dropped them would reason at a different intensity, so the request would stop matching.
+     */
+    @Test fun carriesTheCompletedTurnsThinkingControlsItsTokenBudgetsAndItsCaps() {
+        val params = listOf(
+            parameter("reasoning_effort", "high"),
+            parameter("thinking_budget", 8_192),
+            parameter("thinkingBudget", 8_192),
+            parameter("budget_tokens", 8_192),
+            parameter("enable_thinking", true),
+            parameter("thinking_level", "medium"),
+            objectParameter("thinking", """{"type":"enabled"}"""),
+            parameter("max_tokens", 32_000),
+            parameter("max_completion_tokens", 32_000),
+            parameter("max_output_tokens", 32_000),
+        )
+        val names = predictionParameters(params).map { it.apiName }.toSet()
+        assertEquals(
+            setOf(
+                "reasoning_effort", "enable_thinking", "thinking_level",
+                "budget_tokens", "thinking_budget", "thinkingBudget",
+                "max_tokens", "max_completion_tokens", "max_output_tokens",
+                "thinking",
+            ),
+            names,
+        )
+        assertEquals(
+            "high",
+            predictionParameters(params)
+                .single { it.apiName == "reasoning_effort" }.currentValue,
+        )
+        // A budget must sit below the request's cap, and the cap here is the completed turn's own,
+        // so the budget that turn sent was already valid against exactly this cap.
+        assertEquals(
+            8_192,
+            predictionParameters(params)
+                .single { it.apiName == "budget_tokens" }.currentValue,
+        )
+        // Native reasoning objects are allowed, but a scalar field mislabeled OBJECT is not.
+        assertEquals(
+            emptyList<ModelParameter<*>>(),
+            predictionParameters(listOf(objectParameter("max_tokens", "{}"), objectParameter("reasoning_effort", "{}"))),
+        )
+    }
+
+    @Test fun preservesNativeThinkingObjectsWithoutChangingValuesCategoryOrOrder() {
+        val params = listOf(
+            objectParameter("reasoning", """{ "effort": "high", "summary": "auto" }"""),
+            objectParameter("thinking", """{"type":"enabled","budget_tokens":8192}"""),
+            objectParameter("output_config", """{"effort":"max"}"""),
+            objectParameter("thinkingConfig", """{"thinkingLevel":"high","thinkingBudget":-1,"includeThoughts":true}""")
+                .copy(category = ParameterCategory.GENERATION),
+            parameter("thinking", """{"type":"adaptive"}"""),
+        )
+        val result = predictionParameters(params)
+        assertEquals(params, result)
+        params.zip(result).forEach { (original, retained) -> assertSame(original, retained) }
+    }
+
+    @Test fun unsupportedThinkingObjectsStopBeforeCreatingAProvider() = runBlocking {
+        var acquired = false
+        val runner = ComposerPredictionService(context, { _, _ ->
+            acquired = true
+            error("Must not acquire a provider")
+        })
+        for ((name, raw) in listOf(
+            "reasoning" to """{"effort":"high","messages":[]}""",
+            "reasoning" to """{"effort":{"tools":[]}}""",
+            "thinking" to """{"type":"enabled","budget_tokens":"8192"}""",
+            "thinkingConfig" to """{"includeThoughts":"true"}""",
+            "output_config" to """{"effort":"high","format":{"type":"json_schema"}}""",
+            "reasoning" to "{",
+            "reasoning" to "null",
+            "reasoning" to "[]",
+        )) {
+            try {
+                runner.predict(snapshot.copy(modelParameters = listOf(objectParameter(name, raw))))
+                fail("Expected unsupported $name to stop the request")
+            } catch (_: IllegalArgumentException) {
+                assertFalse(acquired)
+            }
+        }
+        assertTrue(predictionParameters(listOf(
+            objectParameter("reasoning", "{").copy(isEnabled = false)
+        )).isEmpty())
+    }
+
+    @Test fun mirrorsTheCompletedTurnInsteadOfDisablingToolsSearchOrBounds() {
+        val original = config.copy(
+            enableGoogleSearch = true,
+            enableToolCall = false,
+            customHeaders = """{"x-opencode-session":"foreground","Authorization":"custom"}""",
+            maxTokens = 65_536,
+            maxTokensEnabled = true,
+        )
         val result = predictionConfig(original)
-        assertFalse(result.enableGoogleSearch)
-        assertTrue(result.enableToolCall)
+        // Turning either off here would change the cached prefix, and would raise tool calling the
+        // completed turn had disabled. The auxiliary request has to look like the completed one.
+        assertTrue(result.enableGoogleSearch)
+        assertFalse(result.enableToolCall)
+        assertEquals("foreground", JSONObject(result.customHeaders).getString("x-opencode-session"))
         assertEquals("custom", JSONObject(result.customHeaders).getString("Authorization"))
-        assertFalse(JSONObject(result.customHeaders).has("x-opencode-session"))
+        assertEquals(65_536, result.maxTokens)
+        assertTrue(result.maxTokensEnabled)
+        assertEquals("[]", result.customParameters)
         assertTrue(original.enableGoogleSearch)
+        assertEquals("foreground", JSONObject(original.customHeaders).getString("x-opencode-session"))
     }
 
     @Test fun explicitlyRejectsUnknownAndRetiredProviders() {
@@ -88,21 +208,84 @@ class ComposerPredictionServiceTest {
         assertTrue(ComposerPredictionService.supports(config))
     }
 
-    @Test fun requestUsesAuxiliaryCategoryIndependentInstancesAndNoTools() = runBlocking {
+    @Test fun reusesTheCompletedTurnsToolsAndIdentitySoItsPrefixCanStillBeHit() = runBlocking {
+        val tools = listOf(ToolPrompt(name = "shell", description = "Run a shell command"))
+        val shared = snapshot.copy(
+            availableTools = tools,
+            providerSessionId = "foreground-session",
+            workspacePath = "/workspace/project",
+        )
         val instances = mutableListOf<FakeService>()
         val runner = runner { FakeService().also(instances::add) }
-        assertEquals("Tell me more", runner.predict(snapshot))
-        assertEquals("Tell me more", runner.predict(snapshot))
+        assertEquals("Tell me more", runner.predict(shared))
+        assertEquals("Tell me more", runner.predict(shared))
         assertEquals(2, instances.size)
         instances.forEach {
             assertEquals(TokenStatCategory.COMPOSER_PREDICTION, it.category)
-            assertEquals(emptyList<ToolPrompt>(), it.tools)
+            assertEquals(tools, it.tools)
             assertFalse(it.thinking)
             assertFalse(it.retry)
-            assertEquals(providerSessionIdForScope("composer-prediction:chat-1"), it.session)
+            assertEquals("foreground-session", it.session)
+            assertEquals("/workspace/project", it.workspace)
             assertTrue(it.cancelled)
             assertTrue(it.released)
         }
+    }
+
+    @Test fun keepsAnIsolatedIdentityOnlyWhenTheCompletedTurnHadNone() = runBlocking {
+        val instances = mutableListOf<FakeService>()
+        val runner = runner { FakeService().also(instances::add) }
+        assertEquals("Tell me more", runner.predict(snapshot))
+        assertEquals(providerSessionIdForScope("composer-prediction:chat-1"), instances.single().session)
+        assertEquals(emptyList<ToolPrompt>(), instances.single().tools)
+    }
+
+    /**
+     * The reasoning block shares the chunk stream, so it must not be mistaken for the suggestion,
+     * and it must not eat the bounded response budget either.
+     */
+    @Test fun followsTheCompletedTurnsThinkingChoiceAndStripsItsInlineReasoningBlock() = runBlocking {
+        val instances = mutableListOf<FakeService>()
+        val runner = runner { FakeService(reasoning = true).also(instances::add) }
+        val shared = snapshot.copy(
+            enableThinking = true,
+            modelParameters = listOf(
+                parameter("reasoning_effort", "high"),
+                parameter("max_tokens", 32_000),
+                parameter("budget_tokens", 32_000),
+            ),
+        )
+        assertEquals("Tell me more", runner.predict(shared))
+        val service = instances.single()
+        assertTrue(service.thinking)
+        val sent = requireNotNull(service.parameters).associateBy { it.apiName }
+        assertEquals("high", sent.getValue("reasoning_effort").currentValue)
+        assertEquals(32_000, sent.getValue("max_tokens").currentValue)
+        assertEquals(32_000, sent.getValue("budget_tokens").currentValue)
+    }
+
+    /** The read bound is the only ceiling left, so hitting it must fail visibly rather than buffer on. */
+    @Test fun failsInsteadOfBufferingAnEndlessStream() = runBlocking {
+        val fake = FakeService(oversized = true)
+        // The stream fixture lets the failure escape through a builder that logs it, and that logging
+        // goes through Android APIs a JVM test cannot provide.
+        val loggingWasEnabled = StreamLogger.isEnabled
+        StreamLogger.setEnabled(false)
+        try {
+            runner { fake }.predict(snapshot)
+            fail("Expected the read bound to stop the stream")
+        } catch (error: IOException) {
+            assertEquals("Prediction exceeded response limit", error.message)
+        } finally {
+            StreamLogger.setEnabled(loggingWasEnabled)
+        }
+        assertTrue(fake.released)
+    }
+
+    /** An unfinished reasoning block is not a suggestion: the prediction completes empty instead. */
+    @Test fun rejectsAPredictionThatNeverLeftItsReasoningBlock() = runBlocking {
+        val runner = runner { FakeService(reasoning = true, closeReasoning = false) }
+        assertNull(runner.predict(snapshot.copy(enableThinking = true)))
     }
 
     @Test fun timeoutClosesBlockedIndependentCallAndReleasesIt() = runBlocking {
@@ -147,7 +330,29 @@ class ComposerPredictionServiceTest {
         isEnabled = true, valueType = ParameterValueType.INT,
     )
 
-    private class FakeService(val block: Boolean = false, val fail: Boolean = false, val warn: Boolean = false) : AIService {
+    private fun parameter(name: String, value: String) = ModelParameter(
+        name, name, name, defaultValue = value, currentValue = value,
+        isEnabled = true, valueType = ParameterValueType.STRING,
+    )
+
+    private fun parameter(name: String, value: Boolean) = ModelParameter(
+        name, name, name, defaultValue = value, currentValue = value,
+        isEnabled = true, valueType = ParameterValueType.BOOLEAN,
+    )
+
+    private fun objectParameter(name: String, value: String) = ModelParameter(
+        name, name, name, defaultValue = value, currentValue = value,
+        isEnabled = true, valueType = ParameterValueType.OBJECT,
+    )
+
+    private class FakeService(
+        val block: Boolean = false,
+        val fail: Boolean = false,
+        val warn: Boolean = false,
+        val reasoning: Boolean = false,
+        val closeReasoning: Boolean = true,
+        val oversized: Boolean = false,
+    ) : AIService {
         override val inputTokenCount = 0
         override val cachedInputTokenCount = 0
         override val outputTokenCount = 0
@@ -156,9 +361,11 @@ class ComposerPredictionServiceTest {
         var released = false
         var category: TokenStatCategory? = null
         var tools: List<ToolPrompt>? = null
+        var parameters: List<ModelParameter<*>>? = null
         var thinking = true
         var retry = true
         var session: String? = null
+        var workspace: String? = null
         private val stop = CountDownLatch(1)
         override fun resetTokenCounts() = Unit
         override fun cancelStreaming() { cancelled = true; stop.countDown() }
@@ -174,7 +381,10 @@ class ComposerPredictionServiceTest {
             onNonFatalError: suspend (String) -> Unit, enableRetry: Boolean, statsCategory: TokenStatCategory?,
         ): Stream<String> {
             category = statsCategory; tools = availableTools; thinking = enableThinking; retry = enableRetry
-            session = currentCoroutineContext()[OpenCodeSessionContext]?.sessionId
+            parameters = modelParameters
+            val identity = currentCoroutineContext()[OpenCodeSessionContext]
+            session = identity?.sessionId
+            workspace = identity?.workspacePath
             // Throw directly from the provider boundary. StreamBuilders logs failures through
             // Android APIs on Dispatchers.IO, outside a test-thread static logging mock.
             if (fail) return object : AbstractStream<String>() {
@@ -188,6 +398,15 @@ class ComposerPredictionServiceTest {
             return com.ai.assistance.operit.util.stream.stream {
                 if (block) check(stop.await(2, TimeUnit.SECONDS)) { "Cancellation did not close blocked call" }
                 if (warn) onNonFatalError("Provider stream error")
+                if (oversized) {
+                    emit("x".repeat(ComposerPredictionService.MAX_RESPONSE_CHARS + 1))
+                    return@stream
+                }
+                if (reasoning) {
+                    emit(ChatUtils.PROVIDER_REASONING_OPEN_TAG)
+                    emit("Weighing the options before answering")
+                    if (closeReasoning) emit("</think>")
+                }
                 emit("Tell me more")
             }
         }
