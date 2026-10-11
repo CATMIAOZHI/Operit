@@ -38,6 +38,14 @@ class ComposerPredictionCoordinator(
         status = Status.IDLE
     }
 
+    /** A finished suggestion is still useful after adjusting the next request's thinking settings. */
+    @Synchronized
+    fun invalidateForThinkingChange(): Boolean {
+        if (status == Status.READY) return false
+        invalidate()
+        return true
+    }
+
     @Synchronized
     fun update(
         enabled: Boolean,

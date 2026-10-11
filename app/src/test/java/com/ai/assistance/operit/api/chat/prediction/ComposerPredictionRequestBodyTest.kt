@@ -2,6 +2,8 @@ package com.ai.assistance.operit.api.chat.prediction
 
 import android.content.Context
 import com.ai.assistance.operit.api.chat.llmprovider.OpenAIProvider
+import com.ai.assistance.operit.api.chat.llmprovider.CodexProvider
+import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeZenFree
 import com.ai.assistance.operit.api.chat.llmprovider.OpenAIResponsesProvider
 import com.ai.assistance.operit.api.chat.llmprovider.SingleApiKeyProvider
 import com.ai.assistance.operit.api.chat.llmprovider.applyCallerSuppliedClaudeThinkingParameters
@@ -10,6 +12,10 @@ import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.model.ParameterCategory
+import com.ai.assistance.operit.data.model.ToolPrompt
+import com.ai.assistance.operit.data.api.CodexAuthManager
+import com.ai.assistance.operit.core.chat.hooks.PromptTurn
+import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.util.AppLogger
 import okhttp3.OkHttpClient
 import okhttp3.RequestBody
@@ -20,11 +26,95 @@ import org.junit.Test
 import org.mockito.Mockito
 
 /**
- * Exercise the existing adapters, rather than assuming they rename the output cap. Tool declarations
- * are not this fixture's subject: predictions mirror the completed turn's tools, and the empty list
- * here only proves the adapters stay well-formed when a turn had none.
+ * Exercise actual adapter serialization, including account-specific transformations, instead of
+ * assuming equal input objects produce an equal request prefix. No network or account is used.
  */
 class ComposerPredictionRequestBodyTest {
+    @Test fun codexPredictionPreservesInstructionsToolsReasoningAndInputPrefix() {
+        Mockito.mockStatic(AppLogger::class.java).use {
+            val provider = CodexProvider(
+                authManager = Mockito.mock(CodexAuthManager::class.java),
+                modelName = "gpt-6-astra", httpClient = OkHttpClient(), enableToolCall = true,
+            )
+            val (parent, prediction) = parentAndPredictionBodies(provider)
+            assertEquals("Stable system instructions", prediction.getString("instructions"))
+            assertEquals(parent.getString("instructions"), prediction.getString("instructions"))
+            assertFalse(prediction.getBoolean("store"))
+            assertTrue(prediction.getBoolean("stream"))
+            assertFalse(prediction.has("max_output_tokens"))
+            assertEquals(parent.getJSONArray("include").toString(), prediction.getJSONArray("include").toString())
+            assertPrefix(parent, prediction, "input")
+        }
+    }
+
+    @Test fun zenChatPredictionPreservesThePrefixAndReservedTools() {
+        Mockito.mockStatic(AppLogger::class.java).use {
+            val provider = OpenAIProvider(
+                apiEndpoint = OpenCodeZenFree.CHAT_ENDPOINT,
+                apiKeyProvider = SingleApiKeyProvider(""), modelName = "mimo-v2.5-free",
+                client = OkHttpClient(), providerType = ApiProviderType.OPENCODE_ZEN_FREE,
+                enableToolCall = true,
+            )
+            val (parent, prediction) = parentAndPredictionBodies(provider, responses = false)
+            assertPrefix(parent, prediction, "messages")
+            val tools = prediction.getJSONArray("tools")
+            assertEquals(setOf("shell", "bash", "read"), (0 until tools.length()).map {
+                tools.getJSONObject(it).getJSONObject("function").getString("name")
+            }.toSet())
+        }
+    }
+
+    @Test fun zenResponsesPredictionPreservesThePrefixAndReservedTools() {
+        Mockito.mockStatic(AppLogger::class.java).use {
+            val provider = OpenAIResponsesProvider(
+                responsesApiEndpoint = OpenCodeZenFree.RESPONSES_ENDPOINT,
+                apiKeyProvider = SingleApiKeyProvider(""), modelName = "muse-spark-1.3-contributor-free",
+                client = OkHttpClient(), responsesProviderType = ApiProviderType.OPENCODE_ZEN_FREE,
+                enableToolCall = true,
+            )
+            val (parent, prediction) = parentAndPredictionBodies(provider)
+            assertPrefix(parent, prediction, "input")
+            val tools = prediction.getJSONArray("tools")
+            assertEquals(setOf("shell", "bash", "read"), (0 until tools.length()).map {
+                tools.getJSONObject(it).getString("name")
+            }.toSet())
+        }
+    }
+
+    private fun parentAndPredictionBodies(
+        provider: OpenAIProvider,
+        responses: Boolean = true,
+    ): Pair<JSONObject, JSONObject> {
+        val history = listOf(
+            PromptTurn(PromptTurnKind.SYSTEM, "Stable system instructions"),
+            PromptTurn(PromptTurnKind.USER, "Compare the two choices"),
+        )
+        val completed = history + PromptTurn(PromptTurnKind.ASSISTANT, "Here is a comparison")
+        val parameters = if (responses) {
+            listOf(nativeObject("reasoning", """{"effort":"high","summary":"auto"}"""))
+        } else listOf(ModelParameter(
+            "effort", "effort", "reasoning_effort", defaultValue = "high", currentValue = "high",
+            isEnabled = true, valueType = ParameterValueType.STRING,
+        ))
+        val tools = listOf(ToolPrompt(name = "shell", description = "Run a shell command"))
+        return body(provider, parameters, history, tools, true) to
+            body(provider, predictionParameters(parameters), predictionHistory(completed), tools, true)
+    }
+
+    private fun assertPrefix(parent: JSONObject, prediction: JSONObject, inputKey: String) {
+        val original = parent.getJSONArray(inputKey)
+        val extended = prediction.getJSONArray(inputKey)
+        assertEquals(original.length() + 2, extended.length())
+        for (index in 0 until original.length()) {
+            assertEquals(original.getJSONObject(index).toString(), extended.getJSONObject(index).toString())
+        }
+        assertEquals(parent.getJSONArray("tools").toString(), prediction.getJSONArray("tools").toString())
+        assertEquals(parent.opt("reasoning")?.toString(), prediction.opt("reasoning")?.toString())
+        assertEquals(parent.opt("reasoning_effort"), prediction.opt("reasoning_effort"))
+        assertEquals(parent.getString("model"), prediction.getString("model"))
+        assertTrue(prediction.getBoolean("stream"))
+    }
+
     @Test fun nativeThinkingObjectsReachAdaptersWithTheCompletedTurnsSettings() {
         Mockito.mockStatic(AppLogger::class.java).use {
             val provider = OpenAIResponsesProvider(
@@ -106,12 +196,18 @@ class ComposerPredictionRequestBodyTest {
         valueType = ParameterValueType.OBJECT, category = ParameterCategory.GENERATION,
     )
 
-    private fun body(provider: OpenAIProvider, parameters: List<ModelParameter<*>>): JSONObject {
+    private fun body(
+        provider: OpenAIProvider,
+        parameters: List<ModelParameter<*>>,
+        history: List<PromptTurn> = emptyList(),
+        tools: List<ToolPrompt> = emptyList(),
+        thinking: Boolean = false,
+    ): JSONObject {
         val owner = if (provider is OpenAIResponsesProvider) OpenAIResponsesProvider::class.java else OpenAIProvider::class.java
         val method = owner.declaredMethods.single { it.name == "createRequestBody" && it.parameterCount == 7 }
         method.isAccessible = true
-        val body = method.invoke(provider, Mockito.mock(Context::class.java), emptyList<Any>(), parameters,
-            false, true, emptyList<Any>(), false) as RequestBody
+        val body = method.invoke(provider, Mockito.mock(Context::class.java), history, parameters,
+            thinking, true, tools, false) as RequestBody
         val buffer = Buffer()
         body.writeTo(buffer)
         return JSONObject(buffer.readUtf8())

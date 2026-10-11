@@ -130,15 +130,9 @@ class ComposerPredictionService internal constructor(
             val sourceProvider = ApiProviderType.fromProviderTypeId(config.apiProviderTypeId) ?: return false
             val resolvedProvider = ApiProviderType.fromProviderTypeId(config.withModelProtocol().apiProviderTypeId)
                 ?: return false
-            // Respect the account's factory restrictions and the selected model's wire adapter.
-            // Zen Free rewrites the request shape server-side (it injects reserved bash/read
-            // schemas) and Codex OAuth rewrites the body client-side, and neither rewrite has been
-            // checked against a real completed turn yet, so this version declines both rather than
-            // assuming the prediction still reproduces the cached prefix.
-            val unsupported = setOf(
-                ApiProviderType.MNN, ApiProviderType.LLAMA_CPP,
-                ApiProviderType.OPENCODE_ZEN_FREE, ApiProviderType.OPENAI_CODEX,
-            )
+            // Account-specific adapters apply the same request transformations to both calls.
+            // Codex OAuth and Zen Free can use the isolated path just like other text providers.
+            val unsupported = setOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
             if (sourceProvider in unsupported || resolvedProvider in unsupported) return false
             // Media/embedding-only modes cannot promise a short text completion.
             return !Regex("(?:^|[-_/])(?:image|audio|realtime|tts|whisper|veo|embedding|transcription)(?:$|[-_/])", RegexOption.IGNORE_CASE)

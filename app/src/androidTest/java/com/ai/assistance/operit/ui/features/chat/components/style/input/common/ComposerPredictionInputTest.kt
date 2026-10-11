@@ -68,17 +68,17 @@ class ComposerPredictionInputTest(private val style: String) {
                         },
                     )
                 } else {
-                    val layout = androidx.compose.runtime.remember { ComposerPredictionLayout() }
                     BasicTextField(
                         value = draft.value, onValueChange = { draft.value = it },
-                        modifier = modifier.composerPredictionSemantics(draft.value, prediction, onAccept = accept),
+                        modifier = modifier
+                            .composerPredictionSemantics(draft.value, prediction, onAccept = accept)
+                            .composerPredictionGesture(draft.value, prediction, onAccept = accept),
                         textStyle = MaterialTheme.typography.bodyLarge,
                         visualTransformation = transformation,
                         maxLines = if (visibleComposerPrediction(draft.value, prediction) == null) 3 else Int.MAX_VALUE,
-                        onTextLayout = { layout.result = it },
                         decorationBox = { inner ->
-                            ComposerPredictionViewport(draft.value, prediction, layout,
-                                MaterialTheme.typography.bodyLarge, 3, onAccept = accept,
+                            ComposerPredictionViewport(draft.value, prediction,
+                                MaterialTheme.typography.bodyLarge, 3,
                                 innerTextField = inner)
                         },
                     )
@@ -131,17 +131,67 @@ class ComposerPredictionInputTest(private val style: String) {
         field.performTouchInput { doubleClick() }
         compose.runOnIdle { assertEquals(1, adoptions) }
     }
-    @Test fun blankEditorAreaAndTrailingControlsCannotAdopt() {
+    @Test fun blankEditorAreaAdoptsButTrailingControlsDoNot() {
+        prediction = "Hi"
         showField()
-        compose.onNodeWithTag("composer").performTouchInput {
-            doubleClick(Offset(width - 2f, height - 2f))
-        }
         if (style != "basic") compose.onNodeWithTag("trailing").performTouchInput { doubleClick() }
         compose.runOnIdle {
             assertEquals(0, adoptions)
             assertEquals("", draft.value.text)
             if (style != "basic") assertEquals(2, trailingClicks)
         }
+        val field = compose.onNodeWithTag("composer")
+        for (top in listOf(true, false)) {
+            field.performTouchInput {
+                advanceEventTime(600)
+                doubleClick(Offset(width / 2f, if (top) 2f else height - 2f))
+            }
+            compose.runOnIdle { assertEquals(prediction, draft.value.text) }
+            field.performTextClearance()
+        }
+        compose.runOnIdle { assertEquals(2, adoptions) }
+    }
+
+    @Test fun doubleTapOnWordSpaceAdoptsPrediction() {
+        showField()
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("composer").performSemanticsAction(SemanticsActions.GetTextLayoutResult) {
+            it(layouts)
+        }
+        val space = layouts.single().getBoundingBox(prediction.indexOf(' ')).center
+        compose.onNodeWithTag("composer_prediction_text", useUnmergedTree = true)
+            .performTouchInput { doubleClick(space) }
+        compose.runOnIdle { assertEquals(1, adoptions) }
+    }
+
+    @Test fun doubleTapAllowsNativeDistanceBetweenTapsWithoutAcceptingADrag() {
+        showField()
+        val layouts = mutableListOf<TextLayoutResult>()
+        compose.onNodeWithTag("composer").performSemanticsAction(SemanticsActions.GetTextLayoutResult) {
+            it(layouts)
+        }
+        val layout = layouts.single()
+        val first = layout.getBoundingBox(0).center
+        val second = layout.getBoundingBox(5).center
+        val config = android.view.ViewConfiguration.get(
+            androidx.test.platform.app.InstrumentationRegistry.getInstrumentation().targetContext,
+        )
+        assertTrue((second - first).getDistance() > config.scaledTouchSlop)
+        assertTrue((second - first).getDistance() < config.scaledDoubleTapSlop)
+        val viewport = compose.onNodeWithTag("composer_prediction_text", useUnmergedTree = true)
+        viewport.performTouchInput {
+            down(first)
+            moveTo(second, delayMillis = 50)
+            up()
+        }
+        compose.runOnIdle { assertEquals(0, adoptions) }
+        viewport.performTouchInput {
+            advanceEventTime(600)
+            click(first)
+            advanceEventTime(100)
+            click(second)
+        }
+        compose.runOnIdle { assertEquals(1, adoptions) }
     }
 
     @Test fun cachedPredictionKeepsScrollButNewPredictionStartsAtBeginning() {
