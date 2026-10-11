@@ -273,6 +273,9 @@ class MessageProcessingDelegate(
     fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
         chatRuntimes[chatId]?.inputInbox?.pendingInputKind()
 
+    fun turnInputInbox(chatId: String): TurnInputInbox? =
+        chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox
+
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
         val inbox = runtime.inputInbox ?: return false
@@ -1316,7 +1319,7 @@ class MessageProcessingDelegate(
                     (!turnOptions.isSubTask || turnOptions.isCollaborationAgent) && !isGroupOrchestrationTurn
                 if (chatRuntime.canSteer) {
                     com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
-                        .getInstance(context).deliverPending()
+                        .getInstance(context).deliverPending(chatId)
                 }
                 toolBoundaryMessageReady.complete(
                     aiMessage.takeIf {

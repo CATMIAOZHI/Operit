@@ -6,6 +6,22 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CollaborationWaitDeliveryTest {
+    @Test(timeout = 5_000) fun eventSubscriptionCannotMissInputArrivingAfterReadinessCheck() = runBlocking {
+        val inbox = TurnInputInbox()
+        var acknowledged = false
+        val result = awaitCollaborationInput(
+            timeoutMs = 2_000,
+            deliverToCurrentTurn = {},
+            pendingInput = { pending(inbox) },
+            awaitActivity = {
+                inbox.offer(TurnInputInbox.Input("late input", consumed = { acknowledged = true }))
+                inbox.awaitInput()
+            },
+        )
+        assertEquals(CollaborationWaitOutcome.STEERED, result)
+        assertFalse(acknowledged)
+        assertEquals("late input", inbox.drain().single().text)
+    }
     private fun pending(inbox: TurnInputInbox) = when (inbox.pendingInputKind()) {
         TurnInputInbox.PendingInputKind.USER -> CollaborationWaitOutcome.STEERED
         TurnInputInbox.PendingInputKind.AGENT -> CollaborationWaitOutcome.MAILBOX

@@ -2226,7 +2226,10 @@ open class OpenAIProvider(
         emitter: StreamEmitter
     ) {
         // Structured tool markup must never be emitted inside provider-controlled reasoning.
-        closeReasoningBlockIfOpen(state, emitter)
+        val reasoningEnded = closeReasoningBlockIfOpen(state, emitter)
+        if (reasoningEnded && !useResponsesApi && !hasOpenToolCalls(state)) {
+            kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.checkpoint()
+        }
 
         for (i in 0 until toolCallsDeltas.length()) {
             val deltaCall = toolCallsDeltas.getJSONObject(i)
@@ -2456,6 +2459,7 @@ open class OpenAIProvider(
                             OpenAIResponsesPayloadAdapter.createReasoningMetadataTag(item)?.let { metadataTag ->
                                 emitter.emitTag(metadataTag)
                             }
+                            kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.checkpoint()
                         } else {
                             AppLogger.d(
                                 "AIService",
@@ -2676,7 +2680,10 @@ open class OpenAIProvider(
         // 处理常规内容
         if (hasRegular) {
             // 如果之前在思考模式，现在切换到了常规内容，需要关闭思考标签
-            closeReasoningBlockIfOpen(state, emitter)
+            val reasoningEnded = closeReasoningBlockIfOpen(state, emitter)
+            if (reasoningEnded && !useResponsesApi) {
+                kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.checkpoint()
+            }
 
             // 硬切策略：正文一旦开始输出，后续到达的推理内容全部忽略
             state.hasEmittedRegularContent = true
@@ -3069,6 +3076,8 @@ open class OpenAIProvider(
                 // 创建Call对象并保存到activeCall中，以便可以取消
                 val call = client.newCall(request)
                 activeCall = call
+                kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
+                    ?.bindAbort { call.cancel() }
 
                 AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】正在建立连接到服务器...")
 
@@ -3245,6 +3254,7 @@ open class OpenAIProvider(
                 return@stream
             } catch (e: Exception) {
                 lastException = e
+                kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.throwIfInterrupted()
                 emitter.emitRollback(requestSavepointId)
                 if (e is RepetitionTruncationException) {
                     if (!enableRetry || repetitionRetryCount >= 1 || retryCount >= maxRetries) throw e

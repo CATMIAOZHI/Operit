@@ -5,7 +5,7 @@ import kotlinx.coroutines.withTimeoutOrNull
 
 enum class CollaborationWaitOutcome { MAILBOX, STEERED, IDLE, TIMED_OUT }
 
-/** Pending input is cheap to poll; mailbox reconciliation reads the caller's whole history. */
+/** Legacy callers without an activity subscription use this polling fallback. */
 private const val WAIT_POLL_MS = 100L
 private const val WAIT_DELIVER_INTERVAL_MS = 1_000L
 
@@ -13,14 +13,15 @@ private const val WAIT_DELIVER_INTERVAL_MS = 1_000L
  * Storage arrival is not readiness: the next model boundary drains the execution inbox.
  *
  * Reconciliation runs immediately and then at most once per [WAIT_DELIVER_INTERVAL_MS], because
- * senders push their own deliveries and the retry path is only a fallback. Pending input keeps
- * the [WAIT_POLL_MS] cadence so user steering stays prompt.
+ * senders push their own deliveries and the retry path is only a fallback. Production callers
+ * subscribe to inbox/state changes; callers without a subscription use [WAIT_POLL_MS].
  */
 internal suspend fun awaitCollaborationInput(
     timeoutMs: Long,
     deliverToCurrentTurn: suspend () -> Unit,
     pendingInput: () -> CollaborationWaitOutcome?,
     hasWaitableWork: () -> Boolean = { true },
+    awaitActivity: (suspend () -> Unit)? = null,
 ): CollaborationWaitOutcome = withTimeoutOrNull(timeoutMs) {
     var nextDeliverAtMs = 0L
     while (true) {
@@ -33,7 +34,8 @@ internal suspend fun awaitCollaborationInput(
         }
         // Only after delivery: a queued mailbox entry must reach the inbox before giving up.
         if (!hasWaitableWork()) return@withTimeoutOrNull CollaborationWaitOutcome.IDLE
-        delay(WAIT_POLL_MS)
+        if (awaitActivity == null) delay(WAIT_POLL_MS)
+        else withTimeoutOrNull(WAIT_DELIVER_INTERVAL_MS) { awaitActivity() }
     }
     @Suppress("UNREACHABLE_CODE")
     CollaborationWaitOutcome.TIMED_OUT

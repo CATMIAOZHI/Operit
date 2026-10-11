@@ -27,7 +27,15 @@ class StandardTerminalCommandExecutor(private val context: Context) {
         private val taskRegistry = TerminalTaskRegistry(CoroutineScope(SupervisorJob() + Dispatchers.IO))
     }
 
-    fun terminalTask(tool: AITool, action: String): ToolResult = runBlocking {
+    fun terminalTask(tool: AITool, action: String): ToolResult {
+        val chatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+            .currentToolRuntimeContext()?.callerChatId
+        val inbox = chatId?.let {
+            com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context)
+                .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+                .getMessageProcessingDelegate().turnInputInbox(it)
+        }
+        return runBlocking {
         var startedId: String? = null
         try {
             fun param(name: String) = tool.parameters.find { it.name == name }?.value
@@ -47,7 +55,9 @@ class StandardTerminalCommandExecutor(private val context: Context) {
                 param("run_id") ?: param("session_id")?.let(taskRegistry::latest)
                     ?: error("No terminal task found. Pass the runId returned by terminal.")
             }
-            val result = if (action == "cancel") taskRegistry.cancel(id) else taskRegistry.poll(id, yieldMs)
+            val result = if (action == "cancel") taskRegistry.cancel(id) else taskRegistry.poll(
+                id, yieldMs, inbox?.let { { it.awaitInput() } },
+            )
             val session = terminal.terminalState.value.sessions.find { it.id == result.sessionId }
             val status = if (result.status == "running" && session != null &&
                 synchronized(session.commandLifecycle) { session.commandQueue.any { it.id == result.runId } }
@@ -63,6 +73,7 @@ class StandardTerminalCommandExecutor(private val context: Context) {
             throw e
         } catch (e: Exception) {
             ToolResult(tool.name, false, StringResultData(""), e.message)
+        }
         }
     }
 
