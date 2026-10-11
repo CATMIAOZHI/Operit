@@ -7,24 +7,29 @@ import java.util.UUID
  * Expanded messages are self-contained; this store is not needed for history or export.
  */
 internal object CardDelivery {
-    private val runs = mutableMapOf<String, MutableMap<String, String>>()
+    private data class Revision(val document: String, val source: String) {
+        val size get() = document.length + source.length
+    }
+    private val runs = mutableMapOf<String, MutableMap<String, Revision>>()
     @Synchronized fun begin(run: String) {
         if (runs.size < 64) runs.putIfAbsent(run, linkedMapOf())
     }
     @Synchronized fun end(run: String) { runs.remove(run) }
-    @Synchronized fun register(run: String, document: String): String {
+    @Synchronized fun register(run: String, document: String, source: String = ""): String {
         val cards = runs[run] ?: error("Card generation is unavailable outside an active chat turn.")
-        require(cards.size < 16 && cards.values.sumOf { it.length } + document.length <= 524_288) {
+        val revision = Revision(document, source)
+        require(cards.size < 16 && cards.values.sumOf { it.size } + revision.size <= 524_288) {
             "Too many cards in this turn."
         }
-        require(runs.values.sumOf { map -> map.values.sumOf { it.length } } + document.length <= 4_194_304) {
+        require(runs.values.sumOf { map -> map.values.sumOf { it.size } } + revision.size <= 4_194_304) {
             "Card generation is busy. Try again after other tasks finish."
         }
         val id = UUID.randomUUID().toString()
-        cards[id] = document
+        cards[id] = revision
         return id
     }
-    @Synchronized fun resolve(run: String, id: String): String? = runs[run]?.get(id)
+    @Synchronized fun resolve(run: String, id: String): String? = runs[run]?.get(id)?.document
+    @Synchronized fun source(run: String, id: String): String? = runs[run]?.get(id)?.source?.takeIf { it.isNotEmpty() }
 }
 
 /** Incremental Markdown reference decoder. Ordinary prose is emitted immediately; only a

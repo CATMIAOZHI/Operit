@@ -267,6 +267,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                 logIssue("icon", surface.id, "unknown_token")
                             },
                         ) {
+                            CardPopoverHost {
                             A2uiSurface(surface, modifier = Modifier.fillMaxWidth(), transitionSpec = null, errorContent = {
                                 LaunchedEffect(it) {
                                     surfaceErrors[surface.id] = it.code
@@ -274,6 +275,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                 }
                                 Text(invalidText, color = MaterialTheme.colorScheme.error)
                             })
+                            }
                         }
                         if (surface.id in surfaceErrors) Text(
                             stringResource(R.string.dynamic_ui_partial_error), color = MaterialTheme.colorScheme.error,

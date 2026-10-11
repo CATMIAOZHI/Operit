@@ -16,6 +16,31 @@ import org.junit.Test
 
 /** Exercises the actual published AndroidX parser and processor, not a mock renderer. */
 class DynamicUiOfficialEngineTest {
+    @Test fun derivedTableRowsReactThroughOfficialEvaluator() = runBlocking {
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/data.express")!!.readText()),true)
+        val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
+        val events = java.util.concurrent.CopyOnWriteArrayList<A2uiClientToServerMessage>()
+        val collector = launch(start=CoroutineStart.UNDISPATCHED) { processor.outboundEvents.collect { events.add(it) } }
+        val job = launch(Dispatchers.Default) { processor.collectMessages() }
+        try {
+            val parser = A2uiJsonMessageParser(::JvmJsonReader)
+            batch.lines.forEach { processor.processInput(parser,it) }
+            processor.processMessage(A2uiUpdateDataModelMessage("card","/ready",true))
+            val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
+            withTimeout(5000) { while(surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
+            val table = batch.componentsBySurface.getValue("card").values.single { it["component"]?.jsonPrimitive?.content == "Table" }
+            val payload = DynamicUiProtocol.toValue(table.getValue("rows"))
+            fun rows() = surface.evaluatePayload("table", { surface.dataModel[it] }, A2uiDataPath("/"),payload) as List<*>
+            assertEquals(2,rows().size)
+            surface.dataModel.update(A2uiDataPath("/filter/minimum"),15)
+            assertEquals(1,rows().size)
+            assertEquals("开发",(rows().single() as List<*>).first())
+            surface.dataModel.update(A2uiDataPath("/filter/minimum"),24)
+            assertEquals(emptyList<Any>(),rows())
+            assertTrue(events.toString(),events.none { it is A2uiClientEventMessage || it is A2uiClientErrorMessage })
+        } finally { job.cancelAndJoin(); collector.cancelAndJoin() }
+    }
+
     @Test fun queuedKeypadActionsReadLatestStateWhenConsumed() = runBlocking {
         val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/calculator.express")!!.readText()), true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))

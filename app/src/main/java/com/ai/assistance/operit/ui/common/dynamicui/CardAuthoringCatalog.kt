@@ -10,9 +10,14 @@ internal object CardAuthoringCatalog {
         Field(key.removeSuffix("?"), type, !key.endsWith("?"))
     }
     val components = linkedMapOf(
-        "Text" to "text:string variant?:string",
+        "Text" to "text:string variant?:string textAlign?:string lineClamp?:number",
         "Icon" to "name:string",
-        "Row" to "children:children", "Column" to "children:children",
+        "Row" to "children:children gap?:string align?:string justify?:string wrap?:boolean",
+        "Column" to "children:children gap?:string align?:string",
+        "Panel" to "child:child padding?:string radius?:string background?:string border?:boolean maxWidth?:number",
+        "Scroll" to "child:child maxHeight:number",
+        "Popover" to "label:string child:child",
+        "Vector" to "label:string width:number height:number shapes:array",
         "List" to "children:children", "Card" to "child:child", "Divider" to "",
         "Button" to "child:child action:action variant?:string checks?:array",
         "CheckBox" to "label:string value:boolean",
@@ -22,7 +27,7 @@ internal object CardAuthoringCatalog {
         "Badge" to "text:string tone?:string", "Code" to "text:string",
         "Progress" to "number:number label?:string",
         "Table" to "columns:array rows:array",
-        "Grid" to "children:children columnCount?:number columnSpans?:array",
+        "Grid" to "children:children columnCount?:number columnSpans?:array minItemWidth?:number",
         "Form" to "label:string children:children",
         "Expandable" to "label:string children:children expanded:boolean",
         "TextField" to "label:string value:string inputType?:string",
@@ -48,7 +53,9 @@ internal object CardAuthoringCatalog {
         "Draft" to "label:string value:string",
     ).mapValues { (_, value) -> fields(value) }
 
-    val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "type", "align")
+    val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "minItemWidth",
+        "type", "align", "gap", "justify", "wrap", "padding", "radius", "background", "border", "maxWidth",
+        "maxHeight", "textAlign", "lineClamp", "width", "height", "shapes")
     val enums = mapOf(
         "Text.variant" to setOf("h1", "h2", "h3", "h4", "h5", "body", "caption"),
         "Button.variant" to setOf("primary", "default", "borderless"),
@@ -59,15 +66,28 @@ internal object CardAuthoringCatalog {
         "Header.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "InfoRow.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Badge.tone" to setOf("neutral", "success", "info", "warning", "error"),
+        "Text.textAlign" to setOf("start", "center", "end"),
+        "Row.gap" to setOf("none", "xs", "sm", "md", "lg"),
+        "Column.gap" to setOf("none", "xs", "sm", "md", "lg"),
+        "Row.align" to setOf("start", "center", "end"),
+        "Column.align" to setOf("start", "center", "end"),
+        "Row.justify" to setOf("start", "center", "end", "between"),
+        "Panel.padding" to setOf("none", "xs", "sm", "md", "lg"),
+        "Panel.radius" to setOf("none", "sm", "md", "lg"),
+        "Panel.background" to setOf("transparent", "surface", "inset", "accentMuted"),
+    )
+    val ranges = mapOf(
+        "Text.lineClamp" to 1..8, "Panel.maxWidth" to 120..960, "Scroll.maxHeight" to 80..480,
+        "Grid.minItemWidth" to 80..320, "Vector.width" to 1..1000, "Vector.height" to 1..1000,
     )
     fun isStatic(component: String, field: String) =
-        field in staticFields || component == "Table" && field in setOf("rows", "columns")
+        field in staticFields || component == "Table" && field == "columns" || component == "Vector" && field == "label"
 
     fun guide(): String = buildString {
         appendLine("Use named arguments for every component and function. Inline child components or reference named declarations.")
         components.forEach { (name, fields) ->
             appendLine("$name(${fields.joinToString {
-                "${it.name}${if (it.required) "" else "?"}: ${enums["$name.${it.name}"]?.joinToString("|") ?: it.type}${if (isStatic(name, it.name)) " [literal]" else ""}"
+                "${it.name}${if (it.required) "" else "?"}: ${enums["$name.${it.name}"]?.joinToString("|") ?: ranges["$name.${it.name}"]?.let { r -> "${r.first}..${r.last}" } ?: it.type}${if (isStatic(name, it.name)) " [literal]" else ""}"
             }})")
         }
         appendLine("Pure local functions:")

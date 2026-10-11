@@ -19,6 +19,7 @@ internal object DynamicUiProtocol {
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
         "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
+        "Panel", "Scroll", "Popover", "Vector",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
@@ -88,6 +89,12 @@ internal object DynamicUiProtocol {
             "Unsupported function property", "Unsupported local function", "Function args must be an object",
             "Invalid function arguments", "Incorrect return type", "Decimal places must be 0 to 6",
             "Too many strings", "Unknown calculator key",
+            "Invalid style token", "Style tokens must be literal", "Invalid layout size", "Invalid layout boolean",
+            "Scroll needs a bounded height", "Vector needs a short accessibility label", "Vector needs 1-64 shapes",
+            "Invalid vector shape", "Unsupported vector shape", "Unknown vector property", "Invalid vector tone",
+            "Invalid vector fill", "Vector shape outside viewport", "Invalid vector points", "Invalid vector point count",
+            "Invalid vector point", "Invalid vector text",
+            "Popovers cannot be nested",
         )
         return generateSequence<Throwable>(error) { it.cause }.take(8)
             .mapNotNull { it.message?.takeIf(known::contains) }.firstOrNull()
@@ -167,6 +174,23 @@ internal object DynamicUiProtocol {
     }
 
     private fun validateComponent(c: JsonObject) {
+        val kind = c["component"]?.jsonPrimitive?.content.orEmpty()
+        CardAuthoringCatalog.enums.forEach { (key, allowed) ->
+            if (key.substringBefore('.') == kind) c[key.substringAfter('.')]?.let { value ->
+                if (value is JsonPrimitive) require(value.isString && value.content in allowed) { "Invalid style token" }
+                else require(!CardAuthoringCatalog.isStatic(kind, key.substringAfter('.'))) { "Style tokens must be literal" }
+            }
+        }
+        CardAuthoringCatalog.ranges.forEach { (key, range) ->
+            if (key.substringBefore('.') == kind) c[key.substringAfter('.')]?.let {
+                require(it is JsonPrimitive && !it.isString && it.intOrNull in range) { "Invalid layout size" }
+            }
+        }
+        if (kind == "Vector") CardVectorData.parse(c)
+        for (key in listOf("wrap", "border")) c[key]?.let {
+            require(it is JsonPrimitive && !it.isString && it.booleanOrNull != null) { "Invalid layout boolean" }
+        }
+        if (kind == "Scroll") require(c.containsKey("maxHeight")) { "Scroll needs a bounded height" }
         c.forEach { (key, value) ->
             if (key in setOf("id", "component", "child", "children", "weight", "min", "max", "type", "columnCount", "columnSpans", "steps")) {
                 require(!containsCall(value)) { "Functions cannot change component structure" }
@@ -205,9 +229,12 @@ internal object DynamicUiProtocol {
         }
         if (c["component"]?.jsonPrimitive?.content == "Table") {
             val columns = c["columns"]!!.jsonArray
-            val rows = c["rows"]!!.jsonArray
-            require(columns.size in 1..8 && rows.size <= 32) { "Table too large" }
-            require(rows.all { it is JsonArray && it.size == columns.size }) { "Invalid table rows" }
+            require(columns.size in 1..8) { "Table too large" }
+            (c["rows"] as? JsonArray)?.let { rows ->
+                require(rows.size <= 32 && rows.all { row ->
+                    row is JsonArray && row.size == columns.size && row.all { it is JsonPrimitive }
+                }) { "Invalid table rows" }
+            }
         }
     }
 
@@ -224,6 +251,10 @@ internal object DynamicUiProtocol {
                 require(!requireReferences) { "Missing child: $id" }
                 return 1
             }
+            if (node["component"]?.jsonPrimitive?.content == "Popover")
+                require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Popover" }) {
+                    "Popovers cannot be nested"
+                }
             var count = 1
             references(node).forEach {
                 count += visit(it, ancestors + id, depth + 1)

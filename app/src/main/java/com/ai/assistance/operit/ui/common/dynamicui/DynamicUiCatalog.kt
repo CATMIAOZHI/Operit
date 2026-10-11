@@ -50,7 +50,8 @@ internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
         catalogId = DynamicUiProtocol.CATALOG,
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
-            listOf(text, CardIcon, row, column, list, FramedCard, divider, CardButton, CardCheckBox) +
+            listOf(CardIcon, list, FramedCard, divider, CardButton, CardCheckBox, CardVector, CardPopover) +
+                listOf("Text", "Row", "Column", "Panel", "Scroll").map(::CardLayoutComponent) +
                 listOf(
                     "Heading", "Header", "InfoRow", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
                     "Select", "ChoicePicker", "DatePicker", "TextArea", "TextField", "Slider",
@@ -77,13 +78,14 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
     private val stepCount = A2uiProperty.dynamicNumber("steps")
     private val columnCount = A2uiProperty.dynamicNumber("columnCount")
     private val columnSpans = A2uiProperty.dynamicValue("columnSpans")
+    private val minItemWidth = A2uiProperty.dynamicNumber("minItemWidth")
     private val expandedProperty = A2uiProperty.dynamicBoolean("expanded")
     private val inputType = A2uiProperty.dynamicString("inputType")
     private val tone = A2uiProperty.dynamicString("tone")
     private val status = A2uiProperty.dynamicString("status")
     private val align = A2uiProperty.dynamicString("align")
     override val description = "Operit native $name. Local field changes do not send model requests."
-    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, expandedProperty, inputType, tone, status, align)
+    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, minItemWidth, expandedProperty, inputType, tone, status, align)
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -231,7 +233,12 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
             }
             "Table" -> {
                 val headers = properties.bind(columns).orEmpty()
-                val data = properties.bind(rows) as? List<*> ?: emptyList<Any>()
+                val data = properties.bind(rows) as? List<*>
+                if (data == null || data.size > 32 || data.any { it !is List<*> || it.size != headers.size ||
+                        it.any { cell -> cell is List<*> || cell is Map<*, *> } }) {
+                    Text(stringResource(R.string.dynamic_ui_bad_table), color = MaterialTheme.colorScheme.error)
+                    return
+                }
                 Column(modifier.horizontalScroll(rememberScrollState())) {
                     Row { headers.forEach { Text(it, Modifier.width(140.dp).padding(8.dp), style = MaterialTheme.typography.labelLarge) } }
                     HorizontalDivider()
@@ -268,7 +275,9 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                     if (name != "Expandable" || expanded) {
                         if (name == "Grid") BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val explicitCount = properties.bind(columnCount)?.toInt()?.coerceIn(1, 4)
-                            val count = explicitCount ?: if (maxWidth < 340.dp) 1 else 2
+                            val count = explicitCount ?: cardAutoColumns(maxWidth.value,
+                                properties.bind(minItemWidth)?.toFloat() ?: 160f,
+                                androidx.compose.ui.platform.LocalDensity.current.fontScale)
                             val spans = (properties.bind(columnSpans) as? List<*>)?.map { (it as Number).toInt() }
                                 ?: List(refs.size) { 1 }
                             val gridRows = cardGridRows(count, spans)

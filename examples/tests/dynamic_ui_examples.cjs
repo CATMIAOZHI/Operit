@@ -10,6 +10,13 @@ const sandbox = {
     exports: {}, __operitCurrentCallId:"host-call", complete:value => { result = value; },
     NativeInterface: {
         dynamicUiGuide:() => "NATIVE SIGNATURES",
+        updateDynamicUi:(callId,reference,changes,remove) => {
+            assert.equal(callId,"host-call");
+            assert.equal(reference,"demo");
+            assert.equal(changes,'title = Text(text="Revised")');
+            assert.deepEqual(JSON.parse(remove),["old"]);
+            return JSON.stringify({valid:true,reference:"revision",baseReference:reference});
+        },
         prepareDynamicUi:(callId, source) => {
             assert.equal(callId, "host-call");
             checked = source;
@@ -21,7 +28,7 @@ vm.runInNewContext(source, sandbox);
 (async () => {
     await sandbox.exports.read_guide();
     assert.ok(result.message.endsWith("NATIVE SIGNATURES"));
-    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress"]) {
+    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
         assert.equal(result.valid, true);
@@ -42,6 +49,10 @@ vm.runInNewContext(source, sandbox);
     assert.equal(result.code, "invalid_express");
     await sandbox.exports.prepare_card({source:42});
     assert.equal(result.code, "invalid_source");
+    await sandbox.exports.update_card({reference:"demo",changes:'title = Text(text="Revised")',remove:["old"]});
+    assert.equal(result.reference,"revision");
+    await sandbox.exports.update_card({reference:"demo",changes:42});
+    assert.equal(result.code,"invalid_revision");
     assert.equal(sandbox.exports.validate_card, undefined);
     assert.equal(fs.readFileSync(path.join(root, "app/src/main/assets/packages/dynamic_ui.js"),"utf8"), source);
     console.log("Express package fixtures and diagnostic/reference transport passed.");
