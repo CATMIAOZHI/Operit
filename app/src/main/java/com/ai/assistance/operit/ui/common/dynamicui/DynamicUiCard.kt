@@ -18,7 +18,6 @@ import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Code
 import androidx.compose.ui.Alignment
-import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.a2ui.A2uiSurface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
@@ -233,7 +232,6 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
             }
         }
     }
-    val rootIsCard = components.size == 1 && components.values.single()["root"]?.get("component")?.jsonPrimitive?.content == "Card"
     // Use the app's fonts and colors, with form-sized body text instead of chat prose sizing.
     MaterialTheme(
         colorScheme = cardColorScheme(MaterialTheme.colorScheme),
@@ -242,12 +240,12 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     ) {
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
     Surface(
-        Modifier.fillMaxWidth().padding(vertical = 8.dp),
+        Modifier.fillMaxWidth().padding(vertical = 12.dp),
         shape = MaterialTheme.shapes.large,
-        color = if (rootIsCard && error == null) Color.Transparent else MaterialTheme.colorScheme.surface,
-        border = if (rootIsCard && error == null) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+        color = MaterialTheme.colorScheme.surface,
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
-        Column(Modifier.padding(if (rootIsCard && error == null) 0.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
             if (error != null) {
                 Text(invalidText, color = MaterialTheme.colorScheme.error)
                 Text(stringResource(R.string.dynamic_ui_regenerate), style = MaterialTheme.typography.bodySmall)
@@ -258,6 +256,8 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                         val readOnly = results[surface.id] == true
                         val enabled = closed && ready[surface.id] == true && pending == null && !readOnly && surface.id !in surfaceErrors
                         CompositionLocalProvider(
+                            LocalCardRootAlreadyFramed provides
+                                (components[surface.id]?.get("root")?.get("component")?.jsonPrimitive?.content == "Card"),
                             LocalCardInteractive provides enabled,
                             LocalCardBrowse provides (closed && ready[surface.id] == true && pending == null && surface.id !in surfaceErrors),
                             LocalCardReadOnly provides readOnly,

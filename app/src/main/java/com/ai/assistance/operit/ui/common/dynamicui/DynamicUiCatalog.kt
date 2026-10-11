@@ -50,9 +50,9 @@ internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
         catalogId = DynamicUiProtocol.CATALOG,
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
-            listOf(text, CardIcon, row, column, list, card, divider, CardButton, CardCheckBox) +
+            listOf(text, CardIcon, row, column, list, FramedCard, divider, CardButton, CardCheckBox) +
                 listOf(
-                    "Heading", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
+                    "Heading", "Header", "InfoRow", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
                     "Select", "ChoicePicker", "DatePicker", "TextArea", "TextField", "Slider",
                     "Grid", "Form", "Expandable",
                 ).map(::OperitCardComponent) + cardAdvancedNames.map(::AdvancedCardComponent)
@@ -79,8 +79,11 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
     private val columnSpans = A2uiProperty.dynamicValue("columnSpans")
     private val expandedProperty = A2uiProperty.dynamicBoolean("expanded")
     private val inputType = A2uiProperty.dynamicString("inputType")
+    private val tone = A2uiProperty.dynamicString("tone")
+    private val status = A2uiProperty.dynamicString("status")
+    private val align = A2uiProperty.dynamicString("align")
     override val description = "Operit native $name. Local field changes do not send model requests."
-    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, expandedProperty, inputType)
+    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, expandedProperty, inputType, tone, status, align)
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -89,24 +92,27 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
         val interactive = LocalCardInteractive.current
         val inputError = LocalCardInputError.current
         when (name) {
-            "Heading" -> Text(properties.bind(text).orEmpty(), modifier, style = MaterialTheme.typography.titleMedium)
+            "Heading" -> Text(properties.bind(text).orEmpty(), modifier,
+                style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+            "Header" -> CardHeader(properties.bind(text).orEmpty(), title,
+                properties.bind(status).orEmpty(), properties.bind(tone), modifier)
+            "InfoRow" -> CardInfoRow(title, properties.bind(text).orEmpty(), properties.bind(tone), modifier)
             "Display" -> Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
                 color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.End,
+                val atStart = properties.bind(align) != "end"
+                Column(Modifier.padding(16.dp), horizontalAlignment = if (atStart) Alignment.Start else Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    if (title.isNotBlank()) Text(title, Modifier.fillMaxWidth(), textAlign = TextAlign.End,
+                    if (title.isNotBlank()) Text(title, Modifier.fillMaxWidth(), textAlign = if (atStart) TextAlign.Start else TextAlign.End,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
                     // Keep long results readable at large font scales without truncating digits.
-                    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), contentAlignment = Alignment.CenterEnd) {
+                    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                        contentAlignment = if (atStart) Alignment.CenterStart else Alignment.CenterEnd) {
                         Text(properties.bind(text).orEmpty(), maxLines = 1, softWrap = false,
                             style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
                     }
                 }
             }
-            "Badge" -> Surface(modifier, shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-                Text(properties.bind(text).orEmpty(), Modifier.padding(10.dp, 4.dp),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-            }
+            "Badge" -> CardStatusBadge(properties.bind(text).orEmpty(), properties.bind(tone), modifier)
             "Code" -> Text(
                 properties.bind(text).orEmpty(), modifier.horizontalScroll(rememberScrollState()).padding(8.dp),
                 fontFamily = FontFamily.Monospace, style = MaterialTheme.typography.bodySmall,

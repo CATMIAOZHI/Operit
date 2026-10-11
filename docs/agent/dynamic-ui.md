@@ -11,7 +11,12 @@
 所有卡片共用中性视觉样式：浅色模式白底、深色模式深灰底、淡边框和主题强调色，
 不改变聊天背景。指南同时要求自定义表单、对比、图表和参数试算组织好标题、重点、
 操作和辅助说明，而不是仅套用固定示例。
-`Display(text,label?)` 提供突出结果区；长结果可横向查看，不省略数字。
+外框始终由宿主绘制，不受根节点是否为 `Card` 影响；根 `Card` 复用外框，
+嵌套 `Card` 保留自己的分组边框。卡片上下留白 12 dp、内边距 16 dp。
+`Header` 组合标题、说明和状态徽章；`InfoRow` 左右排列标签与数值，长内容改上下排列。
+`Badge`、`Header` 和 `InfoRow` 支持 neutral/success/info/warning/error 语义色，含深色模式。
+`Display(text,label?,align?)` 提供突出结果区，默认左对齐；计算器显式使用 `align="end"`。
+长结果可横向查看，不省略数字。
 `Grid` 内按钮铺满各自单元格，未满行不会重新均分。显式 `columnCount` 时可传
 `columnSpans` 整数数组，与 `children` 一一对应，每项为 `1..columnCount`；
 跨列不足时另起一行。计算器的零键使用两列，费用试算也复用 `Display`。
@@ -21,8 +26,9 @@
 不再让模型二次抄写 JSON；工具不回传整份编译结果。`valid:false` 保留行、列和原因。
 新编写入口只有 Express，移除 `prepare_card(components,data)` 和 `validate_card`。
 
-`read_example("calculator"|"cost_calculator"|"charts"|"form")` 同样编译后返回短引用。
-它们分别是按键计算器、费用试算、四类图表和表单演示，不修改真实应用配置。
+`read_example` 支持 calculator、cost_calculator、charts、form、info、stats、progress，
+分别为按键计算器、费用试算、四类图表、表单、域名信息、统计和本地清单演示。
+同样编译后返回短引用，不修改真实应用配置。
 每张卡片独立初始化，不能跨卡片更新状态。
 
 ## Express 编写与交付

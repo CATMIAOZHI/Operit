@@ -18,7 +18,7 @@ internal object DynamicUiProtocol {
     val components = setOf(
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
-        "Heading", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
+        "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
