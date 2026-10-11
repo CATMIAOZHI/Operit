@@ -247,14 +247,20 @@ private fun ThinkingStrengthPopup(
             }
 
             val sliderInteraction = remember { MutableInteractionSource() }
+            val sliderState = remember(minLevel, maxLevel) {
+                SliderState(
+                    value = localLevel,
+                    steps = (maxLevel - minLevel - 1).coerceAtLeast(0),
+                    trackRange = minLevel.toFloat()..maxLevel.toFloat(),
+                )
+            }
+            androidx.compose.runtime.SideEffect { sliderState.value = localLevel }
             Slider(
-                value = localLevel,
+                state = sliderState,
                 onValueChange = {
                     localLevel = it
                     touched = true
                 },
-                valueRange = minLevel.toFloat()..maxLevel.toFloat(),
-                steps = (maxLevel - minLevel - 1).coerceAtLeast(0),
                 interactionSource = sliderInteraction,
                 onValueChangeFinished = { if (touched) commitLevel() },
                 thumb = { state ->
@@ -374,10 +380,10 @@ private fun ThinkingSliderTrack(
     inactiveDotColor: Color,
 ) {
     val rtl = LocalLayoutDirection.current == LayoutDirection.Rtl
-    val span = state.valueRange.endInclusive - state.valueRange.start
+    val span = state.trackRange.endInclusive - state.trackRange.start
     val fraction =
         if (span <= 0f) 0f
-        else ((state.value - state.valueRange.start) / span).coerceIn(0f, 1f)
+        else ((state.value - state.trackRange.start) / span).coerceIn(0f, 1f)
     val stopCount = state.steps + 2
 
     Canvas(modifier = Modifier.fillMaxWidth().height(ThinkingSliderTrackHeight)) {

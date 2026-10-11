@@ -1610,6 +1610,10 @@ class JsEngine(private val context: Context) {
         }
 
         @JavascriptInterface
+        fun validateDynamicUi(source: String): String =
+            com.ai.assistance.operit.ui.common.dynamicui.DynamicUiProtocol.validationReport(source).toString()
+
+        @JavascriptInterface
         fun executeCodexDrawAsync(callId: String, callbackId: String, parametersJson: String) {
             val normalizedCallId = callId.trim()
             val session = resolveExecutionSession(normalizedCallId)?.takeIf {

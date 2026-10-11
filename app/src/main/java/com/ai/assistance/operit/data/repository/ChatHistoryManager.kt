@@ -3279,6 +3279,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
      */
     private suspend fun forgetDeletedChats(chatIds: Collection<String>) {
         chatIds.forEach { id ->
+            runCatching {
+                com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.deleteChat(context, id)
+            }.onFailure { AppLogger.w(TAG, "Failed to drop card state of deleted chat $id", it) }
             // Housekeeping must never turn a completed deletion into a reported failure.
             runCatching {
                 // Cancel only: marking a deleted conversation as a live turn would leave the

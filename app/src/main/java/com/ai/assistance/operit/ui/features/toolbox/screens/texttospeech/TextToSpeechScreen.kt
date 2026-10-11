@@ -338,7 +338,7 @@ fun TextToSpeechScreen(navController: NavController) {
                                                                         contentDescription = stringResource(R.string.speech_services_dropdown_expand)
                                                                 )
                                                         },
-                                                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                                                        modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                                 )
                                                 ExposedDropdownMenu(
                                                         expanded = simpleTtsLocaleExpanded,

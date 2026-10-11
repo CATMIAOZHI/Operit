@@ -320,7 +320,7 @@ fun AssistantConfigScreen() {
                                 }
                             OutlinedTextField(
                                 modifier = Modifier
-                                    .menuAnchor()
+                                    .menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable)
                                     .fillMaxWidth()
                                     .heightIn(min = 48.dp),
                                 value = modeLabel,

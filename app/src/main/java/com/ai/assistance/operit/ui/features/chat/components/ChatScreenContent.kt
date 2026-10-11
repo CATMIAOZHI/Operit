@@ -242,6 +242,10 @@ fun ChatScreenContent(
     }
 
     val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
+            if (readOnlyTranscript) null else actualViewModel::submitDynamicUi,
+    ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         if (chatHeaderOverlayMode && chatHeaderTransparent) {
             // 覆盖模式：Header浮动在ChatArea之上
@@ -1126,6 +1130,7 @@ fun ChatScreenContent(
             )
         }
     }
+}
 }
 
 @Composable

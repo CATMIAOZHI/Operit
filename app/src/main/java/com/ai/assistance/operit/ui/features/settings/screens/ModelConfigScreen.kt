@@ -482,7 +482,7 @@ fun ModelConfigScreen(
                                 AnimatedContent(
                                     targetState = isDropdownExpanded,
                                     transitionSpec = {
-                                        fadeIn() + scaleIn() with fadeOut() + scaleOut()
+                                        (fadeIn() + scaleIn()).togetherWith(fadeOut() + scaleOut())
                                     }
                                 ) { expanded ->
                                     Icon(
