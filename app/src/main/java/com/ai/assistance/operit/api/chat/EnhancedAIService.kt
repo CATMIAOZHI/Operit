@@ -471,6 +471,7 @@ class EnhancedAIService private constructor(
 
     private data class MessageExecutionContext(
         val executionId: Int,
+        val dynamicUiRunId: String = java.util.UUID.randomUUID().toString(),
         val streamBuffer: StringBuilder = StringBuilder(),
         val roundManager: ConversationRoundManager = ConversationRoundManager(),
         val isConversationActive: AtomicBoolean = AtomicBoolean(true),
@@ -541,10 +542,12 @@ class EnhancedAIService private constructor(
 
     private fun registerExecutionContext(context: MessageExecutionContext) {
         activeExecutionContexts[context.executionId] = context
+        com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.begin(context.dynamicUiRunId)
         com.ai.assistance.operit.core.tools.phone.PhoneControlTools.registerTurn(context.toolSequence.scopeId)
     }
 
     private fun unregisterExecutionContext(context: MessageExecutionContext) {
+        com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.end(context.dynamicUiRunId)
         com.ai.assistance.operit.core.tools.phone.PhoneControlTools.finishTurn(context.toolSequence.scopeId)
         activeExecutionContexts.remove(context.executionId, context)
     }
@@ -1508,6 +1511,10 @@ class EnhancedAIService private constructor(
 
                     // 创建一个新的轮次来管理内容
                     val revisionTracker = TextStreamRevisionTracker()
+                    val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
+                        { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(execContext.dynamicUiRunId, it) },
+                        context.getString(R.string.dynamic_ui_reference_unavailable),
+                    )
                     val replayRoundStart = execContext.emittedReplayCharCount.get()
                     var processedRevisionEventCount = 0
 
@@ -1517,10 +1524,14 @@ class EnhancedAIService private constructor(
                             val event = events[processedRevisionEventCount++]
                             execContext.eventChannel.emit(event)
                             when (event.eventType) {
-                                TextStreamEventType.SAVEPOINT -> revisionTracker.savepoint(event.id)
+                                TextStreamEventType.SAVEPOINT -> {
+                                    revisionTracker.savepoint(event.id)
+                                    cardReferences.savepoint(event.id)
+                                }
                                 TextStreamEventType.ROLLBACK -> {
                                     val snapshot = revisionTracker.rollback(event.id)?.toString()
                                         ?: continue
+                                    cardReferences.rollback(event.id)
                                     execContext.streamBuffer.clear()
                                     execContext.streamBuffer.append(snapshot)
                                     execContext.roundManager.updateContent(snapshot)
@@ -1538,11 +1549,12 @@ class EnhancedAIService private constructor(
                     var lastLogTime = messageTimingNow()
 
                     try {
-                    responseStream.collect { content ->
+                    responseStream.collect { rawContent ->
                                 // Providers publish revision events before the text they govern.
                                 // Drain that replay log in this collector so rollback and content
                                 // cannot overtake one another in separate coroutines.
                                 drainRevisionEvents()
+                                val content = cardReferences.push(rawContent)
                                 // 第一次收到响应，更新状态
                                 if (isFirstChunk) {
                                     if (!isSubTask) {
@@ -1561,7 +1573,7 @@ class EnhancedAIService private constructor(
 
                                 // 累计统计
                                 chunkCount++
-                                totalChars += content.length
+                                totalChars += rawContent.length
 
                                 // 周期性日志
                                 val currentTime = messageTimingNow()
@@ -1582,7 +1594,17 @@ class EnhancedAIService private constructor(
                                 execContext.emittedReplayCharCount.addAndGet(content.length)
                     }
                     } finally {
-                        withContext(NonCancellable) { drainRevisionEvents() }
+                        withContext(NonCancellable) {
+                            drainRevisionEvents()
+                            val tail = cardReferences.finish()
+                            if (tail.isNotEmpty()) {
+                                revisionTracker.append(tail)
+                                execContext.streamBuffer.append(tail)
+                                execContext.roundManager.appendChunk(tail)
+                                emit(tail)
+                                execContext.emittedReplayCharCount.addAndGet(tail.length)
+                            }
+                        }
                     }
                     }
 
@@ -2411,6 +2433,7 @@ class EnhancedAIService private constructor(
                 callerChatId = chatId,
                 callerCardId = roleCardId,
                 resolvedMemorySpaceId = memorySpaceIdOverride,
+                dynamicUiRunId = context.dynamicUiRunId,
                 conversationLabel = conversationLabel,
                 parentModelConfigId = modelSnapshot.config.id,
                 parentModelIndex = modelSnapshot.lease.modelIndex,
@@ -2779,6 +2802,10 @@ class EnhancedAIService private constructor(
                 var isFirstChunk = true
                 val revisableStream = responseStream as? TextStreamEventCarrier
                 val revisionTracker = TextStreamRevisionTracker()
+                val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
+                    { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(context.dynamicUiRunId, it) },
+                    this@EnhancedAIService.context.getString(R.string.dynamic_ui_reference_unavailable),
+                )
                 val replayRoundStart = context.emittedReplayCharCount.get()
                 var processedRevisionEventCount = 0
 
@@ -2788,10 +2815,14 @@ class EnhancedAIService private constructor(
                         val event = events[processedRevisionEventCount++]
                         context.eventChannel.emit(event)
                         when (event.eventType) {
-                            TextStreamEventType.SAVEPOINT -> revisionTracker.savepoint(event.id)
+                            TextStreamEventType.SAVEPOINT -> {
+                                revisionTracker.savepoint(event.id)
+                                cardReferences.savepoint(event.id)
+                            }
                             TextStreamEventType.ROLLBACK -> {
                                 val snapshot = revisionTracker.rollback(event.id)?.toString()
                                     ?: continue
+                                cardReferences.rollback(event.id)
                                 context.streamBuffer.clear()
                                 context.streamBuffer.append(snapshot)
                                 context.roundManager.updateContent(snapshot)
@@ -2804,8 +2835,9 @@ class EnhancedAIService private constructor(
                 }
 
                 try {
-                responseStream.collect { content ->
+                responseStream.collect { rawContent ->
                             drainRevisionEvents()
+                            val content = cardReferences.push(rawContent)
                             if (isFirstChunk) {
                                 isFirstChunk = false
                                 logMessageTiming(
@@ -2823,7 +2855,7 @@ class EnhancedAIService private constructor(
 
                             // 累计统计
                             chunkCount++
-                            totalChars += content.length
+                            totalChars += rawContent.length
 
                             // 定期记录日志
                             val currentTime = messageTimingNow()
@@ -2836,7 +2868,17 @@ class EnhancedAIService private constructor(
                             context.emittedReplayCharCount.addAndGet(content.length)
                 }
                 } finally {
-                    withContext(NonCancellable) { drainRevisionEvents() }
+                    withContext(NonCancellable) {
+                        drainRevisionEvents()
+                        val tail = cardReferences.finish()
+                        if (tail.isNotEmpty()) {
+                            revisionTracker.append(tail)
+                            context.streamBuffer.append(tail)
+                            context.roundManager.appendChunk(tail)
+                            collector.emit(tail)
+                            context.emittedReplayCharCount.addAndGet(tail.length)
+                        }
+                    }
                 }
                 }
 

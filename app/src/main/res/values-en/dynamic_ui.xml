@@ -1,6 +1,8 @@
 <resources>
+    <string name="dynamic_ui_reference_unavailable">This card could not be displayed. Ask the AI to generate it again.</string>
     <string name="dynamic_ui_bad_number">Invalid number. Please change the input.</string>
-    <string name="dynamic_ui_chart_description">%1$s, %2$d data points. Expand to view the data.</string>
+    <string name="dynamic_ui_chart_description">%1$s, %2$d data points. Tap or touch and hold, then drag to inspect. A data table is also available.</string>
+    <string name="dynamic_ui_chart_gesture">Tap or touch and hold, then drag to inspect</string>
     <string name="dynamic_ui_chart_data">View data</string>
     <string name="dynamic_ui_no_data">No data</string>
     <string name="dynamic_ui_bad_chart">Invalid data. Ask the AI to correct it.</string>

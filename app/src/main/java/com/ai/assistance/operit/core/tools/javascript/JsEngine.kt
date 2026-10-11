@@ -1,5 +1,8 @@
 package com.ai.assistance.operit.core.tools.javascript
 
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+
 import android.content.Context
 import android.graphics.Bitmap
 import android.os.Handler
@@ -1610,8 +1613,35 @@ class JsEngine(private val context: Context) {
         }
 
         @JavascriptInterface
-        fun validateDynamicUi(source: String): String =
-            com.ai.assistance.operit.ui.common.dynamicui.DynamicUiProtocol.validationReport(source).toString()
+        fun dynamicUiGuide(): String =
+            com.ai.assistance.operit.ui.common.dynamicui.CardAuthoringCatalog.guide()
+
+        @JavascriptInterface
+        fun prepareDynamicUi(callId: String, source: String): String {
+            val session = resolveExecutionSession(callId)?.takeIf {
+                it.packageName == "dynamic_ui" && boundToolPkgContainerName == null
+            }
+            val run = session?.toolRuntimeContext?.dynamicUiRunId
+            if (run == null) return """{"valid":false,"code":"inactive_turn","message":"Generate cards inside an active chat turn using the dynamic_ui package."}"""
+            val report = com.ai.assistance.operit.ui.common.dynamicui.CardExpress.report(source)
+            if (report["valid"]?.jsonPrimitive?.booleanOrNull != true) return report.toString()
+            return try {
+                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(
+                    run, report.getValue("document").jsonPrimitive.content,
+                )
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(true))
+                    put("reference", kotlinx.serialization.json.JsonPrimitive(id))
+                    put("message", kotlinx.serialization.json.JsonPrimitive(
+                        "Card compiled and checked. Display exactly this reference in your answer; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
+                    ))
+                }.toString()
+            } catch (_: IllegalArgumentException) {
+                """{"valid":false,"code":"card_limit","message":"Card storage limit reached for this turn. Use fewer or smaller cards."}"""
+            } catch (_: IllegalStateException) {
+                """{"valid":false,"code":"inactive_turn","message":"This chat turn has ended. Generate the card again in the active turn."}"""
+            }
+        }
 
         @JavascriptInterface
         fun executeCodexDrawAsync(callId: String, callbackId: String, parametersJson: String) {

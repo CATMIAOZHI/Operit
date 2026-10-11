@@ -7,7 +7,6 @@ import androidx.a2ui.model.processor.A2uiJsonMessageParser
 import androidx.a2ui.model.processor.A2uiJsonReader
 import androidx.a2ui.model.processor.A2uiJsonToken
 import androidx.a2ui.model.protocol.*
-import java.io.File
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.channels.Channel
@@ -18,7 +17,7 @@ import org.junit.Test
 /** Exercises the actual published AndroidX parser and processor, not a mock renderer. */
 class DynamicUiOfficialEngineTest {
     @Test fun queuedKeypadActionsReadLatestStateWhenConsumed() = runBlocking {
-        val batch = DynamicUiProtocol.parse(javaClass.getResource("/dynamicui/calculator.ndjson")!!.readText(), true)
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/calculator.express")!!.readText()), true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
         val channel = Channel<A2uiClientEventMessage>(Channel.UNLIMITED)
         val errors = java.util.concurrent.CopyOnWriteArrayList<A2uiClientErrorMessage>()
@@ -32,10 +31,10 @@ class DynamicUiOfficialEngineTest {
         try {
             val parser = A2uiJsonMessageParser(::JvmJsonReader)
             batch.lines.forEach { processor.processInput(parser, it) }
-            processor.processMessage(A2uiUpdateDataModelMessage("keypad", "/ready", true))
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/ready", true))
             val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
             withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
-            val graph = batch.componentsBySurface.getValue("keypad")
+            val graph = batch.componentsBySurface.getValue("card")
             val buttons = graph.values.filter { it["component"]?.jsonPrimitive?.content == "Button" }
             for (key in listOf("1", "2", "*", "3", "4", "=")) {
                 val component = buttons.first {
@@ -62,7 +61,7 @@ class DynamicUiOfficialEngineTest {
     }
 
     @Test fun fourChartExamplesLoadInOfficialEngine() = runBlocking {
-        val batch = DynamicUiProtocol.parse(javaClass.getResource("/dynamicui/charts.ndjson")!!.readText(), true)
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/charts.express")!!.readText()), true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
         val events = java.util.concurrent.CopyOnWriteArrayList<A2uiClientToServerMessage>()
         val collector = launch(start = CoroutineStart.UNDISPATCHED) { processor.outboundEvents.collect { events.add(it) } }
@@ -71,7 +70,7 @@ class DynamicUiOfficialEngineTest {
             val parser = A2uiJsonMessageParser(::JvmJsonReader)
             batch.lines.forEach { processor.processInput(parser, it) }
             batch.surfaceIds.forEach { processor.processMessage(A2uiUpdateDataModelMessage(it, "/ready", true)) }
-            val surfaces = withTimeout(5000) { processor.activeSurfaces.first { it.size == 4 } }
+            val surfaces = withTimeout(5000) { processor.activeSurfaces.first { it.size == 1 } }
             withTimeout(5000) { while (surfaces.any { (it as A2uiCoreSurfaceModel).dataModel[A2uiDataPath("/ready")] != true }) delay(10) }
             assertTrue(events.toString(), events.none { it is A2uiClientErrorMessage || it is A2uiClientEventMessage })
         } finally {
@@ -81,7 +80,7 @@ class DynamicUiOfficialEngineTest {
     }
 
     @Test fun shippedCalculatorRecalculatesThroughOfficialEvaluatorWithoutActions() = runBlocking {
-        val source = javaClass.getResource("/dynamicui/cost_calculator.ndjson")!!.readText()
+        val source = CardExpress.compile(javaClass.getResource("/dynamicui/cost_calculator.express")!!.readText())
         val batch = DynamicUiProtocol.parse(source, true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
         val events = java.util.concurrent.CopyOnWriteArrayList<A2uiClientToServerMessage>()
@@ -90,19 +89,20 @@ class DynamicUiOfficialEngineTest {
         try {
             val parser = A2uiJsonMessageParser(::JvmJsonReader)
             batch.lines.forEach { processor.processInput(parser, it) }
-            processor.processMessage(A2uiUpdateDataModelMessage("calculator", "/ready", true))
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/ready", true))
             val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
             withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
-            val payload = DynamicUiProtocol.toValue(batch.componentsBySurface.getValue("calculator").getValue("total").getValue("text"))
+            val display = batch.componentsBySurface.getValue("card").values.single { it["component"]?.jsonPrimitive?.content == "Display" }
+            val payload = DynamicUiProtocol.toValue(display.getValue("text"))
             fun total() = surface.evaluatePayload("total", { surface.dataModel[it] }, A2uiDataPath("/"), payload).toString()
             val originalLocale = java.util.Locale.getDefault()
             try {
                 java.util.Locale.setDefault(java.util.Locale.US)
-                assertEquals("¥ 41.84", total())
+                assertEquals("46.49", total())
                 surface.dataModel.update(A2uiDataPath("/form/discount"), true)
-                assertEquals("¥ 37.66", total())
+                assertEquals("41.84", total())
                 surface.dataModel.update(A2uiDataPath("/form/years"), 10)
-                assertEquals("¥ 94.14", total())
+                assertEquals("104.60", total())
             } finally { java.util.Locale.setDefault(originalLocale) }
             assertTrue(events.toString(), events.none { it is A2uiClientErrorMessage || it is A2uiClientEventMessage })
         } finally {
@@ -112,8 +112,7 @@ class DynamicUiOfficialEngineTest {
     }
 
     @Test fun shippedDemoReplaysAndRestoresWithoutEmittingActions() = runBlocking {
-        val guide = File("../examples/dynamic_ui.js").readText()
-        val source = guide.lineSequence().filter { it.startsWith("""{"version":""") }.joinToString("\n")
+        val source = CardExpress.compile(javaClass.getResource("/dynamicui/form.express")!!.readText())
         val batch = DynamicUiProtocol.parse(source, true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
         val events = java.util.concurrent.CopyOnWriteArrayList<A2uiClientToServerMessage>()
@@ -123,17 +122,17 @@ class DynamicUiOfficialEngineTest {
             // Same official protocol parser; Gson supplies real JVM tokens instead of Android stubs.
             val parser = A2uiJsonMessageParser(::JvmJsonReader)
             batch.lines.forEach { processor.processInput(parser, it) }
-            processor.processMessage(A2uiUpdateDataModelMessage("parameters", "/restored", "saved"))
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/restored", "saved"))
             val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
             withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/restored")] != "saved") delay(10) }
-            assertEquals("Medium", surface.dataModel[A2uiDataPath("/form/effort")])
+            assertEquals("", surface.dataModel[A2uiDataPath("/form/name")])
             assertTrue(events.toString(), events.none { it is A2uiClientErrorMessage || it is A2uiClientEventMessage })
-            surface.dataModel.update(A2uiDataPath("/form/instructions"), "保留中文输入")
+            surface.dataModel.update(A2uiDataPath("/form/notes"), "保留中文输入")
             val saved = DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/")])
-            processor.processMessage(A2uiUpdateDataModelMessage("parameters", "/", DynamicUiProtocol.toValue(saved)))
-            processor.processMessage(A2uiUpdateDataModelMessage("parameters", "/afterRestore", true))
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/", DynamicUiProtocol.toValue(saved)))
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/afterRestore", true))
             withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/afterRestore")] != true) delay(10) }
-            assertEquals("保留中文输入", surface.dataModel[A2uiDataPath("/form/instructions")])
+            assertEquals("保留中文输入", surface.dataModel[A2uiDataPath("/form/notes")])
             assertTrue(events.none { it is A2uiClientEventMessage })
         } finally {
             job.cancelAndJoin()
