@@ -8,7 +8,7 @@ import androidx.compose.ui.graphics.luminance
 internal fun cardColorScheme(base: ColorScheme): ColorScheme {
     val dark = base.surface.luminance() < .5f
     val surface = if (dark) Color(0xFF202124) else Color.White
-    val inset = if (dark) Color(0xFF2C2D30) else Color(0xFFF5F5F5)
+    val inset = if (dark) Color(0xFF2C2D30) else Color(0xFFF2F3F5)
     return base.copy(
         surface = surface,
         onSurface = if (dark) Color(0xFFF1F1F1) else Color(0xFF202124),
@@ -19,7 +19,7 @@ internal fun cardColorScheme(base: ColorScheme): ColorScheme {
         surfaceContainerHigh = inset,
         surfaceContainerHighest = inset,
         outline = if (dark) Color(0xFF77797E) else Color(0xFFA0A2A6),
-        outlineVariant = if (dark) Color(0xFF494B50) else Color(0xFFE1E2E5),
+        outlineVariant = if (dark) Color(0xFF55575C) else Color(0xFFD9DBDF),
     )
 }
 

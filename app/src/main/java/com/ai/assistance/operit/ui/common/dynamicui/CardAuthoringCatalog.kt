@@ -16,8 +16,10 @@ internal object CardAuthoringCatalog {
         "List" to "children:children", "Card" to "child:child", "Divider" to "",
         "Button" to "child:child action:action variant?:string checks?:array",
         "CheckBox" to "label:string value:boolean",
-        "Heading" to "text:string", "Display" to "text:string label?:string",
-        "Badge" to "text:string", "Code" to "text:string",
+        "Heading" to "text:string", "Display" to "text:string label?:string align?:string",
+        "Header" to "text:string label?:string status?:string tone?:string",
+        "InfoRow" to "label:string text:string tone?:string",
+        "Badge" to "text:string tone?:string", "Code" to "text:string",
         "Progress" to "number:number label?:string",
         "Table" to "columns:array rows:array",
         "Grid" to "children:children columnCount?:number columnSpans?:array",
@@ -46,13 +48,17 @@ internal object CardAuthoringCatalog {
         "Draft" to "label:string value:string",
     ).mapValues { (_, value) -> fields(value) }
 
-    val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "type")
+    val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "type", "align")
     val enums = mapOf(
         "Text.variant" to setOf("h1", "h2", "h3", "h4", "h5", "body", "caption"),
         "Button.variant" to setOf("primary", "default", "borderless"),
         "Chart.type" to setOf("line", "bar", "pie", "scatter"),
         "TextField.inputType" to setOf("text", "number"),
         "TextArea.inputType" to setOf("text", "number"),
+        "Display.align" to setOf("start", "end"),
+        "Header.tone" to setOf("neutral", "success", "info", "warning", "error"),
+        "InfoRow.tone" to setOf("neutral", "success", "info", "warning", "error"),
+        "Badge.tone" to setOf("neutral", "success", "info", "warning", "error"),
     )
     fun isStatic(component: String, field: String) =
         field in staticFields || component == "Table" && field in setOf("rows", "columns")

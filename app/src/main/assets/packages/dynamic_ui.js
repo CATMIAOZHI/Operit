@@ -22,7 +22,7 @@
     {
       "name": "read_example",
       "description": {"zh": "直接生成已校验的演示卡片，返回展示短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo and return its display reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts 或 form", "en": "calculator, cost_calculator, charts or form"}}]
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats 或 progress", "en": "calculator, cost_calculator, charts, form, info, stats or progress"}}]
     }
   ]
 }
@@ -67,10 +67,17 @@ Literal controls are read-only. Calls never write state; an explicit local_actio
 
 LAYOUT — applies to ALL cards, not only calculators
 One purpose per card: concise title, prominent result, controls, short supporting note.
-Heading for sections; Display for large results and units; Badge for short status.
-Stack forms vertically. Table aligns attributes; Grid suits short metrics or keypads, not prose.
+Header(text=title,label=optionalSubtitle,status=optionalBadge,tone=...) starts a card.
+Heading is a smaller section heading. InfoRow(label=...,text=...) aligns each attribute/value;
+long values automatically stack without truncation. Divider separates header and details.
+Display(text=...,label=...,align="start") gives statistics a large value on an inset grey panel.
+Default alignment is start; calculators use align="end". Badge tones:
+neutral, success, info, warning, error. Use colors for meaning, never as decoration.
+Stack forms vertically. Table aligns tabular data; Grid suits short metrics or keypads, not prose.
 Row is for short content. Avoid decorative nesting and duplicating titles in the surrounding text.
-Host supplies white/light or neutral dark surfaces, soft borders, spacing and theme accents.
+Host ALWAYS supplies a full-width white/light or neutral dark frame, clear border, rounded corners
+and consistent padding, regardless of root type. Do not wrap root in Card just to get a border.
+Use nested Card only to group separate related sections. Keep commentary outside the card.
 Choose one primary action; quiet secondary actions. No arbitrary style/color overrides.
 Grid columnCount=1..4; columnSpans needs one integer span per child, each 1..columnCount.
 Items pack in order and incomplete rows keep empty cells. A zero key can span 2 columns.
@@ -147,7 +154,7 @@ function example(name) {
             ["1","1"],["2","2"],["3","3"],["+","+"],["0","0"],[".","."],["=","="]];
         return [
             '$/calculator = {display:"0",stored:"",op:"",replace:false,error:false}',
-            'root = Column(children=[Heading(text="本地计算器"),pending,Display(label="本地计算",text=$/calculator/display),error,keys,Text(text="支持小数、退格和连续运算。",variant="caption")])',
+            'root = Column(children=[Header(text="本地计算器",status="本地计算"),pending,Display(label="结果",text=$/calculator/display,align="end"),error,keys,Text(text="支持小数、退格和连续运算。",variant="caption")])',
             'pending = Conditional(visible=not(value=equals(a=$/calculator/op,b="")),children=[Text(text=concat(values=[$/calculator/stored," ",$/calculator/op]))])',
             'error = Conditional(visible=$/calculator/error,children=[Text(text="无法计算，请检查除数或清除后重试。")])',
             'keys = Grid(columnCount=4,columnSpans=[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1],children=[' +
@@ -157,7 +164,7 @@ function example(name) {
     if (name === "cost_calculator") return String.raw`
 $/form = {years:4,discount:false}
 root = Column(children=[
- Heading(text="费用试算 · 演示数据"),
+ Header(text="费用试算",status="演示数据"),
  Display(label="预计费用",text=formatNumber(value=multiply(a=multiply(a=$/form/years,b=11.622222),b=if(condition=$/form/discount,then=0.9,else=1)))),
  Slider(label="购买年限",min=1,max=10,steps=8,number=$/form/years),
  CheckBox(label="模拟九折优惠",value=$/form/discount),
@@ -175,6 +182,29 @@ root = Form(label="偏好表单 · 演示",children=[
  TextArea(label="补充说明",value=$/form/notes),
  Button(child=Text(text="提交给 AI"),variant="primary",action=Event(name="ai_submit",context={form:$/form,required:["/form/name"]}))
 ])`;
-    throw new Error("Choose calculator, cost_calculator, charts or form.");
+    if (name === "info") return String.raw`
+root = Card(child=Column(children=[
+ Header(text="example.com",label="域名状态 · 演示数据",status="活动中",tone="success"),
+ Divider(),
+ InfoRow(label="到期日期",text="2028/09/29"),
+ InfoRow(label="自动续费",text="已开启",tone="success")
+]))`;
+    if (name === "stats") return String.raw`
+root = Column(children=[
+ Header(text="Token 使用统计",status="演示数据"),
+ Grid(children=[Display(label="总 Token",text="9.0M"),Display(label="缓存命中率",text="94.2%")]),
+ Chart(label="每日 Token 用量",type="bar",labels=["周一","周二","周三","周四","周五"],
+ series=[{label:"Token",values:[1200000,1800000,1500000,2100000,2400000]}])
+])`;
+    if (name === "progress") return String.raw`
+$/tasks = {analysis:true,review:true,test:false}
+root = Column(children=[
+ Header(text="代码审查任务",label="演示清单，仅修改当前卡片",status=if(condition=and(a=and(a=$/tasks/analysis,b=$/tasks/review),b=$/tasks/test),then="已完成",else="进行中"),tone=if(condition=and(a=and(a=$/tasks/analysis,b=$/tasks/review),b=$/tasks/test),then="success",else="info")),
+ Progress(label="任务进度",number=divide(a=add(a=add(a=if(condition=$/tasks/analysis,then=1,else=0),b=if(condition=$/tasks/review,then=1,else=0)),b=if(condition=$/tasks/test,then=1,else=0)),b=3)),
+ CheckBox(label="分析代码",value=$/tasks/analysis),
+ CheckBox(label="检查问题",value=$/tasks/review),
+ CheckBox(label="运行测试",value=$/tasks/test)
+])`;
+    throw new Error("Choose calculator, cost_calculator, charts, form, info, stats or progress.");
 }
 exports.read_example = async ({name}) => complete(prepare(example(name)));

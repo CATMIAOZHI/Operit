@@ -29,4 +29,16 @@ class DynamicUiStyleTest {
         assertEquals(1, cardGridRows(2, listOf(1, 1, 1)).last().sumOf { it.span })
         assertTrue(cardGridRows(2, emptyList()).isEmpty())
     }
+
+    @Test fun statusTextHasReadableContrastInBothModes() {
+        for (base in listOf(lightColorScheme(), darkColorScheme())) {
+            val scheme = cardColorScheme(base)
+            for (tone in listOf("neutral", "success", "info", "warning", "error")) {
+                val (ink, fill) = cardToneColors(tone, scheme)
+                val lighter = maxOf(ink.luminance(), fill.luminance())
+                val darker = minOf(ink.luminance(), fill.luminance())
+                assertTrue(tone, (lighter + .05f) / (darker + .05f) >= 4.5f)
+            }
+        }
+    }
 }
