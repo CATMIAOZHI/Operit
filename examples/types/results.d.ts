@@ -1469,6 +1469,7 @@ export interface ModelConfigDeleteResultData {
     deleted: boolean;
     configId: string;
     affectedFunctions: string[];
+    /** Empty when affected functions require an explicit model selection. */
     fallbackConfigId: string;
     toString(): string;
 }

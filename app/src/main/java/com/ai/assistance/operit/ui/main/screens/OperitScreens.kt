@@ -160,6 +160,7 @@ sealed class Screen(
                     onNavigateToSettings = { navigateTo(Settings) },
                     onNavigateToUserPreferences = { navigateTo(UserPreferencesSettings) },
                     onNavigateToModelConfig = { navigateTo(ModelConfig) },
+                    onNavigateToFunctionalConfig = { navigateTo(FunctionalConfig) },
                     onNavigateToOnboardingModelConfig = { navigateTo(ModelConfigOnboarding) },
                     onNavigateToModelPrompts = { navigateTo(ModelPromptsSettings) },
                     onNavigateToPackageManager = { navigateTo(Packages) },

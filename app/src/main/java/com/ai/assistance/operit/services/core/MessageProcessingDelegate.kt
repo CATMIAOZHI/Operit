@@ -878,7 +878,7 @@ class MessageProcessingDelegate(
             val configId = overrideConfigId ?: chatConfigMapping.configId
             val modelIndex =
                 if (overrideConfigId != null) {
-                    (chatModelIndexOverride ?: 0).coerceAtLeast(0)
+                    chatModelIndexOverride ?: 0
                 } else {
                     chatConfigMapping.modelIndex
                 }

@@ -5477,6 +5477,11 @@
     <string name="attachment_camera">Camera</string>
     <string name="attachment_memory">Memory</string>
     <string name="attachment_file">File</string>
+    <string name="functional_model_reselect">Select a model again</string>
+    <string name="functional_model_notice_title">Some features need a model</string>
+    <string name="functional_model_notice_more">%1$s and others (%2$d features)</string>
+    <string name="functional_model_notice_configure">Configure</string>
+    <string name="functional_model_selection_unavailable">The selected model was removed or is unavailable. Choose a model in Function Model Settings; no automatic substitution will be made.</string>
     <string name="attachment_screen_content">Screen Content</string>
     <string name="attachment_notifications">Notifications</string>
     <string name="attachment_location">Location</string>
