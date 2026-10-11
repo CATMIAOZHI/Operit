@@ -12,6 +12,9 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
@@ -23,6 +26,13 @@ internal fun cardSpacing(token: String?, default: Int = 8) =
 
 internal fun cardAutoColumns(width: Float, minimum: Float, fontScale: Float): Int =
     ((width + 8) / (minimum * fontScale.coerceAtLeast(1f) + 8)).toInt().coerceIn(1, 4)
+
+internal fun cardFrameSize(bounds: Constraints, ratio: Float): androidx.compose.ui.unit.IntSize {
+    val width = minOf(bounds.maxWidth.toFloat(), bounds.maxHeight * ratio)
+        .toInt().coerceIn(bounds.minWidth, bounds.maxWidth)
+    val height = (width / ratio).toInt().coerceIn(bounds.minHeight, bounds.maxHeight)
+    return androidx.compose.ui.unit.IntSize(width, height)
+}
 
 /** Bounded layout tokens shared by all authored cards, independent of screen size. */
 internal class CardLayoutComponent(override val name: String) : A2uiComponent {
@@ -41,10 +51,13 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
     private val border = A2uiProperty.dynamicBoolean("border")
     private val maxWidth = A2uiProperty.dynamicNumber("maxWidth")
     private val maxHeight = A2uiProperty.dynamicNumber("maxHeight")
+    private val minWidth = A2uiProperty.dynamicNumber("minWidth")
+    private val minHeight = A2uiProperty.dynamicNumber("minHeight")
+    private val aspectRatio = A2uiProperty.dynamicNumber("aspectRatio")
     private val lineClamp = A2uiProperty.dynamicNumber("lineClamp")
     override val description = "Bounded responsive $name layout."
     override val properties = listOf(children, child, text, variant, align, textAlign, gap, justify,
-        wrap, padding, radius, background, border, maxWidth, maxHeight, lineClamp)
+        wrap, padding, radius, background, border, maxWidth, maxHeight, minWidth, minHeight, aspectRatio, lineClamp)
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
@@ -74,6 +87,17 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
             "center" -> Alignment.CenterVertically; "end" -> Alignment.Bottom; else -> Alignment.Top
         }
         when (name) {
+            "Frame" -> {
+                val ratio = properties.bind(aspectRatio)?.toFloat()
+                Box(modifier
+                    .widthIn(min = (properties.bind(minWidth)?.toInt() ?: 0).dp, max = (properties.bind(maxWidth)?.toInt() ?: 960).dp)
+                    .heightIn(min = (properties.bind(minHeight)?.toInt() ?: 0).dp, max = (properties.bind(maxHeight)?.toInt() ?: 480).dp)
+                    .then(if (ratio != null) Modifier.layout { measurable, bounds ->
+                        val size = cardFrameSize(bounds, ratio)
+                        val measured = measurable.measure(Constraints.fixed(size.width, size.height))
+                        layout(size.width, size.height) { measured.place(0, 0) }
+                    } else Modifier).clipToBounds()) { render() }
+            }
             "Text" -> Text(properties.bind(text).orEmpty(),
                 (if (properties.bind(textAlign) != null) modifier.fillMaxWidth() else modifier)
                     .then(if (properties.bind(variant) in setOf("h1","h2","h3","h4","h5")) Modifier.semantics { heading() } else Modifier),

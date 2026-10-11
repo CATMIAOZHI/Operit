@@ -86,6 +86,26 @@ internal object DynamicUiStateStore {
         signal.trySend(Unit)
     }
 
+    /** Live tool updates acknowledge only after an atomic write, serialized with chat deletion. */
+    fun writeNow(file: File, record: JsonObject) = runBlocking(Dispatchers.IO) {
+        val text = record.toString()
+        require(text.length <= DynamicUiProtocol.MAX_STATE * 3)
+        ioMutex.withLock {
+            check(synchronized(pending) { file.parentFile !in deleted }) { "Chat was deleted" }
+            file.parentFile?.mkdirs()
+            val atomic = AtomicFile(file)
+            var stream: java.io.FileOutputStream? = null
+            try {
+                stream = atomic.startWrite()
+                stream.write(text.toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(stream)
+            } catch (e: Exception) {
+                atomic.failWrite(stream)
+                throw e
+            }
+        }
+    }
+
     suspend fun deleteChat(context: Context, chatId: String) = withContext(Dispatchers.IO) {
         val directory = File(context.filesDir, "dynamic_ui/${DynamicUiProtocol.fingerprint(chatId)}")
         synchronized(pending) {

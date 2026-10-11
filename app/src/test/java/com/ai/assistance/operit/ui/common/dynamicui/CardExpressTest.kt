@@ -19,7 +19,7 @@ class CardExpressTest {
     }
 
     @Test fun examplesPassNativeProtocol() {
-        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector")) {
+        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector", "repeat", "curves")) {
             val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
             val report = CardExpress.report(source)
             assertEquals("$name: $report", JsonPrimitive(true), report["valid"])
@@ -66,6 +66,8 @@ class CardExpressTest {
         assertEquals(DynamicUiProtocol.components, CardAuthoringCatalog.components.keys)
         val actual = operitDynamicUiCatalog.components.associateBy { it.name }
         CardAuthoringCatalog.components.forEach { (name, fields) ->
+            // Repeat is a bounded compiler template, lowered to official Column/components.
+            if (name == "Repeat") return@forEach
             assertNotNull(name, actual[name])
             assertTrue(name, actual.getValue(name).properties.map { it.key }.containsAll(fields.map { it.name }))
         }

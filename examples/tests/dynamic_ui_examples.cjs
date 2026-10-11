@@ -4,7 +4,7 @@ const vm = require("node:vm");
 const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "../..");
 const source = fs.readFileSync(path.join(root, "examples/dynamic_ui.js"), "utf8");
-let result, checked;
+let result, checked, liveFlag;
 let report = {valid:true,reference:"demo",message:"```a2ui-ref\ndemo\n```"};
 const sandbox = {
     exports: {}, __operitCurrentCallId:"host-call", complete:value => { result = value; },
@@ -17,10 +17,18 @@ const sandbox = {
             assert.deepEqual(JSON.parse(remove),["old"]);
             return JSON.stringify({valid:true,reference:"revision",baseReference:reference});
         },
-        prepareDynamicUi:(callId, source) => {
+        prepareDynamicUi:(callId, source, live) => {
             assert.equal(callId, "host-call");
             checked = source;
+            liveFlag = live;
             return JSON.stringify(report);
+        },
+        patchDynamicUiData:(callId, reference, version, data) => {
+            assert.equal(callId, "host-call");
+            assert.equal(reference, "demo");
+            assert.equal(version, 0);
+            assert.deepEqual(JSON.parse(data), {progress:50});
+            return JSON.stringify({valid:true,version:1});
         },
     },
 };
@@ -28,7 +36,7 @@ vm.runInNewContext(source, sandbox);
 (async () => {
     await sandbox.exports.read_guide();
     assert.ok(result.message.endsWith("NATIVE SIGNATURES"));
-    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector"]) {
+    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
         assert.equal(result.valid, true);
@@ -40,6 +48,11 @@ vm.runInNewContext(source, sandbox);
     }
     await sandbox.exports.prepare_card({source:'root = Text(text="hello")'});
     assert.equal(checked, 'root = Text(text="hello")');
+    assert.equal(liveFlag, false);
+    await sandbox.exports.prepare_card({source:'root = Text(text="hello")',live:true});
+    assert.equal(liveFlag, true);
+    await sandbox.exports.patch_card_data({reference:"demo",expected_version:0,data:{progress:50}});
+    assert.equal(result.version, 1);
     report = {valid:false,code:"invalid_express",line:3,column:5,message:"Expected ')'."};
     await sandbox.exports.prepare_card({source:'root = Text('});
     assert.equal(result.success, true);

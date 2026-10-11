@@ -2,9 +2,11 @@ package com.ai.assistance.operit.ui.common.dynamicui
 
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import java.util.UUID
+import kotlinx.serialization.json.*
 
 /** Temporary capabilities: never resolve another run's card or use history as a fallback.
- * Expanded messages are self-contained; this store is not needed for history or export.
+ * Expanded messages contain their initial data; live final data uses a chat-scoped sidecar.
+ * This temporary reference store is not needed to render history.
  */
 internal object CardDelivery {
     private data class Revision(val document: String, val source: String) {
@@ -14,21 +16,33 @@ internal object CardDelivery {
     @Synchronized fun begin(run: String) {
         if (runs.size < 64) runs.putIfAbsent(run, linkedMapOf())
     }
-    @Synchronized fun end(run: String) { runs.remove(run) }
-    @Synchronized fun register(run: String, document: String, source: String = ""): String {
+    @Synchronized fun end(run: String) { runs.remove(run); CardLiveStore.end(run) }
+    @Synchronized fun register(run: String, document: String, source: String = "",
+        liveChat: String? = null, liveDirectory: java.io.File? = null): String {
         val cards = runs[run] ?: error("Card generation is unavailable outside an active chat turn.")
-        val revision = Revision(document, source)
+        val id = UUID.randomUUID().toString()
+        val stored = if (liveChat == null) document else document.lines().filter(String::isNotBlank).joinToString("\n") { line ->
+            val event = Json.parseToJsonElement(line).jsonObject
+            val kind = event.keys.single { it != "version" }
+            val body = event.getValue(kind).jsonObject
+            JsonObject(event + (kind to JsonObject(body + ("surfaceId" to JsonPrimitive(CardLiveStore.surface(id)))))).toString()
+        }
+        val revision = Revision(stored, source)
         require(cards.size < 16 && cards.values.sumOf { it.size } + revision.size <= 524_288) {
             "Too many cards in this turn."
         }
         require(runs.values.sumOf { map -> map.values.sumOf { it.size } } + revision.size <= 4_194_304) {
             "Card generation is busy. Try again after other tasks finish."
         }
-        val id = UUID.randomUUID().toString()
+        if (liveChat != null) CardLiveStore.register(run, id, liveChat, requireNotNull(liveDirectory), source, stored)
         cards[id] = revision
         return id
     }
-    @Synchronized fun resolve(run: String, id: String): String? = runs[run]?.get(id)?.document
+    @Synchronized fun resolve(run: String, id: String): String? {
+        val document = runs[run]?.get(id)?.document ?: return null
+        if (!CardLiveStore.publish(run, id)) return null
+        return document
+    }
     @Synchronized fun source(run: String, id: String): String? = runs[run]?.get(id)?.source?.takeIf { it.isNotEmpty() }
 }
 

@@ -6,8 +6,7 @@ import kotlinx.serialization.json.*
 
 /**
  * Resource limits around the official A2UI parser, not a replacement protocol.
- * The catalog deliberately accepts static child IDs only: template expansion and
- * arbitrary functions/regular expressions are outside this first release.
+ * Repeat templates are lowered to bounded static graphs before the official renderer.
  */
 internal object DynamicUiProtocol {
     const val CATALOG = "https://operit.ai/a2ui/catalog/v1"
@@ -19,7 +18,7 @@ internal object DynamicUiProtocol {
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
         "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
-        "Panel", "Scroll", "Popover", "Vector",
+        "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
@@ -96,6 +95,9 @@ internal object DynamicUiProtocol {
             "Invalid vector fill", "Vector shape outside viewport", "Invalid vector points", "Invalid vector point count",
             "Invalid vector point", "Invalid vector text",
             "Popovers cannot be nested",
+            "Repeat cannot be nested", "Repeat exceeds maxItems", "Repeat items must be an array",
+            "Repeat items must be objects", "Repeat keys must be unique nonempty strings",
+            "item is only available inside Repeat templates", "Expanded Repeat is too large",
         )
         return generateSequence<Throwable>(error) { it.cause }.take(8)
             .mapNotNull { it.message?.takeIf(known::contains) }.firstOrNull()
@@ -167,9 +169,14 @@ internal object DynamicUiProtocol {
                 throw IllegalArgumentException("Line ${index + 1}: ${e.message?.take(160)}", e)
             }
         }
-        if (closed) surfaces.values.forEach {
+        if (closed) surfaces.forEach { (surface, graph) ->
+            val it = graph
             require("root" in it) { "Missing root component" }
             validateGraph(it, requireReferences = true)
+            if (it.values.any { c -> c["component"]?.jsonPrimitive?.content == "Repeat" || containsItem(c) }) {
+                val data = CardRepeat.initialData(completeLines, surface)
+                validateExpanded(CardRepeat.expand(it, data), data)
+            }
         }
         return Batch(completeLines, surfaces.keys.toSet(), closed, surfaces.mapValues { it.value.toMap() })
     }
@@ -188,6 +195,14 @@ internal object DynamicUiProtocol {
             }
         }
         if (kind == "Vector") CardVectorData.parse(c)
+        if (kind == "Frame") {
+            fun n(key: String, fallback: Double) = c[key]?.jsonPrimitive?.double ?: fallback
+            require(n("minWidth", 0.0) <= n("maxWidth", 960.0) &&
+                n("minHeight", 0.0) <= n("maxHeight", 480.0)) { "Invalid layout size" }
+            c["aspectRatio"]?.let {
+                require(it is JsonPrimitive && !it.isString && it.doubleOrNull?.let { ratio -> ratio in 0.25..4.0 } == true) { "Invalid layout size" }
+            }
+        }
         for (key in listOf("wrap", "border")) c[key]?.let {
             require(it is JsonPrimitive && !it.isString && it.booleanOrNull != null) { "Invalid layout boolean" }
         }
@@ -239,6 +254,51 @@ internal object DynamicUiProtocol {
         }
     }
 
+    private fun containsItem(value: JsonElement): Boolean = when (value) {
+        is JsonObject -> "item" in value || value.values.any(::containsItem)
+        is JsonArray -> value.any(::containsItem)
+        else -> false
+    }
+
+    fun validateExpanded(graph: Map<String, JsonObject>, data: JsonObject) {
+        require(graph.size <= 512) { "Too many rendered components" }
+        val calls = intArrayOf(0)
+        graph.values.forEach { c ->
+            checkValue(c, callCount = calls)
+            require(!containsItem(c)) { "item is only available inside Repeat templates" }
+            validateComponent(c)
+            val kind = c.getValue("component").jsonPrimitive.content
+            if (kind == "Chart") {
+                val labels = c["labels"]?.let { CardRepeat.evaluate(it, data).jsonArray.map { v -> v.jsonPrimitive.content } }.orEmpty()
+                cardChartSeries(DynamicUiProtocol.toValue(CardRepeat.evaluate(c.getValue("series"), data)), labels,
+                    c.getValue("type").jsonPrimitive.content)
+            }
+            if (kind == "Map") cardMapMarkers(DynamicUiProtocol.toValue(CardRepeat.evaluate(c.getValue("markers"), data)))
+            if (kind == "Table") {
+                val rows = CardRepeat.evaluate(c.getValue("rows"), data).jsonArray
+                val count = c.getValue("columns").jsonArray.size
+                require(rows.size <= 32 && rows.all { row ->
+                    row is JsonArray && row.size == count && row.all { it is JsonPrimitive }
+                }) { "Invalid table rows" }
+            }
+            CardAuthoringCatalog.components.getValue(kind).forEach { field ->
+                if (field.type in setOf("child", "children", "action")) return@forEach
+                val raw = c[field.name] ?: return@forEach
+                val v = CardRepeat.evaluate(raw, data)
+                if (field.name in setOf("labels", "columns", "options") && v is JsonArray)
+                    require(v.all { it is JsonPrimitive && it.isString }) { "Invalid repeated string array" }
+                require(when(field.type) {
+                    "string" -> v is JsonPrimitive && v.isString
+                    "number" -> v is JsonPrimitive && !v.isString && v.doubleOrNull?.isFinite() == true
+                    "boolean" -> v is JsonPrimitive && !v.isString && v.booleanOrNull != null
+                    "array" -> v is JsonArray
+                    else -> false
+                }) { "Invalid repeated ${field.name} value" }
+            }
+        }
+        validateGraph(graph, true)
+    }
+
     private fun references(c: JsonObject): List<String> =
         c["children"]?.jsonArray?.map { it.jsonPrimitive.content }.orEmpty() +
             listOfNotNull(c["child"]?.jsonPrimitive?.content)
@@ -255,6 +315,10 @@ internal object DynamicUiProtocol {
             if (node["component"]?.jsonPrimitive?.content == "Popover")
                 require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Popover" }) {
                     "Popovers cannot be nested"
+                }
+            if (node["component"]?.jsonPrimitive?.content == "Repeat")
+                require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Repeat" }) {
+                    "Repeat cannot be nested"
                 }
             var count = 1
             references(node).forEach {
