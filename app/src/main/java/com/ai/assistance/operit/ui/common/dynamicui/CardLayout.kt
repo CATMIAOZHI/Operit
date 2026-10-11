@@ -92,6 +92,10 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                 maxLines = properties.bind(lineClamp)?.toInt()?.coerceIn(1, 8) ?: Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis)
             "Column" -> Column(modifier, Arrangement.spacedBy(spacing), horizontal) { render() }
+            // Chat items (and Scroll children) receive unbounded height. The public List
+            // contract is at most 32 static children, so let the enclosing container scroll
+            // instead of nesting AndroidX's unbounded LazyColumn here.
+            "List" -> Column(modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) { render() }
             "Row" -> {
                 val rowModifier = if (properties.bind(justify) != null) modifier.fillMaxWidth() else modifier
                 val arrangement = when (properties.bind(justify)) {

@@ -1627,11 +1627,14 @@ class JsEngine(private val context: Context) {
             if (report["valid"]?.jsonPrimitive?.booleanOrNull != true) return report.toString()
             return try {
                 val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(
-                    run, report.getValue("document").jsonPrimitive.content, source,
+                    run, report.getValue("document").jsonPrimitive.content,
+                    report["preparedSource"]?.jsonPrimitive?.content ?: source,
                 )
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
                     put("reference", kotlinx.serialization.json.JsonPrimitive(id))
+                    report["repaired"]?.let { put("repaired", it) }
+                    report["repair"]?.let { put("repair", it) }
                     put("message", kotlinx.serialization.json.JsonPrimitive(
                         "Card compiled and checked. Display exactly this reference in your answer; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
                     ))
@@ -1657,12 +1660,16 @@ class JsEngine(private val context: Context) {
                     require(it is kotlinx.serialization.json.JsonPrimitive && it.isString)
                     it.jsonPrimitive.content
                 }
-                val (revised, document) = com.ai.assistance.operit.ui.common.dynamicui.CardExpress.revise(source, changes, remove)
-                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(run, document, revised)
+                val prepared = com.ai.assistance.operit.ui.common.dynamicui.CardExpress.prepareRevision(source, changes, remove)
+                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(run, prepared.document, prepared.source)
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
                     put("reference", kotlinx.serialization.json.JsonPrimitive(id))
                     put("baseReference", kotlinx.serialization.json.JsonPrimitive(reference))
+                    prepared.repair?.let {
+                        put("repaired", kotlinx.serialization.json.JsonPrimitive(true))
+                        put("repair", kotlinx.serialization.json.JsonPrimitive(it))
+                    }
                     put("message", kotlinx.serialization.json.JsonPrimitive(
                         "New revision compiled. The previous card and its user state remain unchanged. Display this NEW reference:\n```a2ui-ref\n$id\n```"))
                 }.toString()

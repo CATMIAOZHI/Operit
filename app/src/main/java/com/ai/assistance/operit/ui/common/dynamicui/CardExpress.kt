@@ -10,7 +10,8 @@ import kotlinx.serialization.json.*
 internal object CardExpress {
     const val MAX_SOURCE = 65_536
     private val forbidden = setOf("__proto__", "constructor", "prototype", DynamicUiProtocol.MARKER)
-    class Failure(val line: Int, val column: Int, val reason: String) : IllegalArgumentException(reason)
+    open class Failure(val line: Int, val column: Int, val reason: String) : IllegalArgumentException(reason)
+    internal class SyntaxFailure(line: Int, column: Int, reason: String) : Failure(line, column, reason)
     private data class Token(val text: String, val line: Int, val column: Int, val quoted: Boolean = false)
     private data class Node(
         val token: Token, val kind: String, val fields: Map<String, Node> = emptyMap(),
@@ -18,8 +19,13 @@ internal object CardExpress {
     )
 
     fun report(source: String): JsonObject = try {
-        val compiled = compile(source)
-        buildJsonObject { put("valid", true); put("document", compiled) }
+        val result = prepare(source)
+        buildJsonObject {
+            put("valid", true); put("document", result.document)
+            if (result.repair != null) {
+                put("repaired", true); put("repair", result.repair); put("preparedSource", result.source)
+            }
+        }
     } catch (e: Failure) {
         buildJsonObject {
             put("valid", false); put("code", "invalid_express")
@@ -32,6 +38,24 @@ internal object CardExpress {
     fun compile(source: String): String {
         if (source.length > MAX_SOURCE) throw Failure(1, 1, "Card source exceeds 65536 characters.")
         return Compiler(Parser(source).parse()).compile()
+    }
+
+    internal data class Prepared(val source: String, val document: String, val repair: String? = null)
+
+    internal fun prepare(source: String): Prepared = try {
+        Prepared(source, compile(source))
+    } catch (e: SyntaxFailure) {
+        CardSyntaxRepair.attempt(source, e) { candidate -> Prepared(candidate, compile(candidate)) } ?: throw e
+    }
+
+    internal fun prepareRevision(source: String, changes: String, remove: List<String>): Prepared {
+        fun validate(candidate: String): Prepared {
+            val (revised, document) = revise(source, candidate, remove)
+            return Prepared(revised, document)
+        }
+        return try { validate(changes) } catch (e: SyntaxFailure) {
+            CardSyntaxRepair.attempt(changes, e, ::validate) ?: throw e
+        }
     }
 
     /** Edit named declarations, then validate the complete result before publishing a new revision. */
@@ -63,6 +87,7 @@ internal object CardExpress {
     }
 
     private class Parser(private val source: String) {
+        private fun fail(t: Token, reason: String): Nothing = throw SyntaxFailure(t.line, t.column, reason)
         private var offset = 0
         private var line = 1
         private var column = 1
