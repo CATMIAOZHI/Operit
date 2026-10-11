@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.map
 interface SpeechService {
     /** Only streaming engines can keep decoding across multiple endpoints. */
     val supportsContinuousRecognition: Boolean get() = false
+    /** Explicit opt-in to keeping manual dictation open across recognition endpoints. */
+    val supportsContinuousDictation: Boolean get() = false
     val speechActivityFlow: Flow<Boolean>
         get() = recognitionResultFlow.map { it.text.isNotBlank() }
     /** 当前识别引擎状态枚举 */

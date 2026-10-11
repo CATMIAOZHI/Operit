@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.media.AudioFormat
 import android.media.AudioRecord
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.util.AppLogger
 import com.k2fsa.sherpa.onnx.*
 import kotlinx.coroutines.*
@@ -23,6 +24,8 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
     private var captureJob: Job? = null
     private var samples = FloatArray(0)
     private var length = 0
+    private var segmentHasSpeech = false
+    private var continuousDecoder: ContinuousSpeechDecoder? = null
     @Volatile private var closed = false
     override val isInitialized = MutableStateFlow(false)
     override val recognitionStateFlow = MutableStateFlow(SpeechService.RecognitionState.UNINITIALIZED)
@@ -32,6 +35,8 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
     override val speechActivityFlow = MutableStateFlow(false)
     override val currentState get() = recognitionStateFlow.value
     override val isRecognizing get() = currentState == SpeechService.RecognitionState.RECOGNIZING
+    // Voice conversation keeps its single-utterance default; manual dictation opts into segments.
+    override val supportsContinuousDictation = true
 
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
@@ -82,18 +87,36 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                     record = mic
                     check(mic.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
                     effects = CaptureAudioEffects(mic.audioSessionId)
-                    samples = FloatArray(16000 * 60)
+                    // One extra frame avoids dropping the end of a read at the segment boundary.
+                    samples = FloatArray(16000 * 60 + 512)
                     length = 0
+                    segmentHasSpeech = false
                     SpeechPrerollStore.consumePending()?.let { preroll ->
                         for (sample in preroll.take(16000)) samples[length++] = sample / 32768f
+                        segmentHasSpeech = preroll.isNotEmpty()
                     }
+                    val decoder = if (continuousMode) ContinuousSpeechDecoder(
+                        scope = scope,
+                        decode = { pcm -> decodeText(pcm, session) },
+                        onResult = { text, final ->
+                            epoch.publish(session) {
+                                if (currentState == SpeechService.RecognitionState.RECOGNIZING ||
+                                    currentState == SpeechService.RecognitionState.PROCESSING) {
+                                    if (final) recognitionStateFlow.value = SpeechService.RecognitionState.IDLE
+                                    recognitionResultFlow.value = SpeechService.RecognitionResult(text, final)
+                                }
+                            }
+                        },
+                        onFailure = { failCapture(session, it) },
+                    ) else null
+                    continuousDecoder = decoder
                     mic.startRecording()
                     recognitionStateFlow.value = SpeechService.RecognitionState.RECOGNIZING
                     captureJob = scope.launch {
                         try {
-                            OnnxSileroVad(context, speechDurationMs = 100, silenceDurationMs = 700).use { vad ->
+                            OnnxSileroVad(context, speechDurationMs = 100,
+                                silenceDurationMs = if (continuousMode) 2000 else 700).use { vad ->
                                 val frame = ShortArray(512)
-                                var heardSpeech = false
                                 while (isActive && session == epoch.current()) {
                                     val count = mic.read(frame,0,frame.size)
                                     check(count > 0) { "Microphone read failed: $count" }
@@ -103,37 +126,48 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                                         if (length < samples.size) samples[length++] = value
                                         energy += value * value
                                     }
-                                    volumeLevelFlow.value = kotlin.math.sqrt(energy / count).coerceIn(0f,1f)
-                                    val voice = if (count == frame.size) vad.isSpeech(frame) else heardSpeech
-                                    if (voice) heardSpeech = true
+                                    // Match the other speech providers' -60..0 dB display scale.
+                                    // Raw RMS makes normal speech almost invisible in the recorder.
+                                    val rms = kotlin.math.sqrt(energy / count)
+                                    val db = 20f * kotlin.math.log10(rms + 1e-6f)
+                                    volumeLevelFlow.value = ((db + 60f) / 60f).coerceIn(0f, 1f)
+                                    val voice = if (count == frame.size) vad.isSpeech(frame) else segmentHasSpeech
+                                    if (voice) segmentHasSpeech = true
                                     speechActivityFlow.value = voice
-                                    if ((heardSpeech && !voice) || length == samples.size) {
-                                        scope.launch { stopRecognition(session) }
-                                        break
+                                    if ((segmentHasSpeech && !voice) || length >= 16000 * 60) {
+                                        if (decoder == null) {
+                                            scope.launch { stopRecognition(session) }
+                                            break
+                                        }
+                                        if (segmentHasSpeech) {
+                                            check(decoder.offer(samples.copyOf(length))) {
+                                                context.getString(R.string.voice_dictation_cannot_keep_up)
+                                            }
+                                        }
+                                        length = 0
+                                        segmentHasSpeech = false
+                                    }
+                                    if (continuousMode && !segmentHasSpeech && length > 16000) {
+                                        // Retain onset context, not minutes of silence for the model to hallucinate.
+                                        samples.copyInto(samples, 0, length - 16000, length)
+                                        length = 16000
                                     }
                                 }
                             }
                         } catch (e: CancellationException) { throw e
                         } catch (e: Exception) {
-                            scope.launch {
-                                lifecycle.withLock {
-                                    if (session == epoch.current() && isRecognizing) {
-                                        releaseCapture()
-                                        failure(e)
-                                    }
-                                }
-                            }
+                            failCapture(session, e)
                         }
                     }
                 }
                 true
             } catch (e: CancellationException) {
-                withContext(NonCancellable) { releaseCapture() }
+                withContext(NonCancellable) { releaseCapture(); discardDecoder() }
                 epoch.publish(session) {
                     recognitionStateFlow.value = SpeechService.RecognitionState.IDLE
                 }
                 throw e
-            } catch (e: Exception) { releaseCapture(); failure(e); false }
+            } catch (e: Exception) { releaseCapture(); discardDecoder(); failure(e); false }
         }
 
     override suspend fun stopRecognition(): Boolean = stopRecognition(epoch.current())
@@ -144,25 +178,35 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
             val session = epoch.current()
             recognitionStateFlow.value = SpeechService.RecognitionState.PROCESSING
             releaseCapture()
-            val pcm = samples.copyOf(length)
+            val decoder = continuousDecoder
+            // A manual stop may precede VAD's minimum speech duration. Keep a short audible tail
+            // (using the same -60 dB floor as the meter) rather than losing e.g. a quick "yes".
+            val audibleTail = length > 0 &&
+                (0 until length).sumOf { samples[it].toDouble() * samples[it] } / length > 1e-6
+            val pcm = if (decoder == null || segmentHasSpeech || audibleTail) samples.copyOf(length) else null
             samples = FloatArray(0)
-            session to pcm
+            length = 0
+            Triple(session, pcm, decoder)
         }
-        return decode(captured.second, captured.first)
+        val decoder = captured.third
+        return if (decoder != null) decoder.finish(captured.second)
+            else decode(captured.second ?: FloatArray(0), captured.first)
+    }
+
+    private suspend fun decodeText(pcm: FloatArray, session: Long): String = nativeMutex.withLock {
+        if (session != epoch.current() || pcm.isEmpty()) return@withLock ""
+        val engine = checkNotNull(recognizer)
+        val stream = engine.createStream()
+        try {
+            stream.acceptWaveform(pcm, 16000)
+            engine.decode(stream)
+            engine.getResult(stream).text
+        } finally { stream.release() }
     }
 
     private suspend fun decode(pcm: FloatArray, session: Long): Boolean = withContext(Dispatchers.IO) {
         try {
-            val text = nativeMutex.withLock {
-                if (session != epoch.current() || pcm.isEmpty()) return@withLock ""
-                val engine = checkNotNull(recognizer)
-                val stream = engine.createStream()
-                try {
-                    stream.acceptWaveform(pcm,16000)
-                    engine.decode(stream)
-                    engine.getResult(stream).text
-                } finally { stream.release() }
-            }
+            val text = decodeText(pcm, session)
             epoch.publish(session) {
                 recognitionStateFlow.value = SpeechService.RecognitionState.IDLE
                 recognitionResultFlow.value = SpeechService.RecognitionResult(text, true)
@@ -178,10 +222,30 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
         lifecycle.withLock {
             if (session != epoch.current()) return
             releaseCapture()
+            discardDecoder()
             samples = FloatArray(0)
             epoch.publish(session) {
                 recognitionResultFlow.value = SpeechService.RecognitionResult("")
                 recognitionStateFlow.value = SpeechService.RecognitionState.IDLE
+            }
+        }
+    }
+    private fun discardDecoder() {
+        continuousDecoder?.cancel()
+        continuousDecoder = null
+    }
+
+    private fun failCapture(session: Long, error: Exception) {
+        scope.launch {
+            lifecycle.withLock {
+                if (session == epoch.current() &&
+                    (isRecognizing || currentState == SpeechService.RecognitionState.PROCESSING)) {
+                    releaseCapture()
+                    discardDecoder()
+                    samples = FloatArray(0)
+                    length = 0
+                    failure(error)
+                }
             }
         }
     }

@@ -9078,4 +9078,5 @@
     <string name="composer_predictions_description">After an AI reply, predict a possible next message. Double-tap the gray text to adopt it; typing or adding attachments hides it. Uses extra API calls through the current chat model and may incur charges or consume account quota. Supports text models including Codex sign-in and Zen Free; plugin providers are not currently supported.</string>
     <string name="composer_prediction_adopt">Adopt predicted message</string>
     <string name="token_stats_category_composer_prediction">Composer prediction</string>
+    <string name="voice_dictation_cannot_keep_up">Recognition cannot keep up with recording. Try shorter recordings.</string>
 </resources>
