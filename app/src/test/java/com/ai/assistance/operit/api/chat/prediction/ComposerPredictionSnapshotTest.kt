@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.prediction
 
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
+import com.ai.assistance.operit.data.model.ToolPrompt
 import org.junit.Assert.*
 import org.junit.Test
 
@@ -31,5 +32,15 @@ class ComposerPredictionSnapshotTest {
                 PromptTurnKind.ASSISTANT, "Final", metadata = mapOf("unsafe" to StringBuilder("mutable")),
             )))
         }.isFailure)
+    }
+
+    @Test fun frozenToolsDetachFromLaterEditsAndTolerateAnAbsentList() {
+        val tools = mutableListOf(ToolPrompt(name = "shell", description = "Original"))
+        val frozen = freezePredictionTools(tools)
+        tools.clear()
+        assertEquals(1, frozen.size)
+        assertEquals("shell", frozen.single().name)
+        assertTrue(runCatching { (frozen as MutableList<ToolPrompt>).clear() }.isFailure)
+        assertEquals(emptyList<ToolPrompt>(), freezePredictionTools(null))
     }
 }

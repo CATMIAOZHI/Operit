@@ -3,6 +3,7 @@ package com.ai.assistance.operit.api.chat.prediction
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelParameter
+import com.ai.assistance.operit.data.model.ToolPrompt
 
 /** Request-only copy of the effective, completed turn. Never reconstructed from stored history. */
 data class ComposerPredictionSnapshot(
@@ -12,7 +13,31 @@ data class ComposerPredictionSnapshot(
     val modelConfig: ModelConfigData,
     val modelParameters: List<ModelParameter<*>>,
     val sourceMessageId: String = sourceTurnId,
+    /**
+     * The exact tool definitions the completed request sent. A provider reuses a prompt prefix only
+     * while the tools, the history they shape and the identity stay the same, so the auxiliary
+     * request must declare them too. [ToolPrompt] carries no mutable state worth copying.
+     */
+    val availableTools: List<ToolPrompt> = emptyList(),
+    /**
+     * The provider conversation identity the completed request asked under. Reusing it is what lets
+     * the provider attach the auxiliary request to the prefix the conversation already warmed.
+     */
+    val providerSessionId: String? = null,
+    /** The workspace the completed request reported, when the conversation had one bound. */
+    val workspacePath: String? = null,
+    /**
+     * Whether the completed request ran with thinking enabled.
+     *
+     * The toggle is not only a top-level request field: some adapters rewrite the message history
+     * from it, so a prediction that picked its own value would send a different prefix and miss the
+     * cache. It also decides how much output room the bounded prediction needs.
+     */
+    val enableThinking: Boolean = false,
 )
+
+internal fun freezePredictionTools(tools: List<ToolPrompt>?): List<ToolPrompt> =
+    java.util.Collections.unmodifiableList(tools?.toList() ?: emptyList())
 
 /** Prompt hooks may supply mutable metadata; auxiliary work must never retain those containers. */
 internal fun freezePredictionValue(value: Any?): Any? = when (value) {

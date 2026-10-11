@@ -5,6 +5,9 @@ import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ModelConfigData
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
@@ -99,6 +102,37 @@ class ComposerPredictionCoordinatorTest {
         coordinator.update(true, "different context", snapshot()) { true }
         runCurrent()
         assertEquals(1, calls)
+        assertNull(coordinator.text.value)
+    }
+
+    @Test fun requestTimeoutEndsAsFailedWithoutRetryingOrPublishingText() = runTest {
+        var calls = 0
+        val coordinator = ComposerPredictionCoordinator(this) {
+            calls++
+            withTimeout(100) { awaitCancellation() }
+        }
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        assertEquals(ComposerPredictionCoordinator.Status.RUNNING, coordinator.status)
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(ComposerPredictionCoordinator.Status.FAILED, coordinator.status)
+        assertNull(coordinator.text.value)
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        assertEquals(1, calls)
+    }
+
+    @Test fun externalCancellationBeforeTimeoutKeepsInvalidatedState() = runTest {
+        val coordinator = ComposerPredictionCoordinator(this) {
+            withTimeout(100) { awaitCancellation() }
+        }
+        coordinator.update(true, "context", snapshot()) { true }
+        runCurrent()
+        coordinator.invalidate()
+        advanceTimeBy(100)
+        runCurrent()
+        assertEquals(ComposerPredictionCoordinator.Status.IDLE, coordinator.status)
         assertNull(coordinator.text.value)
     }
 

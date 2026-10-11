@@ -3,9 +3,7 @@ package com.ai.assistance.operit.api.chat.prediction
 import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext
-import com.ai.assistance.operit.api.chat.llmprovider.SUPPRESS_AUTOMATIC_REASONING_API_NAME
 import com.ai.assistance.operit.api.chat.llmprovider.providerSessionIdForScope
-import com.ai.assistance.operit.api.chat.llmprovider.supportsOpenAiReasoningEffortModel
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -14,6 +12,7 @@ import com.ai.assistance.operit.data.model.ModelParameter
 import com.ai.assistance.operit.data.model.withModelProtocol
 import com.ai.assistance.operit.data.model.ParameterValueType
 import com.ai.assistance.operit.data.stats.TokenStatCategory
+import com.ai.assistance.operit.util.ChatUtils
 import java.io.IOException
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
@@ -22,9 +21,20 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
-import org.json.JSONObject
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.booleanOrNull
+import kotlinx.serialization.json.longOrNull
 
-/** One bounded, tool-free request over an already prepared execution snapshot. */
+/**
+ * One auxiliary, best-effort request over an already prepared execution snapshot.
+ *
+ * The request deliberately reproduces the wire shape of the completed turn - same tool definitions,
+ * same output budget and same provider conversation identity - because a provider only reuses a
+ * prompt prefix while those stay the same. Tool execution stays impossible anyway: the tail
+ * instruction forbids tool use and any tool markup that comes back is rejected rather than shown.
+ */
 class ComposerPredictionService internal constructor(
     private val context: Context,
     private val acquireService: suspend (ModelConfigData, List<ModelParameter<*>>) -> MultiServiceManager.ServiceLease,
@@ -40,11 +50,13 @@ class ComposerPredictionService internal constructor(
         require(snapshot.history.lastOrNull()?.kind == PromptTurnKind.ASSISTANT) {
             "Prediction requires a final successful assistant turn"
         }
-        val parameters = predictionParameters(snapshot.modelParameters, snapshot.modelConfig)
+        val parameters = predictionParameters(snapshot.modelParameters)
         return withTimeout(timeoutMs) {
             withContext(
                 Dispatchers.IO + OpenCodeSessionContext(
-                    providerSessionIdForScope("composer-prediction:${snapshot.chatId}"),
+                    snapshot.providerSessionId
+                        ?: providerSessionIdForScope("composer-prediction:${snapshot.chatId}"),
+                    snapshot.workspacePath,
                 ),
             ) {
                 val lease = acquireService(predictionConfig(snapshot.modelConfig), parameters)
@@ -62,21 +74,27 @@ class ComposerPredictionService internal constructor(
                                 context = context,
                                 chatHistory = predictionHistory(snapshot.history),
                                 modelParameters = parameters,
-                                enableThinking = false,
+                                // Closing thinking costs quality and shifts the request shape some
+                                // adapters derive their history from, so the prediction follows the
+                                // completed turn instead of overriding it.
+                                enableThinking = snapshot.enableThinking,
                                 stream = true,
-                                availableTools = emptyList(),
+                                availableTools = snapshot.availableTools,
                                 preserveThinkInHistory = false,
                                 enableRetry = false,
                                 statsCategory = TokenStatCategory.COMPOSER_PREDICTION,
                                 onNonFatalError = { providerFailed = true },
                             ).collect { chunk ->
+                                // The token cap follows the completed turn, so this is the only bound
+                                // left on a runaway stream. It is a buffering limit, not a limit on
+                                // how much the model may generate.
                                 if (output.length + chunk.length > MAX_RESPONSE_CHARS) {
                                     throw IOException("Prediction exceeded response limit")
                                 }
                                 output.append(chunk)
                             }
                             if (providerFailed) throw IOException("Prediction provider reported an error")
-                            validatePrediction(output.toString())
+                            validatePrediction(ChatUtils.removeThinkingContent(output.toString()))
                         } finally {
                             cancellationWatcher.cancel()
                         }
@@ -89,10 +107,23 @@ class ComposerPredictionService internal constructor(
     }
 
     companion object {
-        const val REQUEST_TIMEOUT_MS = 20_000L
-        internal const val MAX_OUTPUT_TOKENS = 192
+        /**
+         * A last-resort stop for a prediction that never settles.
+         *
+         * The request follows the completed turn, so it inherits whatever output budget that turn
+         * had, and a thinking turn can legitimately take minutes. In the range a user could still
+         * adopt a suggestion this bound is effectively "no timeout", while a stuck request inside the
+         * app is still reclaimed instead of hanging forever. Cancellation stays the normal stop: a new
+         * turn cancels the prediction, and the client drops a stream that goes silent.
+         */
+        const val REQUEST_TIMEOUT_MS = 300_000L
         internal const val MAX_PREDICTION_CHARS = 240
-        internal const val MAX_RESPONSE_CHARS = 4096
+        /**
+         * How much of the stream is buffered, not how much the model may generate. The reasoning block
+         * shares the chunk stream and can be long, so the bound has to fit it; a few hundred kilobytes
+         * are nothing next to the risk of buffering an endless stream.
+         */
+        internal const val MAX_RESPONSE_CHARS = 262_144
 
         /** Plugin adapters have no isolation/tool-free contract; retired local modes cannot run. */
         fun supports(config: ModelConfigData): Boolean {
@@ -100,9 +131,10 @@ class ComposerPredictionService internal constructor(
             val resolvedProvider = ApiProviderType.fromProviderTypeId(config.withModelProtocol().apiProviderTypeId)
                 ?: return false
             // Respect the account's factory restrictions and the selected model's wire adapter.
-            // Zen Free requires reserved bash/read schemas even on text-only requests.
-            // Codex OAuth does not expose a supported hard output-token cap. Do not trade
-            // the prediction budget for an unbounded request merely to avoid HTTP rejection.
+            // Zen Free rewrites the request shape server-side (it injects reserved bash/read
+            // schemas) and Codex OAuth rewrites the body client-side, and neither rewrite has been
+            // checked against a real completed turn yet, so this version declines both rather than
+            // assuming the prediction still reproduces the cached prefix.
             val unsupported = setOf(
                 ApiProviderType.MNN, ApiProviderType.LLAMA_CPP,
                 ApiProviderType.OPENCODE_ZEN_FREE, ApiProviderType.OPENAI_CODEX,
@@ -130,72 +162,77 @@ internal fun predictionHistory(history: List<PromptTurn>): List<PromptTurn> = hi
 )
 
 internal fun predictionConfig(config: ModelConfigData): ModelConfigData {
-    // Custom session headers must not override the prediction-only coroutine identity.
-    val headers = JSONObject(config.customHeaders.ifBlank { "{}" })
-    headers.keys().asSequence().toList().filter {
-        it.lowercase() in setOf(
-            "x-opencode-session", "session-id", "x-session-id", "x-grok-conv-id", "x-grok-session-id",
-        )
-    }.forEach(headers::remove)
     return config.copy(
-        // Keep native tool-event parsing ON so unexpected calls become rejectable markup.
-        // The explicit empty availableTools list emits no schemas in all supported adapters.
-        enableToolCall = true,
-        enableGoogleSearch = false,
-        maxTokensEnabled = true,
-        maxTokens = ComposerPredictionService.MAX_OUTPUT_TOKENS,
+        // Output budget, tools and search grounding are left exactly as the completed turn had them:
+        // the first two decide what the model may produce, and all of them are part of the shape a
+        // provider caches against, so changing any of them here would make the auxiliary request
+        // diverge. Only the arbitrary body parameters are dropped.
         customParameters = "[]",
         hasCustomParameters = false,
-        customHeaders = headers.toString(),
     )
 }
 
 internal fun predictionParameters(
     parameters: List<ModelParameter<*>>,
-    config: ModelConfigData,
 ): List<ModelParameter<*>> {
     // Arbitrary request-body parameters can inject tools, messages, output formats, remote state,
-    // or a second token limit. Only scalar sampling controls survive the frozen parent request.
+    // or a second token limit. Only scalar sampling controls, the caller's token caps and the
+    // caller's thinking controls survive the frozen parent request.
     val safeNames = setOf("temperature", "top_p", "top_k", "presence_penalty", "frequency_penalty", "repetition_penalty")
-    val retained = parameters.filter {
-        it.isEnabled && it.apiName in safeNames && it.currentValue is Number && it.valueType != ParameterValueType.OBJECT
-    }
-    val nativeProvider = ApiProviderType.fromProviderTypeId(config.withModelProtocol().apiProviderTypeId)
-    val suppressAutomaticReasoning = nativeProvider !in setOf(
-        ApiProviderType.ANTHROPIC, ApiProviderType.ANTHROPIC_GENERIC, ApiProviderType.CLAUDE_ACCOUNT,
-        ApiProviderType.GOOGLE, ApiProviderType.GEMINI_GENERIC, ApiProviderType.GOOGLE_ANTIGRAVITY,
-        ApiProviderType.ALIYUN, ApiProviderType.SILICONFLOW, ApiProviderType.DOUBAO,
-        ApiProviderType.NVIDIA, ApiProviderType.OPENROUTER, ApiProviderType.NOUS_PORTAL,
+    // The output cap is the completed turn's, not one of ours: a prediction that invented its own
+    // smaller cap would truncate the reasoning block and go empty, and the cap also decides what the
+    // provider bills. Whatever the turn sent is what the prediction sends, under whatever field name
+    // that turn used.
+    val capNames = setOf("max_tokens", "max_completion_tokens", "max_output_tokens")
+    // Thinking controls travel with the prediction because the completed turn sent them: a provider
+    // that matches its cache on thinking intensity only reuses the prefix while both requests ask
+    // for the same one, and a prediction that quietly reasoned differently would diverge from it.
+    // Token budgets count as thinking controls too: the providers require a budget to sit *below* the
+    // request's output cap, and the cap here is the completed turn's own, so a budget the caller sent
+    // was already valid against exactly this cap. Passing it through keeps the intensity identical.
+    // Providers also accept native reasoning objects. Validate their known fields, then retain the
+    // original parameter (including category and order) so the adapter sees the same configuration.
+    // Unsupported shapes stop this auxiliary request rather than silently changing its intensity.
+    val thinkingNames = setOf(
+        "reasoning_effort", "enable_thinking", "thinking_level", "thinkingLevel",
+        "budget_tokens", "thinking_budget", "thinkingBudget",
     )
-    val tokenLimitName = predictionTokenLimitName(config, parameters)
-    return retained + listOf(
-        ModelParameter(
-            id = "composer_prediction_max_tokens", name = tokenLimitName, apiName = tokenLimitName,
-            defaultValue = ComposerPredictionService.MAX_OUTPUT_TOKENS,
-            currentValue = ComposerPredictionService.MAX_OUTPUT_TOKENS,
-            isEnabled = true, valueType = ParameterValueType.INT,
-        ),
-    ) + if (suppressAutomaticReasoning) listOf(
-        ModelParameter(
-            id = "composer_prediction_suppress_reasoning", name = SUPPRESS_AUTOMATIC_REASONING_API_NAME,
-            apiName = SUPPRESS_AUTOMATIC_REASONING_API_NAME,
-            defaultValue = true, currentValue = true, isEnabled = true, valueType = ParameterValueType.BOOLEAN,
-        ),
-    ) else emptyList()
+    val objectNames = setOf("reasoning", "thinking", "output_config", "thinkingConfig")
+    val retained = parameters.filter {
+        if (!it.isEnabled) return@filter false
+        if (it.apiName in objectNames) {
+            requirePredictionThinkingObject(it)
+            return@filter true
+        }
+        it.valueType != ParameterValueType.OBJECT && when (it.apiName) {
+            in safeNames -> it.currentValue is Number
+            in capNames -> it.currentValue is Number
+            in thinkingNames -> it.currentValue is Number || it.currentValue is String || it.currentValue is Boolean
+            else -> false
+        }
+    }
+    return retained
 }
 
-/** Native adapters map max_tokens to their wire field; direct Chat Completions does not. */
-internal fun predictionTokenLimitName(config: ModelConfigData, parameters: List<ModelParameter<*>>): String {
-    val resolved = config.withModelProtocol()
-    val provider = ApiProviderType.fromProviderTypeId(resolved.apiProviderTypeId)
-    val directChat = provider in setOf(
-        ApiProviderType.OPENAI, ApiProviderType.OPENAI_GENERIC, ApiProviderType.OPENAI_LOCAL,
-        ApiProviderType.LMSTUDIO, ApiProviderType.OPENCODE_GO, ApiProviderType.FOUR_ROUTER,
-    )
-    return if (directChat && (
-        supportsOpenAiReasoningEffortModel(resolved.modelName) ||
-            parameters.any { it.isEnabled && it.apiName == "max_completion_tokens" }
-    )) "max_completion_tokens" else "max_tokens"
+private fun requirePredictionThinkingObject(parameter: ModelParameter<*>) {
+    val fields = when (parameter.apiName) {
+        "reasoning" -> setOf("effort", "summary")
+        "thinking" -> setOf("type", "budget_tokens")
+        "output_config" -> setOf("effort")
+        "thinkingConfig" -> setOf("thinkingLevel", "thinkingBudget", "includeThoughts")
+        else -> emptySet()
+    }
+    val value = parameter.currentValue as? String
+    val objectValue = value?.let {
+        runCatching { Json.parseToJsonElement(it) as? JsonObject }.getOrNull()
+    }
+    require(objectValue != null && objectValue.all { (name, item) ->
+        name in fields && item is JsonPrimitive && when (name) {
+            "budget_tokens", "thinkingBudget" -> !item.isString && item.longOrNull != null
+            "includeThoughts" -> !item.isString && item.booleanOrNull != null
+            else -> item.isString
+        }
+    }) { "Prediction cannot preserve the supplied ${parameter.apiName} settings" }
 }
 
 /** Invalid output is completed-empty: never put protocol or speculative partial text in the composer. */

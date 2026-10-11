@@ -9049,7 +9049,7 @@
     <string name="terminal_task_poll_desc">查看终端任务：%1$s</string>
     <string name="terminal_task_cancel_desc">取消终端任务：%1$s</string>
     <string name="composer_predictions">智能输入预测（Composer Predictions）</string>
-    <string name="composer_predictions_description">AI 回复完成后，自动预测下一条可能发送的消息。双击灰色文字即可采纳，手动输入时自动隐藏。开启后会使用当前聊天模型额外调用 API，可能产生费用。</string>
+    <string name="composer_predictions_description">AI 回复完成后，自动预测下一条可能发送的消息。双击灰色文字即可采纳，输入或添加附件时隐藏。开启后会使用当前聊天模型额外调用 API，可能产生费用。仅支持部分文本模型；Codex 登录、Zen Free 和插件提供商暂不支持。</string>
     <string name="composer_prediction_adopt">采纳预测消息</string>
     <string name="token_stats_category_composer_prediction">输入预测</string>
 </resources>
