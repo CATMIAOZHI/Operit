@@ -147,6 +147,7 @@ fun ChatScreenContent(
         bubbleAiContentPaddingLeft: Float = 12f,
         bubbleAiContentPaddingRight: Float = 12f,
         showChatFloatingDotsAnimation: Boolean = true,
+        configurationNotice: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current
     var headerHeight by remember { mutableStateOf(0.dp) }
@@ -353,11 +354,12 @@ fun ChatScreenContent(
                         bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                 )
-                ChatScreenHeader(
-                        modifier =
-                                Modifier.onGloballyPositioned { coordinates ->
-                                    headerHeight = with(density) { coordinates.size.height.toDp() }
-                                },
+                Column(
+                    Modifier.onGloballyPositioned { coordinates ->
+                        headerHeight = with(density) { coordinates.size.height.toDp() }
+                    }
+                ) {
+                    ChatScreenHeader(
                         actualViewModel = actualViewModel,
                         showChatHistorySelector = showChatHistorySelector,
                         chatHeaderTransparent = chatHeaderTransparent,
@@ -365,7 +367,9 @@ fun ChatScreenContent(
                         chatHeaderPipIconColor = chatHeaderPipIconColor,
                         onExitHiddenReadingAuditRun = onExitHiddenReadingAuditRun,
                         onCharacterSwitcherClick = { onShowCharacterSelectorChange(true) }
-                )
+                    )
+                    configurationNotice()
+                }
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
@@ -378,6 +382,7 @@ fun ChatScreenContent(
                         onExitHiddenReadingAuditRun = onExitHiddenReadingAuditRun,
                         onCharacterSwitcherClick = { onShowCharacterSelectorChange(true) }
                 )
+                configurationNotice()
                 ChatArea(
                         chatHistory = chatHistory,
                         currentChatId = currentChatId,

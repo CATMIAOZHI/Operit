@@ -135,6 +135,7 @@ fun AIChatScreen(
         onNavigateToSettings: () -> Unit = {},
         onNavigateToUserPreferences: () -> Unit = {},
         onNavigateToModelConfig: () -> Unit = {},
+        onNavigateToFunctionalConfig: () -> Unit = onNavigateToSettings,
         onNavigateToOnboardingModelConfig: () -> Unit = {},
         onNavigateToModelPrompts: () -> Unit = {},
         onNavigateToPackageManager: () -> Unit = {},
@@ -924,6 +925,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
+                                configurationNotice = {
+                                    if (!isFloatingMode && !isReadOnlyTranscript && !embedded) {
+                                        ModelConfigurationNotice(onNavigateToFunctionalConfig)
+                                    }
+                                },
                                 paddingValues =
                                         PaddingValues(), // Padding is already handled by the parent Box
                                 bottomInset = bottomBarHeightDp,

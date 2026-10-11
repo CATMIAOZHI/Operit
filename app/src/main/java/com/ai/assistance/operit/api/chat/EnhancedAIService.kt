@@ -576,7 +576,7 @@ class EnhancedAIService private constructor(
             if (functionType == FunctionType.CHAT && overrideConfigId != null) {
                 multiServiceManager.acquireServiceForConfig(
                     configId = overrideConfigId,
-                    modelIndex = (chatModelIndexOverride ?: 0).coerceAtLeast(0)
+                    modelIndex = chatModelIndexOverride ?: 0
                 )
             } else {
                 multiServiceManager.acquireServiceForFunction(functionType)
@@ -674,7 +674,7 @@ class EnhancedAIService private constructor(
         return if (functionType == FunctionType.CHAT && overrideConfigId != null) {
             multiServiceManager.getServiceForConfig(
                 configId = overrideConfigId,
-                modelIndex = (chatModelIndexOverride ?: 0).coerceAtLeast(0)
+                modelIndex = chatModelIndexOverride ?: 0
             )
         } else {
             multiServiceManager.getServiceForFunction(functionType)
@@ -698,7 +698,7 @@ class EnhancedAIService private constructor(
         return if (functionType == FunctionType.CHAT && overrideConfigId != null) {
             multiServiceManager.acquireServiceForConfig(
                 configId = overrideConfigId,
-                modelIndex = (chatModelIndexOverride ?: 0).coerceAtLeast(0),
+                modelIndex = chatModelIndexOverride ?: 0,
             )
         } else {
             multiServiceManager.acquireServiceForFunction(functionType)
@@ -773,8 +773,7 @@ class EnhancedAIService private constructor(
         val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
         return if (functionType == FunctionType.CHAT && overrideConfigId != null) {
             multiServiceManager
-                .getModelConfigForConfig(overrideConfigId)
-                .forSelectedModel((chatModelIndexOverride ?: 0).coerceAtLeast(0))
+                .getSelectedModelConfigForConfig(overrideConfigId, chatModelIndexOverride ?: 0)
         } else {
             multiServiceManager.getModelConfigForFunction(functionType)
         }

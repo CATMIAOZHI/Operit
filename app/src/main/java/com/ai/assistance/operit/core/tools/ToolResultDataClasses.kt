@@ -2525,10 +2525,10 @@ data class ModelConfigDeleteResultData(
     val deleted: Boolean,
     val configId: String,
     val affectedFunctions: List<String>,
-    val fallbackConfigId: String
+    val fallbackConfigId: String // Empty: affected functions need an explicit new selection.
 ) : ToolResultData() {
     override fun toString(): String {
-        return "Model config deleted: $configId, affectedFunctions=${affectedFunctions.size}"
+        return "Model config deleted: $configId, affectedFunctions=${affectedFunctions.size}; affected functions require model selection, no automatic fallback"
     }
 }
 

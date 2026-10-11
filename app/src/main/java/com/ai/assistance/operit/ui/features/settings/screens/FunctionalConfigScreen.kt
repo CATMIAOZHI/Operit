@@ -76,7 +76,7 @@ fun FunctionalConfigScreen(
             functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
 
     // 配置摘要列表
-    var configSummaries by remember { mutableStateOf<List<ModelConfigSummary>>(emptyList()) }
+    val configSummaries by modelConfigManager.configSummariesFlow.collectAsState(initial = emptyList())
 
     // UI状态
     var isLoading by remember { mutableStateOf(true) }
@@ -85,7 +85,7 @@ fun FunctionalConfigScreen(
     // 加载配置摘要
     LaunchedEffect(Unit) {
         isLoading = true
-        configSummaries = modelConfigManager.getAllConfigSummaries()
+        functionalConfigManager.initializeIfNeeded()
         isLoading = false
     }
 
@@ -180,6 +180,7 @@ fun FunctionalConfigScreen(
                             functionType = functionType,
                             currentConfig = currentConfig,
                             currentModelIndex = currentConfigMapping.modelIndex,
+                            selectedModelName = currentConfigMapping.modelName,
                             currentThinkingQualityLevel =
                                 currentConfigMapping.thinkingQualityLevel,
                             availableConfigs = configSummaries,
@@ -290,6 +291,7 @@ fun FunctionConfigCard(
         functionType: FunctionType,
         currentConfig: ModelConfigSummary?,
         currentModelIndex: Int,
+        selectedModelName: String?,
         currentThinkingQualityLevel: Int,
         availableConfigs: List<ModelConfigSummary>,
         onConfigSelected: (String, Int) -> Unit,
@@ -313,8 +315,15 @@ fun FunctionConfigCard(
     val modelConfigManager = remember { ModelConfigManager(context) }
     var isTestingConnection by remember { mutableStateOf(false) }
     var testResult by remember { mutableStateOf<Result<String>?>(null) }
+    val selectionKey = Triple(currentConfig, currentModelIndex, currentThinkingQualityLevel)
+    val latestSelectionKey by rememberUpdatedState(selectionKey)
+    LaunchedEffect(selectionKey) { testResult = null }
 
     var mediaSupportWarningResId by remember { mutableStateOf<Int?>(null) }
+    val selectionAvailable = currentConfig != null &&
+        (currentModelIndex in getModelList(currentConfig.modelName).indices ||
+            (currentModelIndex == 0 && currentConfig.modelName.isBlank() &&
+                com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry.get(currentConfig.apiProviderTypeId) != null))
 
     val permissionReviewerTestInvalidMessage =
         stringResource(R.string.functional_config_permission_reviewer_test_invalid)
@@ -325,8 +334,9 @@ fun FunctionConfigCard(
     val riskScorerTestSuccessTemplate =
         stringResource(R.string.functional_config_risk_scorer_test_success)
 
-    LaunchedEffect(functionType, currentConfig?.id, currentModelIndex) {
+    LaunchedEffect(functionType, currentConfig, currentModelIndex) {
         mediaSupportWarningResId = null
+        if (!selectionAvailable) return@LaunchedEffect
         if (
             functionType != FunctionType.IMAGE_RECOGNITION &&
             functionType != FunctionType.AUDIO_RECOGNITION &&
@@ -420,23 +430,28 @@ fun FunctionConfigCard(
                             Text(
                                     text = stringResource(
                                         id = R.string.current_config_label,
-                                        currentConfig?.name ?: stringResource(id = R.string.default_config)
+                                        currentConfig?.name ?: stringResource(id = R.string.functional_model_reselect)
                                     ),
                                     style = MaterialTheme.typography.bodyMedium,
                                     fontWeight = FontWeight.Medium
                             )
 
-                            if (currentConfig != null) {
-                                val modelList = getModelList(currentConfig.modelName)
-                                val displayModel = if (modelList.size > 1) {
-                                    getModelByIndex(currentConfig.modelName, currentModelIndex)
-                                } else {
-                                    currentConfig.modelName
-                                }
+                            if (currentConfig != null || !selectedModelName.isNullOrBlank()) {
+                                val displayModel = selectedModelName
+                                    ?: currentConfig?.let {
+                                        getModelList(it.modelName).getOrNull(currentModelIndex)
+                                    }.orEmpty()
                                 Text(
                                         text = stringResource(id = R.string.model_label, displayModel),
                                         style = MaterialTheme.typography.bodySmall,
                                         color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            if (!selectionAvailable) {
+                                Text(
+                                    text = stringResource(R.string.functional_model_selection_unavailable),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.error,
                                 )
                             }
 
@@ -509,20 +524,14 @@ fun FunctionConfigCard(
                             OutlinedButton(
                                 onClick = {
                                     scope.launch {
+                                        val testedSelectionKey = selectionKey
                                         isTestingConnection = true
                                         testResult = null
                                         val cleanupTasks = mutableListOf<() -> Unit>()
                                         try {
-                                            val configId =
-                                                    currentConfig?.id
-                                                            ?: FunctionalConfigManager.DEFAULT_CONFIG_ID
-                                            val fullConfig =
-                                                    modelConfigManager.getModelConfigFlow(configId).first()
-
-                                            // 根据 modelIndex 选择具体的模型
-                                            val actualIndex = getValidModelIndex(fullConfig.modelName, currentModelIndex)
                                             val configWithSelectedModel =
-                                                fullConfig.forSelectedModel(actualIndex)
+                                                EnhancedAIService.getInstance(context)
+                                                    .getModelConfigForFunction(functionType)
 
                                             val baseService =
                                                     AIServiceFactory.createService(
@@ -819,15 +828,20 @@ fun FunctionConfigCard(
                                                     )
                                                 }
                                             }
-                                            testResult = Result.success(result)
+                                            if (testedSelectionKey == latestSelectionKey) {
+                                                testResult = Result.success(result)
+                                            }
                                         } catch (e: Exception) {
-                                            testResult = Result.failure(e)
+                                            if (testedSelectionKey == latestSelectionKey) {
+                                                testResult = Result.failure(e)
+                                            }
                                         } finally {
                                             cleanupTasks.forEach { task -> runCatching { task() } }
                                         }
                                         isTestingConnection = false
                                     }
                                 },
+                                enabled = selectionAvailable && !isTestingConnection,
                                 modifier = Modifier.height(32.dp),
                                 contentPadding = PaddingValues(horizontal = 8.dp),
                                 shape = RoundedCornerShape(4.dp)
@@ -1048,7 +1062,7 @@ fun FunctionConfigCard(
                                             .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp)
                                     ) {
                                         // 计算有效索引一次，避免重复计算
-                                        val validIndex = getValidModelIndex(config.modelName, currentModelIndex)
+                                        val validIndex = currentModelIndex
                                         modelList.forEachIndexed { index, modelName ->
                                             val isModelSelected = isSelected && validIndex == index
                                             Surface(

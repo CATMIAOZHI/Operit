@@ -2,6 +2,7 @@ package com.ai.assistance.operit.core.tools.defaultTool.standard
 
 import android.content.Context
 import android.os.SystemClock
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConfigConnectionTester
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
@@ -1182,22 +1183,12 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             }
 
             val mappingWithIndex = functionalConfigManager.functionConfigMappingWithIndexFlow.first()
-            val updatedMapping = mappingWithIndex.toMutableMap()
             val affectedFunctions = mutableListOf<FunctionType>()
 
             mappingWithIndex.forEach { (functionType, mapping) ->
                 if (mapping.configId == configId) {
-                    updatedMapping[functionType] =
-                        FunctionConfigMapping(
-                            configId = FunctionalConfigManager.DEFAULT_CONFIG_ID,
-                            modelIndex = 0
-                        )
                     affectedFunctions.add(functionType)
                 }
-            }
-
-            if (affectedFunctions.isNotEmpty()) {
-                functionalConfigManager.saveFunctionConfigMappingWithIndex(updatedMapping)
             }
 
             modelConfigManager.deleteConfig(configId)
@@ -1216,7 +1207,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         deleted = true,
                         configId = configId,
                         affectedFunctions = affectedFunctions.sortedBy { it.name }.map { it.name },
-                        fallbackConfigId = FunctionalConfigManager.DEFAULT_CONFIG_ID
+                        fallbackConfigId = ""
                     )
             )
         } catch (e: Exception) {
@@ -1309,8 +1300,14 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         error = "Model config not found: ${mapping.configId}"
                     )
 
-            val actualModelIndex = getValidModelIndex(config.modelName, mapping.modelIndex)
-            val selectedModel = getModelByIndex(config.modelName, actualModelIndex)
+            val actualModelIndex = mapping.modelIndex
+            val selectedModel = getModelList(config.modelName).getOrNull(actualModelIndex)
+                ?: return ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = context.getString(R.string.functional_model_selection_unavailable),
+                )
 
             ToolResult(
                 toolName = tool.name,
@@ -1367,7 +1364,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         error = "Invalid function_type: $functionTypeRaw"
                     )
             val requestedModelIndex =
-                getOptionalIntParameter(tool, "model_index")?.coerceAtLeast(0) ?: 0
+                getOptionalIntParameter(tool, "model_index") ?: 0
 
             val modelConfigManager = ModelConfigManager(context)
             val functionalConfigManager = FunctionalConfigManager(context)
@@ -1382,7 +1379,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         result = StringResultData(""),
                         error = "Model config not found: $configId"
                     )
-            val actualModelIndex = getValidModelIndex(config.modelName, requestedModelIndex)
+            val actualModelIndex = requestedModelIndex
             val selectedModel = getModelByIndex(config.modelName, actualModelIndex)
 
             functionalConfigManager.setConfigForFunction(functionType, configId, actualModelIndex)

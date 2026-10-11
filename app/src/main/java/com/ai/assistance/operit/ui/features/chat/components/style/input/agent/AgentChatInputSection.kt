@@ -441,14 +441,13 @@ fun AgentChatInputSection(
         configSummaries.find { it.id == effectiveConfigMapping.configId }
     val mappedModelName =
         activeConfigSummary?.let { config ->
-            val validIndex = getValidModelIndex(config.modelName, effectiveConfigMapping.modelIndex)
-            getModelByIndex(config.modelName, validIndex)
+            getModelList(config.modelName).getOrNull(effectiveConfigMapping.modelIndex)
         }
     val displayModelName =
         if (isModelSelectionLockedByCharacterCard) {
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.not_selected)
         } else {
-            mappedModelName?.takeIf { it.isNotBlank() } ?: currentModelName
+            mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.functional_model_reselect)
         }
     val claudeThinkingFormats by ClaudeThinkingFormatState.formats.collectAsState()
     val thinkingRequestSummary =
@@ -1606,8 +1605,7 @@ private fun AgentModelSelectorPopup(
     val inputMenuTogglesBySlot = inputMenuToggles.groupBy { InputMenuToggleSlots.normalize(it.slot) }
     val currentConfig = configSummaries.find { it.id == currentConfigMapping.configId }
     val currentModelName = currentConfig?.let { config ->
-        val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
-        getModelByIndex(config.modelName, validIndex)
+        getModelList(config.modelName).getOrNull(currentConfigMapping.modelIndex)
     }.orEmpty()
     val maxThinkingQualityLevel = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
 
@@ -2123,9 +2121,8 @@ private fun AgentModelSelectorItem(
     var expandedConfigId by remember { mutableStateOf<String?>(null) }
     val currentModelName =
         currentConfig?.let { config ->
-            val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
-            getModelByIndex(config.modelName, validIndex)
-        } ?: stringResource(R.string.not_selected)
+            getModelList(config.modelName).getOrNull(currentConfigMapping.modelIndex)
+        } ?: stringResource(R.string.functional_model_reselect)
 
     Row(
         modifier =
@@ -2300,7 +2297,7 @@ private fun AgentModelSelectorItem(
                                 modifier = Modifier.fillMaxWidth().background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f))
                                     .padding(start = 16.dp, top = 4.dp, bottom = 4.dp, end = 8.dp),
                             ) {
-                                val validIndex = getValidModelIndex(config.modelName, currentConfigMapping.modelIndex)
+                                val validIndex = currentConfigMapping.modelIndex
                                 modelList.forEachIndexed { index, modelName ->
                                     val isModelSelected = isSelected && validIndex == index
                                     val isModelFav = validFavorites.any { it.configId == config.id && it.modelName.equals(modelName, ignoreCase = true) }

@@ -5858,6 +5858,11 @@
     <string name="attachment_camera">拍照</string>
     <string name="attachment_memory">记忆</string>
     <string name="attachment_file">文件</string>
+    <string name="functional_model_reselect">请重新选择模型</string>
+    <string name="functional_model_notice_title">部分功能未配置可用模型</string>
+    <string name="functional_model_notice_more">%1$s 等 %2$d 项功能</string>
+    <string name="functional_model_notice_configure">去配置</string>
+    <string name="functional_model_selection_unavailable">所选模型已删除或不可用，请在功能模型配置中重新选择；不会自动切换模型。</string>
     <string name="attachment_screen_content">屏幕内容</string>
     <string name="attachment_notifications">当前通知</string>
     <string name="attachment_location">当前位置</string>

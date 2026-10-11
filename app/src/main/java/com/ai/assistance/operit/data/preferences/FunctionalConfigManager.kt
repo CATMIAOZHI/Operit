@@ -5,6 +5,10 @@ import androidx.datastore.core.DataStore
 import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import com.ai.assistance.operit.data.model.FunctionType
+import com.ai.assistance.operit.data.model.ModelConfigSummary
+import com.ai.assistance.operit.data.model.getModelList
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
@@ -23,7 +27,39 @@ data class FunctionConfigMapping(
     val configId: String = FunctionalConfigManager.DEFAULT_CONFIG_ID,
     val modelIndex: Int = 0,
     val thinkingQualityLevel: Int = FunctionalConfigManager.DEFAULT_THINKING_QUALITY_LEVEL,
+    // Null is a legacy index-only binding; an empty name records an unavailable selection.
+    val modelName: String? = null,
 )
+
+internal fun FunctionConfigMapping.bindModelName(models: String): FunctionConfigMapping =
+    if (modelName != null || (getModelList(models).isEmpty() && modelIndex == 0)) this
+    else copy(modelName = getModelList(models).getOrNull(modelIndex).orEmpty())
+
+internal fun FunctionConfigMapping.resolveModelIndex(models: String?): FunctionConfigMapping {
+    if (models == null) return copy(modelIndex = -1)
+    val bound = bindModelName(models)
+    // Some plugin providers choose their own model and have never had a named selection.
+    if (bound.modelName == null && getModelList(models).isEmpty()) return bound
+    return bound.copy(modelIndex = getModelList(models).indexOf(bound.modelName))
+}
+
+internal fun unavailableFunctionModels(
+    mapping: Map<FunctionType, FunctionConfigMapping>,
+    configs: List<ModelConfigSummary>,
+    isPluginProvider: (String) -> Boolean,
+): List<FunctionType> = FunctionType.values().filter { function ->
+    if (function == FunctionType.UI_CONTROLLER) return@filter false
+    val configured = mapping[function] ?: FunctionConfigMapping()
+    val followed = FunctionalConfigManager.FUNCTION_CONFIG_FOLLOWERS[function]
+    val binding = if (followed != null && configured.configId == FunctionalConfigManager.DEFAULT_CONFIG_ID) {
+        mapping[followed] ?: FunctionConfigMapping()
+    } else configured
+    val config = configs.find { it.id == binding.configId } ?: return@filter true
+    val resolved = binding.resolveModelIndex(config.modelName)
+    val unnamedPlugin = resolved.modelIndex == 0 && resolved.modelName == null &&
+        getModelList(config.modelName).isEmpty() && isPluginProvider(config.apiProviderTypeId)
+    !unnamedPlugin && resolved.modelIndex !in getModelList(config.modelName).indices
+}
 
 /** 管理不同功能使用的模型配置 这个类用于将FunctionType映射到对应的ModelConfigID */
 class FunctionalConfigManager(private val context: Context) {
@@ -83,7 +119,7 @@ class FunctionalConfigManager(private val context: Context) {
             }
 
     // 获取完整的功能配置映射（包含modelIndex）
-    val functionConfigMappingWithIndexFlow: Flow<Map<FunctionType, FunctionConfigMapping>> =
+    private val storedMappingFlow: Flow<Map<FunctionType, FunctionConfigMapping>> =
             context.functionalConfigDataStore.data.map { preferences ->
                 val mappingJson = preferences[FUNCTION_CONFIG_MAPPING] ?: "{}"
                 if (mappingJson == "{}") {
@@ -105,6 +141,55 @@ class FunctionalConfigManager(private val context: Context) {
                     }
                 }
             }
+
+    val functionConfigMappingWithIndexFlow: Flow<Map<FunctionType, FunctionConfigMapping>> =
+        combine(storedMappingFlow, modelConfigManager.configSummariesFlow) { mapping, configs ->
+            val models = configs.associate { it.id to it.modelName }
+            (FunctionType.values().associateWith { FunctionConfigMapping() } + mapping)
+                .mapValues { (_, value) -> value.resolveModelIndex(models[value.configId]) }
+        }
+
+    val unavailableFunctionModelsFlow: Flow<List<FunctionType>> by lazy {
+        combine(
+            storedMappingFlow,
+            modelConfigManager.configSummariesFlow,
+            com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry.registeredProviderIdsFlow,
+        ) { mapping, configs, providerIds ->
+            unavailableFunctionModels(mapping, configs) { providerId ->
+                providerId.trim().lowercase() in providerIds
+            }
+        }.distinctUntilChanged()
+    }
+
+    /** Pin legacy selections before a model list changes, while its old indices still have meaning. */
+    suspend fun pinModelBindingsBeforeConfigChange(configId: String, oldModels: String) {
+        // An empty setup has no previous model to preserve.
+        if (getModelList(oldModels).isEmpty()) return
+        // Only read this DataStore here: callers may hold the model-config DataStore edit lock.
+        context.functionalConfigDataStore.edit { preferences ->
+            val raw = preferences[FUNCTION_CONFIG_MAPPING] ?: "{}"
+            val mapping = FunctionType.values().associateWith { FunctionConfigMapping() } +
+                decodeStoredMapping(raw)
+            val pinned = mapping.mapValues { (_, value) ->
+                if (value.configId == configId) value.bindModelName(oldModels) else value
+            }
+            preferences[FUNCTION_CONFIG_MAPPING] =
+                json.encodeToString(pinned.mapKeys { it.key.name })
+        }
+    }
+
+    private fun decodeStoredMapping(raw: String): Map<FunctionType, FunctionConfigMapping> {
+        if (raw == "{}") return FunctionType.values().associateWith { FunctionConfigMapping() }
+        return try {
+            json.decodeFromString<Map<String, FunctionConfigMapping>>(raw)
+                .mapKeys { FunctionType.valueOf(it.key) }
+        } catch (_: Exception) {
+            // Preserve old config-id-only settings when upgrading.
+            json.decodeFromString<Map<String, String>>(raw)
+                .mapKeys { FunctionType.valueOf(it.key) }
+                .mapValues { FunctionConfigMapping(it.value) }
+        }
+    }
 
     // 初始化，确保有默认映射
     suspend fun initializeIfNeeded() {
@@ -134,7 +219,10 @@ class FunctionalConfigManager(private val context: Context) {
             .filterKeys { it.name in setOf("CHAT", "VOICE", "IMAGE_RECOGNITION", "AUDIO_RECOGNITION", "VIDEO_RECOGNITION") }
             .mapValues { it.value.configId to it.value.modelIndex }
         val changed = projection(functionConfigMappingWithIndexFlow.first()) != projection(mapping)
-        val stringMapping = mapping.entries.associate { it.key.name to it.value }
+        val configs = modelConfigManager.configSummariesFlow.first().associate { it.id to it.modelName }
+        val stringMapping = mapping.entries.associate {
+            it.key.name to it.value.bindModelName(configs[it.value.configId].orEmpty())
+        }
         context.functionalConfigDataStore.edit { preferences ->
             preferences[FUNCTION_CONFIG_MAPPING] = json.encodeToString(stringMapping)
         }
@@ -173,11 +261,18 @@ class FunctionalConfigManager(private val context: Context) {
 
     // 设置指定功能的配置ID和模型索引
     suspend fun setConfigForFunction(functionType: FunctionType, configId: String, modelIndex: Int) {
+        val config = modelConfigManager.configSummariesFlow.first().find { it.id == configId }
+        val unnamedPlugin = config != null && config.modelName.isBlank() && modelIndex == 0 &&
+            com.ai.assistance.operit.plugins.toolpkg.ToolPkgAiProviderRegistry.get(config.apiProviderTypeId) != null
+        require(config != null && (modelIndex in getModelList(config.modelName).indices || unnamedPlugin)) {
+            context.getString(com.ai.assistance.operit.R.string.functional_model_selection_unavailable)
+        }
         val mapping = functionConfigMappingWithIndexFlow.first().toMutableMap()
         val thinkingQualityLevel =
             mapping[functionType]?.thinkingQualityLevel ?: DEFAULT_THINKING_QUALITY_LEVEL
         mapping[functionType] =
             FunctionConfigMapping(configId, modelIndex, thinkingQualityLevel)
+                .bindModelName(config.modelName)
         saveFunctionConfigMappingWithIndex(mapping)
     }
 

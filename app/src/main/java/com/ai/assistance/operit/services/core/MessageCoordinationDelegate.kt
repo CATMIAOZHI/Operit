@@ -644,7 +644,7 @@ class MessageCoordinationDelegate(
                 val (resolvedChatModelConfigIdOverride, resolvedChatModelIndexOverride) =
                     when {
                         !chatModelConfigIdOverride.isNullOrBlank() -> {
-                            Pair(chatModelConfigIdOverride, (chatModelIndexOverride ?: 0).coerceAtLeast(0))
+                            Pair(chatModelConfigIdOverride, chatModelIndexOverride ?: 0)
                         }
                         isAutoContinuation -> {
                             Pair(currentChatModelConfigIdOverride, currentChatModelIndexOverride)
