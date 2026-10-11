@@ -34,6 +34,29 @@ internal object CardExpress {
         return Compiler(Parser(source).parse()).compile()
     }
 
+    /** Edit named declarations, then validate the complete result before publishing a new revision. */
+    fun revise(source: String, changes: String, remove: List<String>): Pair<String, String> {
+        if (source.length > MAX_SOURCE || changes.length > MAX_SOURCE || remove.size > 128)
+            throw Failure(1, 1, "Revision exceeds source limits.")
+        val base = Parser(source).parse().toMutableMap()
+        val patch = Parser(changes).parse()
+        if (patch.isEmpty() && remove.isEmpty()) throw Failure(1, 1, "Revision is empty.")
+        remove.forEach {
+            if (it !in base || it in patch) throw Failure(1, 1, "Remove only existing declarations, without also replacing them.")
+            base.remove(it)
+        }
+        base.putAll(patch)
+        fun render(n: Node): String = when (n.kind) {
+            "string" -> JsonPrimitive(n.token.text).toString()
+            "array" -> n.items.joinToString(", ", "[", "]", transform = ::render)
+            "object" -> n.fields.entries.joinToString(", ", "{", "}") { "${JsonPrimitive(it.key)}: ${render(it.value)}" }
+            "call" -> n.fields.entries.joinToString(", ", "${n.token.text}(", ")") { "${it.key}=${render(it.value)}" }
+            else -> n.token.text
+        }
+        val revised = base.entries.joinToString("\n") { "${it.key} = ${render(it.value)}" }
+        return revised to compile(revised)
+    }
+
     private fun fail(t: Token, reason: String): Nothing = throw Failure(t.line, t.column, reason)
     private fun safeName(t: Token) {
         if (t.text in forbidden || t.text.length > 80) fail(t, "Reserved or too long a name.")
@@ -256,6 +279,10 @@ internal object CardExpress {
                             val allowed = CardAuthoringCatalog.enums["${node.token.text}.${field.name}"]
                             if (allowed != null && (initial as? JsonPrimitive)?.content !in allowed)
                                 fail(value.token, "${field.name} must be one of ${allowed.joinToString()}.")
+                            CardAuthoringCatalog.ranges["${node.token.text}.${field.name}"]?.let { range ->
+                                if ((initial as? JsonPrimitive)?.intOrNull !in range)
+                                    fail(value.token, "${field.name} must be an integer from ${range.first} to ${range.last}.")
+                            }
                             if (field.name in setOf("labels", "columns", "options") &&
                                 initial is JsonArray && initial.any { it !is JsonPrimitive || !it.isString })
                                 fail(value.token, "${field.name} must contain strings.")
@@ -275,6 +302,14 @@ internal object CardExpress {
                 val markers = node.fields.getValue("markers")
                 try { cardMapMarkers(DynamicUiProtocol.toValue(initial(markers))) }
                 catch (_: Exception) { fail(markers.token, "Invalid map markers. Check numeric latitude/longitude and the 32-marker limit.") }
+            }
+            if (node.token.text == "Table") {
+                val rows = node.fields.getValue("rows")
+                val data = initial(rows) as? JsonArray
+                val count = initial(node.fields.getValue("columns")).jsonArray.size
+                if (data == null || data.size > 32 || data.any { row ->
+                    row !is JsonArray || row.size != count || row.any { it !is JsonPrimitive }
+                }) fail(rows.token, "Table rows must contain up to 32 arrays of scalar cells, matching the columns.")
             }
             components[id] = result
             resolving.remove(id)

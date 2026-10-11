@@ -1627,7 +1627,7 @@ class JsEngine(private val context: Context) {
             if (report["valid"]?.jsonPrimitive?.booleanOrNull != true) return report.toString()
             return try {
                 val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(
-                    run, report.getValue("document").jsonPrimitive.content,
+                    run, report.getValue("document").jsonPrimitive.content, source,
                 )
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
@@ -1640,6 +1640,42 @@ class JsEngine(private val context: Context) {
                 """{"valid":false,"code":"card_limit","message":"Card storage limit reached for this turn. Use fewer or smaller cards."}"""
             } catch (_: IllegalStateException) {
                 """{"valid":false,"code":"inactive_turn","message":"This chat turn has ended. Generate the card again in the active turn."}"""
+            }
+        }
+
+        @JavascriptInterface
+        fun updateDynamicUi(callId: String, reference: String, changes: String, removeJson: String): String {
+            val run = resolveExecutionSession(callId)?.takeIf {
+                it.packageName == "dynamic_ui" && boundToolPkgContainerName == null
+            }?.toolRuntimeContext?.dynamicUiRunId
+                ?: return """{"valid":false,"code":"inactive_turn","message":"Update cards inside the active chat turn."}"""
+            val source = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.source(run, reference)
+                ?: return """{"valid":false,"code":"unknown_reference","message":"Reference is not from this active turn. Prepare a new card instead."}"""
+            return try {
+                require(removeJson.length <= 16384)
+                val remove = (kotlinx.serialization.json.Json.parseToJsonElement(removeJson) as kotlinx.serialization.json.JsonArray).map {
+                    require(it is kotlinx.serialization.json.JsonPrimitive && it.isString)
+                    it.jsonPrimitive.content
+                }
+                val (revised, document) = com.ai.assistance.operit.ui.common.dynamicui.CardExpress.revise(source, changes, remove)
+                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(run, document, revised)
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(true))
+                    put("reference", kotlinx.serialization.json.JsonPrimitive(id))
+                    put("baseReference", kotlinx.serialization.json.JsonPrimitive(reference))
+                    put("message", kotlinx.serialization.json.JsonPrimitive(
+                        "New revision compiled. The previous card and its user state remain unchanged. Display this NEW reference:\n```a2ui-ref\n$id\n```"))
+                }.toString()
+            } catch (e: com.ai.assistance.operit.ui.common.dynamicui.CardExpress.Failure) {
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(false))
+                    put("code", kotlinx.serialization.json.JsonPrimitive("invalid_revision"))
+                    put("line", kotlinx.serialization.json.JsonPrimitive(e.line))
+                    put("column", kotlinx.serialization.json.JsonPrimitive(e.column))
+                    put("message", kotlinx.serialization.json.JsonPrimitive(e.reason))
+                }.toString()
+            } catch (_: Exception) {
+                """{"valid":false,"code":"invalid_revision","message":"Revision failed validation or turn storage limits. No card was changed. Check remove names and use fewer/smaller revisions."}"""
             }
         }
 

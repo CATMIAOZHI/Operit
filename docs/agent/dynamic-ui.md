@@ -131,7 +131,9 @@ TextField 的数字字符串可以直接交给算术函数，不必为了计算�
 状态写入失败明确提示，表单过大阻止保存/提交。
 
 纯函数白名单：add/subtract/multiply/divide/min/max、equals/greaterThan/lessThan、
-and/or/not、if、formatNumber、concat、calculatorStep。最多 6 层嵌套、128 次调用声明，
+and/or/not、if、formatNumber、concat、calculatorStep；
+另有 arrayLength/arrayMap/arrayFilter/arraySum/arrayAverage/arrayJoin、
+stringContains/stringReplace/stringTrim、dateAddDays/dateDiffDays/formatDate。最多 6 层嵌套、128 次调用声明，
 只在动态属性/检查/动作上下文使用；初始数据及组件结构不含函数。数值必须有限且
 绝对值不超过 1e12，除零/无效数字得到未解析值，修正输入后可恢复。if 参数是急切求值。
 表单检查使用 Button.checks；不会执行正则。所有函数无 I/O、无工具访问、无状态写入。
@@ -141,6 +143,31 @@ and/or/not、if、formatNumber、concat、calculatorStep。最多 6 层嵌套、
 未开放任意画布代码、文件上传、内部文件 URI、内嵌网页和模态窗口。
 新增能力通过目录组件和安全边界扩展，不把任意 JSON 当界面。
 包指南按需读取，不在系统前缀塞入完整 schema。
+
+## 布局、表达式与局部修订
+
+- Row 支持 wrap、gap、align、justify；默认保持内容宽度，显式 justify 才铺满可用宽度；
+  Column 支持 gap、align。Grid 未指定列数时按
+  实际可用宽度、minItemWidth 和字体缩放选择 1–4 列；键盘仍使用明确列数及跨度。
+- Panel 集中提供有限间距、圆角、背景、边框和最大宽度；Text 支持对齐与 1–8 行截断。
+  正文默认不截断。Scroll 必须给出 80–480 dp 的最大高度，避免聊天无限高度约束。
+- 数组运算限制 128 项、32K 结果；字段投影/筛选使用相对对象路径，不能执行回调。
+  Table 可使用派生行，仍要求 8 列/32 行及标量单元格。空数组平均值、缺失字段、
+  无效数字返回未解析值；空数组求和为 0。字符串最多 8192 字符。
+- 日期是 1900–2100 年的 ISO 日期；日期运算不受设备时区影响。
+  if 可返回有限对象/数组，但仍急切求值，不能用它保护无效运算。
+- Popover 是卡片内锚定浮层，有关闭按钮、外部点按关闭和有限滚动区域，
+  不创建 Android 弹窗。最多 320×240 dp；短卡片展开到足够容纳浮层。
+- Vector 提供 line/rect/circle/polyline/polygon/text，最多 64 图元、每条 128 点，
+  语义色、有限描边、完整可访问描述；无任意 SVG 路径、脚本或网络资源。
+- update_card(reference, changes, remove?) 只修改当前运行中卡片的命名 Express 声明。
+  先合并 AST，再完整编译校验，成功注册**新引用**；失败不发布。
+  它减少模型重写源码的量，不是已显示卡片的实时热更新。旧引用及用户填写状态保留；
+  新卡片按新源码初始化。不同运行不可读彼此引用，内存配额同时计算源码和编译文档。
+  旧历史卡片如需修改，应重新 prepare_card，不从历史恢复临时能力。
+
+模型指南与示例覆盖 responsive、data、vector；示例通过同一原生编译器验证，
+不建立单独绕过校验的演示通道。真实地图、任意代码以及历史卡片热更新未实现。
 
 ## 真机反馈修复
 

@@ -20,9 +20,18 @@
       "parameters": [{"name": "source", "type": "string", "required": true, "description": {"zh": "Express 源码，不含围栏；参数使用 name=value，语法见 read_guide", "en": "Express source without fences; use name=value arguments. See read_guide."}}]
     },
     {
+      "name": "update_card",
+      "description": {"zh": "局部修改本轮卡片的命名声明，校验后返回新版本引用；保留旧卡片及用户填写内容。", "en": "Revise named declarations of a card from this turn. Return a validated new reference, preserving the old card and its user state."},
+      "parameters": [
+        {"name": "reference", "type": "string", "required": true, "description": {"zh": "本轮 prepare_card 或 update_card 返回的引用", "en": "Reference returned by prepare_card or update_card in this turn."}},
+        {"name": "changes", "type": "string", "required": true, "description": {"zh": "新增或替换的 Express 声明，其他声明保持不变", "en": "Express declarations to add or replace; other declarations remain unchanged."}},
+        {"name": "remove", "type": "array", "required": false, "description": {"zh": "要删除的声明名称数组", "en": "Array of declaration names to remove."}}
+      ]
+    },
+    {
       "name": "read_example",
       "description": {"zh": "直接生成已校验的演示卡片，返回展示短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo and return its display reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats 或 progress", "en": "calculator, cost_calculator, charts, form, info, stats or progress"}}]
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats、progress、responsive、data 或 vector", "en": "calculator, cost_calculator, charts, form, info, stats, progress, responsive, data or vector"}}]
     }
   ]
 }
@@ -40,7 +49,12 @@ Read this guide, then call prepare_card(source). Display its a2ui-ref fence EXAC
 surrounded by a concise explanation. The app inserts the compiled card automatically.
 Do not repeat the source/NDJSON, reconstruct the output or revalidate a successful result.
 References belong to this active turn; never reuse them in another turn/chat.
-To revise, prepare complete corrected source and use the NEW reference.
+To revise a card from THIS turn, use update_card(reference,changes,remove?).
+changes contains only named declarations to replace/add; remove lists existing declarations.
+The complete merged graph is checked atomically. Inline components are changed via their named parent.
+Display the NEW reference; it creates a separate revision, NOT a live edit of a displayed card.
+Old cards and user inputs are preserved. New revisions start from their declared initial data.
+Patch errors use merged source locations. For previous turns, prepare complete new source.
 valid:false is a completed inspection: fix the reported line/column and field. Do not retry identical
 input or infer unsupported nesting. Validation does not prove visual quality or arithmetic intent.
 read_example prepares an unmodified demo. Custom cards are freely composed, not fixed templates.
@@ -75,11 +89,21 @@ Default alignment is start; calculators use align="end". Badge tones:
 neutral, success, info, warning, error. Use colors for meaning, never as decoration.
 Stack forms vertically. Table aligns tabular data; Grid suits short metrics or keypads, not prose.
 Row is for short content. Avoid decorative nesting and duplicating titles in the surrounding text.
+Row(wrap=true) wraps short items at the available width. gap=none|xs|sm|md|lg means 0/4/8/16/24 dp.
+Row align=start|center|end is vertical; justify=start|center|end|between is horizontal.
+Rows keep their content width by default; explicit justify uses the available full width.
+Column align=start|center|end is horizontal. Both default to an 8 dp gap.
+Panel(child=...,padding="md",radius="md",background="inset",border=false,maxWidth=600)
+groups content with bounded styles. Background: transparent|surface|inset|accentMuted; radius:none|sm|md|lg.
+Text textAlign=start|center|end; optional lineClamp=1..8 truncates nonessential text only.
+Scroll(child=...,maxHeight=240) creates a bounded vertical region (80..480 dp). Avoid nested scrolling.
 Host ALWAYS supplies a full-width white/light or neutral dark frame, clear border, rounded corners
 and consistent padding, regardless of root type. Do not wrap root in Card just to get a border.
 Use nested Card only to group separate related sections. Keep commentary outside the card.
 Choose one primary action; quiet secondary actions. No arbitrary style/color overrides.
 Grid columnCount=1..4; columnSpans needs one integer span per child, each 1..columnCount.
+Without columnCount, Grid auto-fits 1..4 columns using minItemWidth (80..320 dp, default160)
+and font scale. Prefer auto columns for metrics; explicit columns for keypads.
 Items pack in order and incomplete rows keep empty cells. A zero key can span 2 columns.
 Slider steps counts INTERMEDIATE stops: min=0,max=100,steps=99 gives integers; default continuous.
 Retain decimal precision unless asked to round. Long Display values scroll rather than truncate.
@@ -94,12 +118,33 @@ Scatter: series=[{label:"Demo",points:[{x:1,y:2,label:"A"}]}].
 Max 4 series/128 points, category lengths must agree. Pie: one nonnegative series.
 Charts provide inspection and a data table; do not duplicate it by default.
 Table: string columns and array rows, max 8 columns/32 rows.
+Rows may bind to state or array expressions; every row must match columns and contain scalar cells.
+Pure collection functions use items (max128) and optional field="object/nestedField", never callbacks.
+arrayMap projects a required field; arrayFilter requires field,operator,value.
+Filter operators: eq/ne/gt/gte/lt/lte/contains. arraySum/arrayAverage use optional field.
+arrayJoin requires separator; arrayLength counts items. Missing fields or invalid numbers are unresolved;
+empty sum=0, empty average is unresolved. Bound results max32K, strings8192, finite numbers <=1e12.
+stringContains(text,query,ignoreCase?), stringReplace(text,search,replacement), stringTrim(text).
+Dates are ISO yyyy-MM-dd, years1900..2100. dateAddDays(date,days), dateDiffDays(start,end),
+formatDate(date,format="iso"|"yearMonth"|"monthDay"). All arguments are NAMED.
+if supports bounded objects/arrays but is eager: both branches must be valid.
 RichText runs=[{text:"...",bold:true,italic:false,underline:false,tone:"primary",size:"caption"}].
 Optional run url is http(s); RichText is not HTML. Put math/Mermaid in normal Markdown.
 Image/Video/Audio use user/tool-provided http(s) URLs; load only on click, never autoplay.
 Link/File open web URLs, not device paths. Media can fail independently.
 Map markers=[{label:"A",latitude:30,longitude:120}], route=true connects points in order:
 this is a LOCATION SKETCH, not roads/navigation. Draft saves/copies locally, never sends mail.
+Popover(label="Details",child=...) opens an anchored panel inside the card, at most320x240 dp,
+with scrolling, a close button and outside-tap dismissal. Short cards expand to fit the panel.
+Do not nest Popovers or hide essential information in them. Opening never calls AI.
+Vector(label="Accessible description",width=320,height=180,shapes=[...]) draws static geometry.
+Viewport integer dimensions1..1000; coordinates stay inside it. Max64 shapes,128 points/shape.
+Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100},
+{type:"rect",x:10,y:10,width:80,height:50}, {type:"circle",cx:50,cy:50,r:20},
+{type:"polyline",points:[[0,0],[100,50]]}, {type:"polygon",points:[[0,0],[100,0],[50,50]]},
+{type:"text",x:10,y:10,text:"Label",size:16}. Text uses TOP-LEFT coordinates; allow space for it.
+Optional tone=neutral|accent|success|info|warning|error, filled=true, stroke=0.5..12.
+No SVG markup, arbitrary paths, scripts, URLs or touch handlers. Use charts for data inspection.
 
 ACTIONS
 Button(child=Text(text="..."),variant="primary"|"default"|"borderless",action=Event(...)).
@@ -144,6 +189,17 @@ exports.prepare_card = async ({source}) => {
         return;
     }
     complete(prepare(source));
+};
+exports.update_card = async ({reference, changes, remove = []}) => {
+    if (typeof reference !== "string" || reference.length > 80 || typeof changes !== "string" ||
+        changes.length > 65536 || !Array.isArray(remove) || remove.length > 128 ||
+        remove.some(name => typeof name !== "string" || name.length > 256)) {
+        complete({success:true,valid:false,code:"invalid_revision",message:"Use a current-turn reference, Express changes and an array of declaration names."});
+        return;
+    }
+    const root = typeof globalThis !== "undefined" ? globalThis : this;
+    complete({success:true,...JSON.parse(String(native().updateDynamicUi(
+        String(root.__operitCurrentCallId || ""),reference,changes,JSON.stringify(remove))))});
 };
 
 const q = JSON.stringify;
@@ -205,6 +261,42 @@ root = Column(children=[
  CheckBox(label="检查问题",value=$/tasks/review),
  CheckBox(label="运行测试",value=$/tasks/test)
 ])`;
-    throw new Error("Choose calculator, cost_calculator, charts, form, info, stats or progress.");
+    if (name === "responsive") return String.raw`
+root = Column(gap="md",children=[
+ Header(text="项目概览",status="演示数据"),
+ Row(wrap=true,gap="sm",align="center",children=[Badge(text="Android",tone="info"),Badge(text="本地交互",tone="success"),Badge(text="响应式布局")]),
+ Grid(minItemWidth=120,children=[Display(label="已完成",text="12"),Display(label="待处理",text="3"),Display(label="完成率",text="80%")]),
+ Panel(background="inset",padding="md",radius="lg",child=Text(text="屏幕变窄或字体变大时，数据面板自动换行。",textAlign="center")),
+ Popover(label="这些数字是什么意思？",child=Column(children=[Heading(text="示例说明"),Text(text="这些是演示数据。可以把面板替换为真实任务统计。")]))
+])`;
+    if (name === "data") return String.raw`
+$/items = [{name:"设计",hours:8,row:["设计",8]},{name:"开发",hours:20,row:["开发",20]},{name:"测试",hours:12,row:["测试",12]}]
+$/filter = {minimum:10}
+$/date = "2026-10-12"
+root = Column(gap="md",children=[
+ Header(text="工时筛选",status="演示数据"),
+ Slider(label="最低工时",min=0,max=24,steps=23,number=$/filter/minimum),
+ Table(columns=["任务","工时"],rows=arrayMap(items=arrayFilter(items=$/items,field="hours",operator="gte",value=$/filter/minimum),field="row")),
+ Display(label="全部任务工时",text=formatNumber(value=arraySum(items=$/items,field="hours"),decimals=0)),
+ InfoRow(label="一周后",text=dateAddDays(date=$/date,days=7)),
+ Text(text=arrayJoin(items=arrayMap(items=$/items,field="name"),separator=" · "),variant="caption")
+])`;
+    if (name === "vector") return String.raw`
+root = Column(children=[
+ Header(text="数据处理流程",status="示意图"),
+ Vector(label="输入经过本地处理，产生结果",width=320,height=150,shapes=[
+ {type:"rect",x:5,y:40,width:85,height:65,tone:"info",filled:true},
+ {type:"rect",x:120,y:40,width:85,height:65,tone:"success"},
+ {type:"circle",cx:275,cy:72,r:34,tone:"accent"},
+ {type:"line",x1:90,y1:72,x2:120,y2:72},
+ {type:"polyline",points:[[110,65],[120,72],[110,79]]},
+ {type:"line",x1:205,y1:72,x2:240,y2:72},
+ {type:"text",x:18,y:58,text:"输入",size:18},
+ {type:"text",x:129,y:58,text:"处理",size:18},
+ {type:"text",x:254,y:58,text:"结果",size:18}
+ ]),
+ Text(text="矢量图用于解释关系；真实统计数据请使用图表。",variant="caption")
+])`;
+    throw new Error("Choose calculator, cost_calculator, charts, form, info, stats, progress, responsive, data or vector.");
 }
 exports.read_example = async ({name}) => complete(prepare(example(name)));

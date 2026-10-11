@@ -1,4 +1,6 @@
 <resources>
+    <string name="dynamic_ui_close_details">关闭详情</string>
+    <string name="dynamic_ui_bad_table">表格数据格式有误，请检查输入</string>
     <string name="logcat_flush_incomplete">现有日志已保存至 %1$s；日志可能不完整，原因也已记录在压缩包的 export-status.txt 中。</string>
     <string name="logcat_export_pending">开始导出时的日志仍有 %1$d 条未完成写入。</string>
     <string name="logcat_export_dropped">日志队列曾因繁忙或线程中断丢弃 %1$d 条记录，无法恢复。</string>

@@ -19,7 +19,7 @@ class CardExpressTest {
     }
 
     @Test fun examplesPassNativeProtocol() {
-        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress")) {
+        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector")) {
             val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
             val report = CardExpress.report(source)
             assertEquals("$name: $report", JsonPrimitive(true), report["valid"])
@@ -48,7 +48,7 @@ class CardExpressTest {
             "${'$'}/flag = null\nroot = CheckBox(label=\"Flag\",value=${'$'}/flag)",
             "root = Chart(label=\"Bad\",type=\"bogus\",series=[])",
             "root = Chart(label=\"Bad\",type=\"bar\",series=[{label:\"A\",values:[\"bad\"]}],labels=[\"x\"])",
-            "${'$'}/rows = [[1]]\nroot = Table(columns=[\"x\"],rows=${'$'}/rows)",
+            "${'$'}/rows = [[1,2]]\nroot = Table(columns=[\"x\"],rows=${'$'}/rows)",
             "root = Text(text=add(a=1,b=2))",
             "root = Text(text=if(condition=true,then=\"ok\",else=1))",
             "root = Header(text=\"Title\",tone=\"pink\")",

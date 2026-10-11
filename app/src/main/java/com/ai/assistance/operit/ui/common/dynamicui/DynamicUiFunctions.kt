@@ -23,6 +23,17 @@ internal object CardFunctions {
         put("formatNumber", Spec(setOf("value"), setOf("decimals", "grouping"), A2uiFunctionReturnType.STRING))
         put("concat", Spec(setOf("values"), emptySet(), A2uiFunctionReturnType.STRING))
         put("calculatorStep", Spec(setOf("state", "key"), emptySet(), A2uiFunctionReturnType.OBJECT))
+        put("arrayLength", Spec(setOf("items"), emptySet(), A2uiFunctionReturnType.NUMBER))
+        put("arrayMap", Spec(setOf("items", "field"), emptySet(), A2uiFunctionReturnType.ANY))
+        put("arrayFilter", Spec(setOf("items", "field", "operator", "value"), emptySet(), A2uiFunctionReturnType.ANY))
+        listOf("arraySum", "arrayAverage").forEach { put(it, Spec(setOf("items"), setOf("field"), A2uiFunctionReturnType.NUMBER)) }
+        put("arrayJoin", Spec(setOf("items", "separator"), emptySet(), A2uiFunctionReturnType.STRING))
+        put("stringContains", Spec(setOf("text", "query"), setOf("ignoreCase"), A2uiFunctionReturnType.BOOLEAN))
+        put("stringReplace", Spec(setOf("text", "search", "replacement"), emptySet(), A2uiFunctionReturnType.STRING))
+        put("stringTrim", Spec(setOf("text"), emptySet(), A2uiFunctionReturnType.STRING))
+        put("dateAddDays", Spec(setOf("date", "days"), emptySet(), A2uiFunctionReturnType.STRING))
+        put("dateDiffDays", Spec(setOf("start", "end"), emptySet(), A2uiFunctionReturnType.NUMBER))
+        put("formatDate", Spec(setOf("date", "format"), emptySet(), A2uiFunctionReturnType.STRING))
     }
     val functions: List<A2uiFunction> = specs.map { (functionName, spec) ->
         object : A2uiFunction {
@@ -91,7 +102,7 @@ internal object CardFunctions {
                 if (name == "and") a && b else a || b
             }
             "not" -> !(args["value"] as? Boolean ?: return null)
-            "if" -> args[if (args["condition"] as? Boolean ?: return null) "then" else "else"].takeIf(::scalar)
+            "if" -> CardDataFunctions.safeValue(args[if (args["condition"] as? Boolean ?: return null) "then" else "else"])
             "formatNumber" -> {
                 val value = number("value") ?: return null
                 val decimals = if ("decimals" in args) number("decimals")?.takeIf { it % 1 == 0.0 && it in 0.0..6.0 }?.toInt() ?: return null else 2
@@ -106,7 +117,7 @@ internal object CardFunctions {
                 if (values.sumOf { it.toString().length } > 8192) return null
                 values.joinToString("")
             }
-            else -> null
+            else -> CardDataFunctions.evaluate(name, args)
         }
         return if (result is Number) result.takeIf { it.toDouble().isFinite() && kotlin.math.abs(it.toDouble()) <= 1e12 } else result
     }
