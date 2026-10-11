@@ -978,8 +978,7 @@ fun ClassicChatInputSection(
             // Token limit warning
             if (isOverTokenLimit && canSendMessage && !showQueueAction) {
                 Text(
-                    text =
-                    context.getString(R.string.token_limit_exceeded_message, projectedTokens, maxTokens),
+                    text = stringResource(R.string.token_limit_exceeded_message, projectedTokens, maxTokens),
                     color = MaterialTheme.colorScheme.error,
                     style = MaterialTheme.typography.labelSmall,
                     modifier =
