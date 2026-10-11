@@ -1,6 +1,8 @@
 <resources>
+    <string name="dynamic_ui_reference_unavailable">卡片未能显示，请让 AI 重新生成。</string>
     <string name="dynamic_ui_bad_number">数值无效，请修改输入</string>
-    <string name="dynamic_ui_chart_description">%1$s，%2$d 个数据点。可展开查看数据</string>
+    <string name="dynamic_ui_chart_description">%1$s，%2$d 个数据点。点按或长按拖动查看数据，也可展开数据表</string>
+    <string name="dynamic_ui_chart_gesture">点按或长按拖动查看数据</string>
     <string name="dynamic_ui_chart_data">查看数据</string>
     <string name="dynamic_ui_no_data">暂无数据</string>
     <string name="dynamic_ui_bad_chart">数据格式有误，请让 AI 修正</string>

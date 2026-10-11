@@ -18,7 +18,7 @@ internal object DynamicUiProtocol {
     val components = setOf(
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
-        "Heading", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
+        "Heading", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
@@ -46,14 +46,52 @@ internal object DynamicUiProtocol {
             put("message", "Protocol checks passed. This does not verify visual layout or arithmetic intent.")
         }
     } catch (e: Exception) {
+        val line = diagnosticLine(e)
+        val code = diagnosticCode(e)
+        val column = if (code == "invalid_json") generateSequence<Throwable>(e) { it.cause }
+            .take(8).filterIsInstance<kotlinx.serialization.SerializationException>()
+            .mapNotNull { Regex("\\boffset (\\d+)").find(it.message.orEmpty())?.groupValues?.get(1)?.toIntOrNull() }
+            .firstOrNull()?.plus(1) else null
+        val reason = if (code == "invalid_json")
+            "Check closing braces, brackets, commas and quotes. Nested initial data is supported."
+        else safeDiagnosticReason(e)
         buildJsonObject {
             put("valid", false)
-            diagnosticLine(e)?.let { put("line", it) }
-            put("code", diagnosticCode(e))
-            put("message", if (diagnosticCode(e) == "invalid_json")
-                "Invalid JSON. Correct the event on this line; do not split one event across lines."
-                else "Invalid card protocol or resource limits. Check read_guide and resend the complete document.")
+            line?.let { put("line", it) }
+            column?.let { put("column", it) }
+            put("code", code)
+            put("message", buildString {
+                append(code)
+                line?.let { append(" at line $it") }
+                column?.let { append(", column $it") }
+                append(": $reason")
+            })
         }
+    }
+
+    // Only relay our fixed diagnostics, never parser excerpts or arbitrary model text.
+    private fun safeDiagnosticReason(error: Exception): String {
+        val known = setOf(
+            "Card exceeds 128 KiB character limit", "Too many updates", "Expected A2UI v0.9",
+            "Expected one A2UI event per line", "Invalid surface ID", "Unsupported catalog",
+            "Duplicate or too many surfaces", "Use the app theme", "Create the surface first",
+            "Too many components", "Invalid or duplicate component ID", "Unsupported component",
+            "Initial data must not contain function calls", "Data model too large", "Unknown surface",
+            "Unsupported A2UI event", "Missing root component", "Functions cannot change component structure",
+            "Invalid weight", "Invalid slider range", "Invalid slider steps", "Grid columns must be 1 to 4",
+            "Grid spans require explicit columns and one integer span per child",
+            "Use up to 32 static child IDs", "Duplicate children", "Only event actions are allowed",
+            "Unsupported action", "Table too large", "Invalid table rows", "Cyclic or deeply nested components",
+            "Too many rendered components", "Invalid data path", "Reserved or array-index data path",
+            "JSON too deeply nested", "Object too large", "Too many local calculations",
+            "Unsupported expression or reserved field", "Array too large", "Text too long",
+            "Unsupported function property", "Unsupported local function", "Function args must be an object",
+            "Invalid function arguments", "Incorrect return type", "Decimal places must be 0 to 6",
+            "Too many strings", "Unknown calculator key",
+        )
+        return generateSequence<Throwable>(error) { it.cause }.take(8)
+            .mapNotNull { it.message?.takeIf(known::contains) }.firstOrNull()
+            ?: "Invalid field type or missing required field/reference. Check read_guide and submit the complete document."
     }
 
     fun diagnosticLine(error: Exception): Int? =
@@ -130,7 +168,7 @@ internal object DynamicUiProtocol {
 
     private fun validateComponent(c: JsonObject) {
         c.forEach { (key, value) ->
-            if (key in setOf("id", "component", "child", "children", "weight", "min", "max", "type", "columnCount", "steps")) {
+            if (key in setOf("id", "component", "child", "children", "weight", "min", "max", "type", "columnCount", "columnSpans", "steps")) {
                 require(!containsCall(value)) { "Functions cannot change component structure" }
             }
         }
@@ -146,6 +184,14 @@ internal object DynamicUiProtocol {
         }
         if (c["component"]?.jsonPrimitive?.content == "Grid") c["columnCount"]?.let {
             require((it as? JsonPrimitive)?.intOrNull in 1..4) { "Grid columns must be 1 to 4" }
+        }
+        if (c["component"]?.jsonPrimitive?.content == "Grid") c["columnSpans"]?.let { spans ->
+            val count = (c["columnCount"] as? JsonPrimitive)?.intOrNull
+            val refs = c["children"] as? JsonArray
+            require(count != null && count in 1..4 && refs != null && spans is JsonArray &&
+                spans.size == refs.size && spans.all {
+                    it is JsonPrimitive && !it.isString && it.intOrNull in 1..count
+                }) { "Grid spans require explicit columns and one integer span per child" }
         }
         c["children"]?.let {
             require(it is JsonArray && it.size <= 32 && it.all { child -> child is JsonPrimitive && child.isString }) {

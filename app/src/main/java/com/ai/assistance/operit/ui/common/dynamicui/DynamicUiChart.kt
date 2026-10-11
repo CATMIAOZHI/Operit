@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.common.dynamicui
 
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
@@ -12,14 +13,19 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ai.assistance.operit.R
@@ -67,9 +73,13 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
     val palette = listOf(primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.error)
     val ink = MaterialTheme.colorScheme.onSurfaceVariant
     val grid = MaterialTheme.colorScheme.outlineVariant
+    val tooltipBackground = MaterialTheme.colorScheme.surfaceContainerHigh
+    val tooltipInk = MaterialTheme.colorScheme.onSurface
+    val markerBackground = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()
     val density = LocalDensity.current
-    var selected by remember(data) { mutableStateOf<Pair<Int, Int>?>(null) }
+    val haptic = LocalHapticFeedback.current
+    var selected by remember(data, type) { mutableStateOf<Pair<Int, Int>?>(null) }
     var showData by rememberSaveable { mutableStateOf(false) }
     val points = remember(data) { data.flatMap { it.points } }
     val pieColors = remember(points.size, primary) {
@@ -81,13 +91,16 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
         if (title.isNotBlank()) Text(title, style = MaterialTheme.typography.titleMedium)
         if (empty) Text(stringResource(R.string.dynamic_ui_no_data), style = MaterialTheme.typography.bodyMedium)
         else {
-            val minX = points.minOf { it.x }; val maxX = points.maxOf { it.x }.let { if (it == minX) it + 1 else it }
-            val low = points.minOf { it.y }.let { if (type == "bar") minOf(0.0, it) else it }
-            val high = points.maxOf { it.y }.let { if (type == "bar") maxOf(0.0, it) else it }
-            val minY = if (low == high) low - 1 else low
-            val maxY = if (low == high) high + 1 else high
-            val tickStyle = TextStyle(color = ink, fontSize = 10.sp)
-            val tickLabels = (0..3).map { i -> measurer.measure(String.format("%.2g", maxY - (maxY - minY) * i / 3), tickStyle) }
+            val xAxis = remember(data, type) { if (type == "scatter")
+                cardChartAxis(points.minOf { it.x }, points.maxOf { it.x }, false) else null }
+            val minX = xAxis?.min ?: points.minOf { it.x }
+            val maxX = xAxis?.max ?: points.maxOf { it.x }.let { if (it == minX) it + 1 else it }
+            val axis = remember(data, type) { cardChartAxis(points.minOf { it.y }, points.maxOf { it.y }, type == "bar") }
+            val minY = axis.min
+            val maxY = axis.max
+            val ticks = axis.ticks.asReversed()
+            val tickStyle = TextStyle(color = ink, fontSize = 11.sp)
+            val tickLabels = cardChartTickLabels(ticks).map { measurer.measure(it, tickStyle) }
             val left = tickLabels.maxOf { it.size.width }.toFloat() + with(density) { 8.dp.toPx() }
             val right = with(density) { 16.dp.toPx() }
             val top = with(density) { 12.dp.toPx() }
@@ -98,35 +111,45 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                 val x = if (type == "bar") {
                     val slot = plotWidth(w) / data.first().points.size.coerceAtLeast(1)
                     left + slot * (p.x.toFloat() + .15f) + (seriesIndex + .5f) * barWidth(w)
-                } else left + ((p.x - minX) / (maxX - minX)).toFloat() * plotWidth(w)
+                } else if (type == "line" && data.first().points.size == 1) left + plotWidth(w) / 2
+                else left + ((p.x - minX) / (maxX - minX)).toFloat() * plotWidth(w)
                 return Offset(x, top + ((maxY - p.y) / (maxY - minY)).toFloat() * (h - top - bottom).coerceAtLeast(1f))
+            }
+            fun selectAt(tap: Offset, w: Float, h: Float) {
+                if (type == "pie") {
+                    val center = Offset(w / 2f, h / 2f)
+                    if ((tap - center).getDistance() <= minOf(w, h) * .43f) {
+                        val angle = ((atan2(tap.y - center.y, tap.x - center.x) * 180 / PI + 90 + 360) % 360).toFloat()
+                        val total = points.sumOf { it.y }; var end = 0f
+                        val index = points.indexOfFirst { end += (it.y / total * 360).toFloat(); angle < end }
+                        if (index >= 0) selected = 0 to index
+                    }
+                } else if (type == "line") {
+                    selected = 0 to cardChartLineIndex(tap.x, left, plotWidth(w), data.first().points.size)
+                } else if (type == "bar") {
+                    selected = cardChartBarSelection(tap.x, left, plotWidth(w), data.first().points.size, data.size)
+                } else {
+                    selected = data.flatMapIndexed { s, series -> series.points.mapIndexed { i, p ->
+                        val pos = position(p, w, h, s)
+                        Triple(s, i, (pos - tap).getDistance())
+                    } }.minByOrNull { it.third }?.let { it.first to it.second }
+                }
             }
             Canvas(Modifier.fillMaxWidth().height(210.dp).semantics { contentDescription = chartDescription }
                 .pointerInput(data, type, left, top, bottom, right) {
-                    detectTapGestures { tap ->
-                        if (type == "pie") {
-                            val center = Offset(size.width / 2f, size.height / 2f)
-                            if ((tap - center).getDistance() <= minOf(size.width, size.height) * .43f) {
-                                val angle = ((atan2(tap.y - center.y, tap.x - center.x) * 180 / PI + 90 + 360) % 360).toFloat()
-                                val total = points.sumOf { it.y }; var end = 0f
-                                val index = points.indexOfFirst { end += (it.y / total * 360).toFloat(); angle < end }
-                                if (index >= 0) selected = 0 to index
-                            }
-                        } else {
-                            val w = size.width.toFloat(); val h = size.height.toFloat()
-                            val zeroY = position(CardChartPoint("", minX, 0.0), w, h).y
-                            selected = data.flatMapIndexed { s, series -> series.points.mapIndexed { i, p ->
-                                val pos = position(p, w, h, s)
-                                // Distance to the drawn bar rectangle, not its top point.
-                                val distance = if (type == "bar") {
-                                    val halfWidth = barWidth(w).coerceAtLeast(1f) / 2
-                                    val dx = maxOf(abs(tap.x - pos.x) - halfWidth, 0f)
-                                    val dy = maxOf(minOf(pos.y, zeroY) - tap.y, tap.y - maxOf(pos.y, zeroY), 0f)
-                                    hypot(dx, dy)
-                                } else (pos - tap).getDistance()
-                                Triple(s, i, distance)
-                            } }.minByOrNull { it.third }?.let { it.first to it.second }
-                        }
+                    detectTapGestures { tap -> selectAt(tap, size.width.toFloat(), size.height.toFloat()) }
+                }
+                .pointerInput(data, type, left, top, bottom, right) {
+                    // Consume only after the long press wins. Child consumption stops the
+                    // phone layout's draggable sidebar while normal chat scrolling stays available.
+                    detectDragGesturesAfterLongPress(
+                        onDragStart = { point ->
+                            haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                            selectAt(point, size.width.toFloat(), size.height.toFloat())
+                        },
+                    ) { change, _ ->
+                        change.consume()
+                        selectAt(change.position, size.width.toFloat(), size.height.toFloat())
                     }
                 }) {
                 val w = size.width; val h = size.height
@@ -140,13 +163,21 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                         start += sweep
                     }
                 } else {
-                    repeat(4) { i ->
-                        val y = maxY - (maxY - minY) * i / 3
+                    ticks.forEachIndexed { i, y ->
                         val pos = position(CardChartPoint("", minX, y), w, h)
                         drawLine(grid, Offset(left, pos.y), Offset(w - right, pos.y), 1f)
-                        drawText(tickLabels[i], topLeft = Offset(0f, pos.y - tickLabels[i].size.height / 2))
+                        drawText(tickLabels[i], topLeft = Offset(left - 8.dp.toPx() - tickLabels[i].size.width, pos.y - tickLabels[i].size.height / 2))
                     }
                     val zeroY = position(CardChartPoint("", minX, 0.0), w, h).y
+                    selected?.let { (s, i) ->
+                        data.getOrNull(s)?.points?.getOrNull(i)?.let { p ->
+                            val pos = position(p, w, h, s)
+                            if (type == "bar") {
+                                drawRect(palette[s % palette.size].copy(alpha = .1f),
+                                    Offset(pos.x - barWidth(w) / 2, top), Size(barWidth(w), (h - top - bottom).coerceAtLeast(1f)))
+                            } else drawLine(ink.copy(alpha = .4f), Offset(pos.x, top), Offset(pos.x, h - bottom), 1.dp.toPx())
+                        }
+                    }
                     data.forEachIndexed { s, series ->
                         val color = palette[s % palette.size]
                         val path = Path()
@@ -167,43 +198,95 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                             }
                         }
                         if (type == "line") drawPath(path, color, style = androidx.compose.ui.graphics.drawscope.Stroke(2.dp.toPx()))
-                        selected?.takeIf { it.first == s }?.second?.let { i ->
-                            series.points.getOrNull(i)?.let { drawCircle(ink, 5.dp.toPx(), position(it, w, h, s)) }
+                        selected?.takeIf { type == "line" || it.first == s }?.second?.let { i ->
+                            series.points.getOrNull(i)?.let {
+                                val pos = position(it, w, h, s)
+                                drawCircle(markerBackground, 6.dp.toPx(), pos)
+                                drawCircle(color, 4.dp.toPx(), pos)
+                            }
                         }
                     }
-                    val labels = if (type == "scatter") (0..3).map { i ->
-                        val x = minX + (maxX - minX) * i / 3
-                        CardChartPoint(String.format("%.2g", x), x, 0.0)
-                    } else data.first().points
+                    val labels = xAxis?.let { axis ->
+                        cardChartTickLabels(axis.ticks).zip(axis.ticks).map { (label, x) -> CardChartPoint(label, x, 0.0) }
+                    } ?: data.first().points
                     val step = max(1, ceil(labels.size / 4.0).toInt())
-                    labels.forEachIndexed { i, p ->
-                        if (i % step == 0 || i == labels.lastIndex) {
-                            val x = if (type == "bar") left + plotWidth(w) / labels.size * (i + .5f) else position(p, w, h).x
-                            val layout = measurer.measure(p.label.take(8), TextStyle(color = ink, fontSize = 10.sp))
-                            drawText(layout, topLeft = Offset((x - layout.size.width / 2).coerceIn(0f, (w - layout.size.width).coerceAtLeast(0f)), h - bottom + 4.dp.toPx()))
+                    // Keep numeric labels intact. Prioritize endpoints and omit ticks that
+                    // would overlap instead of turning distinct large numbers into identical prefixes.
+                    val labelIndices = (listOf(0, labels.lastIndex) +
+                        labels.indices.filter { it % step == 0 }).distinct().filter { it in labels.indices }
+                    val occupied = mutableListOf<ClosedFloatingPointRange<Float>>()
+                    labelIndices.forEach { i ->
+                        val p = labels[i]
+                        val x = if (type == "bar") left + plotWidth(w) / labels.size * (i + .5f) else position(p, w, h).x
+                        val layout = measurer.measure(if (xAxis != null) p.label else p.label.take(8),
+                            TextStyle(color = ink, fontSize = 10.sp))
+                        val labelX = (x - layout.size.width / 2).coerceIn(0f, (w - layout.size.width).coerceAtLeast(0f))
+                        val labelEnd = labelX + layout.size.width
+                        if (labelEnd <= w && occupied.none { labelX < it.endInclusive + 8.dp.toPx() && labelEnd + 8.dp.toPx() > it.start }) {
+                            drawText(layout, topLeft = Offset(labelX, h - bottom + 4.dp.toPx()))
+                            occupied += labelX..labelEnd
                         }
                     }
+                    // Drawn in the same Canvas: the readout cannot steal pointer events.
+                    selected?.let { (s, i) -> data.getOrNull(s)?.points?.getOrNull(i)?.let tooltip@{ point ->
+                        val rows = if (type == "line") data.mapIndexedNotNull { index, series ->
+                            series.points.getOrNull(i)?.let { "${series.label}: ${cardChartNumber(it.y)}" to palette[index % palette.size] }
+                        } else listOf("${data[s].label}: ${cardChartNumber(point.y)}" to palette[s % palette.size]) +
+                            if (type == "scatter") listOf("x: ${cardChartNumber(point.x)}" to tooltipInk) else emptyList()
+                        val padding = 10.dp.toPx()
+                        val maxTextWidth = (minOf(220.dp.toPx(), w) - padding * 2).toInt().coerceAtLeast(1)
+                        val textRows = (listOf(point.label to tooltipInk) + rows).map { (text, color) ->
+                            measurer.measure(text, TextStyle(color = color, fontSize = 12.sp),
+                                overflow = TextOverflow.Ellipsis, maxLines = 1, constraints = Constraints(maxWidth = maxTextWidth))
+                        }
+                        val gap = 3.dp.toPx()
+                        val boxWidth = textRows.maxOf { it.size.width } + padding * 2
+                        val boxHeight = textRows.sumOf { it.size.height } + gap * (textRows.size - 1) + padding * 2
+                        // Large accessibility fonts can make the tooltip taller than the plot.
+                        // The complete, scalable readout below the chart remains available.
+                        if (boxHeight > h - bottom || boxWidth > w) return@tooltip
+                        val pos = position(point, w, h, s)
+                        val boxX = (if (pos.x + 12.dp.toPx() + boxWidth <= w) pos.x + 12.dp.toPx()
+                            else pos.x - 12.dp.toPx() - boxWidth).coerceIn(0f, (w - boxWidth).coerceAtLeast(0f))
+                        val boxY = (pos.y - boxHeight - 12.dp.toPx()).coerceIn(0f, (h - bottom - boxHeight).coerceAtLeast(0f))
+                        drawRoundRect(tooltipBackground, Offset(boxX, boxY), Size(boxWidth, boxHeight),
+                            androidx.compose.ui.geometry.CornerRadius(10.dp.toPx()))
+                        drawRoundRect(grid, Offset(boxX, boxY), Size(boxWidth, boxHeight),
+                            androidx.compose.ui.geometry.CornerRadius(10.dp.toPx()), style = Stroke(1.dp.toPx()))
+                        var textY = boxY + padding
+                        textRows.forEach { row ->
+                            drawText(row, topLeft = Offset(boxX + padding, textY))
+                            textY += row.size.height + gap
+                        }
+                    } }
                 }
             }
+            Text(stringResource(R.string.dynamic_ui_chart_gesture), style = MaterialTheme.typography.labelSmall, color = ink)
             if (type == "pie") Column(Modifier.heightIn(max = 180.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 val total = points.sumOf { it.y }
                 points.forEachIndexed { i, point ->
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("●", color = pieColors[i])
-                        Text("${point.label}: ${point.y} (${String.format("%.1f", point.y / total * 100)}%)", style = MaterialTheme.typography.bodySmall)
+                        Text("${point.label}: ${cardChartNumber(point.y)} (${String.format("%.1f", point.y / total * 100)}%)", style = MaterialTheme.typography.bodySmall)
                     }
                 }
             } else if (data.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                 data.forEachIndexed { i, series -> Text("● ${series.label}", color = palette[i % palette.size], style = MaterialTheme.typography.labelMedium) }
             }
             selected?.let { (s, i) -> data.getOrNull(s)?.points?.getOrNull(i)?.let { p ->
-                Text("${data[s].label} ${p.label}: ${p.y}" + if (type == "scatter") " (x=${p.x})" else "", style = MaterialTheme.typography.labelLarge)
+                if (type == "line") Column {
+                    Text(p.label, style = MaterialTheme.typography.labelLarge)
+                    data.forEachIndexed { index, series -> series.points.getOrNull(i)?.let {
+                        Text("${series.label}: ${cardChartNumber(it.y)}", color = palette[index % palette.size], style = MaterialTheme.typography.bodyMedium)
+                    } }
+                } else Text("${data[s].label} ${p.label}: ${cardChartNumber(p.y)}" +
+                    if (type == "scatter") " (x=${cardChartNumber(p.x)})" else "", style = MaterialTheme.typography.labelLarge)
             } }
             TextButton(onClick = { showData = !showData }) { Text(stringResource(R.string.dynamic_ui_chart_data)) }
             if (showData) Column(Modifier.heightIn(max = 240.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 data.forEach { series ->
                     if (series.label.isNotBlank()) Text(series.label, style = MaterialTheme.typography.labelLarge)
-                    series.points.forEach { p -> Text("${p.label}: ${p.y}" + if (type == "scatter") " (x=${p.x})" else "", style = MaterialTheme.typography.bodySmall) }
+                    series.points.forEach { p -> Text("${p.label}: ${cardChartNumber(p.y)}" + if (type == "scatter") " (x=${cardChartNumber(p.x)})" else "", style = MaterialTheme.typography.bodySmall) }
                 }
             }
         }

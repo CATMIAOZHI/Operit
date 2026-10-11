@@ -1,0 +1,71 @@
+package com.ai.assistance.operit.ui.common.dynamicui
+
+import kotlinx.serialization.json.*
+import org.junit.Assert.*
+import org.junit.Test
+
+class CardExpressTest {
+    @Test fun nestedComponentsAndCallsCompileWithoutManualIds() {
+        val source = """
+            ${'$'}/form = {years:4}
+            root = Column(children=[title,Display(text=formatNumber(value=multiply(a=${'$'}/form/years,b=10)))])
+            title = Heading(text="Cost")
+        """.trimIndent()
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(source), true)
+        val graph = batch.componentsBySurface.getValue("card")
+        assertEquals(3, graph.size)
+        assertEquals(listOf("title", "inline_1"), graph.getValue("root")["children"]!!.jsonArray.map { it.jsonPrimitive.content })
+        assertTrue(CardAuthoringCatalog.guide().contains("Display"))
+    }
+
+    @Test fun examplesPassNativeProtocol() {
+        for (name in listOf("calculator", "cost_calculator", "charts", "form")) {
+            val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
+            val report = CardExpress.report(source)
+            assertEquals("$name: $report", JsonPrimitive(true), report["valid"])
+            assertTrue(DynamicUiProtocol.parse(report["document"]!!.jsonPrimitive.content, true).complete)
+        }
+    }
+
+    @Test fun rejectsUnknownOrUnsafeSyntaxWithLocations() {
+        val bad = listOf(
+            "root = Text(\"hi\")",
+            "root = Text(text=\"hi\",unknown=1)",
+            "root = Column(children=[missing])",
+            "root = Column(children=[root])",
+            "root = Text(text=${'$'}/missing)",
+            "${'$'}/form = {x:1}\n${'$'}/form/x = 2\nroot = Text(text=\"hi\")",
+            "${'$'}/__proto__/x = 1\nroot = Text(text=\"hi\")",
+            "${'$'}/form = {constructor:1}\nroot = Text(text=\"hi\")",
+            "${'$'}/x = add(a=1,b=2)\nroot = Text(text=\"hi\")",
+            "root = Text(text=\"hi\")\nunused = Text(text=\"bye\")",
+            "root = Text(text=eval(value=\"boom\"))",
+            "root = Button(child=Text(text=\"go\"),action=Event(name=\"shell\"))",
+            "root = Text(text=\"hi\") root2 = Text(text=\"bad\")",
+            "root = Text(text=\"hi\",text=\"bad\")",
+            "root = Text(text=" + "[".repeat(30) + "1" + "]".repeat(30) + ")",
+            "${'$'}/style = \"h1\"\nroot = Text(text=\"Hello\",variant=${'$'}/style)",
+            "${'$'}/flag = null\nroot = CheckBox(label=\"Flag\",value=${'$'}/flag)",
+            "root = Chart(label=\"Bad\",type=\"bogus\",series=[])",
+            "root = Chart(label=\"Bad\",type=\"bar\",series=[{label:\"A\",values:[\"bad\"]}],labels=[\"x\"])",
+            "${'$'}/rows = [[1]]\nroot = Table(columns=[\"x\"],rows=${'$'}/rows)",
+            "root = Text(text=add(a=1,b=2))",
+            "root = Text(text=if(condition=true,then=\"ok\",else=1))",
+        )
+        bad.forEach {
+            val report = CardExpress.report(it)
+            assertEquals("$it: $report", JsonPrimitive(false), report["valid"])
+            assertTrue(report.toString(), report["line"]!!.jsonPrimitive.int >= 1)
+            assertTrue(report.toString(), report["column"]!!.jsonPrimitive.int >= 1)
+        }
+    }
+
+    @Test fun catalogMatchesRendererNamesAndPropertyKeys() {
+        assertEquals(DynamicUiProtocol.components, CardAuthoringCatalog.components.keys)
+        val actual = operitDynamicUiCatalog.components.associateBy { it.name }
+        CardAuthoringCatalog.components.forEach { (name, fields) ->
+            assertNotNull(name, actual[name])
+            assertTrue(name, actual.getValue(name).properties.map { it.key }.containsAll(fields.map { it.name }))
+        }
+    }
+}

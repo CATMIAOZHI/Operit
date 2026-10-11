@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import java.time.LocalDate
 import java.time.ZoneOffset
@@ -33,6 +35,7 @@ internal val LocalCardInputError = compositionLocalOf<() -> Unit> { {} }
 internal val LocalCardIconWarning = compositionLocalOf<() -> Unit> { {} }
 internal val LocalCardReadOnly = compositionLocalOf { false }
 internal val LocalCardBrowse = compositionLocalOf { false }
+internal val LocalCardGridCell = compositionLocalOf { false }
 
 internal fun cardNumberLabel(value: Float): String =
     if (!value.isFinite()) "—" else java.math.BigDecimal(value.toString()).setScale(3, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
@@ -49,7 +52,7 @@ internal val operitDynamicUiCatalog by lazy {
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
             listOf(text, CardIcon, row, column, list, card, divider, CardButton, CardCheckBox) +
                 listOf(
-                    "Heading", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
+                    "Heading", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
                     "Select", "ChoicePicker", "DatePicker", "TextArea", "TextField", "Slider",
                     "Grid", "Form", "Expandable",
                 ).map(::OperitCardComponent) + cardAdvancedNames.map(::AdvancedCardComponent)
@@ -73,10 +76,11 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
     private val maximum = A2uiProperty.dynamicNumber("max")
     private val stepCount = A2uiProperty.dynamicNumber("steps")
     private val columnCount = A2uiProperty.dynamicNumber("columnCount")
+    private val columnSpans = A2uiProperty.dynamicValue("columnSpans")
     private val expandedProperty = A2uiProperty.dynamicBoolean("expanded")
     private val inputType = A2uiProperty.dynamicString("inputType")
     override val description = "Operit native $name. Local field changes do not send model requests."
-    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, expandedProperty, inputType)
+    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, expandedProperty, inputType)
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
@@ -86,8 +90,22 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
         val inputError = LocalCardInputError.current
         when (name) {
             "Heading" -> Text(properties.bind(text).orEmpty(), modifier, style = MaterialTheme.typography.titleMedium)
-            "Badge" -> Surface(modifier, shape = MaterialTheme.shapes.small, color = MaterialTheme.colorScheme.secondaryContainer) {
-                Text(properties.bind(text).orEmpty(), Modifier.padding(8.dp, 4.dp), style = MaterialTheme.typography.labelMedium)
+            "Display" -> Surface(modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Column(Modifier.padding(16.dp), horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    if (title.isNotBlank()) Text(title, Modifier.fillMaxWidth(), textAlign = TextAlign.End,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
+                    // Keep long results readable at large font scales without truncating digits.
+                    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()), contentAlignment = Alignment.CenterEnd) {
+                        Text(properties.bind(text).orEmpty(), maxLines = 1, softWrap = false,
+                            style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
+                    }
+                }
+            }
+            "Badge" -> Surface(modifier, shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                Text(properties.bind(text).orEmpty(), Modifier.padding(10.dp, 4.dp),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
             }
             "Code" -> Text(
                 properties.bind(text).orEmpty(), modifier.horizontalScroll(rememberScrollState()).padding(8.dp),
@@ -223,11 +241,14 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 val readOnly = LocalCardReadOnly.current
                 var localExpanded by rememberSaveable(readOnly, boundExpanded) { mutableStateOf(boundExpanded ?: false) }
                 val expanded = if (readOnly) localExpanded else boundExpanded ?: localExpanded
-                val child: @Composable (Int) -> Unit = { index ->
+                val child: @Composable (Int, Boolean) -> Unit = { index, gridCell ->
                     val ref = refs[index]
                     key(ref.id, ref.baseDataPath) {
                         when (val state = observeA2uiComponentState(ref)) {
-                            is A2uiComponentState.Success -> A2uiComponent(state.component)
+                            is A2uiComponentState.Success ->
+                                CompositionLocalProvider(LocalCardGridCell provides (gridCell && state.component.type == "Button")) {
+                                    A2uiComponent(state.component)
+                                }
                             is A2uiComponentState.Error -> Text("⚠", color = MaterialTheme.colorScheme.error)
                             A2uiComponentState.Loading -> CircularProgressIndicator(Modifier.size(16.dp))
                         }
@@ -242,17 +263,25 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                         if (name == "Grid") BoxWithConstraints(Modifier.fillMaxWidth()) {
                             val explicitCount = properties.bind(columnCount)?.toInt()?.coerceIn(1, 4)
                             val count = explicitCount ?: if (maxWidth < 340.dp) 1 else 2
+                            val spans = (properties.bind(columnSpans) as? List<*>)?.map { (it as Number).toInt() }
+                                ?: List(refs.size) { 1 }
+                            val gridRows = cardGridRows(count, spans)
                             val width = if (explicitCount != null) maxOf(maxWidth, (count * 56 + (count - 1) * 8).dp) else maxWidth
                             Box(Modifier.horizontalScroll(rememberScrollState())) {
                             Column(Modifier.width(width), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                refs.indices.chunked(count).forEach { pair ->
+                                gridRows.forEach { cells ->
                                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                        pair.forEach { index -> Box(Modifier.weight(1f)) { child(index) } }
+                                        val cellWidth = (width - 8.dp * (count - 1)) / count
+                                        cells.forEach { cell ->
+                                            Box(Modifier.width(cellWidth * cell.span + 8.dp * (cell.span - 1))) {
+                                                child(cell.index, true)
+                                            }
+                                        }
                                     }
                                 }
                             }
                             }
-                        } else refs.indices.forEach { child(it) }
+                        } else refs.indices.forEach { child(it, false) }
                     }
                 }
             }
@@ -279,10 +308,14 @@ private object CardButton : A2uiBasicCatalogV1.Button {
             }
         }
         Column(modifier) {
+            val buttonModifier = if (LocalCardGridCell.current) Modifier.fillMaxWidth().heightIn(min = 48.dp) else Modifier
+            val buttonPadding = if (LocalCardGridCell.current) PaddingValues(horizontal = 8.dp, vertical = 8.dp)
+                else if (variant == A2uiBasicCatalogV1.Button.Variant.Borderless) ButtonDefaults.TextButtonContentPadding
+                else ButtonDefaults.ContentPadding
             when (variant) {
-                A2uiBasicCatalogV1.Button.Variant.Primary -> Button({ dispatchAction(action) }, enabled = enabled, content = content)
-                A2uiBasicCatalogV1.Button.Variant.Secondary -> OutlinedButton({ dispatchAction(action) }, enabled = enabled, content = content)
-                A2uiBasicCatalogV1.Button.Variant.Borderless -> TextButton({ dispatchAction(action) }, enabled = enabled, content = content)
+                A2uiBasicCatalogV1.Button.Variant.Primary -> Button({ dispatchAction(action) }, modifier = buttonModifier, contentPadding = buttonPadding, enabled = enabled, content = content)
+                A2uiBasicCatalogV1.Button.Variant.Secondary -> OutlinedButton({ dispatchAction(action) }, modifier = buttonModifier, contentPadding = buttonPadding, enabled = enabled, content = content)
+                A2uiBasicCatalogV1.Button.Variant.Borderless -> TextButton({ dispatchAction(action) }, modifier = buttonModifier, contentPadding = buttonPadding, enabled = enabled, content = content)
             }
             checks.firstOrNull { !it.condition }?.let { Text(it.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
         }

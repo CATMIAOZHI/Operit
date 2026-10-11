@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.common.dynamicui
 
 import org.junit.Assert.*
 import org.junit.Test
+import kotlinx.serialization.json.*
 
 class DynamicUiProtocolTest {
     private val create = """{"version":"v0.9","createSurface":{"surfaceId":"test","catalogId":"${DynamicUiProtocol.CATALOG}"}}"""
@@ -61,5 +62,40 @@ class DynamicUiProtocolTest {
         assertTrue(runCatching {
             updateCardField({}) { throw kotlinx.coroutines.CancellationException("disposed") }
         }.exceptionOrNull() is kotlinx.coroutines.CancellationException)
+    }
+
+    @Test fun missingClosingBraceReportsLineAndSafeReasonWhileNestedDataIsValid() {
+        val initial = """{"version":"v0.9","updateDataModel":{"surfaceId":"test","path":"/","value":{"calculator":{"display":"private-value","error":false}}}}"""
+        val source = "$create\n${components(text)}\n$initial"
+        assertTrue(DynamicUiProtocol.validationReport(source)["valid"]!!.jsonPrimitive.boolean)
+        val report = DynamicUiProtocol.validationReport(source.dropLast(1))
+        assertFalse(report["valid"]!!.jsonPrimitive.boolean)
+        assertEquals(3, report["line"]!!.jsonPrimitive.int)
+        assertEquals("invalid_json", report["code"]!!.jsonPrimitive.content)
+        assertTrue(report["message"]!!.jsonPrimitive.content.contains("line 3"))
+        assertTrue(report["message"]!!.jsonPrimitive.content.contains("Nested initial data is supported"))
+        assertFalse(report.toString().contains("private-value"))
+    }
+
+    @Test fun structuralFailureExplainsTheActualConstraint() {
+        val report = DynamicUiProtocol.validationReport("$create\n${components("""{"id":"root","component":"Grid","columnCount":5,"children":[]}""")}")
+        assertEquals(2, report["line"]!!.jsonPrimitive.int)
+        assertEquals("invalid_card", report["code"]!!.jsonPrimitive.content)
+        assertTrue(report["message"]!!.jsonPrimitive.content.contains("Grid columns must be 1 to 4"))
+    }
+
+    @Test fun gridSpansAreStaticBoundedAndMatchChildren() {
+        val child = """{"id":"a","component":"Display","text":"42","label":"Result"}"""
+        fun document(extra: String) = "$create\n${components("""{"id":"root","component":"Grid","children":["a"],$extra},$child""")}"
+        assertTrue(DynamicUiProtocol.validationReport(document(""""columnCount":4,"columnSpans":[2]"""))["valid"]!!.jsonPrimitive.boolean)
+        for (fields in listOf(
+            """"columnSpans":[2]""",
+            """"columnCount":4,"columnSpans":[]""",
+            """"columnCount":4,"columnSpans":[5]""",
+            """"columnCount":4,"columnSpans":[0]""",
+            """"columnCount":4,"columnSpans":[1.5]""",
+            """"columnCount":4,"columnSpans":["2"]""",
+            """"columnCount":4,"columnSpans":{"path":"/spans"}""",
+        )) rejected(document(fields))
     }
 }

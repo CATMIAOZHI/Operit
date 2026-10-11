@@ -1,26 +1,48 @@
-// Keep native-engine fixtures in sync with the actual on-demand package output.
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
 const assert = require("node:assert/strict");
 const root = path.resolve(__dirname, "../..");
 const source = fs.readFileSync(path.join(root, "examples/dynamic_ui.js"), "utf8");
-const fixtureDir = path.join(root, "app/src/test/resources/dynamicui");
-let result;
-const sandbox = {exports: {}, complete: value => { result = value; }};
+let result, checked;
+let report = {valid:true,reference:"demo",message:"```a2ui-ref\ndemo\n```"};
+const sandbox = {
+    exports: {}, __operitCurrentCallId:"host-call", complete:value => { result = value; },
+    NativeInterface: {
+        dynamicUiGuide:() => "NATIVE SIGNATURES",
+        prepareDynamicUi:(callId, source) => {
+            assert.equal(callId, "host-call");
+            checked = source;
+            return JSON.stringify(report);
+        },
+    },
+};
 vm.runInNewContext(source, sandbox);
 (async () => {
-    for (const name of ["calculator", "cost_calculator", "charts"]) {
+    await sandbox.exports.read_guide();
+    assert.ok(result.message.endsWith("NATIVE SIGNATURES"));
+    for (const name of ["calculator","cost_calculator","charts","form"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
-        const document = result.message.split("```a2ui\n")[1].split("\n```")[0] + "\n";
-        document.trim().split("\n").forEach(line => JSON.parse(line));
-        const fixture = path.join(fixtureDir, name + ".ndjson");
-        if (process.argv.includes("--update")) {
-            fs.mkdirSync(fixtureDir, {recursive: true});
-            fs.writeFileSync(fixture, document);
-        } else assert.equal(fs.readFileSync(fixture, "utf8"), document, `${name} fixture differs`);
+        assert.equal(result.valid, true);
+        assert.ok(result.message.includes("a2ui-ref"));
+        assert.ok(!result.message.includes("root ="), "Do not ask the model to copy source again");
+        const file = path.join(root, "app/src/test/resources/dynamicui", name + ".express");
+        if (process.argv.includes("--update")) fs.writeFileSync(file, checked);
+        else assert.equal(fs.readFileSync(file, "utf8"), checked);
     }
-    assert.equal(fs.readFileSync(path.join(root, "app/src/main/assets/packages/dynamic_ui.js"), "utf8"), source);
-    console.log("Package examples and native fixtures match.");
-})().catch(error => { console.error(error); process.exitCode = 1; });
+    await sandbox.exports.prepare_card({source:'root = Text(text="hello")'});
+    assert.equal(checked, 'root = Text(text="hello")');
+    report = {valid:false,code:"invalid_express",line:3,column:5,message:"Expected ')'."};
+    await sandbox.exports.prepare_card({source:'root = Text('});
+    assert.equal(result.success, true);
+    assert.equal(result.valid, false);
+    assert.equal(result.line, 3);
+    assert.equal(result.column, 5);
+    assert.equal(result.code, "invalid_express");
+    await sandbox.exports.prepare_card({source:42});
+    assert.equal(result.code, "invalid_source");
+    assert.equal(sandbox.exports.validate_card, undefined);
+    assert.equal(fs.readFileSync(path.join(root, "app/src/main/assets/packages/dynamic_ui.js"),"utf8"), source);
+    console.log("Express package fixtures and diagnostic/reference transport passed.");
+})().catch(e => { console.error(e); process.exitCode = 1; });

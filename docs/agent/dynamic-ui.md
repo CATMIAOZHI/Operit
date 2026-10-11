@@ -2,14 +2,59 @@
 
 ## 使用
 
-启用「交互卡片」工具包。AI 先调用 `dynamic_ui.read_guide`，再在普通 Markdown
-之间输出 `a2ui` 代码围栏。指南含可直接运行的「AI 参数示例」：默认 Medium，
-补充说明可编辑，保存后保留可读表单，可再次编辑或取消修改。
-这个示例只保存卡片，不修改真实模型配置。
-`read_example("calculator")` 返回按键式四则计算器；
-`read_example("cost_calculator")` 返回本地费用试算；`read_example("charts")`
-返回折线、柱状、饼图、散点四类演示数据。每个围栏必须自带完整初始化；
-后续围栏不能更新前一个围栏的 surface。
+工具包描述和 `read_guide` 会引导 AI 主动选择有助于理解的可视化，无需用户明确要求：
+趋势用折线图，数量对比用柱状图，占比用饼图，数值关系用散点图；
+参数试算用本地控件和计算，收集信息用表单。简单回答仍用文字或 Markdown 表格。
+事实图表必须使用用户或工具提供的数据，演示数据与假设需明确标注；不为配图编造数据。
+这是给模型的使用指引，不会强制每条回答生成卡片。
+
+所有卡片共用中性视觉样式：浅色模式白底、深色模式深灰底、淡边框和主题强调色，
+不改变聊天背景。指南同时要求自定义表单、对比、图表和参数试算组织好标题、重点、
+操作和辅助说明，而不是仅套用固定示例。
+`Display(text,label?)` 提供突出结果区；长结果可横向查看，不省略数字。
+`Grid` 内按钮铺满各自单元格，未满行不会重新均分。显式 `columnCount` 时可传
+`columnSpans` 整数数组，与 `children` 一一对应，每项为 `1..columnCount`；
+跨列不足时另起一行。计算器的零键使用两列，费用试算也复用 `Display`。
+启用「交互卡片」工具包。AI 先调用 `dynamic_ui.read_guide`，再调用
+`prepare_card(source)` 编译 Express 源码。成功后只需在回答中放返回的 `a2ui-ref`
+短围栏。应用在模型文本进入显示、历史和持久化之前，将引用展开为完整 `a2ui`。
+不再让模型二次抄写 JSON；工具不回传整份编译结果。`valid:false` 保留行、列和原因。
+新编写入口只有 Express，移除 `prepare_card(components,data)` 和 `validate_card`。
+
+`read_example("calculator"|"cost_calculator"|"charts"|"form")` 同样编译后返回短引用。
+它们分别是按键计算器、费用试算、四类图表和表单演示，不修改真实应用配置。
+每张卡片独立初始化，不能跨卡片更新状态。
+
+## Express 编写与交付
+
+参考 [A2UI Express 规范](https://a2ui.org/specification/proposals/express/a2ui_express/)及
+[`Express.g4`](https://github.com/a2ui-project/a2ui/blob/ce03d005c0575ff6708da583d9e7658a34df2d5d/specification/inference_formats/express/Express.g4)，
+参考版本 `ce03d005c0575ff6708da583d9e7658a34df2d5d`。
+这是 Operit 的 **Kotlin 受限子集实现**，不是完整官方 Express SDK，也不宣称通过其全套 conformance。
+不引入 TypeScript/ANTLR 运行时。
+
+```text
+$/form = {years:4}
+root = Column(children=[
+  Heading(text="费用试算"),
+  Display(label="演示金额",text=formatNumber(value=multiply(a=$/form/years,b=12.5))),
+  Slider(label="年数",min=1,max=10,steps=8,number=$/form/years)
+])
+```
+
+仅命名参数；一行一项赋值，可多行构造。组件内联或用变量引用，编译器生成 ID；
+使用 `root` 入口。状态仅绝对对象路径、字面量初始化；纯函数使用现有允许列表，
+动作以 `Event(name=...,context={...})` 声明。不支持位置参数、标签、脚本、import、
+生命周期命令、远端目录、模板或跨卡片更新。组件说明和签名来自同一作者目录。
+解析前限制 64K 字符，解析中限制深度、节点、数组和字段数量，编译后再过原生协议校验。
+
+注册只能通过当前 `dynamic_ui` 工具调用的真实执行会话；引用归属稳定的 run ID，
+不受 steering 引起的消息计时 scope 切换影响。仅模型正文中的独立完整引用围栏可展开，
+思考、工具内容、普通代码示例不展开；SAVEPOINT/ROLLBACK 同时恢复解码状态。
+未闭合引用保持代码，丢失或跨轮引用显示明确提示。单轮最多 16 张/512K 编译文本，
+临时全局存储最多 4M 字符；单次采样展开最多 512K，重复引用也计入。
+整轮结束清理临时内容。最终聊天记录为自包含卡片，不需要临时存储进行导出和恢复。
+这节省二次生成成本，不代表后续历史中的卡片源码不占输入 token。
 
 卡片原文随聊天消息保存，本地字段值以原子文件保存在应用私有 `dynamic_ui/`。
 按聊天、消息时间戳、回答版本、围栏位置、源内容和 surface ID 隔离。
@@ -35,7 +80,7 @@ Expandable 可将 `expanded` 绑定数据路径，跨页面恢复展开状态。
 - `CanvasMarkdownNodeRenderer`：仅识别明确的 `a2ui` 语言围栏。
 - `ChatViewModel.submitDynamicUi`：再次核对会话、消息和版本，复用原聊天发送链路。
 
-P0 支持 Card、Text、Heading、Badge、Icon、Row、Column、Grid、Divider、
+P0 支持 Card、Text、Heading、Display、Badge、Icon、Row、Column、Grid、Divider、
 Button、Progress、List、Table、Code。
 P1 支持 TextField、TextArea、CheckBox、RadioGroup、Select、Slider、Switch、
 DatePicker、Form、Expandable。Select 和 DatePicker 在卡片内展开，不创建 Activity
@@ -108,10 +153,18 @@ and/or/not、if、formatNumber、concat、calculatorStep。最多 6 层嵌套、
 第二次真机计算器反馈：首次生成的 NDJSON 第 2 行括号不配对；重写后计算正常，
 但模型把连续滑块的小数结果格式化为整数，造成 `3.219 + 3.814 → 7` 的误解。
 不是响应式引擎失效，也没有达到函数嵌套深度上限。
-新增 `validate_card(source)`，经 NativeInterface 调用与渲染入口相同的协议校验器，
-只返回安全错误码/真实行号，不执行卡片。自定义文档显示前必须调用校验，
-示例优先直接复用；每张独立卡片推荐独立围栏，减少坏文档的连带影响。
-检查成功只表示协议入口通过，不保证视觉布局或业务计算正确。
+当时增加了原生校验工具；现已由 Express 编译入口统一校验并交付，
+不再公开手写 NDJSON 的生成流程。检查仍不保证视觉布局或业务计算意图正确。
+
+第三次真机反馈：模型反复抄写示例，22 次校验有 15 次失败，多数是在
+`updateDataModel` 的嵌套初始值末尾漏掉闭合括号。嵌套对象本身受支持。
+原先 `success:false` 会让工具执行器只保留 message/data，丢失 line/code。
+校验现在将文档不合法作为 `success:true, valid:false` 的完整检查结果返回；
+包含安全错误码、行号、可用时的列号和原因，文字消息也包含位置。
+解析器原始片段不会进入诊断；工具不可用仍属于执行失败。
+
+这次重构将生成流程统一为 Express 编译与短引用交付，消除校验后再次抄写的环节。
+渲染入口继续独立校验；未引入自动补括号或静默放宽协议。
 
 本地状态动作在宿主消费事件时重新解析原始绑定，随后无挂起地写回，避免排队按键
 基于同一旧快照计算；发送给 AI/工具请求继续使用点击时快照，确认预览不变。

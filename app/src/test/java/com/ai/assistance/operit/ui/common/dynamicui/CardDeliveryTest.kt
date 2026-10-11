@@ -1,0 +1,56 @@
+package com.ai.assistance.operit.ui.common.dynamicui
+
+import org.junit.Assert.*
+import org.junit.Test
+
+class CardDeliveryTest {
+    private val id = "00000000-0000-0000-0000-000000000001"
+    private val ref = "```a2ui-ref\n$id\n```"
+    private val result = "```a2ui\nDOCUMENT\n```"
+    private fun decoder() = CardReferenceExpander({ if (it == id) "DOCUMENT" else null }, "MISSING")
+    private fun decode(text: String, size: Int = 1): String {
+        val decoder = decoder()
+        return text.chunked(size).joinToString("") { decoder.push(it) } + decoder.finish()
+    }
+    @Test fun everyChunkBoundaryProducesSameSelfContainedMessage() {
+        val input = "Intro\n$ref\nAfter"
+        for (size in 1..input.length) assertEquals("size=$size", "Intro\n$result\nAfter", decode(input, size))
+        assertEquals(result, decode(ref))
+        assertEquals("``", decode("``"))
+        assertEquals("```a2ui-ref", decode("```a2ui-ref"))
+        assertEquals("```a2ui-ref\n$id", decode("```a2ui-ref\n$id"))
+        assertEquals("hello", decoder().push("hello"))
+    }
+    @Test fun codeThinkingAndToolArgumentsAreNotExpanded() {
+        listOf("````example\n$ref\n````", "~~~\n$ref\n~~~",
+            "<think>\n$ref\n</think>", "<think data-operit-provider-reasoning=\"html-v1\">\n$ref\n</think>",
+            "<tool name=\"anything\">\n$ref\n</tool>",
+            "<tool_ab12 name=\"anything\">\n$ref\n</tool_ab12>",
+            "<tool_result_ab12>\n$ref\n</tool_result_ab12>",
+            "<ns:tool_ab12>\n$ref\n</ns:tool_ab12>",
+            "> $ref", "    $ref").forEach { assertEquals(it, decode(it)) }
+        assertEquals("<think>x</think>\n$result", decode("<think>x</think>\n$ref"))
+        assertEquals("<tool_ab12>x</tool_ab12>\n$result", decode("<tool_ab12>x</tool_ab12>\n$ref"))
+    }
+    @Test fun rollbackRestoresHalfReferenceAndOutputQuota() {
+        val decoder = decoder()
+        assertEquals("", decoder.push("```a2ui-ref\n"))
+        decoder.savepoint("point")
+        assertEquals(result + "\n", decoder.push("$id\n```\n"))
+        decoder.rollback("point")
+        assertEquals(result, decoder.push("$id\n```") + decoder.finish())
+    }
+    @Test fun referencesCannotCrossRunsAndAreRemovedAtEnd() {
+        CardDelivery.begin("a")
+        CardDelivery.begin("b")
+        try {
+            val ref = CardDelivery.register("a", "payload")
+            assertEquals("payload", CardDelivery.resolve("a", ref))
+            assertNull(CardDelivery.resolve("b", ref))
+            CardDelivery.end("a")
+            assertNull(CardDelivery.resolve("a", ref))
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("b", it) }, "MISSING")
+            assertEquals("MISSING\n", decoder.push("```a2ui-ref\n$ref\n```\n"))
+        } finally { CardDelivery.end("a"); CardDelivery.end("b") }
+    }
+}

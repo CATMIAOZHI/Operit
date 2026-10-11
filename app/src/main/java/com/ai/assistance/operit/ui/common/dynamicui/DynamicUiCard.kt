@@ -11,6 +11,8 @@ import androidx.a2ui.engine.model.A2uiCoreSurfaceModel
 import androidx.a2ui.model.processor.A2uiActionInterceptor
 import androidx.a2ui.model.protocol.*
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.material.icons.Icons
@@ -233,12 +235,17 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     }
     val rootIsCard = components.size == 1 && components.values.single()["root"]?.get("component")?.jsonPrimitive?.content == "Card"
     // Use the app's fonts and colors, with form-sized body text instead of chat prose sizing.
-    MaterialTheme(typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium)) {
+    MaterialTheme(
+        colorScheme = cardColorScheme(MaterialTheme.colorScheme),
+        shapes = MaterialTheme.shapes.copy(medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(20.dp)),
+        typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium),
+    ) {
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
     Surface(
         Modifier.fillMaxWidth().padding(vertical = 8.dp),
         shape = MaterialTheme.shapes.large,
-        color = if (rootIsCard && error == null) Color.Transparent else MaterialTheme.colorScheme.surfaceContainerLow,
+        color = if (rootIsCard && error == null) Color.Transparent else MaterialTheme.colorScheme.surface,
+        border = if (rootIsCard && error == null) null else BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
     ) {
         Column(Modifier.padding(if (rootIsCard && error == null) 0.dp else 16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (error != null) {
