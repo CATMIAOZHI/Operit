@@ -17,7 +17,19 @@
     {
       "name": "prepare_card",
       "description": {"zh": "编译并校验 Express 卡片，返回展示短引用。失败按行列修正源码；成功只输出短引用，不抄写 JSON。", "en": "Compile and validate Express. Fix reported source locations on failure. On success display only the returned reference, never copy JSON."},
-      "parameters": [{"name": "source", "type": "string", "required": true, "description": {"zh": "Express 源码，不含围栏；参数使用 name=value，语法见 read_guide", "en": "Express source without fences; use name=value arguments. See read_guide."}}]
+      "parameters": [
+        {"name": "source", "type": "string", "required": true, "description": {"zh": "Express 源码，不含围栏；参数使用 name=value，语法见 read_guide", "en": "Express source without fences; use name=value arguments. See read_guide."}},
+        {"name": "live", "type": "boolean", "required": false, "description": {"zh": "允许本轮更新 $/agent 数据；必须初始化该对象。", "en": "Allow current-turn updates to initialized $/agent data."}}
+      ]
+    },
+    {
+      "name": "patch_card_data",
+      "description": {"zh": "原位替换本轮 live 卡片的 Agent 数据，不改界面结构或用户输入。成功后无需再次展示引用。", "en": "Replace Agent data in a current-turn live card without changing layout or user input. Do not display the reference again."},
+      "parameters": [
+        {"name": "reference", "type": "string", "required": true, "description": {"zh": "本轮 live 卡片引用", "en": "Current-turn live card reference."}},
+        {"name": "expected_version", "type": "number", "required": true, "description": {"zh": "最近返回的版本号，初始为 0", "en": "Last returned version, initially 0."}},
+        {"name": "data", "type": "object", "required": true, "description": {"zh": "完整的新 Agent 数据对象，最多 8K 字符", "en": "Complete new Agent data object, at most 8K characters."}}
+      ]
     },
     {
       "name": "update_card",
@@ -31,7 +43,7 @@
     {
       "name": "read_example",
       "description": {"zh": "直接生成已校验的演示卡片，返回展示短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo and return its display reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats、progress、responsive、data 或 vector", "en": "calculator, cost_calculator, charts, form, info, stats, progress, responsive, data or vector"}}]
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats、progress、responsive、data、vector、repeat 或 curves", "en": "calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat or curves"}}]
     }
   ]
 }
@@ -69,7 +81,7 @@ State bindings use absolute object paths: $/form/years. Initialize with literal 
 $/form = {years:4,discount:false}
 No overlapping initializations, array-index paths, reserved keys, uninitialized bindings, or calls
 inside initial data. Strings use JSON double quotes/escapes; numbers are decimal.
-No positional args, scripts, operators, imports, templates, lifecycle commands or remote catalogs.
+No positional args, scripts, operators, imports, lifecycle commands or remote catalogs.
 All declarations must be reachable from root. No cycles. Max 128 components, 32 children/container,
 depth 12; source 64K characters, compiled document 128K, initial data 32K, string 8192 characters.
 Event(name="...", context={...}) describes an action, not a callback.
@@ -78,6 +90,26 @@ Functions accept numeric strings. if evaluates eagerly; division by zero is unre
 Conditional hints and Button checks, e.g. checks=[{condition:greaterThan(a=$/form/years,b=0),
 message:"Enter a positive value"}]. Bind controls' value/checked/number to initialized state.
 Literal controls are read-only. Calls never write state; an explicit local_action does.
+
+DYNAMIC LISTS
+Repeat(items=$/issues,key="id",child=issueRow,maxItems=20) repeats one component template.
+Initialize issues as object arrays with stable, unique nonempty string IDs (not array indexes).
+Template fields use item(field="title") or item(field="author/name"); functions may consume item values.
+Item data is read-only. Absolute $/ bindings still refer to shared card state, not row-local form fields.
+Arrays may come from arrayFilter. Default maxItems=20, maximum32; overflow is rejected, never truncated.
+Repeat cannot nest. Empty arrays render no rows; use Conditional for an empty-state explanation.
+
+LIVE TASK DATA
+prepare_card(source,live=true) enables data-only updates during this active turn.
+Initialize $/agent={...} as an object (maximum8K). Keep user inputs under other branches such as $/form.
+After displaying the reference ONCE, patch_card_data(reference,expected_version=0,data={...}) replaces
+the COMPLETE Agent object. Each success returns the next version; use it on the next patch.
+Conflicts and invalid updates change nothing. The whole source is revalidated before publication.
+User controls/local actions cannot write Agent data. Patches never execute actions or modify layout.
+The final data is saved on this device, including while the card is off-screen. After this turn ends
+the reference is no longer writable. update_card still creates a separate, non-live revision.
+Live data and user input are included in app data backups; ordinary text exports carry initial data.
+Cross-card sharing is not implicit: use multiple Panels in one card for shared controls and results.
 
 LAYOUT — applies to ALL cards, not only calculators
 One purpose per card: concise title, prominent result, controls, short supporting note.
@@ -137,6 +169,10 @@ this is a LOCATION SKETCH, not roads/navigation. Draft saves/copies locally, nev
 Popover(label="Details",child=...) opens an anchored panel inside the card, at most320x240 dp,
 with scrolling, a close button and outside-tap dismissal. Short cards expand to fit the panel.
 Do not nest Popovers or hide essential information in them. Opening never calls AI.
+Frame(child=...,minWidth=0,maxWidth=600,minHeight=0,maxHeight=300,aspectRatio=1.5)
+bounds one region; aspectRatio is width/height (0.25..4). Available screen constraints take priority.
+Use ratios for graphics/media, not growing prose or forms. Width0..960dp, height0..480dp;
+defaults are min0,maxWidth960,maxHeight480. Content is clipped to the requested region.
 Vector(label="Accessible description",width=320,height=180,shapes=[...]) draws static geometry.
 Viewport integer dimensions1..1000; coordinates stay inside it. Max64 shapes,128 points/shape.
 Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100},
@@ -144,6 +180,9 @@ Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100},
 {type:"polyline",points:[[0,0],[100,50]]}, {type:"polygon",points:[[0,0],[100,0],[50,50]]},
 {type:"text",x:10,y:10,text:"Label",size:16}. Text uses TOP-LEFT coordinates; allow space for it.
 Optional tone=neutral|accent|success|info|warning|error, filled=true, stroke=0.5..12.
+Curves: {type:"quadratic",x1:0,y1:80,cx:100,cy:0,x2:200,y2:80} or
+{type:"cubic",x1:0,y1:80,cx1:60,cy1:0,cx2:140,cy2:160,x2:200,y2:80}.
+All endpoints and controls must be within the viewport; curves are stroked, never filled.
 No SVG markup, arbitrary paths, scripts, URLs or touch handlers. Use charts for data inspection.
 
 ACTIONS
@@ -176,19 +215,28 @@ function native() {
         throw new Error("This app version does not include the Express card compiler.");
     return NativeInterface;
 }
-function prepare(source) {
+function prepare(source, live = false) {
     const root = typeof globalThis !== "undefined" ? globalThis : this;
     const callId = String(root.__operitCurrentCallId || "");
     if (!callId) throw new Error("No active card tool invocation.");
-    return {success:true, ...JSON.parse(String(native().prepareDynamicUi(callId, source)))};
+    return {success:true, ...JSON.parse(String(native().prepareDynamicUi(callId, source, live === true)))};
 }
 exports.read_guide = async () => complete({success:true,message:guide + native().dynamicUiGuide()});
-exports.prepare_card = async ({source}) => {
+exports.prepare_card = async ({source, live = false}) => {
     if (typeof source !== "string" || source.length > 65536) {
         complete({success:true,valid:false,code:"invalid_source",message:"Pass Express source (maximum 65536 characters)."});
         return;
     }
-    complete(prepare(source));
+    complete(prepare(source, live));
+};
+exports.patch_card_data = async ({reference, expected_version, data}) => {
+    if (typeof reference !== "string" || reference.length > 80 || !Number.isInteger(expected_version) ||
+        expected_version < 0 || !data || Array.isArray(data) || typeof data !== "object" || JSON.stringify(data).length > 8192) {
+        complete({success:true,valid:false,message:"Pass a live reference, integer version and an Agent data object up to 8K characters."});
+        return;
+    }
+    complete({success:true,...JSON.parse(String(native().patchDynamicUiData(
+        String(globalThis.__operitCurrentCallId || ""), reference, expected_version, JSON.stringify(data))))});
 };
 exports.update_card = async ({reference, changes, remove = []}) => {
     if (typeof reference !== "string" || reference.length > 80 || typeof changes !== "string" ||
@@ -204,6 +252,16 @@ exports.update_card = async ({reference, changes, remove = []}) => {
 
 const q = JSON.stringify;
 function example(name) {
+    if (name === "repeat") return [
+        '$/issues = [{id:"login",title:"修复登录",status:"处理中"},{id:"layout",title:"调整排版",status:"待处理"}]',
+        '$/query = ""',
+        'root = Column(children=[Header(text="任务清单",status="演示数据"),TextField(label="筛选标题",value=$/query),rows,empty])',
+        'rows = Repeat(items=arrayFilter(items=$/issues,field="title",operator="contains",value=$/query),key="id",maxItems=20,child=Panel(child=InfoRow(label=item(field="title"),text=item(field="status")),background="inset"))',
+        'empty = Conditional(visible=equals(a=arrayLength(items=arrayFilter(items=$/issues,field="title",operator="contains",value=$/query)),b=0),children=[Text(text="没有匹配的任务")])',
+    ].join("\n");
+    if (name === "curves") return [
+        'root = Column(children=[Header(text="曲线示意",status="静态图形"),Frame(maxWidth=480,maxHeight=240,aspectRatio=2,child=Vector(label="两条不同形状的曲线",width=320,height=160,shapes=[{type:"quadratic",x1:10,y1:80,cx:160,cy:0,x2:310,y2:80,tone:"accent"},{type:"cubic",x1:10,y1:100,cx1:100,cy1:20,cx2:220,cy2:160,x2:310,y2:100,tone:"success"}]))])',
+    ].join("\n");
     if (name === "calculator") {
         const keys = [["AC","AC"],["backspace","⌫"],["sign","±"],["/","÷"],
             ["7","7"],["8","8"],["9","9"],["*","×"],["4","4"],["5","5"],["6","6"],["-","−"],

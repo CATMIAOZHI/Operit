@@ -16,6 +16,34 @@ import org.junit.Test
 
 /** Exercises the actual published AndroidX parser and processor, not a mock renderer. */
 class DynamicUiOfficialEngineTest {
+    @Test fun repeatReplacesRegistryWithoutReplacingUserState() = runBlocking {
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/repeat.express")!!.readText()), true)
+        val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
+        val errors = java.util.concurrent.CopyOnWriteArrayList<A2uiClientErrorMessage>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            processor.outboundEvents.collect { if (it is A2uiClientErrorMessage) errors.add(it) }
+        }
+        val job = launch(Dispatchers.Default) { processor.collectMessages() }
+        try {
+            val parser = A2uiJsonMessageParser(::JvmJsonReader)
+            CardRepeat.lowerLines(batch).forEach { processor.processInput(parser, it) }
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/ready", true))
+            val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
+            withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
+            surface.dataModel.update(A2uiDataPath("/query"), "登录")
+            val data = DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/")]).jsonObject
+            val next = CardRepeat.expand(batch.componentsBySurface.getValue("card"), data)
+            DynamicUiProtocol.validateExpanded(next, data)
+            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                surface.componentRegistry.close()
+                surface.componentRegistry.update(CardRepeat.payloads(next))
+            }
+            assertEquals("登录", surface.dataModel[A2uiDataPath("/query")])
+            assertEquals(1, next.getValue("rows").getValue("children").jsonArray.size)
+            assertTrue(errors.toString(), errors.isEmpty())
+        } finally { job.cancelAndJoin(); collector.cancelAndJoin() }
+    }
+
     @Test fun sevenLevelFormulaEvaluatesAndReactsThroughOfficialEngine() = runBlocking {
         var formula = "${'$'}/number"
         repeat(6) { formula = "add(a=1,b=$formula)" }

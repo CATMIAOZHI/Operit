@@ -44,6 +44,8 @@ internal data class CardVectorData(val label: String, val width: Float, val heig
                 val type = s["type"]?.jsonPrimitive?.content
                 val keys = when (type) {
                     "line" -> setOf("x1", "y1", "x2", "y2")
+                    "quadratic" -> setOf("x1", "y1", "cx", "cy", "x2", "y2")
+                    "cubic" -> setOf("x1", "y1", "cx1", "cy1", "cx2", "cy2", "x2", "y2")
                     "rect" -> setOf("x", "y", "width", "height")
                     "circle" -> setOf("cx", "cy", "r")
                     "polyline", "polygon" -> setOf("points")
@@ -60,7 +62,7 @@ internal data class CardVectorData(val label: String, val width: Float, val heig
                 val stroke = if ("stroke" in s) number(s, "stroke", 0.5f..12f) else 2f
                 val numbers = keys.filter { it !in setOf("text", "points", "size") }.associateWith { key ->
                     number(s, key, 0f..when (key) {
-                        "y", "y1", "y2", "cy", "height" -> height
+                        "y", "y1", "y2", "cy", "cy1", "cy2", "height" -> height
                         "r" -> min(width, height) / 2
                         else -> width
                     })
@@ -126,6 +128,22 @@ internal object CardVector : A2uiComponent {
                 val style = if (shape.filled) androidx.compose.ui.graphics.drawscope.Fill else Stroke(shape.stroke*scale)
                 when (shape.type) {
                     "line" -> drawLine(color, point(n.getValue("x1"),n.getValue("y1")), point(n.getValue("x2"),n.getValue("y2")), shape.stroke*scale)
+                    "quadratic", "cubic" -> {
+                        val start = point(n.getValue("x1"), n.getValue("y1"))
+                        val end = point(n.getValue("x2"), n.getValue("y2"))
+                        val path = Path().apply {
+                            moveTo(start.x, start.y)
+                            if (shape.type == "quadratic") {
+                                val control = point(n.getValue("cx"), n.getValue("cy"))
+                                quadraticTo(control.x, control.y, end.x, end.y)
+                            } else {
+                                val c1 = point(n.getValue("cx1"), n.getValue("cy1"))
+                                val c2 = point(n.getValue("cx2"), n.getValue("cy2"))
+                                cubicTo(c1.x, c1.y, c2.x, c2.y, end.x, end.y)
+                            }
+                        }
+                        drawPath(path, color, style = Stroke(shape.stroke * scale))
+                    }
                     "rect" -> drawRect(color, point(n.getValue("x"),n.getValue("y")), Size(n.getValue("width")*scale,n.getValue("height")*scale), style = style)
                     "circle" -> drawCircle(color,n.getValue("r")*scale,point(n.getValue("cx"),n.getValue("cy")),style=style)
                     "polyline", "polygon" -> {

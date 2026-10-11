@@ -61,6 +61,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     var validated by remember { mutableStateOf(false) }
     var processed by remember { mutableStateOf(emptyList<String>()) }
     var components by remember { mutableStateOf<Map<String, Map<String, JsonObject>>>(emptyMap()) }
+    var templates by remember { mutableStateOf<Map<String, Map<String, JsonObject>>>(emptyMap()) }
     val surfaceErrors = remember { mutableStateMapOf<String, String>() }
     val iconWarnings = remember { mutableStateMapOf<String, Boolean>() }
     val loggedErrors = remember { mutableSetOf<String>() }
@@ -104,18 +105,22 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     fun model(surface: A2uiCoreSurfaceModel): JsonElement {
         val raw = DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/")]) as? JsonObject ?: JsonObject(emptyMap())
         return JsonObject(raw.filterKeys { it != DynamicUiProtocol.MARKER }).also {
-            require(it.toString().length <= DynamicUiProtocol.MAX_STATE)
+            // Reserve the independent Agent quota; a progress update must never evict form data.
+            require((if (CardLiveStore.isLive(surface.id)) CardLiveStore.userData(it) else it)
+                .toString().length <= DynamicUiProtocol.MAX_STATE)
         }
     }
     fun restore(surface: A2uiCoreSurfaceModel, data: JsonElement) {
-        surface.dataModel.update(A2uiDataPath("/"), DynamicUiProtocol.toValue(data))
+        val restored = if (CardLiveStore.isLive(surface.id)) JsonObject(data.jsonObject +
+            ("agent" to DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/agent")]))) else data
+        surface.dataModel.update(A2uiDataPath("/"), DynamicUiProtocol.toValue(restored))
         surface.dataModel.update(A2uiDataPath("/${DynamicUiProtocol.MARKER}"), "ready")
     }
     fun persist(surface: A2uiCoreSurfaceModel, data: JsonElement) {
         val file = stateFile(surface.id) ?: return
         DynamicUiStateStore.save(file, buildJsonObject {
-            put("data", data)
-            saved[surface.id]?.let { put("saved", it) }
+            put("data", if (CardLiveStore.isLive(surface.id)) CardLiveStore.userData(data.jsonObject) else data)
+            saved[surface.id]?.let { put("saved", if (CardLiveStore.isLive(surface.id)) CardLiveStore.userData(it.jsonObject) else it) }
             put("result", results[surface.id] == true)
         })
     }
@@ -136,6 +141,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                             event.surfaceId in surfaceErrors || pending != null ||
                             (results[event.surfaceId] == true && event.type == "local_action")) return@collect
                         val surface = surfaces.firstOrNull { it.id == event.surfaceId } as? A2uiCoreSurfaceModel ?: return@collect
+                        if (event.componentId !in components[event.surfaceId].orEmpty()) return@collect
                         try {
                             val actionContext = if (event.type == "local_action")
                                 resolveLocalCardContext(surface, event.componentId, components[event.surfaceId]?.get(event.componentId), event.context)
@@ -147,6 +153,9 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                     "set", "add" -> {
                                         val path = actionContext["path"] as? String ?: error("Missing path")
                                         DynamicUiProtocol.validatePath(path)
+                                        require(!CardLiveStore.isLive(surface.id) || !CardLiveStore.protectedPath(path)) {
+                                            "User actions cannot write Agent data"
+                                        }
                                         val next = if (actionContext["op"] == "add") {
                                             val old = surface.dataModel[A2uiDataPath(path)] as? Number ?: 0
                                             val delta = actionContext["value"] as? Number ?: error("Missing number")
@@ -154,6 +163,10 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                         } else actionContext["value"]
                                         DynamicUiProtocol.toJson(next)
                                         val before = model(surface)
+                                        templates[surface.id]?.let { definition ->
+                                            val candidate = CardRepeat.put(before.jsonObject, path, DynamicUiProtocol.toJson(next))
+                                            DynamicUiProtocol.validateExpanded(CardRepeat.expand(definition, candidate), candidate)
+                                        }
                                         surface.dataModel.update(A2uiDataPath(path), next)
                                         try { model(surface) } catch (e: Exception) { restore(surface, before); throw e }
                                     }
@@ -195,19 +208,39 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     LaunchedEffect(source, closed) {
         try {
             val batch = withContext(Dispatchers.Default) { DynamicUiProtocol.parse(source, closed) }
-            components = batch.componentsBySurface
+            if (!closed && batch.componentsBySurface.values.any { graph ->
+                    graph.values.any { it["component"]?.jsonPrimitive?.content == "Repeat" }
+                }) return@LaunchedEffect
+            templates = batch.componentsBySurface.filterValues { graph ->
+                graph.values.any { it["component"]?.jsonPrimitive?.content == "Repeat" }
+            }
+            components = batch.componentsBySurface.mapValues { (id, graph) ->
+                if (id in templates) CardRepeat.expand(graph, CardRepeat.initialData(batch.lines, id)) else graph
+            }
             require(batch.lines.take(processed.size) == processed) { "Card changed during streaming" }
             val parser = A2uiMessageParser()
             // Parse everything before feeding anything: malformed updates never reach the renderer.
-            val messages = withContext(Dispatchers.Default) { batch.lines.drop(processed.size).map { parser.parse(it) } }
+            val messages = withContext(Dispatchers.Default) {
+                (if (templates.isNotEmpty()) CardRepeat.lowerLines(batch) else batch.lines)
+                    .drop(processed.size).map { parser.parse(it) }
+            }
             messages.forEach { processor.processMessage(it) }
             processed = batch.lines
             if (closed) {
                 batch.surfaceIds.forEach { id ->
                     val record = stateFile(id)?.let { DynamicUiStateStore.read(it) }
-                    record?.get("data")?.let {
-                        processor.processMessage(A2uiUpdateDataModelMessage(id, "/", DynamicUiProtocol.toValue(it)))
+                    val live = if (CardLiveStore.isLive(id)) currentOwner?.let { identity ->
+                        CardLiveStore.observe(identity.chatId, source, id)?.value
+                            ?: CardLiveStore.read(requireNotNull(stateFile(id)).parentFile!!, source, id)
+                    } else null
+                    val initialAgent = CardRepeat.initialData(batch.lines, id)["agent"]
+                    val agent = live?.get("agent") ?: initialAgent
+                    record?.get("data")?.let { old ->
+                        val data = if (CardLiveStore.isLive(id) && agent != null)
+                            JsonObject(CardLiveStore.userData(old.jsonObject) + ("agent" to agent)) else old
+                        processor.processMessage(A2uiUpdateDataModelMessage(id, "/", DynamicUiProtocol.toValue(data)))
                     }
+                    if (live != null) processor.processMessage(A2uiUpdateDataModelMessage(id, "/agent", DynamicUiProtocol.toValue(live.getValue("agent"))))
                     record?.get("saved")?.let { saved[id] = it }
                     results[id] = record?.get("result")?.jsonPrimitive?.booleanOrNull == true
                     processor.processMessage(A2uiUpdateDataModelMessage(id, "/${DynamicUiProtocol.MARKER}", "ready"))
@@ -226,6 +259,61 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
             if (!validated) return@LaunchedEffect
             snapshotFlow { surface.dataModel[A2uiDataPath("/${DynamicUiProtocol.MARKER}")] }.first { it == "ready" }
             ready[surface.id] = true
+            if (CardLiveStore.isLive(surface.id)) currentOwner?.let { identity ->
+                CardLiveStore.observe(identity.chatId, source, surface.id)?.let { updates ->
+                    launch {
+                        updates.collect { record ->
+                            if (record["error"]?.jsonPrimitive?.booleanOrNull == true) notice = failedText
+                            try {
+                                surface.dataModel.update(A2uiDataPath("/agent"), DynamicUiProtocol.toValue(record.getValue("agent")))
+                            } catch (e: CancellationException) { throw e }
+                            catch (_: Exception) { notice = failedText }
+                        }
+                    }
+                }
+            }
+            templates[surface.id]?.let { definition ->
+                launch {
+                    snapshotFlow {
+                        runCatching {
+                            val current = model(surface).jsonObject
+                            definition.values.filter { it["component"]?.jsonPrimitive?.content == "Repeat" }
+                            .map { CardRepeat.evaluate(it.getValue("items"), current) } }.getOrNull()
+                    }.collect { items ->
+                        try {
+                            require(items != null)
+                            val data = model(surface).jsonObject
+                            val next = CardRepeat.expand(definition, data)
+                            DynamicUiProtocol.validateExpanded(next, data)
+                            if (components[surface.id] != next) {
+                                val payloads = CardRepeat.payloads(next)
+                                // Replace synchronously without deleting the surface/data model.
+                                // Registry.update alone would retain every removed row forever.
+                                androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                    surface.componentRegistry.close()
+                                    surface.componentRegistry.update(payloads)
+                                    components = components + (surface.id to next)
+                                }
+                            }
+                            ready[surface.id] = true
+                        } catch (e: CancellationException) { throw e }
+                        catch (_: Exception) {
+                            // Replace failed lists, keeping outside filters usable for correction.
+                            val fallback = components[surface.id].orEmpty()
+                                .filterKeys { it in definition }.toMutableMap()
+                            definition.filterValues { it["component"]?.jsonPrimitive?.content == "Repeat" }.keys.forEach { id ->
+                                fallback[id] = buildJsonObject { put("id", id); put("component", "Text"); put("text", invalidText) }
+                            }
+                            androidx.compose.runtime.snapshots.Snapshot.withMutableSnapshot {
+                                surface.componentRegistry.close()
+                                surface.componentRegistry.update(CardRepeat.payloads(fallback))
+                                components = components + (surface.id to fallback)
+                            }
+                            if (pending?.surfaceId == surface.id) pending = null
+                        }
+                    }
+                }
+            }
             snapshotFlow { runCatching { model(surface) }.getOrNull() }.collect { data ->
                 if (data != null && error == null && surface.id !in surfaceErrors) persist(surface, data)
                 else if (data == null) notice = tooLargeText
@@ -331,6 +419,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                         val identity = currentOwner
                         val surface = surfaces.firstOrNull { it.id == event.surfaceId } as? A2uiCoreSurfaceModel
                             ?: error("Surface missing")
+                        require(event.componentId in components[event.surfaceId].orEmpty()) { "Card item no longer exists" }
                         val submittedState = model(surface) // Validate before any model request.
                         val request = buildJsonObject {
                             put("card", event.surfaceId); put("action", event.type)

@@ -224,6 +224,8 @@ internal object CardExpress {
         private val state = linkedMapOf<String, JsonElement>()
         private val bindings = mutableListOf<Node>()
         private var inline = 0
+        private fun hasItem(n: Node): Boolean = n.kind == "call" && n.token.text == "item" ||
+            n.fields.values.any(::hasItem) || n.items.any(::hasItem)
         private fun path(node: Node): String {
             val path = node.token.text.removePrefix("$")
             try { DynamicUiProtocol.validatePath(path) } catch (_: Exception) { fail(node.token, "Invalid state path.") }
@@ -300,9 +302,9 @@ internal object CardExpress {
                         else -> {
                             val v = json(value, literal = CardAuthoringCatalog.isStatic(node.token.text, field.name))
                             checkType(value, field.type, field.name)
-                            val initial = initial(value)
+                            val initial = if (hasItem(value)) JsonNull else initial(value)
                             val allowed = CardAuthoringCatalog.enums["${node.token.text}.${field.name}"]
-                            if (allowed != null && (initial as? JsonPrimitive)?.content !in allowed)
+                            if (allowed != null && !hasItem(value) && (initial as? JsonPrimitive)?.content !in allowed)
                                 fail(value.token, "${field.name} must be one of ${allowed.joinToString()}.")
                             CardAuthoringCatalog.ranges["${node.token.text}.${field.name}"]?.let { range ->
                                 if ((initial as? JsonPrimitive)?.intOrNull !in range)
@@ -317,18 +319,18 @@ internal object CardExpress {
                     put(field.name, compiled)
                 }
             }
-            if (node.token.text == "Chart") {
+            if (node.token.text == "Chart" && !hasItem(node)) {
                 val series = node.fields.getValue("series")
                 val labels = node.fields["labels"]?.let { initial(it).jsonArray.map { v -> v.jsonPrimitive.content } }.orEmpty()
                 try { cardChartSeries(DynamicUiProtocol.toValue(initial(series)), labels, initial(node.fields.getValue("type")).jsonPrimitive.content) }
                 catch (_: Exception) { fail(series.token, "Invalid chart series. Check type, numeric values, label lengths and series limits.") }
             }
-            if (node.token.text == "Map") {
+            if (node.token.text == "Map" && !hasItem(node)) {
                 val markers = node.fields.getValue("markers")
                 try { cardMapMarkers(DynamicUiProtocol.toValue(initial(markers))) }
                 catch (_: Exception) { fail(markers.token, "Invalid map markers. Check numeric latitude/longitude and the 32-marker limit.") }
             }
-            if (node.token.text == "Table") {
+            if (node.token.text == "Table" && !hasItem(node)) {
                 val rows = node.fields.getValue("rows")
                 val data = initial(rows) as? JsonArray
                 val count = initial(node.fields.getValue("columns")).jsonArray.size
@@ -352,6 +354,8 @@ internal object CardExpress {
             return component(node, id, depth)
         }
         private fun checkType(node: Node, type: String, field: String) {
+            // Item types are checked against every row after template expansion.
+            if (hasItem(node)) return
             // Both branches must fit even when only one is selected by the initial condition.
             if (node.kind == "call" && node.token.text == "if") {
                 node.fields["then"]?.let { checkType(it, type, field) }
@@ -403,10 +407,17 @@ internal object CardExpress {
             }
             "call" -> {
                 if (literal) fail(node.token, "Initial state must contain only literal data.")
+                if (node.token.text == "item") {
+                    val field = node.fields["field"]
+                    if (node.fields.keys != setOf("field") || field?.kind != "string")
+                        fail(node.token, "Use item(field=\"fieldName\") inside a Repeat template.")
+                    buildJsonObject { put("item", field.token.text) }
+                } else {
                 val spec = CardFunctions.specs[node.token.text] ?: fail(node.token, "Unknown local function.")
                 if (!node.fields.keys.containsAll(spec.required) || node.fields.keys.any { it !in spec.required + spec.optional })
                     fail(node.token, "Missing or unknown function argument.")
                 buildJsonObject { put("call", node.token.text); put("args", JsonObject(node.fields.mapValues { json(it.value) })) }
+                }
             }
             else -> fail(node.token, "Bare names are only allowed in child slots; quote text values.")
         }

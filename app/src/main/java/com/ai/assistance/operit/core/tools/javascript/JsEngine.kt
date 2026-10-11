@@ -1617,7 +1617,7 @@ class JsEngine(private val context: Context) {
             com.ai.assistance.operit.ui.common.dynamicui.CardAuthoringCatalog.guide()
 
         @JavascriptInterface
-        fun prepareDynamicUi(callId: String, source: String): String {
+        fun prepareDynamicUi(callId: String, source: String, live: Boolean): String {
             val session = resolveExecutionSession(callId)?.takeIf {
                 it.packageName == "dynamic_ui" && boundToolPkgContainerName == null
             }
@@ -1629,20 +1629,53 @@ class JsEngine(private val context: Context) {
                 val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(
                     run, report.getValue("document").jsonPrimitive.content,
                     report["preparedSource"]?.jsonPrimitive?.content ?: source,
+                    liveChat = if (live) requireNotNull(session.toolRuntimeContext?.callerChatId) else null,
+                    liveDirectory = if (live) java.io.File(context.filesDir, "dynamic_ui/" +
+                        com.ai.assistance.operit.ui.common.dynamicui.DynamicUiProtocol.fingerprint(
+                            requireNotNull(session.toolRuntimeContext?.callerChatId))) else null,
                 )
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
                     put("reference", kotlinx.serialization.json.JsonPrimitive(id))
+                    if (live) put("version", kotlinx.serialization.json.JsonPrimitive(0))
                     report["repaired"]?.let { put("repaired", it) }
                     report["repair"]?.let { put("repair", it) }
                     put("message", kotlinx.serialization.json.JsonPrimitive(
                         "Card compiled and checked. Display exactly this reference in your answer; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
                     ))
                 }.toString()
-            } catch (_: IllegalArgumentException) {
-                """{"valid":false,"code":"card_limit","message":"Card storage limit reached for this turn. Use fewer or smaller cards."}"""
+            } catch (e: IllegalArgumentException) {
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(false))
+                    put("code", kotlinx.serialization.json.JsonPrimitive("invalid_card"))
+                    put("message", kotlinx.serialization.json.JsonPrimitive(e.message?.take(240) ?: "Invalid card data"))
+                }.toString()
             } catch (_: IllegalStateException) {
                 """{"valid":false,"code":"inactive_turn","message":"This chat turn has ended. Generate the card again in the active turn."}"""
+            }
+        }
+
+        @JavascriptInterface
+        fun patchDynamicUiData(callId: String, reference: String, expectedVersion: Int, dataJson: String): String {
+            val run = resolveExecutionSession(callId)?.takeIf {
+                it.packageName == "dynamic_ui" && boundToolPkgContainerName == null
+            }?.toolRuntimeContext?.dynamicUiRunId
+                ?: return """{"valid":false,"code":"inactive_turn","message":"Update data inside the active chat turn."}"""
+            return try {
+                require(dataJson.length <= 8192)
+                val data = kotlinx.serialization.json.Json.parseToJsonElement(dataJson) as kotlinx.serialization.json.JsonObject
+                val version = com.ai.assistance.operit.ui.common.dynamicui.CardLiveStore.patch(run, reference, expectedVersion, data)
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(true))
+                    put("version", kotlinx.serialization.json.JsonPrimitive(version))
+                    put("message", kotlinx.serialization.json.JsonPrimitive("Card data updated in place. Do not display the reference again."))
+                }.toString()
+            } catch (e: Exception) {
+                kotlinx.serialization.json.buildJsonObject {
+                    put("valid", kotlinx.serialization.json.JsonPrimitive(false))
+                    put("code", kotlinx.serialization.json.JsonPrimitive("data_update_failed"))
+                    put("message", kotlinx.serialization.json.JsonPrimitive(e.message?.take(240) ?: "Invalid data; no update applied"))
+                }.toString()
             }
         }
 

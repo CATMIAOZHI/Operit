@@ -16,9 +16,11 @@ internal object CardAuthoringCatalog {
         "Column" to "children:children gap?:string align?:string",
         "Panel" to "child:child padding?:string radius?:string background?:string border?:boolean maxWidth?:number",
         "Scroll" to "child:child maxHeight:number",
+        "Frame" to "child:child minWidth?:number maxWidth?:number minHeight?:number maxHeight?:number aspectRatio?:number",
         "Popover" to "label:string child:child",
         "Vector" to "label:string width:number height:number shapes:array",
         "List" to "children:children", "Card" to "child:child", "Divider" to "",
+        "Repeat" to "items:array key:string child:child maxItems?:number",
         "Button" to "child:child action:action variant?:string checks?:array",
         "CheckBox" to "label:string value:boolean",
         "Heading" to "text:string", "Display" to "text:string label?:string align?:string",
@@ -55,7 +57,7 @@ internal object CardAuthoringCatalog {
 
     val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "minItemWidth",
         "type", "align", "gap", "justify", "wrap", "padding", "radius", "background", "border", "maxWidth",
-        "maxHeight", "textAlign", "lineClamp", "width", "height", "shapes")
+        "maxHeight", "minWidth", "minHeight", "aspectRatio", "textAlign", "lineClamp", "width", "height", "shapes", "key", "maxItems")
     val enums = mapOf(
         "Text.variant" to setOf("h1", "h2", "h3", "h4", "h5", "body", "caption"),
         "Button.variant" to setOf("primary", "default", "borderless"),
@@ -79,6 +81,9 @@ internal object CardAuthoringCatalog {
     val ranges = mapOf(
         "Text.lineClamp" to 1..8, "Panel.maxWidth" to 120..960, "Scroll.maxHeight" to 80..480,
         "Grid.minItemWidth" to 80..320, "Vector.width" to 1..1000, "Vector.height" to 1..1000,
+        "Repeat.maxItems" to 1..32,
+        "Frame.minWidth" to 0..960, "Frame.maxWidth" to 1..960,
+        "Frame.minHeight" to 0..480, "Frame.maxHeight" to 1..480,
     )
     fun isStatic(component: String, field: String) =
         field in staticFields || component == "Table" && field == "columns" || component == "Vector" && field == "label"
@@ -88,6 +93,8 @@ internal object CardAuthoringCatalog {
         appendLine("Object entries use key:value; component/function arguments use key=value. A single unambiguous punctuation mistake may be repaired locally and reported as repaired=true; values, functions and validation limits are never rewritten.")
         appendLine("Local calculations allow at most 128 calls across the complete card document. There is no separate 6-level function nesting limit; overall source and JSON structure limits still apply.")
         appendLine("List lays out its static children vertically at natural height and scrolls with the chat. For a separately scrolling area, wrap it in Scroll(child=..., maxHeight=80..480).")
+        appendLine("Repeat(items=arrayBindingOrCalculation,key=\"id\",child=template,maxItems=20) renders object items using stable unique nonempty string keys. Maximum 32 rows; excess rows are rejected, never silently hidden. Nested Repeat is unsupported. In its template use item(field=\"title\") or nested field=\"author/name\" for read-only item data. Absolute state bindings remain shared, not per-row form storage. Empty arrays render no rows; use Conditional for an empty-state message.")
+        appendLine("Frame applies bounded size constraints to one child; available screen constraints always win. aspectRatio is width/height from 0.25 to 4. Avoid fixed height for text/forms with large fonts. Vector also supports quadratic(x1,y1,cx,cy,x2,y2) and cubic(x1,y1,cx1,cy1,cx2,cy2,x2,y2) shape objects; all coordinates stay in the viewport.")
         components.forEach { (name, fields) ->
             appendLine("$name(${fields.joinToString {
                 "${it.name}${if (it.required) "" else "?"}: ${enums["$name.${it.name}"]?.joinToString("|") ?: ranges["$name.${it.name}"]?.let { r -> "${r.first}..${r.last}" } ?: it.type}${if (isStatic(name, it.name)) " [literal]" else ""}"
