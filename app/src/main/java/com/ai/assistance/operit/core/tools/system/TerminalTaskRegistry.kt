@@ -116,9 +116,20 @@ internal class TerminalTaskRegistry(
     @Synchronized fun latest(sessionId: String): String? =
         runs.values.lastOrNull { it.sessionId == sessionId }?.id
 
-    suspend fun poll(id: String, yieldMs: Long): Snapshot {
+    suspend fun poll(id: String, yieldMs: Long, awaitInput: (suspend () -> Unit)? = null): Snapshot {
         val run = get(id)
-        if (yieldMs > 0) withTimeoutOrNull(yieldMs.coerceAtMost(30_000L)) { run.done.await() }
+        if (yieldMs > 0) withTimeoutOrNull(yieldMs.coerceAtMost(30_000L)) {
+            if (awaitInput == null) run.done.await()
+            else coroutineScope {
+                val input = async { awaitInput() }
+                try {
+                    kotlinx.coroutines.selects.select<Unit> {
+                        run.done.onAwait { }
+                        input.onAwait { }
+                    }
+                } finally { input.cancelAndJoin() }
+            }
+        }
         return synchronized(this) {
             Snapshot(run.id, run.sessionId, run.status, run.output.takeLast(12_000),
                 run.truncated || run.output.length > 12_000, run.reason,

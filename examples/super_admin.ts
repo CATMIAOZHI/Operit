@@ -61,8 +61,8 @@ METADATA
         {
             "name": "terminal_wait",
             "description": {
-                "zh": "查询runId，返回日志尾部output和动态画面screen快照；不要重复拼接。running表示继续执行；completed后检查exitCode，null不能视为成功。查询不会中断命令或排入检测命令。不传runId时查询指定sessionId或当前会话最近任务。ID失效时不要自动重跑命令。",
-                "en": "Poll runId for output log tail and dynamic screen snapshots; do not concatenate repeats. running continues execution. After completed, inspect exitCode; null is not success. Polling never interrupts or queues a probe command. Without runId, polls the latest task in the specified/current session. Do not rerun automatically if an ID expires."
+                "zh": "查询runId，返回日志尾部output和动态画面screen快照；不要重复拼接。新消息到达时可能提前返回running，命令继续执行；稍后用同一runId查询，不要重跑。completed后检查exitCode，null不能视为成功。查询不会中断命令或排入检测命令。不传runId时查询指定sessionId或当前会话最近任务。ID失效时不要自动重跑命令。",
+                "en": "Poll runId for output log tail and dynamic screen snapshots; do not concatenate repeats. New input may return running early while the command continues; poll the same runId later instead of rerunning. After completed, inspect exitCode; null is not success. Polling never interrupts or queues a probe command. Without runId, polls the latest task in the specified/current session. Do not rerun automatically if an ID expires."
             },
             "parameters": [
                 {

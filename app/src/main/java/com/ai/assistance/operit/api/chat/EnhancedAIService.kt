@@ -19,6 +19,7 @@ import com.ai.assistance.operit.api.chat.llmprovider.AIService
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.chat.TurnInputInbox
+import com.ai.assistance.operit.core.chat.runSteerableSampling
 import com.ai.assistance.operit.core.chat.AssistantToolSequence
 import com.ai.assistance.operit.core.chat.hooks.PromptHookContext
 import com.ai.assistance.operit.core.chat.hooks.PromptHookRegistry
@@ -495,6 +496,10 @@ class EnhancedAIService private constructor(
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
         var composerPredictionAllowed: Boolean = true,
+        var samplingInterrupted: Boolean = false,
+        var samplingSavepoint: String = "",
+        var samplingReplayStart: Int = 0,
+        var samplingReplayMetadata: String = "",
         /**
          * The tool definitions the most recent request actually sent. The auxiliary prediction
          * request must declare the same ones, because the tools shape both the provider request and
@@ -1464,6 +1469,15 @@ class EnhancedAIService private constructor(
                     val requestStartTime = messageTimingNow()
                     notifyModelRequestStarted(chatId, isSubTask, modelSnapshot)
                     val inputUsage = beginInputUsage(serviceForFunction, requestHistory, availableTools)
+                    var requestReportedTokens = false
+                    startAssistantResponseRound(execContext, responseCollector)
+                    execContext.samplingSavepoint = "sampling_${java.util.UUID.randomUUID()}"
+                    execContext.samplingReplayStart = execContext.emittedReplayCharCount.get()
+                    execContext.eventChannel.emit(TextStreamEvent(TextStreamEventType.SAVEPOINT, execContext.samplingSavepoint))
+                    execContext.samplingReplayMetadata = ""
+                    execContext.samplingInterrupted = runSteerableSampling(
+                        execContext.turnInputInbox, { execContext.samplingReplayMetadata = it },
+                    ) {
                     val responseStream =
                             serviceForFunction.sendMessage(
                                     context = this@EnhancedAIService.context,
@@ -1474,6 +1488,7 @@ class EnhancedAIService private constructor(
                                     availableTools = availableTools,
                                     onUsageReported = { usage, attempt -> reportInputUsage(inputUsage, usage, attempt) },
                                     onTokensUpdated = { input, cachedInput, output ->
+                                        requestReportedTokens = true
                                         currentRequestInputTokenCount = input.coerceAtLeast(0)
                                         currentRequestOutputTokenCount = output.coerceAtLeast(0)
                                         currentRequestCachedInputTokenCount = cachedInput.coerceAtLeast(0)
@@ -1492,7 +1507,6 @@ class EnhancedAIService private constructor(
                     var isFirstChunk = true
 
                     // 创建一个新的轮次来管理内容
-                    startAssistantResponseRound(execContext, responseCollector)
                     val revisionTracker = TextStreamRevisionTracker()
                     val replayRoundStart = execContext.emittedReplayCharCount.get()
                     var processedRevisionEventCount = 0
@@ -1568,13 +1582,14 @@ class EnhancedAIService private constructor(
                                 execContext.emittedReplayCharCount.addAndGet(content.length)
                     }
                     } finally {
-                        drainRevisionEvents()
+                        withContext(NonCancellable) { drainRevisionEvents() }
+                    }
                     }
 
                     // Update accumulated token counts and persist them
-                    val inputTokens = serviceForFunction.inputTokenCount
-                    val cachedInputTokens = serviceForFunction.cachedInputTokenCount
-                    val outputTokens = serviceForFunction.outputTokenCount
+                    val inputTokens = if (requestReportedTokens) serviceForFunction.inputTokenCount else 0
+                    val cachedInputTokens = if (requestReportedTokens) serviceForFunction.cachedInputTokenCount else 0
+                    val outputTokens = if (requestReportedTokens) serviceForFunction.outputTokenCount else 0
                     accumulatedInputTokenCount = saturatedTokenSum(accumulatedInputTokenCount, inputTokens)
                     accumulatedOutputTokenCount = saturatedTokenSum(accumulatedOutputTokenCount, outputTokens)
                     accumulatedCachedInputTokenCount =
@@ -1590,7 +1605,7 @@ class EnhancedAIService private constructor(
                     logMessageTiming(
                         stage = "enhanced.sendMessage.streamComplete",
                         startTimeMs = requestStartTime,
-                        details = "functionType=$functionType, totalChars=$totalChars, stream=$stream"
+                        details = "functionType=$functionType, interrupted=${execContext.samplingInterrupted}, stream=$stream"
                     )
                 }
             } catch (e: CancellationException) {
@@ -1809,6 +1824,37 @@ class EnhancedAIService private constructor(
             val startTime = messageTimingNow()
             // If conversation is no longer active, return immediately
             if (!context.isConversationActive.get()) {
+                return
+            }
+
+            if (context.samplingInterrupted) {
+                context.samplingInterrupted = false
+                val original = context.streamBuffer.toString()
+                val retained = com.ai.assistance.operit.services.core.finalizeInterruptedStreamingContent(
+                    ExecutableToolProtocolParser.retainBeforeUnexecutedTool(original)
+                ) + context.samplingReplayMetadata
+                // Replace only this unfinished sampling round. Earlier tool results and reasoning
+                // stay intact; discarded arguments must not reappear as executable history.
+                if (retained != original ||
+                    context.emittedReplayCharCount.get() - context.samplingReplayStart != retained.length
+                ) {
+                    context.eventChannel.emit(TextStreamEvent(TextStreamEventType.ROLLBACK, context.samplingSavepoint))
+                    context.streamBuffer.clear()
+                    context.streamBuffer.append(retained)
+                    context.roundManager.updateContent(retained)
+                    context.emittedReplayCharCount.set(context.samplingReplayStart)
+                    collector.emit(retained)
+                    context.emittedReplayCharCount.addAndGet(retained.length)
+                }
+                if (retained.isNotBlank()) context.conversationHistory.add(
+                    PromptTurn(
+                        kind = PromptTurnKind.ASSISTANT, content = retained,
+                        metadata = mapOf(
+                            com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA to true,
+                        ),
+                    )
+                )
+                finishTurn()
                 return
             }
 
@@ -2610,9 +2656,6 @@ class EnhancedAIService private constructor(
             }
         }
 
-        // Add short delay to make state change more visible
-        delay(300)
-
         // Get all model parameters from preferences (with enabled state)
         val modelSnapshot = getModelExecutionSnapshot(
             context,
@@ -2689,6 +2732,14 @@ class EnhancedAIService private constructor(
                 val aiStartTime = messageTimingNow()
                 notifyModelRequestStarted(chatId, isSubTask, modelSnapshot)
                 val inputUsage = beginInputUsage(serviceForFunction, currentChatHistory, availableTools)
+                var requestReportedTokens = false
+                context.samplingSavepoint = "sampling_${java.util.UUID.randomUUID()}"
+                context.samplingReplayStart = context.emittedReplayCharCount.get()
+                context.eventChannel.emit(TextStreamEvent(TextStreamEventType.SAVEPOINT, context.samplingSavepoint))
+                context.samplingReplayMetadata = ""
+                context.samplingInterrupted = runSteerableSampling(
+                    context.turnInputInbox, { context.samplingReplayMetadata = it },
+                ) {
                 val responseStream =
                         serviceForFunction.sendMessage(
                                 context = this@EnhancedAIService.context,
@@ -2699,6 +2750,7 @@ class EnhancedAIService private constructor(
                                 availableTools = availableTools,
                                 onUsageReported = { usage, attempt -> reportInputUsage(inputUsage, usage, attempt) },
                                 onTokensUpdated = { input, cachedInput, output ->
+                                    requestReportedTokens = true
                                     currentRequestInputTokenCount = input.coerceAtLeast(0)
                                     currentRequestOutputTokenCount = output.coerceAtLeast(0)
                                     currentRequestCachedInputTokenCount = cachedInput.coerceAtLeast(0)
@@ -2784,13 +2836,14 @@ class EnhancedAIService private constructor(
                             context.emittedReplayCharCount.addAndGet(content.length)
                 }
                 } finally {
-                    drainRevisionEvents()
+                    withContext(NonCancellable) { drainRevisionEvents() }
+                }
                 }
 
                 // Update accumulated token counts and persist them
-                val inputTokens = serviceForFunction.inputTokenCount
-                val cachedInputTokens = serviceForFunction.cachedInputTokenCount
-                val outputTokens = serviceForFunction.outputTokenCount
+                val inputTokens = if (requestReportedTokens) serviceForFunction.inputTokenCount else 0
+                val cachedInputTokens = if (requestReportedTokens) serviceForFunction.cachedInputTokenCount else 0
+                val outputTokens = if (requestReportedTokens) serviceForFunction.outputTokenCount else 0
                 accumulatedInputTokenCount = saturatedTokenSum(accumulatedInputTokenCount, inputTokens)
                 accumulatedOutputTokenCount = saturatedTokenSum(accumulatedOutputTokenCount, outputTokens)
                 accumulatedCachedInputTokenCount =
@@ -2807,7 +2860,7 @@ class EnhancedAIService private constructor(
                 logMessageTiming(
                     stage = "enhanced.processToolResults.aiResponseComplete",
                     startTimeMs = aiStartTime,
-                    details = "toolNames=$displayToolNames, totalChars=$totalChars"
+                    details = "toolNames=$displayToolNames, interrupted=${context.samplingInterrupted}"
                 )
 
                 // 流处理完成，处理完成逻辑

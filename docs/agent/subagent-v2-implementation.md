@@ -99,15 +99,40 @@ not merely a durable mailbox entry. Wait reconciles and offers only its caller's
 pending messages before reporting readiness; the normal model boundary still
 owns draining, transcript persistence and acknowledgement. This prevents a
 successful wait result from reaching a model request without the message body.
-Reconciliation reads the caller's stored history, so the loop reconciles on its
-first pass and then at most once per second while pending input keeps its
-hundred-millisecond cadence; a wait that already has pending input returns before
-reconciling. Senders push their own deliveries, and this retry path is a fallback.
+Wait subscribes to inbox and agent-state changes. Once-per-second reconciliation
+remains a recovery fallback, and only restored or previously handed-off messages
+need a stored-history read. Senders deliver to their recipient directly; separate
+recipients no longer wait for each other's history. A pending input returns
+immediately without consuming or acknowledging it.
 Tool dispatch runs non-`task` calls serially in the model's call order, so a
 `spawn_agent` earlier in the same batch is registered before a following
 `wait_agent` starts. When the order is reversed the wait can report idle before
 that child exists; the tool description tells the model to call `wait_agent` again
 once the child is running instead of failing the turn.
+
+### Input during a model request
+
+User steering cancels only the current sampling request, including connection,
+streaming and retry/rate-limit waits. The turn, prompt snapshot, reasoning
+configuration and running tools stay alive. Cancellation uses the request-local
+HTTP call, not a provider-wide cancellation that could affect another chat.
+
+Mailbox input yields at a provider's complete reasoning boundary, after any
+Responses replay metadata. Gemini retains completed native parts/signatures
+before the first unexecuted function call. Providers without such a boundary
+continue to use the existing end-of-response/tool boundary.
+
+Interrupted reasoning/text is kept, with the app-owned reasoning tag closed.
+Unexecuted tool arguments are discarded rather than repaired or run; network
+retry rollbacks still remove failed drafts. Input is then appended through the
+existing transcript/acknowledgement handoff. A real user Stop still cancels the
+whole turn.
+
+Terminal start/wait observations yield a current `runId` snapshot when input
+arrives; the underlying command continues. Ordinary tools finish and record their
+results before the next model request. No automatic rerun or tool cancellation is
+introduced. Reference: local Codex `8c0f7011`, user-input watcher and complete-item
+mailbox boundaries in `session/input_queue.rs` and `session/turn.rs`.
 
 Agent-to-agent replies must use `send_message` addressed to the incoming sender;
 ordinary assistant prose or a handwritten envelope is not a delivery. A child's
@@ -158,7 +183,7 @@ The follow-up corrects portable behavior found by a fresh source-level audit:
 | Fork filtering | Keep system context, user inputs, final assistant text and checkpoints; remove agent communication, intermediate assistants, tools and reasoning. Count real user/NEW_TASK boundaries before filtering agent messages. |
 | Trusted message identity | Persist distinct collaboration task/event and intermediate assistant display modes; prompt filtering does not infer identity from user-controlled text. |
 | Full default fork | Retain parent prepared instructions, model and role-card tool access; do not append the general profile instructions unless a profile is explicitly selected. |
-| Wait | Distinguish mailbox activity, user steering, an idle tree with an empty caller mailbox, and timeout; report minimum clamping; reject values above configured maximum. The idle result is a deliberate deviation from Codex, whose wait is purely event-driven: `finish()` enqueues before it drops a job, `send()` enqueues before it starts one, and the completion callback of a resumed agent's job cancelled before its body runs enqueues the terminal notification inside the same lock region that removes the job, so one lock snapshot with no live job, reservation or streaming peer turn proves the wait cannot succeed. A first spawn cancelled before its agent is created has no notification to send; it reports through the spawn call. Reconciliation is throttled to one stored-history read per second per wait, while pending input still polls every hundred milliseconds. |
+| Wait | Distinguish mailbox activity, user steering, an idle tree with an empty caller mailbox, and timeout; report minimum clamping; reject values above configured maximum. Terminal notifications are enqueued before jobs are removed. One locked snapshot with no job, reservation or streaming peer proves the idle result. Inbox/state changes wake the wait; once-per-second reconciliation is a recovery fallback. |
 | List | Include `agent_name` and `agent_status`. Per the user's context-budget preference, completed status is `{"completed": null}`: final text is delivered through the mailbox, not repeated on each list call. Durable final results remain stored. Existing Operit IDs/status fields remain available. |
 | Limits | Configure whole-tree active children, depth and wait durations. The v1 per-parent ten-task quota does not cap v2. Provider/model concurrency limits remain shared. |
 | Arguments | Reject unknown and duplicate parameters, including legacy `fork_context`, before any agent can be created. |

@@ -11,6 +11,23 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class TerminalTaskRegistryTest {
+    @Test fun `new input yields wait without cancelling background command`() = runBlocking {
+        val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+        try {
+            val registry = TerminalTaskRegistry(scope)
+            val finish = CompletableDeferred<Unit>()
+            val input = CompletableDeferred<Unit>()
+            val id = registry.start("session", 10_000) { id -> flow {
+                finish.await()
+                emit(event(id, "done", true))
+            } }
+            val waiter = async { registry.poll(id, 30_000) { input.await() } }
+            input.complete(Unit)
+            assertEquals("running", withTimeout(1_000) { waiter.await() }.status)
+            finish.complete(Unit)
+            assertEquals("completed", registry.poll(id, 1_000).status)
+        } finally { scope.cancel() }
+    }
     private fun event(id: String, text: String, done: Boolean = false) =
         CommandExecutionEvent(id, "session", text, done)
 

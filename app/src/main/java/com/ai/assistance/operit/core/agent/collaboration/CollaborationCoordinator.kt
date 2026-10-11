@@ -13,6 +13,10 @@ import com.ai.assistance.operit.core.agent.SubagentTaskResult
 import com.ai.assistance.operit.core.chat.TurnInputInbox
 import java.util.UUID
 import kotlinx.coroutines.*
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 
 /**
  * v2 owns durable identities, mailboxes and asynchronous turn lifetimes. The existing runner
@@ -37,6 +41,10 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val reservations = mutableSetOf<String>()
     private val pendingParents = mutableMapOf<String, String>()
     private val deliveries = mutableSetOf<String>()
+    // Only restored or previously handed-off messages can already exist in the transcript.
+    private val possiblyPersisted = state.agents.flatMap { it.messages }.mapTo(mutableSetOf()) { it.id }
+    // Bounded lock stripes avoid retaining deleted chats or replacing a mutex with live waiters.
+    private val deliveryLocks = Array(64) { Mutex() }
     private val deleting = mutableSetOf<String>()
     private val stopGate = CollaborationStopGate()
 
@@ -305,7 +313,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             write(state.enqueue(caller.rootChatId, message))
             if (wake) startExisting(requireNotNull(state.find(receiver.rootChatId, receiver.path)))
         }
-        deliverPending()
+        deliverPending(receiverBeforeDelivery.chatId)
     }
 
     /** Called with the lifecycle lock held so two follow-ups cannot start the same agent twice. */
@@ -313,6 +321,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         val jobKey = key(agent.rootChatId, agent.path)
         val inputs = agent.messages
         deliveries.addAll(inputs.map { it.id })
+        possiblyPersisted.addAll(inputs.map { it.id })
         write(state.update(agent.copy(status = CollaborationStatus.RUNNING, lastError = null)))
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
@@ -336,6 +345,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                         synchronized(lock) {
                             write(state.acknowledge(agent.rootChatId, agent.path, inputs.mapTo(mutableSetOf()) { it.id }))
                             deliveries.removeAll(inputs.map { it.id }.toSet())
+                            possiblyPersisted.removeAll(inputs.map { it.id }.toSet())
                         }
                     },
                 ))
@@ -401,17 +411,31 @@ class CollaborationCoordinator private constructor(context: Context) {
                 text.ifBlank { "$path completed with an empty response" },
             )))
         }
-        deliverPending()
+        val parentChatId = synchronized(lock) {
+            val agent = state.find(root, path)
+            agent?.parentPath?.let { state.find(root, it)?.chatId }
+        }
+        if (parentChatId != null) deliverPending(parentChatId)
     }
 
     /** Uses the same inbox acceptance/EOF lock as user steering, including acknowledgement. */
-    fun deliverPending() {
+    fun deliverPending(chatId: String? = null) {
         scope.launch {
-            val agents = synchronized(lock) { state.agents.filter { it.messages.isNotEmpty() } }
-            agents.forEach { reconcileMailbox(it) }
-            offerPending()
+            val agents = synchronized(lock) {
+                state.agents.filter { it.messages.isNotEmpty() && (chatId == null || it.chatId == chatId) }
+            }
+            agents.forEach { agent -> launch { deliverToAgent(agent.chatId) } }
         }
     }
+
+    private suspend fun deliverToAgent(chatId: String) =
+        deliveryLocks[(chatId.hashCode() and Int.MAX_VALUE) % deliveryLocks.size].withLock {
+            val agent = synchronized(lock) { state.agents.firstOrNull { it.chatId == chatId } }
+            if (agent != null) {
+                reconcileMailbox(agent)
+                offerPending(chatId)
+            }
+        }
 
     /**
      * A process can stop after the user transcript commits but before the mailbox ack commits.
@@ -419,7 +443,12 @@ class CollaborationCoordinator private constructor(context: Context) {
      */
     private suspend fun reconcileMailbox(agent: CollaborationAgent) {
         if (agent.messages.isEmpty()) return
-        val ids = agent.messages.mapTo(mutableSetOf()) { it.id }
+        val ids = synchronized(lock) {
+            agent.messages.map { it.id }.filterTo(mutableSetOf()) {
+                it in possiblyPersisted && it !in deliveries
+            }
+        }
+        if (ids.isEmpty()) return
         val persisted = core.getChatHistoryDelegate().getChatHistory(agent.chatId)
             .asSequence().filter { it.sender == "user" }
             .flatMap { row -> MESSAGE_ID.findAll(row.content).map { it.groupValues[1] } }
@@ -428,6 +457,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             if (state.find(agent.rootChatId, agent.path) != null) {
                 write(state.acknowledge(agent.rootChatId, agent.path, persisted))
             }
+            possiblyPersisted.removeAll(persisted)
         }
     }
 
@@ -440,6 +470,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 val turn = delegate.steeringTurnId(agent.chatId) ?: return@forEach
                 agent.messages.forEach messageLoop@ { message ->
                     if (!deliveries.add(message.id)) return@messageLoop
+                    possiblyPersisted.add(message.id)
                     val accepted = delegate.trySteerMessage(agent.chatId, turn, TurnInputInbox.Input(
                         text = message.render(),
                         agentPath = message.sender,
@@ -450,11 +481,15 @@ class CollaborationCoordinator private constructor(context: Context) {
                                     write(state.acknowledge(agent.rootChatId, agent.path, setOf(message.id)))
                                 }
                                 deliveries.remove(message.id)
+                                possiblyPersisted.remove(message.id)
                             }
                         },
                         returned = { synchronized(lock) { deliveries.remove(message.id) } },
                     ))
-                    if (!accepted) deliveries.remove(message.id)
+                    if (!accepted) {
+                        deliveries.remove(message.id)
+                        possiblyPersisted.remove(message.id)
+                    }
                 }
             }
         }
@@ -523,9 +558,15 @@ class CollaborationCoordinator private constructor(context: Context) {
                     core.getChatHistoryDelegate().getChatMetadata(it) == null
                 }.toSet()
                 synchronized(lock) {
-                    if (removed.isNotEmpty()) write(state.copy(agents = state.agents.filterNot {
-                        it.chatId in removed || it.rootChatId in removed
-                    }))
+                    if (removed.isNotEmpty()) {
+                        val removedAgents = state.agents.filter {
+                            it.chatId in removed || it.rootChatId in removed
+                        }
+                        write(state.copy(agents = state.agents - removedAgents.toSet()))
+                        val removedMessages = removedAgents.flatMap { it.messages }.mapTo(mutableSetOf()) { it.id }
+                        deliveries.removeAll(removedMessages)
+                        possiblyPersisted.removeAll(removedMessages)
+                    }
                     deleting.removeAll(chatIds.toSet())
                 }
             }
@@ -536,6 +577,8 @@ class CollaborationCoordinator private constructor(context: Context) {
         val limits = AgentProfileRepository.instance.collaborationLimits.value
         require(timeoutMs <= limits.maxWaitMs) { "timeout_ms must be at most ${limits.maxWaitMs}" }
         val caller = caller(chatId)
+        val inbox = core.getMessageProcessingDelegate().turnInputInbox(chatId)
+        var observedRevision = _composerPredictionRevision.value
         val outcome = awaitCollaborationInput(
             timeoutMs.coerceAtLeast(limits.minWaitMs).coerceAtLeast(1),
             deliverToCurrentTurn = {
@@ -543,8 +586,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 if (current != null && current.messages.isNotEmpty()) {
                     // Keep restart deduplication before offering; never hold the lifecycle
                     // lock across database reads or wait for unrelated agents' histories.
-                    reconcileMailbox(current)
-                    offerPending(chatId)
+                    deliverToAgent(chatId)
                 }
             },
             pendingInput = {
@@ -555,6 +597,16 @@ class CollaborationCoordinator private constructor(context: Context) {
                 }
             },
             hasWaitableWork = { callerHasWaitableWork(caller) },
+            awaitActivity = {
+                if (inbox != null) {
+                    combine(_composerPredictionRevision, inbox.changes) { version, _ -> version }
+                        .first { version ->
+                            version != observedRevision || inbox.hasPending()
+                        }.also { observedRevision = it }
+                } else {
+                    observedRevision = _composerPredictionRevision.first { it != observedRevision }
+                }
+            },
         )
         return CollaborationWaitResult(outcome, timeoutMs, limits.minWaitMs)
     }
