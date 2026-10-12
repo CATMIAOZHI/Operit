@@ -245,7 +245,7 @@ DATA AND MEDIA
 Chart type="line"|"bar"|"pie"|"scatter", labels=["A","B"], series=[{label:"Sales",values:[1,2]}].
 Scatter: series=[{label:"Demo",points:[{x:1,y:2,label:"A"}]}].
 Max 4 series/128 points, category lengths must agree. Pie: one nonnegative series.
-Charts provide inspection and a data table; do not duplicate it by default.
+Charts provide tap inspection and read their values to screen readers; do not repeat the data in a Table by default.
 Table: string columns and array rows, max 8 columns/32 rows.
 columnWidths=[120,180] sets one literal64..480dp width per column (default140).
 maxHeight=80..480 bounds the vertically scrolling body; the header stays visible and aligns on horizontal scroll.

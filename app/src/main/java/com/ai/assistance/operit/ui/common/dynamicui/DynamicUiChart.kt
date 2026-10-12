@@ -10,7 +10,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,6 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.contentDescription
@@ -127,13 +127,27 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
     val density = LocalDensity.current
     val haptic = LocalHapticFeedback.current
     var selected by remember(data, type) { mutableStateOf<Pair<Int, Int>?>(null) }
-    var showData by rememberSaveable { mutableStateOf(false) }
     val points = remember(data) { data.flatMap { it.points } }
     val pieColors = remember(points.size, palette, dark) {
         List(points.size) { i -> palette.getOrNull(i) ?: Color.hsv((i * 137.508f) % 360f, .45f, if (dark) .85f else .72f) }
     }
     val empty = points.isEmpty() || (type == "pie" && points.sumOf { it.y } <= 0)
-    val chartDescription = stringResource(R.string.dynamic_ui_chart_description, title, points.size)
+    // Screen readers hear the values here; sighted users inspect by tapping, so no data table is shown.
+    // The title is its own text node, and very dense charts are capped so focus does not read for minutes.
+    val context = LocalContext.current
+    val chartValues = remember(data, type, context) {
+        // Split the budget so every series keeps some values, and say how many were left out.
+        val perSeries = 64 / data.size.coerceAtLeast(1)
+        data.joinToString("; ") { series ->
+            val shown = series.points.take(perSeries)
+            val values = (shown.map { p ->
+                "${p.label} ${cardChartNumber(p.y)}" + if (type == "scatter") " (x ${cardChartNumber(p.x)})" else ""
+            } + listOfNotNull((series.points.size - shown.size).takeIf { it > 0 }?.let { context.getString(R.string.dynamic_ui_chart_more, it) }))
+                .joinToString(", ")
+            if (series.label.isBlank()) values else "${series.label}: $values"
+        }
+    }
+    val chartDescription = stringResource(R.string.dynamic_ui_chart_description, points.size, chartValues)
     Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         if (title.isNotBlank()) Text(title, style = MaterialTheme.typography.titleMedium)
         if (empty) Text(stringResource(R.string.dynamic_ui_no_data), style = MaterialTheme.typography.bodyMedium)
@@ -406,13 +420,6 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                 } else Text("${data[s].label} ${p.label}: ${cardChartNumber(p.y)}" +
                     if (type == "scatter") " (x=${cardChartNumber(p.x)})" else "", style = MaterialTheme.typography.labelLarge)
             } }
-            TextButton(onClick = { showData = !showData }) { Text(stringResource(R.string.dynamic_ui_chart_data)) }
-            if (showData) Column(Modifier.heightIn(max = 240.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
-                data.forEach { series ->
-                    if (series.label.isNotBlank()) Text(series.label, style = MaterialTheme.typography.labelLarge)
-                    series.points.forEach { p -> Text("${p.label}: ${cardChartNumber(p.y)}" + if (type == "scatter") " (x=${cardChartNumber(p.x)})" else "", style = MaterialTheme.typography.bodySmall) }
-                }
-            }
         }
     }
 }
