@@ -181,7 +181,7 @@ class OpenAISttProvider(
 
                 pcmBytesWritten = 0
 
-                val pendingPcm = SpeechPrerollStore.consumePending()
+                val pendingPcm = SpeechPrerollStore.consumePending(audioSource)
                 if (pendingPcm != null && pendingPcm.isNotEmpty()) {
                     try {
                         writePcm16le(stream, pendingPcm, pendingPcm.size)

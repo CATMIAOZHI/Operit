@@ -73,6 +73,12 @@ interface SpeechService {
     suspend fun initialize(): Boolean
 
     /**
+     * Whether starting needs no download or confirmation first, so a capture opened at the tap is
+     * not left running while the user decides. A plain file check; never starts a download.
+     */
+    fun canStartWithoutPrompt(context: android.content.Context): Boolean = true
+
+    /**
      * 开始语音识别
      *
      * @param languageCode 语言代码，例如 "zh-CN"、"en-US"

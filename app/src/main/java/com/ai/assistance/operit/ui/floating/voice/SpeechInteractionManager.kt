@@ -12,6 +12,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.ai.assistance.operit.api.chat.AIForegroundService
+import com.ai.assistance.operit.api.speech.EarlyCapture
 import com.ai.assistance.operit.api.speech.SpeechPrerollStore
 import com.ai.assistance.operit.api.speech.WakePhraseSnapshot
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
@@ -19,9 +20,12 @@ import com.ai.assistance.operit.api.voice.VoiceServiceFactory
 import com.ai.assistance.operit.util.TtsCleaner
 import com.ai.assistance.operit.util.WaifuMessageProcessor
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -52,6 +56,13 @@ class SpeechInteractionManager(
         private set
     var hasFocus by mutableStateOf(false)
         private set
+    /**
+     * The microphone is already kept by [EarlyCapture] while the recognizer still loads. The
+     * session counts as recording: what is said now reaches the recognizer once it starts.
+     */
+    var isHearingEarly by mutableStateOf(false)
+        private set
+    private var finishOnStart = false
 
     // 文本累积
     var userMessage by mutableStateOf("")
@@ -117,6 +128,8 @@ class SpeechInteractionManager(
         isPreparing = false
         isRecording = false
         isProcessingSpeech = false
+        isHearingEarly = false
+        finishOnStart = false
         userMessage = ""
         accumulatedText = ""
         latestPartialText = ""
@@ -138,6 +151,20 @@ class SpeechInteractionManager(
         return true
     }
 
+    /**
+     * For composers inside the app window, which already has focus. The overlay trick above makes
+     * the keyboard pop up and drop again; here the keyboard only goes away.
+     */
+    fun claimFocusWithoutKeyboard(view: View?): Boolean {
+        if (view == null) {
+            hasFocus = false
+            return false
+        }
+        inputMethodManager.hideSoftInputFromWindow(view.windowToken, 0)
+        hasFocus = true
+        return true
+    }
+
     fun releaseFocus(view: View?) {
         view?.let {
             inputMethodManager.hideSoftInputFromWindow(it.windowToken, 0)
@@ -150,6 +177,7 @@ class SpeechInteractionManager(
     fun startListening(
         continuousMode: Boolean = speechService.supportsContinuousRecognition,
         onStarted: (() -> Unit)? = null,
+        captureEarly: Boolean = false,
         onStartFailure: ((String) -> Unit)? = null,
     ) {
         if (isPreparing || isRecording || isProcessingSpeech) return
@@ -166,6 +194,8 @@ class SpeechInteractionManager(
         timing = com.ai.assistance.operit.api.speech.VoiceTiming("recognition").also { it.mark("start_requested") }
         isPreparing = true
         isRecording = false
+        isHearingEarly = false
+        finishOnStart = false
         userMessage = ""
         accumulatedText = ""
         latestPartialText = ""
@@ -174,6 +204,7 @@ class SpeechInteractionManager(
 
         // 启动监听
         startJob = coroutineScope.launch {
+          var stopAfterStart = false
           stopJob?.join()
           lifecycleMutex.withLock {
             if (closed || session != generation) return@withLock
@@ -184,7 +215,28 @@ class SpeechInteractionManager(
                 previous.speechService.cancelRecognition()
             }
             captureOwner = this@SpeechInteractionManager
+            // Wake sessions already hand over the audio around the wake word.
+            var earlyToken = 0L
             try {
+                // Not while a model download waits for the user: the microphone would stay open
+                // throughout, and keep the wrong audio.
+                if (captureEarly && wakePhraseSnapshot == null &&
+                    withContext(Dispatchers.IO) { speechService.canStartWithoutPrompt(context) }
+                ) {
+                    // Not cancellable: once the microphone opens, its token must reach `finally`.
+                    earlyToken = withContext(NonCancellable + Dispatchers.IO) { EarlyCapture.start(context) }
+                    if (earlyToken != 0L && session == generation) {
+                        timing?.mark("capturing")
+                        isPreparing = false
+                        isRecording = true
+                        isHearingEarly = true
+                        onStateChange(context.getString(R.string.floating_listening))
+                    }
+                } else {
+                    // A capture left by another session must not be handed to this one.
+                    withContext(NonCancellable + Dispatchers.IO) { EarlyCapture.stop() }
+                }
+
                 try {
                     AIForegroundService.ensureMicrophoneForeground(context, forceStart = true)
                 } catch (e: Exception) {
@@ -224,6 +276,14 @@ class SpeechInteractionManager(
                     return@withLock
                 }
                 isPreparing = false
+                isHearingEarly = false
+                if (ok && finishOnStart) {
+                    // Stopped while the recognizer was still loading: it has the audio, so finish now.
+                    // finishOnStart stays set until the stop below, so another stop tap stays a no-op.
+                    timing?.mark("recording")
+                    stopAfterStart = true
+                    return@withLock
+                }
                 isRecording = ok
                 if (ok) {
                     timing?.mark("recording")
@@ -233,6 +293,7 @@ class SpeechInteractionManager(
                 if (!ok) {
                     isRecording = false
                     isProcessingSpeech = false
+                    finishOnStart = false
                     onStateChange(context.getString(R.string.floating_hold_microphone))
                     // Only the download layer produces a reason that is safe to show here: the
                     // provider's own error text is engine wording, sometimes not even translated.
@@ -248,9 +309,20 @@ class SpeechInteractionManager(
                 isPreparing = false
                 isRecording = false
                 isProcessingSpeech = false
+                isHearingEarly = false
+                finishOnStart = false
                 onStateChange(context.getString(R.string.floating_hold_microphone))
                 onStartFailure?.invoke(e.message ?: context.getString(R.string.floating_start_recording_failed))
+            } finally {
+                // Normally the recognizer has taken it already; otherwise the audio is dropped here.
+                if (earlyToken != 0L) withContext(NonCancellable + Dispatchers.IO) { EarlyCapture.stop(earlyToken) }
             }
+          }
+          if (stopAfterStart && session == generation && isProcessingSpeech) {
+              onStateChange(context.getString(R.string.floating_recognizing))
+              speechService.stopRecognition()
+              finishOnStart = false
+              if (session == generation && isProcessingSpeech) startFallbackTimeout()
           }
         }
 
@@ -263,11 +335,25 @@ class SpeechInteractionManager(
     fun stopListening(isCancel: Boolean) {
         timing?.mark(if (isCancel) "cancel_requested" else "recording_stopped")
         if (!isRecording && !isPreparing && !isProcessingSpeech) return
+        // Already finishing once the recognizer is up; another stop must not throw the audio away.
+        if (!isCancel && finishOnStart) return
+        if (!isCancel && isHearingEarly) {
+            // The recognizer is still loading. It finishes as soon as it has taken the audio.
+            finishOnStart = true
+            isHearingEarly = false
+            isRecording = false
+            isProcessingSpeech = true
+            silenceTimeoutJob?.cancel()
+            onStateChange(context.getString(R.string.floating_recognizing))
+            return
+        }
         val cancel = isCancel || isPreparing
         val session = if (cancel) ++generation else generation
         startJob?.cancel()
         isPreparing = false
-        
+        isHearingEarly = false
+        finishOnStart = false
+
         isRecording = false
         isProcessingSpeech = !cancel
         silenceTimeoutJob?.cancel()

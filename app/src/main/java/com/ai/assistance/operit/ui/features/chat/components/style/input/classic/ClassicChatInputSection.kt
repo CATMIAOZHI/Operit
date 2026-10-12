@@ -31,6 +31,8 @@ import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Send
 import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.ArrowUpward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.rounded.GraphicEq
@@ -88,6 +90,12 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.V
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberDraftVoiceController
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.HoldToTalkArea
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.SuppressFieldLongPress
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.holdToTalk
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberKeyboardDown
+import androidx.compose.ui.layout.onGloballyPositioned
+import kotlinx.coroutines.delay
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
@@ -226,17 +234,22 @@ fun ClassicChatInputSection(
                 actualViewModel.showToast(context.getString(R.string.voice_draft_permission))
             }
         }
-    val startDictation = {
+    // Returns whether a session started; without the microphone permission it asks for it instead.
+    val startDictation: (Boolean) -> Boolean = { holding ->
         if (
             ContextCompat.checkSelfPermission(context, Manifest.permission.RECORD_AUDIO) ==
                 PackageManager.PERMISSION_GRANTED
         ) {
-            dictation.open()
+            dictation.open(holding)
+            true
         } else {
             dictationPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            false
         }
     }
     BackHandler(enabled = dictation.isActive) { dictation.cancel() }
+    val holdArea = remember { HoldToTalkArea() }
+    val keyboardDown = rememberKeyboardDown()
 
     val showQueueAction = isProcessing && canSendMessage
     val showCancelAction = isProcessing && !showQueueAction
@@ -292,6 +305,21 @@ fun ClassicChatInputSection(
         }
         onSendMessage()
         setShowAttachmentPanel(false)
+    }
+
+    // Releasing a hold to the send side sends the transcribed draft through the normal send path,
+    // once this composition sees the text the transcription put in the box.
+    var pendingVoiceSend by remember { mutableStateOf<String?>(null) }
+    dictation.bindSend { pendingVoiceSend = actualViewModel.userMessage.value.text }
+    LaunchedEffect(pendingVoiceSend, userMessage.text) {
+        val expected = pendingVoiceSend ?: return@LaunchedEffect
+        if (userMessage.text == expected) {
+            pendingVoiceSend = null
+            handleEnterSendAction()
+        } else {
+            delay(1000)
+            pendingVoiceSend = null
+        }
     }
 
     val surfaceColor = chatComposerColor(false, chatInputTransparent, hasBackgroundImage)
@@ -558,6 +586,14 @@ fun ClassicChatInputSection(
                     modifier =
                     Modifier
                         .fillMaxWidth()
+                        .onGloballyPositioned { holdArea.container = it }
+                        .holdToTalk(
+                            enabled = classicInputEnabled && keyboardDown && !dictation.isActive,
+                            area = holdArea,
+                            onStart = { startDictation(true) },
+                            onTargetChange = dictation::setReleaseToSend,
+                            onRelease = dictation::releaseHold,
+                        )
                         .then(
                             if (classicInputNeedsBackdrop) {
                                 Modifier.border(1.dp, classicInputBorderColor, classicInputShape)
@@ -573,7 +609,7 @@ fun ClassicChatInputSection(
                                 Color.Transparent
                             }
                         )
-                        .padding(start = 14.dp, end = 10.dp, top = 10.dp, bottom = 4.dp),
+                        .padding(start = 14.dp, end = 10.dp, top = 14.dp, bottom = 4.dp),
                 ) {
 
                 if (dictation.isActive) {
@@ -615,6 +651,15 @@ fun ClassicChatInputSection(
 
                     Spacer(modifier = Modifier.height(4.dp))
 
+                    if (dictation.isHolding) {
+                        HoldToTalkRow(
+                            releaseToSend = dictation.releaseToSend,
+                            volumeLevelFlow = dictation.volumeLevelFlow,
+                            isRecording = dictation.isRecording,
+                            isCapturing = dictation.isHearingEarly || recognitionState ==
+                                com.ai.assistance.operit.api.speech.SpeechService.RecognitionState.RECOGNIZING,
+                        )
+                    } else {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
@@ -637,7 +682,7 @@ fun ClassicChatInputSection(
                             VoiceRecordingWaveform(
                                 volumeLevelFlow = dictation.volumeLevelFlow,
                                 isRecording = dictation.isRecording,
-                                isCapturing = recognitionState ==
+                                isCapturing = dictation.isHearingEarly || recognitionState ==
                                     com.ai.assistance.operit.api.speech.SpeechService.RecognitionState.RECOGNIZING,
                                 modifier =
                                     Modifier.weight(1f).height(22.dp).padding(horizontal = 8.dp),
@@ -711,14 +756,17 @@ fun ClassicChatInputSection(
                             )
                         }
                     }
+                    }
                 } else {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                SuppressFieldLongPress(active = classicInputEnabled && keyboardDown) {
                 BasicTextField(
                     value = userMessage,
                     onValueChange = onUserMessageChange,
                     modifier = Modifier
                         .weight(1f)
+                        .onGloballyPositioned { holdArea.field = it }
                         .heightIn(min = 24.dp)
                         .composerPredictionSemantics(userMessage, composerPrediction,
                             enabled = classicInputEnabled,
@@ -763,9 +811,9 @@ fun ClassicChatInputSection(
                                 Text(
                                     text =
                                         if (isWorkspaceOpen) {
-                                            context.getString(R.string.input_question_with_workspace)
+                                            context.getString(R.string.input_question_with_workspace_hold)
                                         } else {
-                                            context.getString(R.string.input_question_hint)
+                                            context.getString(R.string.input_question_hint_hold)
                                         },
                                     style = modernTextStyle,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -778,6 +826,7 @@ fun ClassicChatInputSection(
                         }
                     },
                 )
+                }
                     Spacer(modifier = Modifier.width(4.dp))
                     // A plain box rather than IconButton: IconButton enforces a 48dp minimum touch
                     // target that would stretch the draft row past the text line and leave the icon
@@ -857,7 +906,7 @@ fun ClassicChatInputSection(
                         Spacer(modifier = Modifier.width(6.dp))
 
                         IconButton(
-                            onClick = startDictation,
+                            onClick = { startDictation(false) },
                             enabled = classicInputEnabled,
                             modifier = Modifier.size(36.dp),
                         ) {
@@ -1021,5 +1070,68 @@ fun ClassicChatInputSection(
             }
 
         }
+    }
+}
+
+/** The panel's bottom row while a finger holds the composer: stop on the left, send on the right. */
+@Composable
+private fun HoldToTalkRow(
+    releaseToSend: Boolean,
+    volumeLevelFlow: kotlinx.coroutines.flow.StateFlow<Float>,
+    isRecording: Boolean,
+    isCapturing: Boolean,
+) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        HoldTarget(
+            icon = androidx.compose.material.icons.Icons.Filled.Stop,
+            highlighted = !releaseToSend,
+        )
+        Text(
+            text = stringResource(
+                if (releaseToSend) R.string.voice_hold_release_to_send
+                else R.string.voice_hold_release_to_stop
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier.padding(start = 10.dp),
+        )
+        VoiceRecordingWaveform(
+            volumeLevelFlow = volumeLevelFlow,
+            isRecording = isRecording,
+            isCapturing = isCapturing,
+            modifier = Modifier.weight(1f).height(22.dp).padding(horizontal = 8.dp),
+        )
+        HoldTarget(
+            icon = androidx.compose.material.icons.Icons.Filled.ArrowUpward,
+            highlighted = releaseToSend,
+        )
+    }
+}
+
+@Composable
+private fun HoldTarget(icon: androidx.compose.ui.graphics.vector.ImageVector, highlighted: Boolean) {
+    Box(
+        modifier =
+            Modifier
+                .size(36.dp)
+                .clip(CircleShape)
+                .background(
+                    if (highlighted) MaterialTheme.colorScheme.primary
+                    else MaterialTheme.colorScheme.surfaceVariant
+                ),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint =
+                if (highlighted) MaterialTheme.colorScheme.onPrimary
+                else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(18.dp),
+        )
     }
 }
