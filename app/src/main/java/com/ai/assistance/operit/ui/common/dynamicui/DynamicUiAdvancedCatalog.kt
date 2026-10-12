@@ -42,7 +42,7 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
     private val route = A2uiProperty.dynamicBoolean("route")
     private val disabled = A2uiProperty.dynamicBoolean("disabled")
     override val description = "Operit native $name. Data-bound, with explicit user actions only."
-    override val properties = listOf(label, text, value, url, imageUrl, price, address, type, labels, options, children, visible, series, runs, markers, route, disabled, A2uiProperty.dynamicValue("onChange"))
+    override val properties = listOf(label, text, value, url, imageUrl, price, address, type, labels, options, children, visible, series, runs, markers, route, disabled, A2uiProperty.any("onChange"))
 
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {

@@ -66,7 +66,9 @@ internal object CardPressable : A2uiComponent {
     override val description = "Accessible clickable node. Its content contains display components only."
     private val label = A2uiProperty.dynamicString("label")
     private val child = A2uiProperty.dynamicString("child")
-    private val action = A2uiProperty.dynamicValue("action")
+    // Operit validates event actions itself, including structured local state values.
+    // Read the definition unchanged; its bindings are evaluated only when dispatched.
+    private val action = A2uiProperty.any("action")
     private val disabled = A2uiProperty.dynamicBoolean("disabled")
     private val selected = A2uiProperty.dynamicBoolean("selected")
     override val properties = listOf(label, child, action, disabled, selected)
@@ -76,7 +78,7 @@ internal object CardPressable : A2uiComponent {
         val childId = properties.bind(child) ?: return
         val isSelected = properties.bind(selected) == true
         @Suppress("UNCHECKED_CAST")
-        val event = properties.bind(action) as? Map<String, Any?> ?: return
+        val event = properties[action] as? Map<String, Any?> ?: return
         val local = (event["event"] as? Map<*, *>)?.get("name") == "local_action"
         val enabled = LocalCardBrowse.current && properties.bind(disabled) != true &&
             (!local || !LocalCardReadOnly.current)

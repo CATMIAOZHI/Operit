@@ -98,7 +98,9 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
     private val widths = A2uiProperty.dynamicValue("columnWidths")
     private val tableHeight = A2uiProperty.dynamicNumber("maxHeight")
     override val description = "Operit native $name. Local field changes do not send model requests."
-    override val properties = listOf(text, label, if (name == "CheckBox") checkboxValue else value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, minItemWidth, expandedProperty, inputType, tone, status, align, disabled, error, mask, minLines, maxLines, minDate, maxDate, clearable, widths, tableHeight, A2uiProperty.dynamicValue("onChange"))
+    // onChange contains host-side event_value placeholders, not a DynamicValue binding.
+    // DynamicUiProtocol validates it and resolveLocalCardContext reads it after real input.
+    override val properties = listOf(text, label, if (name == "CheckBox") checkboxValue else value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, minItemWidth, expandedProperty, inputType, tone, status, align, disabled, error, mask, minLines, maxLines, minDate, maxDate, clearable, widths, tableHeight, A2uiProperty.any("onChange"))
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
