@@ -14,6 +14,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
 import androidx.compose.ui.graphics.compositeOver
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
@@ -26,6 +27,7 @@ import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -68,10 +70,44 @@ internal fun cardChartSeries(value: Any?, labels: List<String>, type: String): L
     }
 }
 
+/**
+ * Series colors: the theme primary first, then fixed hues that stay distinct from it and from
+ * each other. Theme secondary/tertiary are often the same family as primary, so they are not used.
+ */
+internal fun cardChartPalette(primary: Color, dark: Boolean): List<Color> {
+    // Light colors double as legend and tooltip text, so each keeps >= 4:1 contrast on white.
+    val fixed = if (dark) listOf(0xFF8AB4F0, 0xFF6FD0C2, 0xFFF0C46A, 0xFFB9A2EC, 0xFFF29E7C, 0xFFA9B6C6)
+        else listOf(0xFF3D7CC9, 0xFF22857A, 0xFF96690F, 0xFF8466C4, 0xFFB85A32, 0xFF6E7F94)
+    fun hueSat(c: Color): Pair<Float, Float> {
+        val max = maxOf(c.red, c.green, c.blue); val min = minOf(c.red, c.green, c.blue); val d = max - min
+        if (d < 1e-4f) return 0f to 0f
+        val h = when (max) {
+            c.red -> 60f * (((c.green - c.blue) / d) % 6f)
+            c.green -> 60f * ((c.blue - c.red) / d + 2f)
+            else -> 60f * ((c.red - c.green) / d + 4f)
+        }
+        return ((h + 360f) % 360f) to (if (max <= 0f) 0f else d / max)
+    }
+    val (primaryHue, primarySat) = hueSat(primary)
+    val colors = fixed.map { Color(it) }
+    fun rgbDistance(a: Color, b: Color) = (a.red - b.red).pow(2) + (a.green - b.green).pow(2) + (a.blue - b.blue).pow(2)
+    // A near-gray primary has no reliable hue: drop only the fixed color that looks closest to it.
+    val closest = if (primarySat < .2f) colors.minBy { rgbDistance(it, primary) } else null
+    val distinct = colors.filter { color ->
+        if (color == closest) return@filter false
+        val (hue, sat) = hueSat(color)
+        val distance = abs(hue - primaryHue).let { minOf(it, 360f - it) }
+        primarySat < .2f || sat < .2f || distance >= 35f
+    }
+    // A chart has up to 4 series: never let the filter leave fewer colors than that.
+    return listOf(primary) + distinct + (colors - distinct.toSet()).take((3 - distinct.size).coerceAtLeast(0))
+}
+
 @Composable
 internal fun CardChart(type: String, title: String, data: List<CardChartSeries>, modifier: Modifier = Modifier) {
     val primary = MaterialTheme.colorScheme.primary
-    val palette = listOf(primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.error)
+    val dark = MaterialTheme.colorScheme.surface.luminance() < .5f
+    val palette = remember(primary, dark) { cardChartPalette(primary, dark) }
     val ink = MaterialTheme.colorScheme.onSurfaceVariant
     val grid = MaterialTheme.colorScheme.outlineVariant
     // Insets are translucent in embedded blocks; the floating tooltip must stay opaque.
@@ -84,8 +120,8 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
     var selected by remember(data, type) { mutableStateOf<Pair<Int, Int>?>(null) }
     var showData by rememberSaveable { mutableStateOf(false) }
     val points = remember(data) { data.flatMap { it.points } }
-    val pieColors = remember(points.size, primary) {
-        List(points.size) { i -> if (i == 0) primary else Color.hsv((i * 137.508f) % 360f, .65f, .78f) }
+    val pieColors = remember(points.size, palette, dark) {
+        List(points.size) { i -> palette.getOrNull(i) ?: Color.hsv((i * 137.508f) % 360f, .45f, if (dark) .85f else .72f) }
     }
     val empty = points.isEmpty() || (type == "pie" && points.sumOf { it.y } <= 0)
     val chartDescription = stringResource(R.string.dynamic_ui_chart_description, title, points.size)
@@ -106,7 +142,11 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
             val left = tickLabels.maxOf { it.size.width }.toFloat() + with(density) { 8.dp.toPx() }
             val right = with(density) { 16.dp.toPx() }
             val top = with(density) { 12.dp.toPx() }
-            val bottom = with(density) { 28.dp.toPx() }
+            val axisLabelStyle = TextStyle(color = ink, fontSize = 10.sp, textAlign = TextAlign.Center)
+            // CJK fallback fonts are taller than Latin, so size the band from a CJK sample.
+            val axisLineHeight = measurer.measure("Ag图", axisLabelStyle).size.height
+            // Bar categories get two label lines so long names wrap instead of being dropped.
+            val bottom = with(density) { if (type == "bar") maxOf(28.dp.toPx(), axisLineHeight * 2 + 8.dp.toPx()) else 28.dp.toPx() }
             fun plotWidth(w: Float) = (w - left - right).coerceAtLeast(1f)
             fun barWidth(w: Float) = plotWidth(w) / data.first().points.size.coerceAtLeast(1) * .7f / data.size
             fun position(p: CardChartPoint, w: Float, h: Float, seriesIndex: Int = 0): Offset {
@@ -211,10 +251,21 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                     val labels = xAxis?.let { axis ->
                         cardChartTickLabels(axis.ticks).zip(axis.ticks).map { (label, x) -> CardChartPoint(label, x, 0.0) }
                     } ?: data.first().points
+                    val slot = plotWidth(w) / labels.size.coerceAtLeast(1)
+                    val slotText = (slot - 4.dp.toPx()).toInt()
+                    // Bar categories each own a slot: label every bar inside it, wrapping to two lines.
+                    // Only slots too narrow for readable text fall back to thinning below.
+                    val everyLabel = type == "bar" && slotText >= 28.dp.toPx()
+                    if (everyLabel) labels.forEachIndexed { i, p ->
+                        val layout = measurer.measure(p.label, axisLabelStyle, overflow = TextOverflow.Ellipsis,
+                            maxLines = 2, constraints = Constraints(maxWidth = slotText))
+                        val x = left + slot * (i + .5f)
+                        drawText(layout, topLeft = Offset(x - layout.size.width / 2, h - bottom + 4.dp.toPx()))
+                    }
                     val step = max(1, ceil(labels.size / 4.0).toInt())
                     // Keep numeric labels intact. Prioritize endpoints and omit ticks that
                     // would overlap instead of turning distinct large numbers into identical prefixes.
-                    val labelIndices = (listOf(0, labels.lastIndex) +
+                    val labelIndices = if (everyLabel) emptyList<Int>() else (listOf(0, labels.lastIndex) +
                         labels.indices.filter { it % step == 0 }).distinct().filter { it in labels.indices }
                     val occupied = mutableListOf<ClosedFloatingPointRange<Float>>()
                     labelIndices.forEach { i ->

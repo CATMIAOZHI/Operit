@@ -4,6 +4,15 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class DynamicUiChartGeometryTest {
+    @Test fun paletteKeepsFourSeriesColorsForAnyPrimary() {
+        for (dark in listOf(false, true)) for (sat in listOf(0f, .1f, .6f, .9f)) for (hue in 0 until 360) {
+            val primary = androidx.compose.ui.graphics.Color.hsv(hue.toFloat(), sat, .7f)
+            val palette = cardChartPalette(primary, dark)
+            assertEquals(primary, palette.first())
+            assertTrue("hue $hue sat $sat dark $dark", palette.size >= 4 && palette.distinct().size == palette.size)
+        }
+    }
+
     @Test fun readableTicksCoverTheReportedCharts() {
         val line = cardChartAxis(32.0, 288.0, false)
         assertEquals(listOf("0", "100", "200", "300"), cardChartTickLabels(line.ticks))
