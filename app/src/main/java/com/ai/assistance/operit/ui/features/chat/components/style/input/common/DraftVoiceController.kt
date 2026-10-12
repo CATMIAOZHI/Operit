@@ -20,6 +20,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.speech.EarlyCapture
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.voice.SpeechInteractionManager
 import kotlinx.coroutines.CoroutineScope
@@ -42,6 +43,9 @@ internal constructor(
     private var statusState by mutableStateOf("")
     private var errorState by mutableStateOf<String?>(null)
     private var failedTextState by mutableStateOf<String?>(null)
+    private var holdingState by mutableStateOf(false)
+    private var releaseToSendState by mutableStateOf(false)
+    private var sendAfterResult = false
 
     internal val manager: SpeechInteractionManager by lazy {
         SpeechInteractionManager(
@@ -53,50 +57,93 @@ internal constructor(
     }
 
     private var insertText: (String) -> Unit = {}
+    private var requestSend: () -> Unit = {}
 
     val isActive: Boolean get() = activeState
     val isRecording: Boolean get() = manager.isRecording
     val isPreparing: Boolean get() = manager.isPreparing
     val isProcessing: Boolean get() = manager.isProcessingSpeech
+    /** Listening while the recognizer still loads; the audio is kept for it. */
+    val isHearingEarly: Boolean get() = manager.isHearingEarly
+
+    /** A finger is holding the composer: the panel shows the stop/send targets. */
+    val isHolding: Boolean get() = holdingState
+    /**
+     * Whether letting go now sends instead of only filling the message box. Before anything is
+     * being heard, letting go can only cancel, so the send side does not light up yet.
+     */
+    val releaseToSend: Boolean get() = releaseToSendState && manager.isRecording
 
     /** What has been recognised so far, partial results included. */
     val liveText: String get() = failedTextState ?: manager.userMessage
     val statusText: String get() = statusState
     val errorText: String? get() = errorState
-    val volumeLevelFlow: StateFlow<Float> get() = manager.volumeLevelFlow
+    val volumeLevelFlow: StateFlow<Float>
+        get() = if (manager.isHearingEarly) EarlyCapture.level else manager.volumeLevelFlow
     val recognitionStateFlow get() = manager.speechService.recognitionStateFlow
 
     internal fun bindInsert(block: (String) -> Unit) {
         insertText = block
     }
 
+    internal fun bindSend(block: () -> Unit) {
+        requestSend = block
+    }
+
     /** Starts listening. Safe to call again to retry after a failure. */
-    fun open() {
+    fun open(holding: Boolean = false) {
         errorState = null
         failedTextState = null
+        holdingState = holding
+        releaseToSendState = false
+        sendAfterResult = false
         activeState = true
-        manager.requestFocus(view)
+        manager.claimFocusWithoutKeyboard(view)
         manager.startListening(
             onStartFailure = { errorState = it },
             continuousMode = manager.speechService.supportsContinuousDictation ||
                 manager.speechService.supportsContinuousRecognition,
+            // People start talking as soon as they tap; keep that while the model loads.
+            captureEarly = true,
         )
     }
 
     /** Stops the microphone and waits for the final transcription. */
-    fun finishRecording() {
+    fun finishRecording(thenSend: Boolean = false) {
+        sendAfterResult = thenSend
         manager.stopListening(isCancel = false)
+    }
+
+    fun setReleaseToSend(send: Boolean) {
+        releaseToSendState = send
+    }
+
+    /**
+     * The holding finger let go. A session that already finished on its own has put its text in
+     * the message box, so sending then means sending that draft.
+     */
+    fun releaseHold(send: Boolean) {
+        if (!holdingState) return
+        holdingState = false
+        releaseToSendState = false
+        when {
+            !activeState -> if (send) requestSend()
+            isPreparing -> cancel()
+            isRecording -> finishRecording(thenSend = send)
+        }
     }
 
     /** Takes whatever has been recognised so far and closes, without waiting for the final pass. */
     fun confirmNow() {
         val text = liveText
+        resetHold()
         manager.stopListening(isCancel = true)
         activeState = false
         insertText(text)
     }
 
     fun cancel() {
+        resetHold()
         manager.stopListening(isCancel = true)
         activeState = false
     }
@@ -107,14 +154,24 @@ internal constructor(
      */
     fun fail(message: String) {
         failedTextState = liveText
+        resetHold()
         manager.stopListening(isCancel = true)
         errorState = message
         activeState = true
     }
 
     internal fun closeFromResult(text: String) {
+        val send = sendAfterResult
+        sendAfterResult = false
         activeState = false
         insertText(text)
+        if (send && text.isNotBlank()) requestSend()
+    }
+
+    private fun resetHold() {
+        holdingState = false
+        releaseToSendState = false
+        sendAfterResult = false
     }
 
     internal fun setStatus(text: String) {

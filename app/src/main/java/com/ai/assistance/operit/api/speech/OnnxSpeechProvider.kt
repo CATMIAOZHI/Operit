@@ -38,6 +38,9 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
     // Voice conversation keeps its single-utterance default; manual dictation opts into segments.
     override val supportsContinuousDictation = true
 
+    override fun canStartWithoutPrompt(context: Context): Boolean =
+        isInitialized.value || LocalVoiceModels.find(modelId)?.downloaded(context) == true
+
     override suspend fun initialize(): Boolean = withContext(Dispatchers.IO) {
         try {
             LocalVoiceModels.withModelFiles(context, modelId) { directory ->
@@ -78,12 +81,18 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
             recognitionResultFlow.value = SpeechService.RecognitionResult("")
             recognitionErrorFlow.value = SpeechService.RecognitionError(0, "")
             recognitionStateFlow.value = SpeechService.RecognitionState.PREPARING
+            var vad: OnnxSileroVad? = null
             try {
                 withContext(Dispatchers.IO) {
                     val min = AudioRecord.getMinBufferSize(16000, AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT)
                     check(min > 0) { "Microphone unavailable" }
+                    // Built before recording starts: while it loads, the microphone buffer would overflow.
+                    val detector = OnnxSileroVad(context, speechDurationMs = 100,
+                        silenceDurationMs = if (continuousMode) 2000 else 700).also { vad = it }
+                    // Room for the audio that arrives while the handed-off samples are being checked
+                    // (five seconds, enough for a long preroll on a slow phone).
                     val mic = AudioRecord(audioSource,16000,AudioFormat.CHANNEL_IN_MONO,
-                        AudioFormat.ENCODING_PCM_16BIT, maxOf(min * 2, 4096))
+                        AudioFormat.ENCODING_PCM_16BIT, maxOf(min * 2, 16000 * 2 * 5))
                     record = mic
                     check(mic.state == AudioRecord.STATE_INITIALIZED) { "Microphone unavailable" }
                     effects = CaptureAudioEffects(mic.audioSessionId)
@@ -91,10 +100,6 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                     samples = FloatArray(16000 * 60 + 512)
                     length = 0
                     segmentHasSpeech = false
-                    SpeechPrerollStore.consumePending()?.let { preroll ->
-                        for (sample in preroll.take(16000)) samples[length++] = sample / 32768f
-                        segmentHasSpeech = preroll.isNotEmpty()
-                    }
                     val decoder = if (continuousMode) ContinuousSpeechDecoder(
                         scope = scope,
                         decode = { pcm -> decodeText(pcm, session) },
@@ -110,15 +115,27 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                         onFailure = { failCapture(session, it) },
                     ) else null
                     continuousDecoder = decoder
+                    val preroll = SpeechPrerollStore.consumePending(audioSource)
                     mic.startRecording()
                     recognitionStateFlow.value = SpeechService.RecognitionState.RECOGNIZING
-                    captureJob = scope.launch {
+                    // Atomic start: the job always reaches `use` and closes the detector, even if cancelled first.
+                    captureJob = scope.launch(start = CoroutineStart.ATOMIC) {
                         try {
-                            OnnxSileroVad(context, speechDurationMs = 100,
-                                silenceDurationMs = if (continuousMode) 2000 else 700).use { vad ->
+                            detector.use { vad ->
                                 val frame = ShortArray(512)
-                                while (isActive && session == epoch.current()) {
-                                    val count = mic.read(frame,0,frame.size)
+                                var prerollAt = 0
+                                // A stop right after start must still see all of the earlier audio, so
+                                // that part is finished even once this job is cancelled.
+                                while ((isActive || (preroll != null && prerollAt < preroll.size)) &&
+                                    session == epoch.current()) {
+                                    // Audio heard before this microphone opened goes through the same path first.
+                                    val fromPreroll = preroll != null && prerollAt < preroll.size
+                                    val count = if (preroll != null && prerollAt < preroll.size) {
+                                        val n = minOf(frame.size, preroll.size - prerollAt)
+                                        preroll.copyInto(frame, 0, prerollAt, prerollAt + n)
+                                        prerollAt += n
+                                        n
+                                    } else mic.read(frame,0,frame.size)
                                     check(count > 0) { "Microphone read failed: $count" }
                                     var energy = 0f
                                     for (i in 0 until count) {
@@ -140,7 +157,11 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                                             break
                                         }
                                         if (segmentHasSpeech) {
-                                            check(decoder.offer(samples.copyOf(length))) {
+                                            val sent = decoder.offer(samples.copyOf(length))
+                                            // Earlier audio arrives faster than real time; with the queue
+                                            // full, the segment keeps growing instead of failing the session.
+                                            if (!sent && fromPreroll && length < 16000 * 60) continue
+                                            check(sent) {
                                                 context.getString(R.string.voice_dictation_cannot_keep_up)
                                             }
                                         }
@@ -162,12 +183,16 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                 }
                 true
             } catch (e: CancellationException) {
+                if (captureJob == null) vad?.close()
                 withContext(NonCancellable) { releaseCapture(); discardDecoder() }
                 epoch.publish(session) {
                     recognitionStateFlow.value = SpeechService.RecognitionState.IDLE
                 }
                 throw e
-            } catch (e: Exception) { releaseCapture(); discardDecoder(); failure(e); false }
+            } catch (e: Exception) {
+                if (captureJob == null) vad?.close()
+                releaseCapture(); discardDecoder(); failure(e); false
+            }
         }
 
     override suspend fun stopRecognition(): Boolean = stopRecognition(epoch.current())

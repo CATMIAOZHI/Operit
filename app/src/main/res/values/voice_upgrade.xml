@@ -54,4 +54,8 @@
     <string name="voice_model_source">模型来源与许可</string>
     <string name="voice_pitch_unavailable">此模型不支持调节音调</string>
     <string name="voice_playback_failed">播报失败，请检查语音设置；文字回复继续</string>
+    <string name="voice_hold_release_to_stop">松开以停止</string>
+    <string name="voice_hold_release_to_send">松开即可发送</string>
+    <string name="input_question_hint_hold">随心输入或长按说话</string>
+    <string name="input_question_with_workspace_hold">随心输入或长按说话，使用@来引用文件</string>
 </resources>

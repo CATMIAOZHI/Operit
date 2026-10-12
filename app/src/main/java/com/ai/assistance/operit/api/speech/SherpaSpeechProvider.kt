@@ -99,6 +99,9 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
     @Volatile private var closed = false
     private val recognitionMutex = Mutex()
 
+    override fun canStartWithoutPrompt(context: Context): Boolean =
+        isInitialized.value || OnDemandResources.hasSpeechModel(context)
+
     override suspend fun initialize(): Boolean {
         if (closed) return false
         if (isInitialized.value) return true
@@ -259,22 +262,6 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             _recognitionResult.value = SpeechService.RecognitionResult(text = "", isFinal = false, confidence = 0f)
             recognizer?.reset(false) // 使用SherpaNcnn中的reset方法，参数为false不重新创建识别器
 
-            val pendingPcm = SpeechPrerollStore.consumePending()
-            if (pendingPcm != null && pendingPcm.isNotEmpty()) {
-                try {
-                    recognizer?.let { recognizerInstance ->
-                        val samples = FloatArray(pendingPcm.size) { i -> pendingPcm[i] / 32768.0f }
-                        recognizerInstance.acceptSamples(samples)
-                        while (recognizerInstance.isReady()) {
-                            recognizerInstance.decode()
-                        }
-                    }
-                    AppLogger.d(TAG, "Applied preroll: samples=${pendingPcm.size}")
-                } catch (e: Exception) {
-                    AppLogger.w(TAG, "Failed to apply preroll", e)
-                }
-            }
-
             val sampleRateInHz = 16000
             val channelConfig = AudioFormat.CHANNEL_IN_MONO
             val audioFormat = AudioFormat.ENCODING_PCM_16BIT
@@ -291,13 +278,16 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                 return@withLock false
             }
 
+            var pendingPcm: ShortArray? = null
             audioRecord =
                     AudioRecord(
                             audioSource,
                             sampleRateInHz,
                             channelConfig,
                             audioFormat,
-                            minBufferSize * 2
+                            // Room for the audio that arrives while earlier audio is decoded below
+                            // (five seconds; decoding runs at a fraction of real time).
+                            maxOf(minBufferSize * 2, sampleRateInHz * 2 * 5)
                     )
             val recordInstance = audioRecord
             if (recordInstance == null || recordInstance.state != AudioRecord.STATE_INITIALIZED) {
@@ -312,6 +302,9 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                 return@withLock false
             }
             try {
+                // Taken right before recording so the earlier capture and this one meet without a gap.
+                // Off the main thread: handing over stops the earlier capture and waits for its reader.
+                pendingPcm = withContext(Dispatchers.IO) { SpeechPrerollStore.consumePending(audioSource) }
                 recordInstance.startRecording()
             } catch (e: Exception) {
                 AppLogger.e(TAG, "AudioRecord.startRecording failed", e)
@@ -329,6 +322,30 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             currentVolume = 0f
             _volumeLevelFlow.value = 0f
             AppLogger.d(TAG, "Started recording")
+
+            val preroll = pendingPcm
+            if (preroll != null && preroll.isNotEmpty()) {
+                try {
+                    withContext(Dispatchers.IO) {
+                        recognizer?.let { recognizerInstance ->
+                            val samples = FloatArray(preroll.size) { i -> preroll[i] / 32768.0f }
+                            recognizerInstance.acceptSamples(samples)
+                            while (recognizerInstance.isReady()) {
+                                recognizerInstance.decode()
+                            }
+                        }
+                    }
+                    AppLogger.d(TAG, "Applied preroll: samples=${preroll.size}")
+                } catch (e: CancellationException) {
+                    // Recording already started; a cancel here must not leave the microphone open.
+                    clearAndReleaseAudioRecord()
+                    _recognitionState.value = SpeechService.RecognitionState.IDLE
+                    _volumeLevelFlow.value = 0f
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Failed to apply preroll", e)
+                }
+            }
 
             recordingJob =
                     scope.launch {
