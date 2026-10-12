@@ -130,7 +130,7 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
                     statusBarTransparent -> Color.Transparent.toArgb()
                     useBackgroundImage && backgroundImageUri != null -> Color.Transparent.toArgb()  // 有背景时透明
                     useCustomStatusBarColor && customStatusBarColorValue != null -> customStatusBarColorValue!!.toInt()
-                    else -> colorScheme.surfaceContainerHigh.toArgb()
+                    else -> colorScheme.rainyAppBarFill.toArgb()
                 }
                 window.statusBarColor = statusBarColor
 
@@ -448,98 +448,6 @@ fun OperitTheme(updateSystemBars: Boolean = true, content: @Composable () -> Uni
             }
         }
     }
-}
-
-/** 为亮色主题生成基于主色的完整颜色方案 */
-internal fun generateLightColorScheme(
-        primaryColor: Color,
-    secondaryColor: Color,
-    onColorMode: String
-): ColorScheme {
-    // A custom color is used verbatim and then drawn as accent *text* all over the UI, so a pale
-    // pick has to be strengthened before it is readable on the light surfaces.
-    val accent = ensureResolvedLightAccentContrast(primaryColor)
-    val accentSecondary = ensureResolvedLightAccentContrast(secondaryColor)
-    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
-    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
-
-    // Tints keep the value the user picked; only the accent itself is strengthened.
-    val primaryContainer = lightenColor(primaryColor, 0.7f)
-    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
-    val secondaryContainer = lightenColor(secondaryColor, 0.7f)
-    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
-
-    // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
-    return rainyBaseColorScheme(darkTheme = false).copy(
-            primary = accent,
-            onPrimary = onPrimary,
-            primaryContainer = primaryContainer,
-            onPrimaryContainer = onPrimaryContainer,
-            secondary = accentSecondary,
-            onSecondary = onSecondary,
-            secondaryContainer = secondaryContainer,
-            onSecondaryContainer = onSecondaryContainer,
-        // Ensure other colors are consistent with a light theme
-        onSurface = Color.Black,
-        onSurfaceVariant = Color.Black.copy(alpha = 0.7f),
-        onBackground = Color.Black
-    )
-}
-
-/** 为暗色主题生成基于主色的完整颜色方案 */
-internal fun generateDarkColorScheme(
-        primaryColor: Color,
-    secondaryColor: Color,
-    onColorMode: String
-): ColorScheme {
-    val adjustedPrimaryColor = lightenColor(primaryColor, 0.2f)
-    val adjustedSecondaryColor = lightenColor(secondaryColor, 0.2f)
-    // The fixed 0.2 is not enough for a very dark pick, so a dark custom color still needs the
-    // contrast guard on the dark surfaces.
-    val accent = ensureResolvedDarkAccentContrast(adjustedPrimaryColor)
-    val accentSecondary = ensureResolvedDarkAccentContrast(adjustedSecondaryColor)
-
-    val onPrimary = resolveContrastingTextColor(accent, onColorMode)
-    val onSecondary = resolveContrastingTextColor(accentSecondary, onColorMode)
-
-    val primaryContainer = darkenColor(primaryColor, 0.3f)
-    // Measured like every other label: a light pick leaves this container light enough that a
-    // forced white label would sit at 2.1:1 on it.
-    val onPrimaryContainer = getResolvedContrastingTextColor(primaryContainer)
-    val secondaryContainer = darkenColor(secondaryColor, 0.3f)
-    val onSecondaryContainer = getResolvedContrastingTextColor(secondaryContainer)
-
-    // Return a complete color scheme, ensuring onSurface and onSurfaceVariant are consistent
-    return rainyBaseColorScheme(darkTheme = true).copy(
-            primary = accent,
-            onPrimary = onPrimary,
-            primaryContainer = primaryContainer,
-            onPrimaryContainer = onPrimaryContainer,
-            secondary = accentSecondary,
-            onSecondary = onSecondary,
-            secondaryContainer = secondaryContainer,
-            onSecondaryContainer = onSecondaryContainer,
-        // Ensure other colors are consistent with a dark theme
-        onSurface = Color.White,
-        onSurfaceVariant = Color.White.copy(alpha = 0.7f),
-        onBackground = Color.White
-    )
-}
-
-/** 使颜色变亮 */
-private fun lightenColor(color: Color, factor: Float): Color {
-    val r = color.red + (1f - color.red) * factor
-    val g = color.green + (1f - color.green) * factor
-    val b = color.blue + (1f - color.blue) * factor
-    return Color(r, g, b, color.alpha)
-}
-
-/** 使颜色变暗 */
-private fun darkenColor(color: Color, factor: Float): Color {
-    val r = color.red * (1f - factor)
-    val g = color.green * (1f - factor)
-    val b = color.blue * (1f - factor)
-    return Color(r, g, b, color.alpha)
 }
 
 /** 混合两种颜色 */
