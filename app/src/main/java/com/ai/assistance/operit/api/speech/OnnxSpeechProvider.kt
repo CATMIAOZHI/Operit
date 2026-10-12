@@ -136,6 +136,10 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                                         prerollAt += n
                                         n
                                     } else mic.read(frame,0,frame.size)
+                                    // Stopping the microphone wakes a pending read with nothing in it.
+                                    // That is the end of capture, not a broken microphone.
+                                    if (count <= 0 && (session != epoch.current() ||
+                                            currentState != SpeechService.RecognitionState.RECOGNIZING)) break
                                     check(count > 0) { "Microphone read failed: $count" }
                                     var energy = 0f
                                     for (i in 0 until count) {

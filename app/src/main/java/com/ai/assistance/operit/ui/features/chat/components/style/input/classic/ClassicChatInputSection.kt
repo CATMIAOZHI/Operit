@@ -629,7 +629,12 @@ fun ClassicChatInputSection(
                         Text(
                             text =
                                 dictation.liveText.ifBlank {
-                                    dictation.errorText ?: dictation.statusText
+                                    dictation.errorText
+                                        ?: if (dictation.isProcessing) {
+                                            stringResource(R.string.voice_transcribing)
+                                        } else {
+                                            dictation.statusText
+                                        }
                                 },
                             style = modernTextStyle,
                             color =
@@ -647,6 +652,21 @@ fun ClassicChatInputSection(
                             style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.error,
                         )
+                    } else if (dictation.isProcessing && dictation.liveText.isNotBlank()) {
+                        // Letting go is not the end: the last words are still being turned into text.
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(12.dp),
+                                strokeWidth = 1.5.dp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.voice_transcribing),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
                     }
 
                     Spacer(modifier = Modifier.height(4.dp))
