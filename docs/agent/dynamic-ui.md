@@ -42,7 +42,7 @@ DECIDE FIRST 说明读取指南不等于必须生成界面；VISUAL RULES 约束
 `Header` 组合标题、说明和状态徽章；`InfoRow` 左右排列标签与数值，长内容改上下排列。
 `Badge`、`Header` 和 `InfoRow` 支持 neutral/success/info/warning/error 语义色，含深色模式。
 `Display(text,label?,align?)` 提供突出结果区，默认左对齐；计算器显式使用 `align="end"`。
-长结果可横向查看，不省略数字。
+长结果先缩小字号（最小到 60%），仍放不下再换行，不省略数字，也不需要横向拖动。
 `Grid` 内按钮铺满各自单元格，未满行不会重新均分。显式 `columnCount` 时可传
 `columnSpans` 整数数组，与 `children` 一一对应，每项为 `1..columnCount`；
 跨列不足时另起一行。计算器的零键使用两列，费用试算也复用 `Display`。

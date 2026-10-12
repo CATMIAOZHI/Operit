@@ -123,12 +123,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (title.isNotBlank()) Text(title, Modifier.fillMaxWidth(), textAlign = if (atStart) TextAlign.Start else TextAlign.End,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelMedium)
-                    // Keep long results readable at large font scales without truncating digits.
-                    Box(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
-                        contentAlignment = if (atStart) Alignment.CenterStart else Alignment.CenterEnd) {
-                        Text(properties.bind(text).orEmpty(), maxLines = 1, softWrap = false,
-                            style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.SemiBold)
-                    }
+                    CardDisplayValue(properties.bind(text).orEmpty(), atStart)
                 }
             }
             "Badge" -> CardStatusBadge(properties.bind(text).orEmpty(), properties.bind(tone), modifier)
