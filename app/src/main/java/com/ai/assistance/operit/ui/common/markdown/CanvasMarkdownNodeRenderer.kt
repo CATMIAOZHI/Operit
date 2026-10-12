@@ -678,6 +678,7 @@ private fun renderNodeContent(
                     closed = codeLines.size > 1 && codeLines.last().trim() == "```",
                     streaming = LocalMarkdownRenderMode.current == MarkdownRenderMode.STREAMING,
                     blockIndex = index,
+                    ink = textColor,
                 )
             } else EnhancedCodeBlock(
                 code = codeContent,
