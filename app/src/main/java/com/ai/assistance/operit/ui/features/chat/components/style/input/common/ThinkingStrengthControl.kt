@@ -45,6 +45,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -211,10 +212,15 @@ private fun ThinkingStrengthPopup(
     }
 
     // The debounce above only fires while the popup is still composed. Lifting the finger commits
-    // right away, so closing the popup immediately after a drag cannot drop the last level.
+    // right away, so closing the popup immediately after a drag cannot drop the last level. A tap
+    // changes the value and finishes in one gesture with no recomposition in between, so the level
+    // is read from the state here rather than from this composition's `shownLevel`.
+    val latestStored by rememberUpdatedState(storedLevel)
+    val latestEnabled by rememberUpdatedState(thinkingEnabled)
     val commitLevel = {
-        if (!thinkingEnabled) onSetThinkingMode(true)
-        if (shownLevel != storedLevel) onQualityLevelChange(shownLevel)
+        val level = localLevel.roundToInt().coerceIn(minLevel, maxLevel)
+        if (!latestEnabled) onSetThinkingMode(true)
+        if (level != latestStored) onQualityLevelChange(level)
         // Stops the debounce effect above from writing the same value a second time.
         touched = false
         Unit
