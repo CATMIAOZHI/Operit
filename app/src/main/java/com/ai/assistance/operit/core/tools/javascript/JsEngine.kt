@@ -1641,7 +1641,7 @@ class JsEngine(private val context: Context) {
                     report["repaired"]?.let { put("repaired", it) }
                     report["repair"]?.let { put("repair", it) }
                     put("message", kotlinx.serialization.json.JsonPrimitive(
-                        "Card compiled and checked. Display exactly this reference in your answer; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
+                        "UI block compiled and checked. Place exactly this reference where the block belongs in your answer, with prose around it as needed; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
                     ))
                 }.toString()
             } catch (e: IllegalArgumentException) {

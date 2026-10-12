@@ -18,7 +18,7 @@ internal object DynamicUiProtocol {
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
         "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
-        "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame", "Pressable", "Tooltip", "Stepper", "Formula",
+        "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame", "Pressable", "Tooltip", "Stepper", "Formula", "Flow",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
@@ -323,6 +323,7 @@ internal object DynamicUiProtocol {
                     c.getValue("type").jsonPrimitive.content)
             }
             if (kind == "Map") cardMapMarkers(DynamicUiProtocol.toValue(CardRepeat.evaluate(c.getValue("markers"), data)))
+            if (kind == "Flow") cardFlowSteps(DynamicUiProtocol.toValue(CardRepeat.evaluate(c.getValue("steps"), data)))
             if (kind == "Table") {
                 val rows = CardRepeat.evaluate(c.getValue("rows"), data).jsonArray
                 val count = c.getValue("columns").jsonArray.size
@@ -370,7 +371,7 @@ internal object DynamicUiProtocol {
                 }
             if (ancestors.any { graph[it]?.get("component")?.jsonPrimitive?.content == "Pressable" })
                 require(node["component"]?.jsonPrimitive?.content in setOf("Text", "Icon", "Heading",
-                    "Header", "InfoRow", "Display", "Badge", "Progress", "Divider", "Code", "Vector",
+                    "Header", "InfoRow", "Display", "Badge", "Progress", "Divider", "Code", "Vector", "Flow",
                     "Row", "Column", "Grid", "Frame", "Panel", "Card", "Conditional", "List")) {
                     "Pressable content must not contain interactive controls"
                 }

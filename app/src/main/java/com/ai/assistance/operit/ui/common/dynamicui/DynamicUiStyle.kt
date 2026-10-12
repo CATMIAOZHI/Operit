@@ -4,11 +4,12 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 
-/** White light-mode cards with the app's warm inset, ink and border colors. */
+/** White light-mode cards with the app's ink and border colors. Blocks are now embedded without a
+ * frame, so insets are a translucent ink wash: they stay visible on any chat bubble color. */
 internal fun cardColorScheme(base: ColorScheme): ColorScheme {
     val dark = base.surface.luminance() < .5f
     val surface = if (dark) Color(0xFF202124) else Color.White
-    val inset = if (dark) Color(0xFF2C2D30) else base.surfaceContainer
+    val inset = if (dark) Color.White.copy(alpha = .08f) else base.onSurface.copy(alpha = .055f)
     return base.copy(
         surface = surface,
         onSurface = if (dark) Color(0xFFF1F1F1) else base.onSurface,

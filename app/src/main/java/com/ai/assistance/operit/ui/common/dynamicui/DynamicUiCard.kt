@@ -350,20 +350,16 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
             }
         }
     }
-    // Use the app's fonts and colors, with form-sized body text instead of chat prose sizing.
+    // Embedded like a Markdown block: no host frame, background or padding. A root Card draws its
+    // own frame, so only authors who need visual grouping get one.
     MaterialTheme(
         colorScheme = cardColorScheme(MaterialTheme.colorScheme),
         shapes = MaterialTheme.shapes.copy(medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(20.dp)),
         typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium),
     ) {
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
-    Surface(
-        Modifier.fillMaxWidth().padding(vertical = 12.dp),
-        shape = MaterialTheme.shapes.large,
-        color = MaterialTheme.colorScheme.surface,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
-        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
+    CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
+        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (error != null) {
                 Text(invalidText, color = MaterialTheme.colorScheme.error)
                 Text(stringResource(R.string.dynamic_ui_regenerate), style = MaterialTheme.typography.bodySmall)
@@ -374,8 +370,6 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                         val readOnly = results[surface.id] == true
                         val enabled = closed && ready[surface.id] == true && pending == null && !readOnly && surface.id !in surfaceErrors
                         CompositionLocalProvider(
-                            LocalCardRootAlreadyFramed provides
-                                (components[surface.id]?.get("root")?.get("component")?.jsonPrimitive?.content == "Card"),
                             LocalCardInteractive provides enabled,
                             LocalCardBrowse provides (closed && ready[surface.id] == true && pending == null && surface.id !in surfaceErrors),
                             LocalCardReadOnly provides readOnly,
@@ -440,7 +434,10 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                 stateFile(it.id) in storageFailures
             }) Text(stringResource(R.string.dynamic_ui_save_failed), color = MaterialTheme.colorScheme.error)
             pending?.let { event ->
-                HorizontalDivider()
+                Surface(Modifier.fillMaxWidth(), shape = MaterialTheme.shapes.medium,
+                    color = MaterialTheme.colorScheme.surface,
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text(stringResource(if (event.type == "tool_action") R.string.dynamic_ui_confirm_tool else R.string.dynamic_ui_confirm_send))
                 val graph = components[event.surfaceId].orEmpty()
                 val definition = (graph[event.componentId]?.get("action") as? JsonObject)?.get("event")
@@ -487,14 +484,18 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                     } }) { Text(stringResource(R.string.dynamic_ui_send)) }
                     TextButton(onClick = { pending = null }) { Text(stringResource(android.R.string.cancel)) }
                 }
+                }
+                }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
+            // Source is a diagnostic tool, so it only appears when this block has a problem.
+            val hasIssue = error != null || surfaceErrors.isNotEmpty() || iconWarnings.isNotEmpty()
+            if (hasIssue) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End, verticalAlignment = Alignment.CenterVertically) {
                 if (iconWarnings.isNotEmpty()) Text(stringResource(R.string.dynamic_ui_icon_missing), Modifier.weight(1f), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 IconButton(onClick = { showSource = !showSource }, modifier = Modifier.size(48.dp)) {
                     Icon(Icons.Outlined.Code, stringResource(R.string.dynamic_ui_source), modifier = Modifier.size(18.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (showSource) {
+            if (hasIssue && showSource) {
                 error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 EnhancedCodeBlock(source.take(DynamicUiProtocol.MAX_SOURCE), "json", enableDialogs = false)
             }

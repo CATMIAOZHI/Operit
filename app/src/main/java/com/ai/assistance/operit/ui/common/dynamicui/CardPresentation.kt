@@ -20,22 +20,21 @@ import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 
-internal val LocalCardRootAlreadyFramed = compositionLocalOf { false }
-
-/** The host owns the outside frame; only explicit nested cards add another frame. */
+/** The host embeds UI without a frame; Card is the explicit, optional grouping container. */
 internal object FramedCard : A2uiBasicCatalogV1.Card {
     @Composable
     override fun A2uiComponentScope.TypedContent(
         childId: String, accessibility: A2uiBasicCatalogV1.AccessibilityAttributes?, modifier: Modifier,
     ) {
         val child = observeA2uiComponentState(childId)
-        val framed = LocalCardRootAlreadyFramed.current
         val accessible = modifier.fillMaxWidth().semantics {
             listOfNotNull(accessibility?.label, accessibility?.description)
                 .takeIf { it.isNotEmpty() }?.let { contentDescription = it.joinToString(". ") }
         }
-        val content: @Composable () -> Unit = {
-            CompositionLocalProvider(LocalCardRootAlreadyFramed provides false) {
+        Surface(accessible, shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.surface,
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
+            Box(Modifier.padding(16.dp)) {
                 when (child) {
                     is A2uiComponentState.Success -> A2uiComponent(child.component)
                     is A2uiComponentState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
@@ -45,12 +44,6 @@ internal object FramedCard : A2uiBasicCatalogV1.Card {
                     }
                 }
             }
-        }
-        if (framed) Box(accessible) { content() }
-        else Surface(accessible, shape = MaterialTheme.shapes.medium,
-            color = MaterialTheme.colorScheme.surface,
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)) {
-            Box(Modifier.padding(16.dp)) { content() }
         }
     }
 }

@@ -13,6 +13,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
@@ -73,7 +74,8 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
     val palette = listOf(primary, MaterialTheme.colorScheme.tertiary, MaterialTheme.colorScheme.secondary, MaterialTheme.colorScheme.error)
     val ink = MaterialTheme.colorScheme.onSurfaceVariant
     val grid = MaterialTheme.colorScheme.outlineVariant
-    val tooltipBackground = MaterialTheme.colorScheme.surfaceContainerHigh
+    // Insets are translucent in embedded blocks; the floating tooltip must stay opaque.
+    val tooltipBackground = MaterialTheme.colorScheme.surfaceContainerHigh.compositeOver(MaterialTheme.colorScheme.surface)
     val tooltipInk = MaterialTheme.colorScheme.onSurface
     val markerBackground = MaterialTheme.colorScheme.surface
     val measurer = rememberTextMeasurer()

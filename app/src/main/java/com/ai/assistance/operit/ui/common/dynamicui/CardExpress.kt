@@ -335,6 +335,11 @@ internal object CardExpress {
                 try { cardMapMarkers(DynamicUiProtocol.toValue(initial(markers))) }
                 catch (_: Exception) { fail(markers.token, "Invalid map markers. Check numeric latitude/longitude and the 32-marker limit.") }
             }
+            if (node.token.text == "Flow" && !hasItem(node)) {
+                val steps = node.fields.getValue("steps")
+                try { cardFlowSteps(DynamicUiProtocol.toValue(initial(steps))) }
+                catch (e: Exception) { fail(steps.token, "Invalid Flow steps: ${e.message ?: "use 1..8 {title,caption?,icon?,tone?} objects"}. Icons: ${cardFlowIcons.keys.joinToString(",")}.") }
+            }
             if (node.token.text == "Table" && !hasItem(node)) {
                 val rows = node.fields.getValue("rows")
                 val data = initial(rows) as? JsonArray

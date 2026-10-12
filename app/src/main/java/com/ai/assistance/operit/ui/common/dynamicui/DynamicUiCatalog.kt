@@ -52,7 +52,7 @@ internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
         catalogId = DynamicUiProtocol.CATALOG,
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
-            listOf(CardIcon, FramedCard, divider, CardButton, CardPressable, CardVector, CardPopover, CardTooltip, CardStepper, CardFormula) +
+            listOf(CardIcon, FramedCard, divider, CardButton, CardPressable, CardVector, CardPopover, CardTooltip, CardStepper, CardFormula, CardFlow) +
                 listOf("Text", "Row", "Column", "List", "Panel", "Scroll", "Frame").map(::CardLayoutComponent) +
                 listOf(
                     "Heading", "Header", "InfoRow", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",

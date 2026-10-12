@@ -23,6 +23,7 @@ internal object CardAuthoringCatalog {
         "Tooltip" to "label:string text:string",
         "Stepper" to "label:string labels:array current:number",
         "Formula" to "label:string text:string",
+        "Flow" to "label:string steps:array direction?:string",
         "Vector" to "label:string width:number height:number shapes:array",
         "List" to "children:children", "Card" to "child:child", "Divider" to "",
         "Repeat" to "items:array key:string child:child maxItems?:number",
@@ -63,7 +64,7 @@ internal object CardAuthoringCatalog {
         fields("onChange?:action disabled?:boolean") else emptyList() }
 
     val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "minItemWidth",
-        "type", "align", "gap", "justify", "wrap", "padding", "radius", "background", "border", "maxWidth",
+        "type", "align", "gap", "justify", "wrap", "padding", "radius", "background", "border", "maxWidth", "direction",
         "maxHeight", "minWidth", "minHeight", "aspectRatio", "textAlign", "lineClamp", "width", "height", "key", "maxItems",
         "columnWidths", "minLines", "maxLines", "mask")
     val enums = mapOf(
@@ -74,6 +75,7 @@ internal object CardAuthoringCatalog {
         "TextArea.inputType" to setOf("text", "number"),
         "TextField.mask" to setOf("none", "password", "digits"),
         "Display.align" to setOf("start", "end"),
+        "Flow.direction" to setOf("auto", "horizontal", "vertical"),
         "Header.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "InfoRow.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Badge.tone" to setOf("neutral", "success", "info", "warning", "error"),
@@ -95,8 +97,9 @@ internal object CardAuthoringCatalog {
         "Frame.minWidth" to 0..960, "Frame.maxWidth" to 1..960,
         "Frame.minHeight" to 0..480, "Frame.maxHeight" to 1..480,
     )
+    // Flow.steps is content data (may come from state or a Repeat item); Slider.steps is a literal count.
     fun isStatic(component: String, field: String) =
-        field in staticFields || component == "Table" && field == "columns"
+        field in staticFields && !(component == "Flow" && field == "steps") || component == "Table" && field == "columns"
 
     fun guide(): String = buildString {
         appendLine("Use named arguments for every component and function. Inline child components or reference named declarations.")

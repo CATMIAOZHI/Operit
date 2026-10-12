@@ -19,7 +19,7 @@ class CardExpressTest {
     }
 
     @Test fun examplesPassNativeProtocol() {
-        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector", "repeat", "curves", "interactive_flow", "p2_controls", "p2_lists")) {
+        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector", "repeat", "curves", "interactive_flow", "p2_controls", "p2_lists", "flow_steps", "flowchart", "data_story", "mixed_branch")) {
             val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
             val report = CardExpress.report(source)
             assertEquals("$name: $report", JsonPrimitive(true), report["valid"])
@@ -53,12 +53,37 @@ class CardExpressTest {
             "root = Text(text=if(condition=true,then=\"ok\",else=1))",
             "root = Header(text=\"Title\",tone=\"pink\")",
             "root = Display(text=\"42\",align=\"center\")",
+            "root = Flow(label=\"x\",steps=[])",
+            "root = Flow(label=\"x\",steps=[{title:\"\"}])",
+            "root = Flow(label=\"x\",steps=[{title:\"a\",icon:\"rocket\"}])",
+            "root = Flow(label=\"x\",steps=[{title:\"a\",onClick:\"b\"}])",
+            "root = Flow(label=\"x\",steps=[{title:\"a\"}],direction=\"diagonal\")",
+            "root = Flow(label=\"x\",steps=[" + List(9) { "{title:\"s$it\"}" }.joinToString(",") + "])",
         )
         bad.forEach {
             val report = CardExpress.report(it)
             assertEquals("$it: $report", JsonPrimitive(false), report["valid"])
             assertTrue(report.toString(), report["line"]!!.jsonPrimitive.int >= 1)
             assertTrue(report.toString(), report["column"]!!.jsonPrimitive.int >= 1)
+        }
+    }
+
+    @Test fun flowStepsMayComeFromStateButStayValidated() {
+        val ok = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\"},{title:\"B\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
+        assertEquals(ok.toString(), JsonPrimitive(true), ok["valid"])
+        val bad = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\",icon:\"rocket\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
+        assertEquals(bad.toString(), JsonPrimitive(false), bad["valid"])
+    }
+
+    @Test fun displayOnlyExamplesNeedNoStateOrActions() {
+        for (name in listOf("flow_steps", "flowchart", "data_story")) {
+            val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
+            assertFalse(name, source.contains("$/"))
+            assertFalse(name, source.contains("Event("))
+            val batch = DynamicUiProtocol.parse(CardExpress.compile(source), true)
+            val graph = batch.componentsBySurface.getValue("card")
+            assertTrue(name, graph.values.none { "action" in it || "onChange" in it })
+            assertNotEquals(name, "Card", graph.getValue("root")["component"]!!.jsonPrimitive.content)
         }
     }
 
