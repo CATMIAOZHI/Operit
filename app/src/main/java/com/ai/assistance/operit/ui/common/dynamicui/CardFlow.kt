@@ -10,6 +10,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
@@ -19,6 +20,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.theme.ensureReadableOn
 
 internal data class CardFlowStep(val title: String, val caption: String, val icon: String?, val tone: String?)
 
@@ -106,24 +108,26 @@ internal object CardFlow : A2uiComponent {
 @Composable
 private fun FlowTile(step: CardFlowStep, modifier: Modifier, centered: Boolean) {
     val scheme = MaterialTheme.colorScheme
+    // Accent tiles keep the accent on the icon; their title uses the container ink so it stays readable.
     val (ink, fill) = when (step.tone) {
         null, "neutral" -> scheme.onSurface to scheme.surfaceContainerHigh
-        "accent" -> scheme.primary to scheme.primaryContainer.copy(alpha = .55f)
+        "accent" -> scheme.onPrimaryContainer to scheme.primaryContainer.copy(alpha = .55f)
         else -> cardToneColors(step.tone, scheme)
     }
+    val iconTint = if (step.tone == "accent") ensureReadableOn(scheme.primary, fill.compositeOver(scheme.surface), 3.0) else ink
     Surface(modifier, shape = MaterialTheme.shapes.medium, color = fill) {
         val icon = step.icon?.let(cardFlowIcons::get)
         if (centered) Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {
-            icon?.let { Icon(it, null, Modifier.size(20.dp), tint = ink) }
+            icon?.let { Icon(it, null, Modifier.size(20.dp), tint = iconTint) }
             Text(step.title, color = ink, style = MaterialTheme.typography.labelLarge,
                 fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             if (step.caption.isNotBlank()) Text(step.caption, color = scheme.onSurfaceVariant,
                 style = MaterialTheme.typography.labelSmall, textAlign = TextAlign.Center)
         } else Row(Modifier.padding(horizontal = 14.dp, vertical = 12.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-            icon?.let { Icon(it, null, Modifier.size(20.dp), tint = ink) }
+            icon?.let { Icon(it, null, Modifier.size(20.dp), tint = iconTint) }
             Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(step.title, color = ink, style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
                 if (step.caption.isNotBlank()) Text(step.caption, color = scheme.onSurfaceVariant,

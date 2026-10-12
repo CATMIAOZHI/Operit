@@ -316,12 +316,17 @@ internal fun resolveContrastingTextColor(fill: Color, onColorMode: String): Colo
  * that already read there come back untouched.
  */
 internal fun ensureAccentReadableOn(accent: Color, surface: Color): Color =
+    ensureReadableOn(accent, surface, ACCENT_TEXT_CONTRAST_TARGET)
+
+/** [ensureAccentReadableOn] with an explicit contrast [target], e.g. 4.5 for small secondary text. */
+internal fun ensureReadableOn(color: Color, surface: Color, target: Double): Color =
     ensureResolvedAccentContrast(
-        accent,
+        color,
         surface,
         lighten =
             resolvedContrastRatio(Color.White, surface) >
                 resolvedContrastRatio(Color.Black, surface),
+        target = target,
     )
 
 private fun lightenResolvedColor(color: Color, factor: Float): Color {
@@ -374,15 +379,16 @@ private fun ensureResolvedAccentContrast(
     accent: Color,
     surface: Color,
     lighten: Boolean,
+    target: Double = ACCENT_TEXT_CONTRAST_TARGET,
 ): Color {
-    if (resolvedContrastRatio(accent, surface) >= ACCENT_TEXT_CONTRAST_TARGET) return accent
+    if (resolvedContrastRatio(accent, surface) >= target) return accent
 
     val hsl = accent.toResolvedHsl()
     val saturation = hsl.saturation.coerceAtMost(ACCENT_SATURATION_CEILING)
     var lightness = hsl.lightness
     repeat(ACCENT_LIGHTNESS_STEPS) {
         val candidate = ResolvedHsl(hsl.hue, saturation, lightness.coerceIn(0f, 1f)).toResolvedColor()
-        if (resolvedContrastRatio(candidate, surface) >= ACCENT_TEXT_CONTRAST_TARGET) {
+        if (resolvedContrastRatio(candidate, surface) >= target) {
             return candidate
         }
         lightness += if (lighten) ACCENT_LIGHTNESS_STEP else -ACCENT_LIGHTNESS_STEP

@@ -53,6 +53,56 @@ class DynamicUiStyleTest {
         assertTrue(cardGridRows(2, emptyList()).isEmpty())
     }
 
+    @Test fun secondaryTextAndAccentsReadOnMidToneBubbles() {
+        fun ratio(a: Color, b: Color) = (maxOf(a.luminance(), b.luminance()) + .05f) / (minOf(a.luminance(), b.luminance()) + .05f)
+        val rainy = lightColorScheme(primary = Color(0xFFE91E63), onSurfaceVariant = Color(0xFF806371))
+        for (bubble in listOf(Color(0xFF808080), Color(0xFFD9E2FF), Color(0xFF6A8F7A), Color(0xFF3A3F58))) {
+            val ink = if (bubble.luminance() > .18f) Color.Black else Color.White
+            val scheme = cardColorScheme(rainy, ink, bubble)
+            assertTrue("muted on $bubble", ratio(scheme.onSurfaceVariant, bubble) >= 4.5f)
+            assertTrue("text on $bubble", ratio(scheme.onSurface, bubble) >= 4.5f)
+            assertTrue("accent on $bubble", ratio(scheme.primary, bubble) >= 3f)
+            assertTrue("error on $bubble", ratio(scheme.error, bubble) >= 3f)
+            if (scheme.primary != rainy.primary) assertTrue("label on $bubble", ratio(scheme.onPrimary, scheme.primary) >= 4.5f)
+        }
+        // A bubble the theme already reads on keeps the theme's own colors.
+        fun picked(s: androidx.compose.material3.ColorScheme) = listOf(s.primary, s.onPrimary, s.error, s.onSurface, s.onSurfaceVariant)
+        assertEquals(picked(cardColorScheme(rainy, Color.Black)), picked(cardColorScheme(rainy, Color.Black, Color.White)))
+        // A pale custom accent on the default bubble follows the app's own contrast setting.
+        val pale = lightColorScheme(primary = Color(0xFFFFCDE8), surface = Color(0xFFFFF7FA))
+        assertEquals(pale.primary, cardColorScheme(pale, Color.Black, pale.surface).primary)
+        // Blue where neither black nor white reaches far: translucent thinking ink still gets readable text.
+        val blue = Color(0xFF0066FF)
+        val thinking = cardColorScheme(rainy, Color.White.copy(alpha = .6f), blue)
+        assertTrue(ratio(thinking.onSurface, blue) >= 4.5f)
+        assertEquals(1f, thinking.onSurfaceVariant.alpha)
+        assertTrue(ratio(thinking.onSurfaceVariant, blue) >= 4.5f)
+    }
+
+    @Test fun selectedFillsFollowAFlippedCard() {
+        fun ratio(a: Color, b: Color) = (maxOf(a.luminance(), b.luminance()) + .05f) / (minOf(a.luminance(), b.luminance()) + .05f)
+        val cases = listOf(lightColorScheme(secondaryContainer = Color(0xFFFFD1DC)) to Color.White,
+            darkColorScheme(secondaryContainer = Color(0xFF5A2A3A)) to Color.Black)
+        for ((base, ink) in cases) {
+            val scheme = cardColorScheme(base, ink)
+            assertTrue(ratio(scheme.onSurface, scheme.secondaryContainer) >= 4.5f)
+            assertTrue(ratio(scheme.onSecondaryContainer, scheme.secondaryContainer) >= 4.5f)
+            assertTrue(ratio(scheme.onPrimaryContainer, scheme.primaryContainer) >= 4.5f)
+        }
+        // Card text tuned for a mid-gray bubble must still read on a flipped card's highlight fills.
+        val gray = cardColorScheme(lightColorScheme(primary = Color(0xFFE91E63)), Color.White, Color(0xFF6A6A6A))
+        for (text in listOf(gray.onSurface, gray.onSurfaceVariant))
+            for (fill in listOf(gray.primaryContainer, gray.secondaryContainer)) assertTrue(ratio(text, fill) >= 4.5f)
+        for (fill in listOf(gray.primaryContainer, gray.secondaryContainer)) assertTrue(ratio(gray.primary, fill) >= 3f)
+        // A custom text color that fights the bubble must not leave the card's own panels unreadable.
+        for ((base, badInk, bubble) in listOf(Triple(darkColorScheme(), Color.White, Color(0xFFD9E2FF)),
+            Triple(darkColorScheme(), Color.White, Color(0xFF0099BB)), Triple(lightColorScheme(), Color.Black, Color(0xFF2A2A40)))) {
+            val s = cardColorScheme(base, badInk, bubble)
+            assertTrue(ratio(s.onSurface, s.surface) >= 4.5f)
+            assertTrue(ratio(s.onSurface, bubble) >= 4.5f)
+        }
+    }
+
     @Test fun statusTextHasReadableContrastInBothModes() {
         for (base in listOf(lightColorScheme(), darkColorScheme())) {
             val scheme = cardColorScheme(base)

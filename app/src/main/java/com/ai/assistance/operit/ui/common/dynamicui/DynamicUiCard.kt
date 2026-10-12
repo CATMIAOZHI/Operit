@@ -35,6 +35,8 @@ import kotlinx.serialization.json.*
 data class DynamicUiOwner(val chatId: String, val timestamp: Long, val variant: Int, val content: String)
 val LocalDynamicUiOwner = staticCompositionLocalOf<DynamicUiOwner?> { null }
 val LocalDynamicUiSubmit = staticCompositionLocalOf<((DynamicUiOwner, String) -> Boolean)?> { null }
+/** Solid color the card is drawn on (a plain chat bubble); unspecified for images, glass or no bubble. */
+val LocalDynamicUiBackdrop = staticCompositionLocalOf { Color.Unspecified }
 
 @Composable
 fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {
@@ -354,7 +356,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     // Embedded like a Markdown block: no host frame, background or padding. A root Card draws its
     // own frame, so only authors who need visual grouping get one.
     MaterialTheme(
-        colorScheme = cardColorScheme(MaterialTheme.colorScheme, ink),
+        colorScheme = cardColorScheme(MaterialTheme.colorScheme, ink, LocalDynamicUiBackdrop.current),
         shapes = MaterialTheme.shapes.copy(medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(20.dp)),
         typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium),
     ) {
