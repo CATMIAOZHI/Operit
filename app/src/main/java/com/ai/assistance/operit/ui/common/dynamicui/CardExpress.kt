@@ -224,12 +224,13 @@ internal object CardExpress {
         private val state = linkedMapOf<String, JsonElement>()
         private val bindings = mutableListOf<Node>()
         private var inline = 0
-        private fun hasItem(n: Node): Boolean = n.kind == "call" && n.token.text == "item" ||
+        private var changeContext = false
+        private fun hasItem(n: Node): Boolean = n.kind == "call" && n.token.text in setOf("item", "item_state") ||
             n.fields.values.any(::hasItem) || n.items.any(::hasItem)
         private fun path(node: Node): String {
             val path = node.token.text.removePrefix("$")
             try { DynamicUiProtocol.validatePath(path) } catch (_: Exception) { fail(node.token, "Invalid state path.") }
-            if (path == "/" || path.drop(1).split('/').any { it.isEmpty() || it in forbidden })
+            if (path == "/" || path.drop(1).split('/').any { it.isEmpty() || it in forbidden || it == CardRowState.ROOT })
                 fail(node.token, "Use a nonempty, nonreserved object path.")
             return path
         }
@@ -295,7 +296,11 @@ internal object CardExpress {
                             if (value.fields.keys.any { it !in setOf("name", "context") }) fail(value.token, "Unknown Event argument.")
                             val name = value.fields["name"]?.takeIf { it.kind == "string" }?.token?.text
                             if (name !in DynamicUiProtocol.actions) fail(value.token, "Unknown Event action.")
-                            val context = value.fields["context"]?.let { json(it) } ?: JsonObject(emptyMap())
+                            if (field.name == "onChange" && name != "local_action")
+                                fail(value.token, "onChange only supports local_action.")
+                            changeContext = field.name == "onChange"
+                            val context = try { value.fields["context"]?.let { json(it) } ?: JsonObject(emptyMap()) }
+                                finally { changeContext = false }
                             if (context !is JsonObject) fail(value.token, "Event context must be an object.")
                             buildJsonObject { put("event", buildJsonObject { put("name", name); put("context", context) }) }
                         }
@@ -412,6 +417,19 @@ internal object CardExpress {
                     if (node.fields.keys != setOf("field") || field?.kind != "string")
                         fail(node.token, "Use item(field=\"fieldName\") inside a Repeat template.")
                     buildJsonObject { put("item", field.token.text) }
+                } else if (node.token.text == "item_state") {
+                    val field = node.fields["field"]
+                    val default = node.fields["default"]
+                    if (node.fields.keys != setOf("field", "default") || field?.kind != "string" || default == null)
+                        fail(node.token, "Use item_state(field=\"done\", default=false) in a Repeat template.")
+                    try { CardRowState.placeholder(field.token.text, json(default, literal = true)) }
+                    catch (_: Exception) { fail(node.token, "item_state requires a named field and a scalar default.") }
+                } else if (node.token.text == "event_value") {
+                    val field = node.fields["field"]
+                    if (!changeContext || node.fields.keys != setOf("field") || field?.kind != "string" ||
+                        field.token.text !in setOf("value", "previous", "index"))
+                        fail(node.token, "event_value(field=\"value\"|\"previous\"|\"index\") is only available in onChange.")
+                    buildJsonObject { put("event_value", field.token.text) }
                 } else {
                 val spec = CardFunctions.specs[node.token.text] ?: fail(node.token, "Unknown local function.")
                 if (!node.fields.keys.containsAll(spec.required) || node.fields.keys.any { it !in spec.required + spec.optional })

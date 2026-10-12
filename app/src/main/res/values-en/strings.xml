@@ -1,4 +1,6 @@
 <resources>
+    <string name="dynamic_ui_clear">Clear</string>
+    <string name="dynamic_ui_date_outside_range">The current date is invalid or outside the allowed range. Choose another date.</string>
     <string name="dynamic_ui_close_details">Close details</string>
     <string name="dynamic_ui_bad_table">Invalid table data. Check your input.</string>
     <string name="logcat_flush_incomplete">Available logs saved to %1$s. Logs may be incomplete; details are also saved in export-status.txt inside the archive.</string>

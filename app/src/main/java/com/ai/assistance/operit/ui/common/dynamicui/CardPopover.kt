@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -148,5 +149,35 @@ internal object CardPopover : A2uiComponent {
                 if(state?.entry?.owner===owner) state.entry=null
                 else if(state != null) state.entry=CardPopoverState.Entry(owner,{anchor},locals,title) { CardChild(childId) }
             }) { Text(title) }
+    }
+}
+
+/** Uses the same in-card overlay as Popover, so floating windows need no dialog token. */
+internal object CardTooltip : A2uiComponent {
+    override val name = "Tooltip"
+    override val description = "Tap or long-press for a short explanation."
+    private val label = A2uiProperty.dynamicString("label")
+    private val text = A2uiProperty.dynamicString("text")
+    override val properties = listOf(label, text)
+    @Composable
+    override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
+        val state = LocalCardPopover.current
+        val title = properties.bind(label).orEmpty()
+        val message by rememberUpdatedState(properties.bind(text).orEmpty())
+        val owner = remember { Any() }
+        var anchor by remember { mutableStateOf(Rect.Zero) }
+        val locals = currentCompositionLocalContext
+        DisposableEffect(state, owner) { onDispose { if (state?.entry?.owner === owner) state.entry = null } }
+        val show = {
+            if (state != null) {
+                if (state.entry?.owner === owner) state.entry = null
+                else state.entry = CardPopoverState.Entry(owner, { anchor }, locals, title) { Text(message) }
+            }
+        }
+        Text(title, modifier.heightIn(min = 48.dp).onGloballyPositioned {
+            anchor = Rect(it.positionInRoot(), androidx.compose.ui.geometry.Size(it.size.width.toFloat(), it.size.height.toFloat()))
+        }.combinedClickable(enabled = LocalCardBrowse.current && state != null,
+            role = androidx.compose.ui.semantics.Role.Button, onClick = show, onLongClick = show)
+            .padding(vertical = 12.dp), color = MaterialTheme.colorScheme.primary)
     }
 }

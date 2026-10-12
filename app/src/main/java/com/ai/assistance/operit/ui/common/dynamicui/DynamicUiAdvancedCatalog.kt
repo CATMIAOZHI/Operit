@@ -40,16 +40,18 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
     private val runs = A2uiProperty.dynamicValue("runs")
     private val markers = A2uiProperty.dynamicValue("markers")
     private val route = A2uiProperty.dynamicBoolean("route")
+    private val disabled = A2uiProperty.dynamicBoolean("disabled")
     override val description = "Operit native $name. Data-bound, with explicit user actions only."
-    override val properties = listOf(label, text, value, url, imageUrl, price, address, type, labels, options, children, visible, series, runs, markers, route)
+    override val properties = listOf(label, text, value, url, imageUrl, price, address, type, labels, options, children, visible, series, runs, markers, route, disabled, A2uiProperty.dynamicValue("onChange"))
 
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
         val title = properties.bind(label).orEmpty()
-        val interactive = LocalCardInteractive.current
+        val interactive = LocalCardInteractive.current && properties.bind(disabled) != true
         val readOnly = LocalCardReadOnly.current
-        val browse = LocalCardBrowse.current
-        val inputError = LocalCardInputError.current
+        val browse = LocalCardBrowse.current && properties.bind(disabled) != true
+        val change = cardChangeHandler(properties, "value")
+        val mutationGuard = LocalCardMutationGuard.current
         val link = properties.bind(url).orEmpty()
         fun open(link: String) {
             if (DynamicUiProtocol.safeUrl(link)) dispatchAction(mapOf("event" to mapOf("name" to "open_url", "context" to mapOf("url" to link))))
@@ -72,7 +74,7 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
                 Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(title, style = MaterialTheme.typography.titleMedium)
                     if (readOnly) Text(current, style = MaterialTheme.typography.bodyMedium)
-                    else OutlinedTextField(current, { next -> if (next.length <= 8192) updateCardField(inputError) { update?.invoke(next) } },
+                    else OutlinedTextField(current, { next -> if (interactive && update != null && next.length <= 8192) mutationGuard { update(next) } },
                         modifier = Modifier.fillMaxWidth(), enabled = interactive, readOnly = update == null, minLines = 4, maxLines = 12)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         if (!readOnly) OutlinedButton(onClick = { dispatchAction(mapOf("event" to mapOf("name" to "local_action", "context" to mapOf("op" to "save")))) }, enabled = interactive) {
@@ -92,7 +94,7 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
                     if (title.isNotBlank()) Text(title, style = MaterialTheme.typography.labelLarge)
                     FlowRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         choices.forEach { choice ->
-                            FilterChip(selected = current == choice, onClick = { updateCardField(inputError) { update?.invoke(choice) } },
+                            FilterChip(selected = current == choice, onClick = { if (interactive && update != null) change(current, choice, choices.indexOf(choice)) { update(choice) } },
                                 label = { Text(choice) }, enabled = update != null && interactive)
                         }
                     }
@@ -108,7 +110,7 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
                 val selected = refs.indexOfFirst { it.id == current }.coerceAtLeast(0)
                 val canNavigate = browse && (readOnly || bound == null || update != null)
                 fun select(index: Int) { refs.getOrNull(index)?.let { ref ->
-                    if (update != null && !readOnly) updateCardField(inputError) { update(ref.id) } else local = ref.id
+                    if (update != null && !readOnly) change(current, ref.id, index) { update(ref.id) } else local = ref.id
                 } }
                 val latestSelect by rememberUpdatedState<(Int) -> Unit> { select(it) }
                 val renderChild: @Composable (Int) -> Unit = { index ->

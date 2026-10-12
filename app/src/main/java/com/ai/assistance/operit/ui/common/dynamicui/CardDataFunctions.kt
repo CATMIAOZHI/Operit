@@ -34,6 +34,55 @@ internal object CardDataFunctions {
     fun evaluate(name: String, args: Map<String, Any>): Any? = runCatching {
         if (args.values.any { !bounded(it) }) return null
         val result: Any? = when (name) {
+            "arraySort", "arrayFind", "arrayUpdateByKey" -> {
+                val items = (args["items"] as? List<*>)?.takeIf { safeValue(it) != null } ?: return null
+                fun scalar(value: Any?) = value is String || value is Boolean || value is Number
+                fun equal(a: Any?, b: Any?) = if (a is Number && b is Number) number(a) == number(b) else a == b
+                when (name) {
+                    "arraySort" -> {
+                        val path = if ("field" in args) args["field"] as? String ?: return null else null
+                        val direction = args["direction"] ?: "asc"
+                        if (direction !in setOf("asc", "desc")) return null
+                        val pairs = items.map { it to (field(it, path) ?: return null) }
+                        val sample = pairs.firstOrNull()?.second
+                        if (pairs.any { (_, v) -> !scalar(v) ||
+                            (v is Number) != (sample is Number) ||
+                            (v is String) != (sample is String) }) return null
+                        val sorted = pairs.sortedWith { a, b ->
+                            val comparison = when (val v = a.second) {
+                                is Number -> v.toDouble().compareTo((b.second as Number).toDouble())
+                                is String -> v.compareTo(b.second as String)
+                                is Boolean -> v.compareTo(b.second as Boolean)
+                                else -> 0
+                            }
+                            if (direction == "desc") -comparison else comparison
+                        }
+                        sorted.map { it.first }
+                    }
+                    "arrayFind" -> {
+                        val path = args["field"] as? String ?: return null
+                        val target = args["value"]
+                        if (!scalar(target)) return null
+                        // Validate every row even if an early match exists.
+                        val values = items.map { field(it, path)?.takeIf(::scalar) ?: return null }
+                        val index = values.indexOfFirst { equal(it, target) }
+                        if (index < 0) args["fallback"] else items[index]
+                    }
+                    else -> {
+                        val key = args["key"] as? String ?: return null
+                        if (!key.matches(Regex("[A-Za-z_][A-Za-z0-9_]*")) ||
+                            key in setOf("__proto__", "constructor", "prototype")) return null
+                        val patch = args["patch"] as? Map<*, *> ?: return null
+                        if (key in patch || patch.keys.any { it !is String }) return null
+                        val target = args["value"]
+                        if (!scalar(target)) return null
+                        val rows = items.map { it as? Map<*, *> ?: return null }
+                        val keys = rows.map { field(it, key)?.takeIf(::scalar) ?: return null }
+                        if (keys.indices.any { i -> keys.take(i).any { equal(it, keys[i]) } }) return null
+                        rows.mapIndexed { i, row -> if (equal(keys[i], target)) row + patch else row }
+                    }
+                }
+            }
             "arrayLength", "arrayMap", "arrayFilter", "arraySum", "arrayAverage", "arrayJoin" -> {
                 val items = (args["items"] as? List<*>)?.takeIf { safeValue(it) != null } ?: return null
                 val path = if ("field" in args) args["field"] as? String ?: return null else null

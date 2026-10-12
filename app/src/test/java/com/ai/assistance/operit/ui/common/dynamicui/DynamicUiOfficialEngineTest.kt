@@ -16,6 +16,35 @@ import org.junit.Test
 
 /** Exercises the actual published AndroidX parser and processor, not a mock renderer. */
 class DynamicUiOfficialEngineTest {
+    @Test fun rowStateAndChangeContextWorkThroughOfficialRuntime() = runBlocking {
+        val source = """
+            ${'$'}/rows = [{id:"a",title:"Input"}]
+            ${'$'}/echo = ""
+            root = Repeat(items=${'$'}/rows,key="id",child=TextField(label=item(field="title"),
+                value=item_state(field="text",default=""),onChange=Event(name="local_action",
+                context={op:"set",path:"/echo",value:concat(values=[event_value(field="previous")," → ",event_value(field="value")])})))
+        """.trimIndent()
+        val batch = DynamicUiProtocol.parse(CardExpress.compile(source), true)
+        val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
+        val job = launch(Dispatchers.Default) { processor.collectMessages() }
+        try {
+            val parser = A2uiJsonMessageParser(::JvmJsonReader)
+            CardRepeat.lowerLines(batch).forEach { processor.processInput(parser, it) }
+            processor.processMessage(A2uiUpdateDataModelMessage("card", "/ready", true))
+            val surface = withTimeout(5000) { processor.activeSurfaces.first { it.isNotEmpty() }.first() } as A2uiCoreSurfaceModel
+            withTimeout(5000) { while (surface.dataModel[A2uiDataPath("/ready")] != true) delay(10) }
+            val data = DynamicUiProtocol.toJson(surface.dataModel[A2uiDataPath("/")]).jsonObject
+            val graph = CardRepeat.expand(batch.componentsBySurface.getValue("card"), data)
+            val input = graph.values.single { it["component"]?.jsonPrimitive?.content == "TextField" }
+            val path = input.getValue("value").jsonObject.getValue("path").jsonPrimitive.content
+            assertEquals("", surface.dataModel[A2uiDataPath(path)])
+            surface.dataModel.update(A2uiDataPath(path), "new")
+            val result = resolveLocalCardContext(surface, input.getValue("id").jsonPrimitive.content,
+                input, mapOf("previous" to "", "value" to "new", "index" to -1), change = true)
+            assertEquals(" → new", result["value"])
+            assertEquals("/echo", result["path"])
+        } finally { job.cancelAndJoin() }
+    }
     @Test fun repeatReplacesRegistryWithoutReplacingUserState() = runBlocking {
         val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/repeat.express")!!.readText()), true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))

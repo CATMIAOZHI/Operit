@@ -37,7 +37,12 @@ internal fun CardRichText(runs: List<*>, modifier: Modifier, onOpenUrl: (String)
                     },
                     fontWeight = if (run["bold"] == true) FontWeight.SemiBold else FontWeight.Normal,
                     fontStyle = if (run["italic"] == true) FontStyle.Italic else FontStyle.Normal,
-                    textDecoration = if (url != null || run["underline"] == true) TextDecoration.Underline else TextDecoration.None,
+                    textDecoration = TextDecoration.combine(buildList {
+                        if (url != null || run["underline"] == true) add(TextDecoration.Underline)
+                        if (run["strike"] == true) add(TextDecoration.LineThrough)
+                    }),
+                    background = if (run["highlight"] == true) colors.secondaryContainer else androidx.compose.ui.graphics.Color.Unspecified,
+                    fontFeatureSettings = if (run["tabular"] == true) "tnum" else null,
                 )) { append(text) }
                 if (url != null) pop()
             }
