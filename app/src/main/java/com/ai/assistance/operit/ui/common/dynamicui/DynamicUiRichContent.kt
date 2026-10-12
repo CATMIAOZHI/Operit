@@ -8,6 +8,7 @@ import androidx.compose.ui.text.*
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
+import com.ai.assistance.operit.ui.theme.ensureReadableOn
 
 /** Structured text only: it cannot recurse into tool markup, HTML or another A2UI surface. */
 @Composable
@@ -21,15 +22,18 @@ internal fun CardRichText(runs: List<*>, modifier: Modifier, onOpenUrl: (String)
                 val run = item as? Map<*, *> ?: return@forEach
                 val text = (run["text"] as? String).orEmpty().take(8192)
                 val url = (run["url"] as? String)?.takeIf(DynamicUiProtocol::safeUrl)
-                val tone = when (run["tone"]) {
+                val highlight = run["highlight"] == true
+                val base = if (url != null) colors.primary else when (run["tone"]) {
                     "primary" -> colors.primary
                     "muted" -> colors.onSurfaceVariant
                     "error" -> colors.error
                     else -> colors.onSurface
                 }
+                // Colors are tuned for the card backdrop; a highlight wash moves it, so re-check there.
+                val tone = if (highlight) ensureReadableOn(base, colors.secondaryContainer, 3.0) else base
                 if (url != null) pushLink(LinkAnnotation.Url(url, linkInteractionListener = { openUrl(url) }))
                 withStyle(SpanStyle(
-                    color = if (url != null) colors.primary else tone,
+                    color = tone,
                     fontSize = when (run["size"]) {
                         "title" -> typography.titleMedium.fontSize
                         "caption" -> typography.bodySmall.fontSize
@@ -41,7 +45,7 @@ internal fun CardRichText(runs: List<*>, modifier: Modifier, onOpenUrl: (String)
                         if (url != null || run["underline"] == true) add(TextDecoration.Underline)
                         if (run["strike"] == true) add(TextDecoration.LineThrough)
                     }),
-                    background = if (run["highlight"] == true) colors.secondaryContainer else androidx.compose.ui.graphics.Color.Unspecified,
+                    background = if (highlight) colors.secondaryContainer else androidx.compose.ui.graphics.Color.Unspecified,
                     fontFeatureSettings = if (run["tabular"] == true) "tnum" else null,
                 )) { append(text) }
                 if (url != null) pop()
