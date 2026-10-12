@@ -13,8 +13,9 @@ DECIDE FIRST 说明读取指南不等于必须生成界面；VISUAL RULES 约束
 徽章只表达含义、结论不放彩色面板、按钮必须有实际作用。
 
 段落内的状态不需要块：模型直接在 Markdown 正文写 `:badge[已完成]{tone=success icon=check}`
-或 `:icon[time]`，无需工具调用。语法写在包描述里（模型读指南前就能用），完整规则见指南
-INLINE IN PARAGRAPHS。解析在 `util/markdown/InlineDirectives.kt`，只扫描纯文本节点，
+或 `:icon[time]`，无需 `prepare_card`。包描述只写触发条件（汇报有依据的状态或结果），
+语法与使用规则只在指南 INLINE IN PARAGRAPHS 里，所以模型要先激活包并读取 `read_guide`。
+解析在 `util/markdown/InlineDirectives.kt`，只扫描纯文本节点，
 行内代码里的同样写法保持原样（复制时也是）；格式不对时原样显示文字，未知图标名不显示。
 徽章不会折行，标签最多 16 个字符；引用块按纯文本绘制，其中的徽章只显示标签文字。
 `accent` 的墨色把主题主色向正文一侧（浅色向黑、深色向白）拉近 30%，保证小字对比度。

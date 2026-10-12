@@ -42,16 +42,6 @@ TEMPORARY FILES AND TOOL PERMISSION REVIEW:
 - 自动审核不代表所有操作都已获授权。工具调用被拒绝时，依据返回原因调整方案，或说明缺少的授权；不得通过更换工具、路径或命令形式绕过拒绝。
 """
 
-    // The chat renderer always draws these directives, so the rule must not depend on tool or package visibility.
-    private const val REPLY_FORMAT_GUIDELINES_EN = """
-REPLY FORMAT:
-- When reporting a status or result backed by evidence (build passed/failed, task done/running, supported or not, risk level), you may write an inline badge :badge[label]{tone=success icon=check} or a small icon :icon[time] inside the sentence; no tool call is needed. Example: Build :badge[passed]{tone=success icon=check}, took :icon[time] 2 min.
-- tone: success/info/warning/error/accent; common icons: check, warning, time, info, build; label at most 16 characters. Use 0-2 per answer. Do not use them for general explanations, hypothetical results, or when the user asks for plain text, code or JSON."""
-    private const val REPLY_FORMAT_GUIDELINES_CN = """
-回复格式：
-- 汇报有依据的状态或结果时（构建通过/失败、任务完成/进行中、是否支持、风险等级），可以在句子里写行内徽章 :badge[文字]{tone=success icon=check} 或小图标 :icon[time]，不用调用工具。例：构建 :badge[通过]{tone=success icon=check}，耗时 :icon[time] 2 分钟。
-- tone：success/info/warning/error/accent；常用图标：check、warning、time、info、build；文字不超过 16 字。每条回答 0～2 个。普通知识解释、假设的结果、用户要求纯文本/代码/JSON 时不用。"""
-
     private const val TOOL_USAGE_GUIDELINES_EN = """
 When calling a tool, the user will see your response, and then will automatically send the tool results back to you in a follow-up message.
 
@@ -519,7 +509,6 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
             .replace(workspaceGuidelines, "")
     }
 
-    prompt = prompt.trimEnd() + "\n\n" + if (useEnglish) REPLY_FORMAT_GUIDELINES_EN else REPLY_FORMAT_GUIDELINES_CN
 
     // Clean up multiple consecutive blank lines (replace 3+ newlines with 2)
     prompt = prompt.replace(Regex("\n{3,}"), "\n\n")
