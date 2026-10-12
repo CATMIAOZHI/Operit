@@ -50,13 +50,18 @@ internal object FramedCard : A2uiBasicCatalogV1.Card {
 
 /** Fixed semantic colors remain readable with either card palette. No AI-supplied arbitrary colors. */
 internal fun cardToneColors(tone: String?, scheme: ColorScheme): Pair<Color, Color> {
-    val dark = scheme.surface.luminance() < .5f
+    return cardSemanticToneColors(tone, scheme.surface.luminance() < .5f)
+        ?: (scheme.onSurfaceVariant to scheme.surfaceContainerHigh)
+}
+
+/** Ink and fill for success/info/warning/error; null for neutral or unknown tones. */
+internal fun cardSemanticToneColors(tone: String?, dark: Boolean): Pair<Color, Color>? {
     val ink = when (tone) {
         "success" -> if (dark) Color(0xFF9BE0B0) else Color(0xFF256A3C)
         "info" -> if (dark) Color(0xFFABCFFF) else Color(0xFF245A98)
         "warning" -> if (dark) Color(0xFFFFD58A) else Color(0xFF7B5000)
         "error" -> if (dark) Color(0xFFFFB4B4) else Color(0xFF9C3030)
-        else -> return scheme.onSurfaceVariant to scheme.surfaceContainerHigh
+        else -> return null
     }
     val background = when (tone) {
         "success" -> if (dark) Color(0xFF213C2A) else Color(0xFFE0F2E5)

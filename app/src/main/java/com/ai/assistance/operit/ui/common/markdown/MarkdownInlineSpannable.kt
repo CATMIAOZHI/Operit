@@ -332,15 +332,36 @@ internal fun resolveNestedInlineText(node: MarkdownNodeStable): String {
 
 internal fun resolveNestedInlineChildren(node: MarkdownNodeStable): List<MarkdownNodeStable> {
     if (node.children.isNotEmpty()) {
-        return node.children
+        return node.children.coalescePlainText()
     }
 
     val resolvedText = resolveNestedInlineText(node)
-    val parsedChildren = NestedInlineNodeCache.getOrParse(resolvedText)
+    val parsedChildren = NestedInlineNodeCache.getOrParse(resolvedText).coalescePlainText()
     if (parsedChildren.isSingleSelfReferenceOf(node, resolvedText)) {
         return emptyList()
     }
     return parsedChildren
+}
+
+/**
+ * Joins neighbouring plain-text nodes. The streaming parser may cut a run of text where a
+ * link attempt failed (`[已完成]{…}`), which would otherwise split an inline badge in two.
+ */
+internal fun List<MarkdownNodeStable>.coalescePlainText(): List<MarkdownNodeStable> {
+    if (count { it.type == MarkdownProcessorType.PLAIN_TEXT } < 2) return this
+    val out = ArrayList<MarkdownNodeStable>(size)
+    for (node in this) {
+        val last = out.lastOrNull()
+        if (
+            node.type == MarkdownProcessorType.PLAIN_TEXT && node.children.isEmpty() &&
+                last != null && last.type == MarkdownProcessorType.PLAIN_TEXT && last.children.isEmpty()
+        ) {
+            out[out.lastIndex] = last.copy(content = last.content + node.content)
+        } else {
+            out += node
+        }
+    }
+    return out
 }
 
 private fun List<MarkdownNodeStable>.isSingleSelfReferenceOf(
@@ -536,6 +557,10 @@ private fun appendInlineNode(
             builder.append('\n')
         }
 
+        MarkdownProcessorType.PLAIN_TEXT -> {
+            appendPlainTextWithInlineElements(builder, content, textColor, primaryColor, density?.density)
+        }
+
         else -> {
             builder.append(content)
         }
@@ -550,7 +575,7 @@ internal fun buildMarkdownInlineSpannableFromChildren(
     fontSize: TextUnit? = null
 ): SpannableStringBuilder {
     val builder = SpannableStringBuilder()
-    children.forEach { child ->
+    children.coalescePlainText().forEach { child ->
         appendInlineNode(builder, child, textColor, primaryColor, density, fontSize)
     }
     return builder

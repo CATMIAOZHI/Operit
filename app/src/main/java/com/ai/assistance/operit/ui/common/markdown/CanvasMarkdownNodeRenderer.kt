@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.common.markdown
 
+import com.ai.assistance.operit.util.markdown.InlineDirectives
 import android.text.SpannableStringBuilder
 import android.text.Spanned
 import android.text.StaticLayout
@@ -713,7 +714,8 @@ private fun renderNodeContent(
                         )
                         .padding(4.dp)
                 ) {
-                    val quoteText = content.lines().joinToString("\n") {
+                    // Quotes draw plain text, so inline badges show their label like copy does.
+                    val quoteText = InlineDirectives.toPlainText(content).lines().joinToString("\n") {
                         it.removePrefix("> ").removePrefix(">")
                     }
 
