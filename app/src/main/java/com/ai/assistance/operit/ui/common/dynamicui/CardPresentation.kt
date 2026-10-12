@@ -17,6 +17,7 @@ import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
+import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -108,23 +109,50 @@ internal fun CardHeader(text: String, subtitle: String, status: String, tone: St
 }
 
 /**
+ * The Display tiles of one grid row report the height their content needs, and each tile is then
+ * stretched to the tallest one, so a row of statistics lines up. Heights are measured with no
+ * minimum, so the row shrinks again when its content does.
+ */
+@Stable
+internal class CardRowFill {
+    private val heights = mutableStateMapOf<Any, Int>()
+    val tallest: Int get() = heights.values.maxOrNull() ?: 0
+
+    fun report(slot: Any, height: Int) {
+        // Called while measuring. Writing only on change is what lets the row settle; an
+        // unconditional write would remeasure the row forever.
+        if (heights[slot] != height) heights[slot] = height
+    }
+
+    fun remove(slot: Any) {
+        heights.remove(slot)
+    }
+}
+
+/** Set only for a Display that shares a grid row with other cells. */
+internal val LocalCardRowFill = compositionLocalOf<CardRowFill?> { null }
+
+/**
  * Large statistic value. Shrinks to fit one line so digits are never cut, then wraps at the
- * smallest size: a value inside a chat bubble must never need horizontal dragging.
+ * smallest size into balanced lines: a value inside a chat bubble must never need horizontal
+ * dragging.
  */
 @Composable
 internal fun CardDisplayValue(text: String, atStart: Boolean) {
     val base = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.SemiBold)
-    val measurer = rememberTextMeasurer()
+    // Room for every size step from 100% down to 50%, so remeasuring an unchanged value hits the cache.
+    val measurer = rememberTextMeasurer(cacheSize = 12)
     BoxWithConstraints(Modifier.fillMaxWidth()) {
         val width = constraints.maxWidth
         val largest = base.fontSize.value
-        val smallest = largest * 0.6f
+        val smallest = largest * 0.5f
         var size = largest
         while (measurer.measure(text, style = base.copy(fontSize = size.sp),
                 softWrap = false, maxLines = 1).size.width > width && size > smallest) size = (size - 2f).coerceAtLeast(smallest)
         val fitted = size.sp
         val lineHeight = if (base.lineHeight.isSp) base.lineHeight * (fitted.value / largest) else base.lineHeight
-        Text(text, Modifier.fillMaxWidth(), style = base.copy(fontSize = fitted, lineHeight = lineHeight),
+        Text(text, Modifier.fillMaxWidth(),
+            style = base.copy(fontSize = fitted, lineHeight = lineHeight, lineBreak = LineBreak.Heading),
             textAlign = if (atStart) TextAlign.Start else TextAlign.End)
     }
 }
