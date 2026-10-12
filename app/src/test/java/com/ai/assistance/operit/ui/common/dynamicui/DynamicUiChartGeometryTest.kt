@@ -14,6 +14,11 @@ class DynamicUiChartGeometryTest {
     }
 
     @Test fun readableTicksCoverTheReportedCharts() {
+        assertEquals("35", cardChartPercent(35.0, 100.0))
+        assertEquals("33.3", cardChartPercent(1.0, 3.0))
+        assertEquals("100", cardChartPercent(5.0, 5.0))
+        assertEquals("<0.1", cardChartPercent(1.0, 5000.0))
+        assertEquals("0", cardChartPercent(0.0, 10.0))
         val line = cardChartAxis(32.0, 288.0, false)
         assertEquals(listOf("0", "100", "200", "300"), cardChartTickLabels(line.ticks))
         val bars = cardChartAxis(24.0, 604.0, true)
