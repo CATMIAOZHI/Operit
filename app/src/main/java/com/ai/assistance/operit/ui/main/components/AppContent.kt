@@ -57,6 +57,7 @@ import com.ai.assistance.operit.ui.main.navigation.ScreenRouteViewModelStoreOwne
 import com.ai.assistance.operit.ui.main.navigation.retainedRouteKeysOnContentAttach
 import com.ai.assistance.operit.ui.main.screens.Screen
 import com.ai.assistance.operit.ui.theme.resolveContrastingTextColor
+import com.ai.assistance.operit.ui.theme.rainyAppBarFill
 import com.ai.assistance.operit.ui.common.composedsl.ToolPkgComposeDslToolScreen
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
@@ -209,7 +210,7 @@ fun AppContent(
                     themeContentColor = MaterialTheme.colorScheme.onSurface,
                     defaultAppBarFill =
                             if (toolbarTransparent) null
-                            else MaterialTheme.colorScheme.surfaceContainerHigh,
+                            else MaterialTheme.colorScheme.rainyAppBarFill,
                 )
 
     // 获取聊天历史管理器
@@ -368,7 +369,7 @@ fun AppContent(
                         when {
                             toolbarTransparent -> Color.Transparent
                             useCustomAppBarColor && customAppBarColor != null -> Color(customAppBarColor)
-                            else -> MaterialTheme.colorScheme.surfaceContainerHigh
+                            else -> MaterialTheme.colorScheme.rainyAppBarFill
                         },
                         titleContentColor = appBarContentColor,
                         navigationIconContentColor = appBarContentColor,

@@ -882,13 +882,15 @@
     <string name="theme_custom_color">Custom Colors</string>
     <string name="theme_use_custom_color">Use Custom Colors</string>
     <string name="theme_custom_color_desc">When enabled, you can customize the app\'s main colors</string>
+    <string name="theme_enforce_contrast">Enhanced contrast</string>
+    <string name="theme_enforce_contrast_desc">Turn on if colors are hard to read; deepens accent colors</string>
     <string name="theme_select_color">Select Colors</string>
     <string name="theme_primary_color">Primary</string>
     <string name="theme_secondary_color">Secondary</string>
     <string name="theme_preview">Color Preview</string>
     <string name="theme_primary_button">Main Button</string>
     <string name="theme_secondary_button">Secondary Button</string>
-    <string name="theme_contrast_tip">Tip: High contrast color combinations work best. A color that is too pale is deepened automatically so its text stays readable.</string>
+    <string name="theme_contrast_tip">Tip: High contrast color combinations work best. If a color is too pale to read, turn on Enhanced contrast to deepen it.</string>
     <string name="theme_save_colors">Save Color Settings</string>
     <string name="theme_title_background">Background Customization</string>
     <string name="theme_bg_media">Background Media Settings</string>

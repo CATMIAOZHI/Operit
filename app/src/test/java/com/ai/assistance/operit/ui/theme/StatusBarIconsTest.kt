@@ -11,6 +11,9 @@ class StatusBarIconsTest {
     fun `default chrome gets dark icons in light mode and light icons in dark mode`() {
         assertTrue(resolveStatusBarDarkIcons(rainyBaseColorScheme(false).surfaceContainerHigh))
         assertFalse(resolveStatusBarDarkIcons(rainyBaseColorScheme(true).surfaceContainerHigh))
+        // The bar actually paints rainyAppBarFill.
+        assertTrue(resolveStatusBarDarkIcons(rainyBaseColorScheme(false).rainyAppBarFill))
+        assertFalse(resolveStatusBarDarkIcons(rainyBaseColorScheme(true).rainyAppBarFill))
     }
 
     @Test

@@ -798,13 +798,15 @@
     <string name="theme_custom_color">自定义配色</string>
     <string name="theme_use_custom_color">使用自定义颜色</string>
     <string name="theme_custom_color_desc">开启后可以自定义应用的主要配色</string>
+    <string name="theme_enforce_contrast">增强对比度</string>
+    <string name="theme_enforce_contrast_desc">颜色看不清时再打开，会把强调色加深</string>
     <string name="theme_select_color">选择颜色</string>
     <string name="theme_primary_color">主色</string>
     <string name="theme_secondary_color">次色</string>
     <string name="theme_preview">色彩效果预览</string>
     <string name="theme_primary_button">主按钮</string>
     <string name="theme_secondary_button">次要按钮</string>
-    <string name="theme_contrast_tip">提示: 选择对比度高的颜色组合效果最佳；所选颜色太浅时，应用会自动加深到能看清文字</string>
+    <string name="theme_contrast_tip">提示: 选择对比度高的颜色组合效果最佳；颜色太浅看不清时，可以打开“增强对比度”自动加深</string>
     <string name="theme_save_colors">保存颜色设置</string>
     <string name="theme_title_background">背景定制</string>
     <string name="theme_bg_media">背景媒体设置</string>

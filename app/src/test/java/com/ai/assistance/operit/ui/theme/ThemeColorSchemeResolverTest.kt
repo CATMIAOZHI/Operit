@@ -11,8 +11,9 @@ import org.junit.Test
 
 class ThemeColorSchemeResolverTest {
     @Test
-    fun `Rainy light accents and labels remain readable across default surfaces`() {
-        val scheme = resolveThemeColorScheme(snapshot(), darkTheme = false)
+    fun `enhanced contrast keeps Rainy light accents and labels at AA`() {
+        val scheme =
+            resolveThemeColorScheme(snapshot(enforceColorContrast = true), darkTheme = false)
         val pairs = listOf(
             scheme.onPrimary to scheme.primary,
             scheme.onSecondary to scheme.secondary,
@@ -31,11 +32,44 @@ class ThemeColorSchemeResolverTest {
     }
 
     @Test
+    fun `the default soft light accents still carry white icons and body text stays AA`() {
+        val scheme = resolveThemeColorScheme(snapshot(), darkTheme = false)
+
+        assertEquals(RainySoftRose, scheme.primary)
+        // Filled buttons and the context ring use white icons on these soft accents.
+        for ((ink, fill) in listOf(
+            scheme.onPrimary to scheme.primary,
+            scheme.onSecondary to scheme.secondary,
+            scheme.onTertiary to scheme.tertiary,
+        )) {
+            assertTrue("$ink on $fill", contrastRatio(ink, fill) >= CONTRAST_TARGET)
+        }
+        // Body text is untouched by the switch.
+        assertTrue(contrastRatio(scheme.onSurface, scheme.surface) >= 4.5)
+        assertTrue(contrastRatio(scheme.onSurface, scheme.rainyAppBarFill) >= 4.5)
+        assertTrue(contrastRatio(scheme.onSurfaceVariant, scheme.background) >= 4.5)
+        // The soft accents are also drawn as text on the pink fills (default Card, containers,
+        // statistics cards), so they must still clear the accent floor there.
+        for (accent in listOf(scheme.primary, scheme.secondary, scheme.tertiary)) {
+            for (fill in listOf(
+                scheme.surfaceContainerHighest,
+                scheme.primaryContainer,
+                scheme.secondaryContainer,
+                scheme.surfaceContainerHigh,
+                scheme.background,
+            )) {
+                assertTrue("$accent on $fill", contrastRatio(accent, fill) >= CONTRAST_TARGET)
+            }
+        }
+    }
+
+    @Test
     fun `custom colors off resolves Rainy light scheme despite stale colors`() {
         val snapshot = snapshot(
             useCustomColors = false,
             primary = 0xFF0000FF.toInt(),
             secondary = 0xFF00FF00.toInt(),
+            enforceColorContrast = true,
         )
 
         val scheme = resolveThemeColorScheme(snapshot, darkTheme = false)
@@ -47,6 +81,24 @@ class ThemeColorSchemeResolverTest {
         assertEquals(RainyLightBackground, scheme.background)
         assertEquals(RainyLightPanel, scheme.surface)
         assertEquals(RainyLightElement, scheme.surfaceVariant)
+    }
+
+    @Test
+    fun `the light app bar is its own sakura band only on the default page`() {
+        val light = resolveThemeColorScheme(snapshot(), darkTheme = false)
+        assertEquals(RainyLightAppBar, light.rainyAppBarFill)
+        assertTrue(contrastRatio(light.rainyAppBarFill, light.background) > 1.1)
+
+        val dark = resolveThemeColorScheme(snapshot(), darkTheme = true)
+        assertEquals(dark.surfaceContainerHigh, dark.rainyAppBarFill)
+
+        // A user's own colors keep the neutral container band instead of a sakura one.
+        val custom =
+            resolveThemeColorScheme(
+                snapshot(useCustomColors = true, primary = 0xFF336699.toInt()),
+                darkTheme = false,
+            )
+        assertEquals(custom.surfaceContainerHigh, custom.rainyAppBarFill)
     }
 
     @Test
@@ -78,13 +130,33 @@ class ThemeColorSchemeResolverTest {
     }
 
     @Test
+    fun `with enhanced contrast off a pale custom pick is used as chosen`() {
+        val pale = 0xFFFFCDE8.toInt()
+
+        val scheme = resolveThemeColorScheme(
+            snapshot(useCustomColors = true, primary = pale, secondary = pale),
+            darkTheme = false,
+        )
+
+        assertEquals(Color(pale), scheme.primary)
+        assertEquals(Color(pale), scheme.secondary)
+        // Its label is still measured, so icons on the pale fill stay visible.
+        assertTrue(contrastRatio(scheme.onPrimary, scheme.primary) >= 4.5)
+    }
+
+    @Test
     fun `pale custom accent is strengthened until it separates from the light surfaces`() {
         // 0xFFFFCDE8 is what left the statistics page blank: 1.24:1 on the statistics card and
         // 1.02:1 on the card behind it.
         val pale = 0xFFFFCDE8.toInt()
 
         val scheme = resolveThemeColorScheme(
-            snapshot(useCustomColors = true, primary = pale, secondary = pale),
+            snapshot(
+                useCustomColors = true,
+                primary = pale,
+                secondary = pale,
+                enforceColorContrast = true,
+            ),
             darkTheme = false,
         )
 
@@ -103,7 +175,12 @@ class ThemeColorSchemeResolverTest {
         val pale = Color(0xFFFFCDE8.toInt())
 
         val scheme =
-            generateLightColorScheme(pale, pale, UserPreferencesManager.ON_COLOR_MODE_AUTO)
+            generateLightColorScheme(
+                pale,
+                pale,
+                UserPreferencesManager.ON_COLOR_MODE_AUTO,
+                enforceContrast = true,
+            )
 
         assertTrue(contrastRatio(scheme.primary, RainyLightHover) >= CONTRAST_TARGET)
         assertTrue(contrastRatio(scheme.secondary, RainyLightHover) >= CONTRAST_TARGET)
@@ -140,6 +217,7 @@ class ThemeColorSchemeResolverTest {
                 Color(0xFF102030.toInt()),
                 Color(0xFF102030.toInt()),
                 UserPreferencesManager.ON_COLOR_MODE_AUTO,
+                enforceContrast = true,
             )
         assertTrue(contrastRatio(scheme.primary, RainyDarkBorder) >= CONTRAST_TARGET)
         assertTrue(contrastRatio(scheme.secondary, RainyDarkBorder) >= CONTRAST_TARGET)
@@ -154,6 +232,7 @@ class ThemeColorSchemeResolverTest {
                 Color(0xFF102030.toInt()),
                 Color(0xFF1A1A5E.toInt()),
                 UserPreferencesManager.ON_COLOR_MODE_AUTO,
+                enforceContrast = true,
             )
 
         assertEquals(Color(0xFF8295A5.toInt()), composed.primary)
@@ -169,6 +248,7 @@ class ThemeColorSchemeResolverTest {
                     useCustomColors = true,
                     primary = 0xFF102030.toInt(),
                     secondary = 0xFF102030.toInt(),
+                    enforceColorContrast = true,
                 ),
                 darkTheme = true,
             )
@@ -395,7 +475,12 @@ class ThemeColorSchemeResolverTest {
     @Test
     fun `custom colors on without primary falls back to Rainy`() {
         val scheme = resolveThemeColorScheme(
-            snapshot(useCustomColors = true, primary = null, secondary = 0xFF00FF00.toInt()),
+            snapshot(
+                useCustomColors = true,
+                primary = null,
+                secondary = 0xFF00FF00.toInt(),
+                enforceColorContrast = true,
+            ),
             darkTheme = false,
         )
 
@@ -408,11 +493,13 @@ class ThemeColorSchemeResolverTest {
         primary: Int? = null,
         secondary: Int? = null,
         onColorMode: String = UserPreferencesManager.ON_COLOR_MODE_AUTO,
+        enforceColorContrast: Boolean = false,
     ) = ThemePreferenceSnapshot(
         source = "test",
         themeMode = UserPreferencesManager.THEME_MODE_LIGHT,
         useSystemTheme = false,
         useCustomColors = useCustomColors,
+        enforceColorContrast = enforceColorContrast,
         customPrimaryColor = primary,
         customSecondaryColor = secondary,
         onColorMode = onColorMode,

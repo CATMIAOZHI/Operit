@@ -96,6 +96,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
         private val CUSTOM_PRIMARY_COLOR = intPreferencesKey("custom_primary_color")
         private val CUSTOM_SECONDARY_COLOR = intPreferencesKey("custom_secondary_color")
         private val USE_CUSTOM_COLORS = booleanPreferencesKey("use_custom_colors")
+        private val ENFORCE_COLOR_CONTRAST = booleanPreferencesKey("enforce_color_contrast")
         private val USE_BACKGROUND_IMAGE = booleanPreferencesKey("use_background_image")
         private val BACKGROUND_IMAGE_URI = stringPreferencesKey("background_image_uri")
         private val BACKGROUND_IMAGE_OPACITY = floatPreferencesKey("background_image_opacity")
@@ -733,6 +734,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
     val useCustomColors: Flow<Boolean> =
             context.userPreferencesDataStore.data.map { preferences ->
                 preferences[USE_CUSTOM_COLORS] ?: false
+            }
+
+    /** Off by default: the palette keeps its soft tones until the user asks for stronger contrast. */
+    val enforceColorContrast: Flow<Boolean> =
+            context.userPreferencesDataStore.data.map { preferences ->
+                preferences[ENFORCE_COLOR_CONTRAST] ?: false
             }
 
     // 背景图片相关Flow
@@ -1528,6 +1535,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             customPrimaryColor: Int? = null,
             customSecondaryColor: Int? = null,
             useCustomColors: Boolean? = null,
+            enforceColorContrast: Boolean? = null,
             useBackgroundImage: Boolean? = null,
             backgroundImageUri: String? = null,
             backgroundImageOpacity: Float? = null,
@@ -1641,6 +1649,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             customPrimaryColor?.let { preferences[CUSTOM_PRIMARY_COLOR] = it }
             customSecondaryColor?.let { preferences[CUSTOM_SECONDARY_COLOR] = it }
             useCustomColors?.let { preferences[USE_CUSTOM_COLORS] = it }
+            enforceColorContrast?.let { preferences[ENFORCE_COLOR_CONTRAST] = it }
             useBackgroundImage?.let { preferences[USE_BACKGROUND_IMAGE] = it }
             backgroundImageUri?.let {
                 // Simply store the URI as a string in preferences
@@ -1817,6 +1826,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(CUSTOM_PRIMARY_COLOR)
             preferences.remove(CUSTOM_SECONDARY_COLOR)
             preferences[USE_CUSTOM_COLORS] = false
+            preferences.remove(ENFORCE_COLOR_CONTRAST)
             preferences.remove(USE_BACKGROUND_IMAGE)
             preferences.remove(BACKGROUND_IMAGE_URI)
             preferences.remove(BACKGROUND_IMAGE_OPACITY)
@@ -1950,7 +1960,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     private fun getAllBooleanThemeKeys(): List<Preferences.Key<Boolean>> {
         return listOf(
-            USE_SYSTEM_THEME, USE_CUSTOM_COLORS, USE_BACKGROUND_IMAGE, VIDEO_BACKGROUND_MUTED,
+            USE_SYSTEM_THEME, USE_CUSTOM_COLORS, ENFORCE_COLOR_CONTRAST, USE_BACKGROUND_IMAGE,
+            VIDEO_BACKGROUND_MUTED,
             VIDEO_BACKGROUND_LOOP, TOOLBAR_TRANSPARENT, NAVIGATION_DRAWER_WATER_GLASS,
             NAVIGATION_DRAWER_BUTTON_LIQUID_GLASS,
             USE_CUSTOM_NAVIGATION_DRAWER_BACKGROUND_COLOR,
@@ -2319,6 +2330,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             themeMode = stringValue(THEME_MODE, THEME_MODE_LIGHT) ?: THEME_MODE_LIGHT,
             useSystemTheme = booleanValue(USE_SYSTEM_THEME, true),
             useCustomColors = booleanValue(USE_CUSTOM_COLORS, false),
+            enforceColorContrast = booleanValue(ENFORCE_COLOR_CONTRAST, false),
             customPrimaryColor = intValue(CUSTOM_PRIMARY_COLOR),
             customSecondaryColor = intValue(CUSTOM_SECONDARY_COLOR),
             onColorMode = stringValue(KEY_ON_COLOR_MODE, ON_COLOR_MODE_AUTO) ?: ON_COLOR_MODE_AUTO,

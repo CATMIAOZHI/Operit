@@ -13,6 +13,8 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -832,6 +834,37 @@ internal fun ThemeSettingsColorCustomizationSection(
                         onUseCustomColorsInputChange(it)
                         saveThemeSettingsWithCharacterCard {
                             preferencesManager.saveThemeSettings(useCustomColors = it)
+                        }
+                    },
+                )
+            }
+
+            // Applies to the default palette as well as custom colors, so it sits outside the
+            // custom-color block. Off by default: the soft Rainy tones stay as designed.
+            val enforceColorContrast by
+                preferencesManager.enforceColorContrast.collectAsState(initial = false)
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(id = R.string.theme_enforce_contrast),
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        text = stringResource(id = R.string.theme_enforce_contrast_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+
+                Switch(
+                    checked = enforceColorContrast,
+                    onCheckedChange = {
+                        saveThemeSettingsWithCharacterCard {
+                            preferencesManager.saveThemeSettings(enforceColorContrast = it)
                         }
                     },
                 )

@@ -10,6 +10,16 @@ val RainyRose = Color(0xFFE91E63)
 val RainyAccent = Color(0xFF9F2854)
 val RainySecondary = Color(0xFF795064)
 
+// The soft light accents used while "enhanced contrast" is off (the default). They stay in the
+// sakura family instead of berry, yet still clear 3:1 as accent text on the pink card fill
+// (RainyLightHover) and carry white icons at about 4.3:1.
+val RainySoftRose = Color(0xFFCA5079)
+val RainySoftMauve = Color(0xFF9E6A82)
+val RainySoftCoral = Color(0xFFC24C72)
+
+/** The light app bar and status bar: a sakura band that separates from the paler page. */
+val RainyLightAppBar = Color(0xFFFFDDE6)
+
 val RainyLightBackground = Color(0xFFFFF8FA)
 val RainyLightPanel = Color(0xFFFFFFFF)
 val RainyLightElement = Color(0xFFFFF1F5)
