@@ -1,14 +1,19 @@
 package com.ai.assistance.operit.ui.common.dynamicui
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
@@ -25,6 +30,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.drawText
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
@@ -36,6 +42,9 @@ import kotlin.math.*
 
 internal data class CardChartPoint(val label: String, val x: Double, val y: Double)
 internal data class CardChartSeries(val label: String, val points: List<CardChartPoint>)
+
+/** Donut ring thickness as a share of the outer radius. */
+private const val PIE_RING = .4f
 
 /** Runtime validation also covers values supplied through bindings. */
 internal fun cardChartSeries(value: Any?, labels: List<String>, type: String): List<CardChartSeries> {
@@ -160,7 +169,11 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
             fun selectAt(tap: Offset, w: Float, h: Float) {
                 if (type == "pie") {
                     val center = Offset(w / 2f, h / 2f)
-                    if ((tap - center).getDistance() <= minOf(w, h) * .43f) {
+                    val outer = minOf(w, h) * .43f
+                    val distance = (tap - center).getDistance()
+                    // The donut hole clears the selection; the ring and a small rim select a slice.
+                    if (distance < outer * (1 - PIE_RING)) selected = null
+                    else if (distance <= outer + with(density) { 8.dp.toPx() }) {
                         val angle = ((atan2(tap.y - center.y, tap.x - center.x) * 180 / PI + 90 + 360) % 360).toFloat()
                         val total = points.sumOf { it.y }; var end = 0f
                         val index = points.indexOfFirst { end += (it.y / total * 360).toFloat(); angle < end }
@@ -196,13 +209,43 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                 }) {
                 val w = size.width; val h = size.height
                 if (type == "pie") {
-                    val diameter = min(w, h) * .86f
-                    val corner = Offset((w - diameter) / 2, (h - diameter) / 2)
+                    val center = Offset(w / 2f, h / 2f)
+                    val outer = min(w, h) * .43f
+                    val thickness = outer * PIE_RING
+                    val ring = outer - thickness / 2
+                    // Transparent gaps let the chat background show through, so no fill color is assumed.
+                    val gap = if (points.count { it.y > 0 } > 1) 2.dp.toPx() / ring * (180f / PI.toFloat()) else 0f
                     val total = points.sumOf { it.y }; var start = -90f
+                    val active = selected?.second
                     points.forEachIndexed { i, p ->
                         val sweep = (p.y / total * 360).toFloat()
-                        drawArc(pieColors[i], start, sweep, true, corner, Size(diameter, diameter))
+                        val trim = if (sweep > gap * 2) gap else 0f
+                        val chosen = active == i
+                        val radius = if (chosen) ring + 3.dp.toPx() else ring
+                        val color = if (active == null || chosen) pieColors[i] else pieColors[i].copy(alpha = .3f)
+                        if (sweep > 0f) drawArc(color, start + trim / 2, sweep - trim, false, center - Offset(radius, radius),
+                            Size(radius * 2, radius * 2), style = Stroke(if (chosen) thickness + 6.dp.toPx() else thickness))
                         start += sweep
+                    }
+                    active?.let { points.getOrNull(it) }?.let { p ->
+                        val hole = ((outer - thickness) * 1.6f).toInt().coerceAtLeast(1)
+                        // Shrink the share like Display values instead of eliding digits.
+                        val shareText = "${cardChartPercent(p.y, total)}%"
+                        fun shareAt(size: Float) = measurer.measure(shareText,
+                            TextStyle(color = tooltipInk, fontSize = size.sp, fontWeight = FontWeight.SemiBold), softWrap = false, maxLines = 1)
+                        var shareSize = 22f
+                        var share = shareAt(shareSize)
+                        while (share.size.width > hole && shareSize > 13f) { shareSize -= 1f; share = shareAt(shareSize) }
+                        val name = measurer.measure(p.label, TextStyle(color = ink, fontSize = 12.sp, textAlign = TextAlign.Center),
+                            overflow = TextOverflow.Ellipsis, maxLines = 2, constraints = Constraints(maxWidth = hole))
+                        // Large font scales drop the name, then the share; the highlighted legend still shows both.
+                        if (share.size.width <= hole) {
+                            val both = share.size.height + name.size.height <= hole
+                            val textHeight = share.size.height + if (both) name.size.height else 0
+                            val textTop = center.y - textHeight / 2f
+                            drawText(share, topLeft = Offset(center.x - share.size.width / 2f, textTop))
+                            if (both) drawText(name, topLeft = Offset(center.x - name.size.width / 2f, textTop + share.size.height))
+                        }
                     }
                 } else {
                     ticks.forEachIndexed { i, y ->
@@ -315,18 +358,46 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
                 }
             }
             Text(stringResource(R.string.dynamic_ui_chart_gesture), style = MaterialTheme.typography.labelSmall, color = ink)
-            if (type == "pie") Column(Modifier.heightIn(max = 180.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+            if (type == "pie") Column(Modifier.heightIn(max = 240.dp).verticalScroll(androidx.compose.foundation.rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 val total = points.sumOf { it.y }
-                points.forEachIndexed { i, point ->
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Text("●", color = pieColors[i])
-                        Text("${point.label}: ${cardChartNumber(point.y)} (${String.format("%.1f", point.y / total * 100)}%)", style = MaterialTheme.typography.bodySmall)
+                // Values that already sum to 100 are percentages; repeating them would be noise.
+                val showValue = abs(total - 100) > 1e-9
+                points.indices.chunked(2).forEach { row ->
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        row.forEach { i ->
+                            val point = points[i]
+                            val chosen = selected?.second == i
+                            Row(Modifier.weight(1f).height(IntrinsicSize.Min).clip(RoundedCornerShape(12.dp))
+                                .background(if (chosen) pieColors[i].copy(alpha = .12f) else Color.Transparent)
+                                .selectable(selected = chosen) { selected = if (chosen) null else 0 to i }
+                                .padding(horizontal = 8.dp, vertical = 6.dp),
+                                horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                Box(Modifier.width(4.dp).fillMaxHeight().clip(RoundedCornerShape(2.dp)).background(pieColors[i]))
+                                Column {
+                                    Text(point.label, style = MaterialTheme.typography.labelMedium, color = ink,
+                                        maxLines = 2, overflow = TextOverflow.Ellipsis)
+                                    Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                                        Text("${cardChartPercent(point.y, total)}%", style = MaterialTheme.typography.titleMedium,
+                                            fontWeight = FontWeight.SemiBold)
+                                        if (showValue) Text(cardChartNumber(point.y), style = MaterialTheme.typography.labelSmall,
+                                            color = ink, modifier = Modifier.padding(bottom = 2.dp))
+                                    }
+                                }
+                            }
+                        }
+                        if (row.size == 1) Spacer(Modifier.weight(1f))
                     }
                 }
             } else if (data.size > 1) FlowRow(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                data.forEachIndexed { i, series -> Text("● ${series.label}", color = palette[i % palette.size], style = MaterialTheme.typography.labelMedium) }
+                // Series colors identify, the shared ink reads: a colored label can vanish on a custom bubble.
+                data.forEachIndexed { i, series -> Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                    Text("●", color = palette[i % palette.size], style = MaterialTheme.typography.labelMedium)
+                    Text(series.label, color = ink, style = MaterialTheme.typography.labelMedium)
+                } }
             }
-            selected?.let { (s, i) -> data.getOrNull(s)?.points?.getOrNull(i)?.let { p ->
+            // The donut center and highlighted legend already show the selected slice.
+            selected?.takeIf { type != "pie" }?.let { (s, i) -> data.getOrNull(s)?.points?.getOrNull(i)?.let { p ->
                 if (type == "line") Column {
                     Text(p.label, style = MaterialTheme.typography.labelLarge)
                     data.forEachIndexed { index, series -> series.points.getOrNull(i)?.let {

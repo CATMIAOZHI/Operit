@@ -38,6 +38,13 @@ internal fun cardChartNumber(value: Double): String {
     return if (abs(value) < 1e-6) number.toString() else number.toPlainString()
 }
 
+/** Share of a pie slice with at most one decimal; tiny nonzero shares never read as 0. */
+internal fun cardChartPercent(part: Double, total: Double): String {
+    if (total <= 0.0 || part <= 0.0) return "0"
+    val share = BigDecimal.valueOf(part / total * 100).setScale(1, RoundingMode.HALF_UP)
+    return if (share.signum() == 0) "<0.1" else share.stripTrailingZeros().toPlainString()
+}
+
 internal fun cardChartTickLabels(ticks: List<Double>): List<String> {
     val largest = ticks.maxOf { abs(it) }
     val (scale, suffix) = when {
