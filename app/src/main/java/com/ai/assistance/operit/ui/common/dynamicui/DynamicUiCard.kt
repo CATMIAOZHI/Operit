@@ -21,6 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.material3.a2ui.A2uiSurface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -36,17 +37,17 @@ val LocalDynamicUiOwner = staticCompositionLocalOf<DynamicUiOwner?> { null }
 val LocalDynamicUiSubmit = staticCompositionLocalOf<((DynamicUiOwner, String) -> Boolean)?> { null }
 
 @Composable
-fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int) {
+fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {
     val owner = LocalDynamicUiOwner.current
     // A completed revision owns independent state. Streaming cards are display-only.
     val revision = remember(source, closed) { if (closed) DynamicUiProtocol.fingerprint(source) else "streaming" }
     key(owner?.chatId, owner?.timestamp, owner?.variant, revision, blockIndex) {
-        DynamicUiCardContent(source, closed, streaming, owner, blockIndex)
+        DynamicUiCardContent(source, closed, streaming, owner, blockIndex, ink)
     }
 }
 
 @Composable
-private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boolean, owner: DynamicUiOwner?, blockIndex: Int) {
+private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boolean, owner: DynamicUiOwner?, blockIndex: Int, ink: Color) {
     val context = LocalContext.current
     val submit by rememberUpdatedState(LocalDynamicUiSubmit.current)
     val currentOwner by rememberUpdatedState(owner)
@@ -353,7 +354,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     // Embedded like a Markdown block: no host frame, background or padding. A root Card draws its
     // own frame, so only authors who need visual grouping get one.
     MaterialTheme(
-        colorScheme = cardColorScheme(MaterialTheme.colorScheme),
+        colorScheme = cardColorScheme(MaterialTheme.colorScheme, ink),
         shapes = MaterialTheme.shapes.copy(medium = RoundedCornerShape(20.dp), large = RoundedCornerShape(20.dp)),
         typography = MaterialTheme.typography.copy(bodyLarge = MaterialTheme.typography.bodyMedium),
     ) {

@@ -21,6 +21,28 @@ class DynamicUiStyleTest {
         assertTrue(dark.onSurface.luminance() > .8f)
     }
 
+    @Test fun customBubbleTextColorDecidesTheCardBackdrop() {
+        // Light theme with a dark custom AI bubble: the message ink is light.
+        val onDarkBubble = cardColorScheme(lightColorScheme(primary = Color(0xFFCA5079)), Color.White)
+        assertTrue(onDarkBubble.surface.luminance() < .1f)
+        assertTrue(onDarkBubble.onSurface.luminance() > .8f)
+        val errorOnDark = onDarkBubble.error.luminance()
+        assertTrue((errorOnDark + .05f) / (onDarkBubble.surface.luminance() + .05f) >= 3f)
+        // Dark theme with a light custom AI bubble: the message ink is dark.
+        val onLightBubble = cardColorScheme(darkColorScheme(primary = Color(0xFFFFB3C6)), Color.Black)
+        assertEquals(Color.White, onLightBubble.surface)
+        assertTrue(onLightBubble.onSurface.luminance() < .1f)
+        val accent = onLightBubble.primary.luminance()
+        assertTrue((1.05f) / (accent + .05f) >= 3f)
+        val label = onLightBubble.onPrimary.luminance()
+        assertTrue((maxOf(label, accent) + .05f) / (minOf(label, accent) + .05f) >= 4.5f)
+        // Matching ink keeps the theme scheme untouched.
+        val plain = cardColorScheme(lightColorScheme())
+        val matched = cardColorScheme(lightColorScheme(), Color.Black)
+        assertEquals(listOf(plain.surface, plain.onSurface, plain.primary, plain.outline),
+            listOf(matched.surface, matched.onSurface, matched.primary, matched.outline))
+    }
+
     @Test fun gridSpansPackInOrderAndPreserveIncompleteRows() {
         val keypad = cardGridRows(4, List(16) { 1 } + listOf(2, 1, 1))
         assertEquals(5, keypad.size)
