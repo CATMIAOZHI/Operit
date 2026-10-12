@@ -26,6 +26,10 @@ class DynamicUiOfficialEngineTest {
         """.trimIndent()
         val batch = DynamicUiProtocol.parse(CardExpress.compile(source), true)
         val processor = A2uiMessageProcessor(listOf(operitDynamicUiCatalog))
+        val errors = java.util.concurrent.CopyOnWriteArrayList<A2uiClientErrorMessage>()
+        val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+            processor.outboundEvents.collect { if (it is A2uiClientErrorMessage) errors.add(it) }
+        }
         val job = launch(Dispatchers.Default) { processor.collectMessages() }
         try {
             val parser = A2uiJsonMessageParser(::JvmJsonReader)
@@ -43,7 +47,8 @@ class DynamicUiOfficialEngineTest {
                 input, mapOf("previous" to "", "value" to "new", "index" to -1), change = true)
             assertEquals(" → new", result["value"])
             assertEquals("/echo", result["path"])
-        } finally { job.cancelAndJoin() }
+            assertTrue(errors.toString(), errors.isEmpty())
+        } finally { job.cancelAndJoin(); collector.cancelAndJoin() }
     }
     @Test fun repeatReplacesRegistryWithoutReplacingUserState() = runBlocking {
         val batch = DynamicUiProtocol.parse(CardExpress.compile(javaClass.getResource("/dynamicui/repeat.express")!!.readText()), true)

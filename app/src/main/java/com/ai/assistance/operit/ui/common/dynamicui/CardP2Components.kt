@@ -31,7 +31,7 @@ internal object CardStepper : A2uiComponent {
     private val current = A2uiProperty.dynamicNumber("current")
     private val label = A2uiProperty.dynamicString("label")
     private val disabled = A2uiProperty.dynamicBoolean("disabled")
-    override val properties = listOf(labels, current, label, disabled, A2uiProperty.dynamicValue("onChange"))
+    override val properties = listOf(labels, current, label, disabled, A2uiProperty.any("onChange"))
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
         val steps = properties.bind(labels).orEmpty()

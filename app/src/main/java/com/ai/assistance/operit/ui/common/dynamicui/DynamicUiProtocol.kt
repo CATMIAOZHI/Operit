@@ -71,6 +71,10 @@ internal object DynamicUiProtocol {
 
     // Only relay our fixed diagnostics, never parser excerpts or arbitrary model text.
     private fun safeDiagnosticReason(error: Exception): String {
+        generateSequence<Throwable>(error) { it.cause }.take(8)
+            .filterIsInstance<CardRendererSchema.Failure>().firstOrNull()?.let {
+                return "Renderer schema mismatch: ${it.component}.${it.field}. Check read_guide."
+            }
         val known = setOf(
             "Card exceeds 128 KiB character limit", "Too many updates", "Expected A2UI v0.9",
             "Expected one A2UI event per line", "Invalid surface ID", "Unsupported catalog",
@@ -342,6 +346,9 @@ internal object DynamicUiProtocol {
             }
         }
         validateGraph(graph, true)
+        // Also used by prepare_card: passing our protocol checks must not mask a
+        // component payload that AndroidX will reject when the card is displayed.
+        CardRendererSchema.validate(graph)
     }
 
     private fun references(c: JsonObject): List<String> =
