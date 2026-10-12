@@ -1,22 +1,22 @@
 /* METADATA
 {
   "name": "dynamic_ui",
-  "display_name": {"zh": "交互卡片", "en": "Interactive Cards"},
+  "display_name": {"zh": "动态界面", "en": "Dynamic UI"},
   "description": {
-    "zh": "用原生图表、表单和交互卡片辅助讲解。比较数据、展示趋势、探索参数或解释关系时，若可视化能帮助理解，应主动使用，无需用户明确要求。简单回答用普通文字。使用前先读取 read_guide。",
-    "en": "Explain with native charts, forms and interactive cards. Proactively use them when visualization helps compare data, show trends, explore parameters or explain relationships. Use plain text for simple answers. Read read_guide first."
+    "zh": "在回答正文中嵌入原生流程图、步骤图、图表、表格和数据面板，与文字自然穿插；只有需要用户操作时才加交互控件。讲解步骤、比较数据、展示趋势或关系时，若视觉结构比文字更清楚，应主动使用，无需用户要求。简单回答用普通文字。使用前先读取 read_guide。",
+    "en": "Embed native flows, step diagrams, charts, tables and metrics inside the answer, interleaved with prose; add interactive controls only when the user must act. Proactively use them when visual structure explains steps, comparisons, trends or relationships better than text. Use plain text for simple answers. Read read_guide first."
   },
   "category": "UI",
   "enabledByDefault": true,
   "tools": [
     {
       "name": "read_guide",
-      "description": {"zh": "生成前必读：Express 语法、组件参数、排版和动作指南。", "en": "Read before generation: Express syntax, component signatures, layout and actions."},
+      "description": {"zh": "生成前必读：何时用文字/纯展示/交互、Express 语法、组件参数和排版。", "en": "Read before generation: when to use prose, display-only or interactive UI, Express syntax, components and layout."},
       "parameters": []
     },
     {
       "name": "prepare_card",
-      "description": {"zh": "编译并校验 Express 卡片，返回展示短引用。失败按行列修正源码；成功只输出短引用，不抄写 JSON。", "en": "Compile and validate Express. Fix reported source locations on failure. On success display only the returned reference, never copy JSON."},
+      "description": {"zh": "编译并校验一个 Express 界面块，返回短引用。把引用放在正文中它应出现的位置；失败按行列修正源码；不要抄写 JSON。", "en": "Compile and validate one Express UI block and return a short reference. Place the reference where the block belongs in the answer. Fix reported locations on failure; never copy JSON."},
       "parameters": [
         {"name": "source", "type": "string", "required": true, "description": {"zh": "Express 源码，不含围栏；参数使用 name=value，语法见 read_guide", "en": "Express source without fences; use name=value arguments. See read_guide."}},
         {"name": "live", "type": "boolean", "required": false, "description": {"zh": "允许本轮更新 $/agent 数据；必须初始化该对象。", "en": "Allow current-turn updates to initialized $/agent data."}}
@@ -42,23 +42,47 @@
     },
     {
       "name": "read_example",
-      "description": {"zh": "直接生成已校验的演示卡片，返回展示短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo and return its display reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "p2_controls、p2_lists、interactive_flow、calculator、cost_calculator、charts、form、info、stats、progress、responsive、data、vector、repeat 或 curves", "en": "p2_controls, p2_lists, interactive_flow, calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat or curves"}}]
+      "description": {"zh": "直接生成已校验的演示界面块，返回短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo block and return its reference. Use prepare_card for custom content."},
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "纯展示：flow_steps、flowchart、data_story、stats、charts、info、vector、curves；混合：mixed_branch、responsive；交互：interactive_flow、calculator、cost_calculator、form、progress、data、repeat、p2_controls、p2_lists", "en": "Display-only: flow_steps, flowchart, data_story, stats, charts, info, vector, curves; mixed: mixed_branch, responsive; interactive: interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls, p2_lists"}}]
     }
   ]
 }
 */
 
 const guide = String.raw`
-Use native cards proactively when they help understanding, without waiting for an explicit request.
-Trends: line; category comparison: bar; shares: pie; numeric relationships: scatter.
-Bound controls and local calculations explore assumptions without requesting AI on each change.
-Use forms for structured input. Simple answers need prose/Markdown. Use Mermaid for static diagrams.
+WHAT THIS IS
+Native rich content embedded INSIDE your normal answer, not a separate card app. Each reference
+renders as a borderless block exactly where you place it between Markdown paragraphs, using the
+chat theme. One answer may hold several blocks: text -> flow -> text -> chart/table -> text.
+
+CHOOSE THE LIGHTEST FORM (most blocks should be display-only)
+1. Prose/Markdown when words are clear. Lists, code, short tables and math stay in Markdown.
+2. Display-only UI when visual structure is clearer: Flow for steps/linear processes with arrows,
+   Chart for trends/comparisons, Table for records, Grid+Display for key metrics, InfoRow for
+   attributes, Badge rows for status, Vector for small custom diagrams, Image with text.
+   Display-only blocks need NO $/ state, NO Event, NO Button. Never initialize unused data.
+3. Interactive UI only when the user must choose, enter, filter, calculate or explore. Make only
+   that part interactive and keep the rest of the block static.
+Use display blocks proactively when they clarify steps, trends, comparisons or relationships.
+Do not add buttons, forms, toggles or "tap to..." hints that nothing needs. Keep explanations in
+Markdown around blocks rather than inside them. Trends: line; categories: bar; shares: pie;
+numeric relationships: scatter. Branching or many-node graphs: Mermaid in Markdown, or Vector.
 Use actual user/tool data for factual charts; label demos and assumptions. Never invent measurements.
 
+FRAMING
+Blocks have no border, background or padding by default and line up with paragraphs.
+Do not start every block with a Header; the surrounding text usually introduces it.
+Use root=Card(child=...) only for a self-contained tool or record (calculator, form, status record)
+that benefits from a visible boundary. Panel groups a sub-area. Never nest frames for decoration.
+
+MINIMAL DISPLAY BLOCK (no state, no actions)
+root = Flow(label="Three cooking stages",steps=[{title:"Prepare",caption:"2 min",icon:"list"},
+ {title:"Cook separately",caption:"4 min",icon:"fire"},{title:"Combine",caption:"1 min",icon:"check",tone:"success"}])
+
 WORKFLOW
-Read this guide, then call prepare_card(source). Display its a2ui-ref fence EXACTLY in your answer,
-surrounded by a concise explanation. The app inserts the compiled card automatically.
+Read this guide, then call prepare_card(source) once per block. Place each returned a2ui-ref fence
+EXACTLY where that block belongs in your answer, with prose before/after as needed. The app renders
+the compiled block at that position.
 Do not repeat the source/NDJSON, reconstruct the output or revalidate a successful result.
 References belong to this active turn; never reuse them in another turn/chat.
 To revise a card from THIS turn, use update_card(reference,changes,remove?).
@@ -133,9 +157,18 @@ the reference is no longer writable. update_card still creates a separate, non-l
 Live data and user input are included in app data backups; ordinary text exports carry initial data.
 Cross-card sharing is not implicit: use multiple Panels in one card for shared controls and results.
 
-LAYOUT — applies to ALL cards, not only calculators
-One purpose per card: concise title, prominent result, controls, short supporting note.
-Header(text=title,label=optionalSubtitle,status=optionalBadge,tone=...) starts a card.
+FLOW (static steps and linear flowcharts)
+Flow(label="Accessible summary",steps=[{title:"...",caption:"...",icon:"check",tone:"success"}],
+direction="auto"|"horizontal"|"vertical"). 1..8 steps; title required (<=80 chars), caption <=160.
+Icons: check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,
+fire,food,code,upload,download,lock,chat,build. Tones: neutral,accent,success,info,warning,error.
+auto draws horizontal tiles with right arrows for <=4 steps when they fit, otherwise vertical tiles
+with down arrows. horizontal is a preference: it still stacks vertically when tiles would not fit.
+Combine several Flows in a Column/Grid for simple branches. No state or actions needed.
+
+LAYOUT
+One purpose per block. Titles are optional; prominent results, then details.
+Header(text=title,label=optionalSubtitle,status=optionalBadge,tone=...) titles a self-contained block.
 Heading is a smaller section heading. InfoRow(label=...,text=...) aligns each attribute/value;
 long values automatically stack without truncation. Divider separates header and details.
 Display(text=...,label=...,align="start") gives statistics a large value on an inset grey panel.
@@ -151,9 +184,7 @@ Panel(child=...,padding="md",radius="md",background="inset",border=false,maxWidt
 groups content with bounded styles. Background: transparent|surface|inset|accentMuted; radius:none|sm|md|lg.
 Text textAlign=start|center|end; optional lineClamp=1..8 truncates nonessential text only.
 Scroll(child=...,maxHeight=240) creates a bounded vertical region (80..480 dp). Avoid nested scrolling.
-Host ALWAYS supplies a full-width white/light or neutral dark frame, clear border, rounded corners
-and consistent padding, regardless of root type. Do not wrap root in Card just to get a border.
-Use nested Card only to group separate related sections. Keep commentary outside the card.
+Blocks are frameless; see FRAMING. Keep commentary in Markdown outside the block.
 Choose one primary action; quiet secondary actions. No arbitrary style/color overrides.
 Grid columnCount=1..4; columnSpans needs one integer span per child, each 1..columnCount.
 Without columnCount, Grid auto-fits 1..4 columns using minItemWidth (80..320 dp, default160)
@@ -244,13 +275,12 @@ calculatorStep(state,key) is a pure reducer; initialize
 {display:"0",stored:"",op:"",replace:false,error:false}; keys 0..9,".","+","-","*","/","=",
 "AC","backspace","sign". Set the whole calculator state atomically with local_action.
 
-MINIMAL COST DEMO (simulated price, no purchase)
+MINIMAL INTERACTIVE DEMO (only because the user explores a value; simulated price)
 $/form = {years:4}
-root = Column(children=[
- Heading(text="Cost estimate"),
+root = Card(child=Column(children=[
  Display(label="Demo total",text=formatNumber(value=multiply(a=$/form/years,b=12.5))),
  Slider(label="Years",min=1,max=10,steps=8,number=$/form/years)
-])
+]))
 
 CATALOG — generated from the compiler's contract; ? means optional
 `;
@@ -297,6 +327,31 @@ exports.update_card = async ({reference, changes, remove = []}) => {
 
 const q = JSON.stringify;
 function example(name) {
+    if (name === "flow_steps") return String.raw`
+root = Flow(label="番茄炒蛋三个阶段",steps=[{title:"准备食材",caption:"2 分钟",icon:"list"},{title:"分别炒制",caption:"4 分钟",icon:"fire"},{title:"混合出锅",caption:"1 分钟",icon:"check",tone:"success"}])`;
+    if (name === "flowchart") return String.raw`
+root = Column(gap="xs",children=[main,question,split,branches])
+main = Flow(label="请求处理：收到请求后校验参数",direction="vertical",steps=[{title:"收到请求",icon:"download"},{title:"校验参数",icon:"search"}])
+question = Row(justify="center",children=[Badge(text="参数是否有效？",tone="info")])
+split = Vector(label="分成两个分支",width=320,height=36,shapes=[{type:"arrow",x1:160,y1:2,x2:80,y2:34},{type:"arrow",x1:160,y1:2,x2:240,y2:34}])
+branches = Grid(columnCount=2,children=[
+ Flow(label="有效分支",direction="vertical",steps=[{title:"有效",icon:"check",tone:"success"},{title:"执行业务",icon:"build"},{title:"返回结果",icon:"upload"}]),
+ Flow(label="无效分支",direction="vertical",steps=[{title:"无效",icon:"warning",tone:"error"},{title:"返回错误",caption:"附带原因"}])
+])`;
+    if (name === "data_story") return String.raw`
+root = Column(gap="md",children=[
+ Grid(minItemWidth=100,children=[Display(label="本周总量",text="9.0M"),Display(label="缓存命中",text="94%"),Display(label="较上周",text="+12%")]),
+ Chart(label="每日用量（百万 Token，演示数据）",type="bar",labels=["周一","周二","周三","周四","周五"],series=[{label:"用量",values:[1.2,1.8,1.5,2.1,2.4]}]),
+ Table(columns=["模型","占比","平均耗时"],rows=[["主对话","72%","14 秒"],["子代理","21%","38 秒"],["预测","7%","1.2 秒"]])
+])`;
+    if (name === "mixed_branch") return String.raw`
+$/release = {plan:"稳妥"}
+root = Column(gap="md",children=[
+ Flow(label="发布流程",steps=[{title:"开发",icon:"code"},{title:"审计",icon:"search"},{title:"发布",icon:"upload",tone:"success"}]),
+ Segmented(label="选择发布方式",options=["快速","稳妥"],value=$/release/plan),
+ Conditional(visible=equals(a=$/release/plan,b="快速"),children=[InfoRow(label="快速发布",text="跳过真机验证，适合文案修改")]),
+ Conditional(visible=equals(a=$/release/plan,b="稳妥"),children=[InfoRow(label="稳妥发布",text="真机验证通过后再合并，适合功能改动",tone="success")])
+])`;
     if (name === "interactive_flow") return String.raw`
 $/flow = {step:0,flavor:"原味"}
 $/steps = [
@@ -334,7 +389,7 @@ navigation = Row(wrap=true,children=[Button(child=Text(text="上一步"),checks=
             ["1","1"],["2","2"],["3","3"],["+","+"],["0","0"],[".","."],["=","="]];
         return [
             '$/calculator = {display:"0",stored:"",op:"",replace:false,error:false}',
-            'root = Column(children=[Header(text="本地计算器",status="本地计算"),pending,Display(label="结果",text=$/calculator/display,align="end"),error,keys,Text(text="支持小数、退格和连续运算。",variant="caption")])',
+            'root = Card(child=Column(children=[Header(text="本地计算器",status="本地计算"),pending,Display(label="结果",text=$/calculator/display,align="end"),error,keys,Text(text="支持小数、退格和连续运算。",variant="caption")]))',
             'pending = Conditional(visible=not(value=equals(a=$/calculator/op,b="")),children=[Text(text=concat(values=[$/calculator/stored," ",$/calculator/op]))])',
             'error = Conditional(visible=$/calculator/error,children=[Text(text="无法计算，请检查除数或清除后重试。")])',
             'keys = Grid(columnCount=4,columnSpans=[1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,2,1,1],children=[' +
@@ -343,13 +398,13 @@ navigation = Row(wrap=true,children=[Button(child=Text(text="上一步"),checks=
     }
     if (name === "cost_calculator") return String.raw`
 $/form = {years:4,discount:false}
-root = Column(children=[
+root = Card(child=Column(children=[
  Header(text="费用试算",status="演示数据"),
  Display(label="预计费用",text=formatNumber(value=multiply(a=multiply(a=$/form/years,b=11.622222),b=if(condition=$/form/discount,then=0.9,else=1)))),
  Slider(label="购买年限",min=1,max=10,steps=8,number=$/form/years),
  CheckBox(label="模拟九折优惠",value=$/form/discount),
  Text(text="拖动滑块或勾选优惠即可本地重新计算，不会下单或付款。",variant="caption")
-])`;
+]))`;
     if (name === "charts") return 'root = Column(children=[' +
         ["line","bar","pie","scatter"].map((type, i) => 'Chart(label=' + q(["折线图","柱状图","饼图","散点图"][i] + " · 演示数据") +
             ',type=' + q(type) + (type === "scatter"
@@ -357,11 +412,11 @@ root = Column(children=[
             : ',labels=["A","B","C"],series=[{label:"演示数据",values:[32,56,42]}])')).join(",") + "])";
     if (name === "form") return String.raw`
 $/form = {name:"",notes:""}
-root = Form(label="偏好表单 · 演示",children=[
+root = Card(child=Form(label="偏好表单 · 演示",children=[
  TextField(label="称呼",value=$/form/name),
  TextArea(label="补充说明",value=$/form/notes),
  Button(child=Text(text="提交给 AI"),variant="primary",action=Event(name="ai_submit",context={form:$/form,required:["/form/name"]}))
-])`;
+]))`;
     if (name === "info") return String.raw`
 root = Card(child=Column(children=[
  Header(text="example.com",label="域名状态 · 演示数据",status="活动中",tone="success"),
@@ -378,13 +433,13 @@ root = Column(children=[
 ])`;
     if (name === "progress") return String.raw`
 $/tasks = {analysis:true,review:true,test:false}
-root = Column(children=[
+root = Card(child=Column(children=[
  Header(text="代码审查任务",label="演示清单，仅修改当前卡片",status=if(condition=and(a=and(a=$/tasks/analysis,b=$/tasks/review),b=$/tasks/test),then="已完成",else="进行中"),tone=if(condition=and(a=and(a=$/tasks/analysis,b=$/tasks/review),b=$/tasks/test),then="success",else="info")),
  Progress(label="任务进度",number=divide(a=add(a=add(a=if(condition=$/tasks/analysis,then=1,else=0),b=if(condition=$/tasks/review,then=1,else=0)),b=if(condition=$/tasks/test,then=1,else=0)),b=3)),
  CheckBox(label="分析代码",value=$/tasks/analysis),
  CheckBox(label="检查问题",value=$/tasks/review),
  CheckBox(label="运行测试",value=$/tasks/test)
-])`;
+]))`;
     if (name === "responsive") return String.raw`
 root = Column(gap="md",children=[
  Header(text="项目概览",status="演示数据"),
@@ -453,6 +508,6 @@ groups=Repeat(items=$/groups,key="id",child=Panel(child=Column(children=[
 ]),background="inset"))
 tasks=Repeat(items=item(field="children"),key="id",child=CheckBox(label=item(field="title"),value=item_state(field="done",default=false)))
 `;
-    throw new Error("Choose p2_controls, p2_lists, calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat, curves or interactive_flow.");
+    throw new Error("Choose flow_steps, flowchart, data_story, mixed_branch, stats, charts, info, vector, curves, responsive, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls or p2_lists.");
 }
 exports.read_example = async ({name}) => complete(prepare(example(name)));

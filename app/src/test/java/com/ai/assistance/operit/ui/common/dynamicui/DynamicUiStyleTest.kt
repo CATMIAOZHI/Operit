@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.common.dynamicui
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.luminance
 import org.junit.Assert.*
 import org.junit.Test
@@ -34,7 +35,9 @@ class DynamicUiStyleTest {
         for (base in listOf(lightColorScheme(), darkColorScheme())) {
             val scheme = cardColorScheme(base)
             for (tone in listOf("neutral", "success", "info", "warning", "error")) {
-                val (ink, fill) = cardToneColors(tone, scheme)
+                val (ink, rawFill) = cardToneColors(tone, scheme)
+                // Neutral insets are translucent washes; measure what is actually drawn.
+                val fill = rawFill.compositeOver(scheme.surface)
                 val lighter = maxOf(ink.luminance(), fill.luminance())
                 val darker = minOf(ink.luminance(), fill.luminance())
                 assertTrue(tone, (lighter + .05f) / (darker + .05f) >= 4.5f)

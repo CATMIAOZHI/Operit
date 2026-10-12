@@ -36,7 +36,7 @@ vm.runInNewContext(source, sandbox);
 (async () => {
     await sandbox.exports.read_guide();
     assert.ok(result.message.endsWith("NATIVE SIGNATURES"));
-    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists"]) {
+    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists","flow_steps","flowchart","data_story","mixed_branch"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
         assert.equal(result.valid, true);

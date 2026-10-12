@@ -1,18 +1,26 @@
-# 聊天交互卡片
+# 聊天动态界面（Dynamic UI）
 
 ## 使用
 
+定位：聊天回答里的原生富内容，交互只是可选增强。每个 `a2ui-ref` 渲染成一个无框块，
+出现在模型放置它的位置，可与 Markdown 段落任意穿插，一条回答可以有多个块。
+指南要求模型按「文字 → 纯展示 UI → 需要操作才加交互」选择最轻的形式；
+纯展示块不需要 `$/` 状态、`Event` 或按钮。
+
 工具包描述和 `read_guide` 会引导 AI 主动选择有助于理解的可视化，无需用户明确要求：
-趋势用折线图，数量对比用柱状图，占比用饼图，数值关系用散点图；
+线性步骤和流程用 `Flow`，趋势用折线图，数量对比用柱状图，占比用饼图，数值关系用散点图；
 参数试算用本地控件和计算，收集信息用表单。简单回答仍用文字或 Markdown 表格。
 事实图表必须使用用户或工具提供的数据，演示数据与假设需明确标注；不为配图编造数据。
 这是给模型的使用指引，不会强制每条回答生成卡片。
 
-所有卡片共用中性视觉样式：浅色模式白底、深色模式深灰底、淡边框和主题强调色，
-不改变聊天背景。指南同时要求自定义表单、对比、图表和参数试算组织好标题、重点、
-操作和辅助说明，而不是仅套用固定示例。
-外框始终由宿主绘制，不受根节点是否为 `Card` 影响；根 `Card` 复用外框，
-嵌套 `Card` 保留自己的分组边框。卡片上下留白 12 dp、内边距 16 dp。
+宿主不再绘制外框、背景或内边距，块上下各留 8 dp，与正文对齐；源码按钮只在出错或
+图标缺失时出现。需要视觉边界的独立工具（计算器、表单、状态记录）由模型显式使用
+`root = Card(...)`，`Card` 自己画白底（深色为深灰）、淡边框和 16 dp 内边距。
+无框块中的 inset 底色（`Display`、`Panel(background="inset")`、`Flow` 中性步骤）是半透明墨色，
+在任何气泡颜色上都可见；图表悬浮提示保持不透明。发送/工具确认面板自带边框。
+`Flow(label, steps, direction?)` 绘制静态步骤图：1..8 步，每步 `{title, caption?, icon?, tone?}`，
+`auto` 在步骤不超过 4 个且放得下时横排并用 → 连接，否则竖排并用 ↓ 连接；
+多个 `Flow` 放进 `Column`/`Grid` 可组成简单分支。`steps` 可绑定状态，编译、展开和渲染三层校验一致。
 `Header` 组合标题、说明和状态徽章；`InfoRow` 左右排列标签与数值，长内容改上下排列。
 `Badge`、`Header` 和 `InfoRow` 支持 neutral/success/info/warning/error 语义色，含深色模式。
 `Display(text,label?,align?)` 提供突出结果区，默认左对齐；计算器显式使用 `align="end"`。
@@ -20,14 +28,15 @@
 `Grid` 内按钮铺满各自单元格，未满行不会重新均分。显式 `columnCount` 时可传
 `columnSpans` 整数数组，与 `children` 一一对应，每项为 `1..columnCount`；
 跨列不足时另起一行。计算器的零键使用两列，费用试算也复用 `Display`。
-启用「交互卡片」工具包。AI 先调用 `dynamic_ui.read_guide`，再调用
+启用「动态界面」工具包。AI 先调用 `dynamic_ui.read_guide`，再调用
 `prepare_card(source)` 编译 Express 源码。成功后只需在回答中放返回的 `a2ui-ref`
 短围栏。应用在模型文本进入显示、历史和持久化之前，将引用展开为完整 `a2ui`。
 不再让模型二次抄写 JSON；工具不回传整份编译结果。`valid:false` 保留行、列和原因。
 新编写入口只有 Express，移除 `prepare_card(components,data)` 和 `validate_card`。
 
-`read_example` 支持 calculator、cost_calculator、charts、form、info、stats、progress，
-分别为按键计算器、费用试算、四类图表、表单、域名信息、统计和本地清单演示。
+`read_example` 的纯展示示例有 flow_steps（横向步骤）、flowchart（带分支的流程图）、
+data_story（指标 + 图表 + 表格）、stats、charts、info、vector、curves；
+mixed_branch 只在分支选择处交互；交互示例有 calculator、cost_calculator、form、progress 等。
 同样编译后返回短引用，不修改真实应用配置。
 每张卡片独立初始化，不能跨卡片更新状态。
 
