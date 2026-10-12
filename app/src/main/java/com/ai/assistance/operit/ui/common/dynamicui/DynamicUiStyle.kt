@@ -4,22 +4,22 @@ import androidx.compose.material3.ColorScheme
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.luminance
 
-/** Neutral card surfaces, retaining the user's accent colors and app-selected light/dark mode. */
+/** White light-mode cards with the app's warm inset, ink and border colors. */
 internal fun cardColorScheme(base: ColorScheme): ColorScheme {
     val dark = base.surface.luminance() < .5f
     val surface = if (dark) Color(0xFF202124) else Color.White
-    val inset = if (dark) Color(0xFF2C2D30) else Color(0xFFF2F3F5)
+    val inset = if (dark) Color(0xFF2C2D30) else base.surfaceContainer
     return base.copy(
         surface = surface,
-        onSurface = if (dark) Color(0xFFF1F1F1) else Color(0xFF202124),
-        onSurfaceVariant = if (dark) Color(0xFFBFC0C4) else Color(0xFF616368),
+        onSurface = if (dark) Color(0xFFF1F1F1) else base.onSurface,
+        onSurfaceVariant = if (dark) Color(0xFFBFC0C4) else base.onSurfaceVariant,
         surfaceContainerLowest = surface,
         surfaceContainerLow = surface,
         surfaceContainer = inset,
         surfaceContainerHigh = inset,
         surfaceContainerHighest = inset,
-        outline = if (dark) Color(0xFF77797E) else Color(0xFFA0A2A6),
-        outlineVariant = if (dark) Color(0xFF55575C) else Color(0xFFD9DBDF),
+        outline = if (dark) Color(0xFF77797E) else base.outline,
+        outlineVariant = if (dark) Color(0xFF55575C) else base.outlineVariant,
     )
 }
 

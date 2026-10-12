@@ -21,7 +21,7 @@ private val RainyDarkColorScheme =
         onPrimary = RainyDarkBackground,
         primaryContainer = RainyDarkElement,
         onPrimaryContainer = RainySakura,
-        inversePrimary = RainyPinkHover,
+        inversePrimary = RainyAccent,
         secondary = RainyPink,
         onSecondary = RainyDarkBackground,
         secondaryContainer = RainyDarkElement,
@@ -56,21 +56,21 @@ private val RainyDarkColorScheme =
 
 private val RainyLightColorScheme =
     lightColorScheme(
-        primary = RainyPinkHover,
-        onPrimary = RainyLightBackground,
+        primary = RainyAccent,
+        onPrimary = RainyLightPanel,
         primaryContainer = RainyLightHover,
         onPrimaryContainer = RainyLightText,
         inversePrimary = RainySakura,
-        secondary = RainyPink,
-        onSecondary = RainyLightText,
+        secondary = RainySecondary,
+        onSecondary = RainyLightPanel,
         secondaryContainer = RainyLightHover,
         onSecondaryContainer = RainyLightText,
-        tertiary = RainyRose,
-        onTertiary = RainyLightBackground,
+        tertiary = Color(0xFFAE244C),
+        onTertiary = RainyLightPanel,
         tertiaryContainer = Color(0xFFFDE8EF),
         onTertiaryContainer = RainyLightText,
-        error = RainyRose,
-        onError = RainyLightBackground,
+        error = Color(0xFFB3261E),
+        onError = RainyLightPanel,
         errorContainer = Color(0xFFFDE8EF),
         onErrorContainer = RainyLightText,
         background = RainyLightBackground,
@@ -79,17 +79,17 @@ private val RainyLightColorScheme =
         onSurface = RainyLightText,
         surfaceVariant = RainyLightElement,
         onSurfaceVariant = RainyLightMuted,
-        surfaceTint = RainyPinkHover,
+        surfaceTint = RainyPink,
         inverseSurface = RainyDarkPanel,
         inverseOnSurface = RainyDarkText,
         outline = RainyLightBorder,
-        outlineVariant = RainyLightHover,
+        outlineVariant = RainyLightDivider,
         surfaceBright = RainyLightPanel,
         surfaceDim = RainyLightBackground,
         surfaceContainerLowest = RainyLightPanel,
         surfaceContainerLow = RainyLightPanel,
         surfaceContainer = RainyLightElement,
-        surfaceContainerHigh = RainyLightBackground,
+        surfaceContainerHigh = RainyLightElement,
         surfaceContainerHighest = RainyLightHover,
     )
 
@@ -98,9 +98,7 @@ internal fun rainyBaseColorScheme(darkTheme: Boolean): ColorScheme =
 
 /**
  * The tone for something that stopped without failing, such as a Subagent run an app restart cut
- * short. It is deliberately neither `error` nor `tertiary`: this palette paints the light theme's
- * tertiary with the very rose it paints `error`, so a stopped run would still read as one that went
- * wrong. The warning hue says "look at this" without saying "this broke".
+ * short. The amber warning remains distinct from both rose accents and red errors.
  */
 val ColorScheme.stoppedAttention: Color
     get() = if (background.luminance() > 0.5f) RainyWarningTextLight else RainyWarning
@@ -232,8 +230,7 @@ internal fun getResolvedContrastingTextColor(backgroundColor: Color): Color {
 /**
  * The label colour for a filled accent: the measured side, unless the user's theme-text-colour
  * setting asks for a specific one and that side still reads on the fill. The setting is a
- * preference about tone, and a soft tone is legitimate - the shipped light palette draws its own
- * app bar (#FFF0F5 on #FF6B8E) at 2.44:1 - so the setting is honoured down to
+ * preference about tone, so an explicitly requested soft tone is honoured down to
  * [LABEL_VISIBILITY_FLOOR]. Below that the requested colour is not a tone but a smudge: a black
  * label on a black accent, or a white one on a white accent, measures 1:1, which is the defect this
  * guards.

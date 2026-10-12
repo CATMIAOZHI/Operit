@@ -11,6 +11,26 @@ import org.junit.Test
 
 class ThemeColorSchemeResolverTest {
     @Test
+    fun `Rainy light accents and labels remain readable across default surfaces`() {
+        val scheme = resolveThemeColorScheme(snapshot(), darkTheme = false)
+        val pairs = listOf(
+            scheme.onPrimary to scheme.primary,
+            scheme.onSecondary to scheme.secondary,
+            scheme.onTertiary to scheme.tertiary,
+            scheme.onError to scheme.error,
+            scheme.onSurface to scheme.surfaceContainerHigh,
+            scheme.onSurfaceVariant to scheme.background,
+            scheme.primary to scheme.primaryContainer,
+            scheme.secondary to scheme.primaryContainer,
+        )
+        for ((ink, fill) in pairs) {
+            val contrast = (maxOf(ink.luminance(), fill.luminance()) + 0.05f) /
+                (minOf(ink.luminance(), fill.luminance()) + 0.05f)
+            assertTrue("Unreadable default color pair: $ink on $fill ($contrast)", contrast >= 4.5f)
+        }
+    }
+
+    @Test
     fun `custom colors off resolves Rainy light scheme despite stale colors`() {
         val snapshot = snapshot(
             useCustomColors = false,
@@ -20,8 +40,8 @@ class ThemeColorSchemeResolverTest {
 
         val scheme = resolveThemeColorScheme(snapshot, darkTheme = false)
 
-        assertEquals(RainyPinkHover, scheme.primary)
-        assertEquals(RainyPink, scheme.secondary)
+        assertEquals(RainyAccent, scheme.primary)
+        assertEquals(RainySecondary, scheme.secondary)
         assertEquals(RainyLightHover, scheme.primaryContainer)
         assertEquals(RainyLightText, scheme.onPrimaryContainer)
         assertEquals(RainyLightBackground, scheme.background)
@@ -226,7 +246,7 @@ class ThemeColorSchemeResolverTest {
 
     @Test
     fun `a requested label tone is kept while it is visible and rescued when it is not`() {
-        // The shipped light palette draws its own app bar at 2.7:1, so a soft requested tone is a
+        // A custom palette may intentionally use a soft requested tone, which is a
         // legitimate choice and has to survive; only an invisible one is replaced.
         val soft = Color(0xFFFF6B8E.toInt())
         assertEquals(Color.White, resolveContrastingTextColor(soft, UserPreferencesManager.ON_COLOR_MODE_LIGHT))
@@ -379,8 +399,8 @@ class ThemeColorSchemeResolverTest {
             darkTheme = false,
         )
 
-        assertEquals(RainyPinkHover, scheme.primary)
-        assertEquals(RainyPink, scheme.secondary)
+        assertEquals(RainyAccent, scheme.primary)
+        assertEquals(RainySecondary, scheme.secondary)
     }
 
     private fun snapshot(
