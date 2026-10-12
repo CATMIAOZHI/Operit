@@ -19,6 +19,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /** The host embeds UI without a frame; Card is the explicit, optional grouping container. */
 internal object FramedCard : A2uiBasicCatalogV1.Card {
@@ -103,6 +104,28 @@ internal fun CardHeader(text: String, subtitle: String, status: String, tone: St
             title(Modifier.weight(1f))
             if (status.isNotBlank()) CardStatusBadge(status, tone, Modifier.widthIn(max = badgeWidth))
         }
+    }
+}
+
+/**
+ * Large statistic value. Shrinks to fit one line so digits are never cut, then wraps at the
+ * smallest size: a value inside a chat bubble must never need horizontal dragging.
+ */
+@Composable
+internal fun CardDisplayValue(text: String, atStart: Boolean) {
+    val base = MaterialTheme.typography.headlineLarge.copy(fontWeight = FontWeight.SemiBold)
+    val measurer = rememberTextMeasurer()
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val width = constraints.maxWidth
+        val largest = base.fontSize.value
+        val smallest = largest * 0.6f
+        var size = largest
+        while (measurer.measure(text, style = base.copy(fontSize = size.sp),
+                softWrap = false, maxLines = 1).size.width > width && size > smallest) size = (size - 2f).coerceAtLeast(smallest)
+        val fitted = size.sp
+        val lineHeight = if (base.lineHeight.isSp) base.lineHeight * (fitted.value / largest) else base.lineHeight
+        Text(text, Modifier.fillMaxWidth(), style = base.copy(fontSize = fitted, lineHeight = lineHeight),
+            textAlign = if (atStart) TextAlign.Start else TextAlign.End)
     }
 }
 

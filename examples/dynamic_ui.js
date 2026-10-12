@@ -220,7 +220,7 @@ Without columnCount, Grid auto-fits 1..4 columns using minItemWidth (80..320 dp,
 and font scale. Prefer auto columns for metrics; explicit columns for keypads.
 Items pack in order and incomplete rows keep empty cells. A zero key can span 2 columns.
 Slider steps counts INTERMEDIATE stops: min=0,max=100,steps=99 gives integers; default continuous.
-Retain decimal precision unless asked to round. Long Display values scroll rather than truncate.
+Retain decimal precision unless asked to round. Long Display values shrink to fit, then wrap; never truncated.
 Text variants: h1/h2/h3/body/caption. Icon names: info,check,settings,person,home,star,warning,
 search,calendarToday,folder. Bind Expandable.expanded and Tabs/Carousel.value to retain state.
 Navigation value is a named child's ID; use named declarations for navigation children.
