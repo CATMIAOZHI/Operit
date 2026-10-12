@@ -3,15 +3,15 @@
   "name": "dynamic_ui",
   "display_name": {"zh": "动态界面", "en": "Dynamic UI"},
   "description": {
-    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。决定使用后再读取 read_guide。",
-    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. Read read_guide only after deciding to use it."
+    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。汇报有依据的状态或结果（如构建通过/失败、任务完成/进行中、风险等级）时，也可在句子里加行内徽章或小图标。决定使用后再读取 read_guide。",
+    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. When reporting an evidence-backed status or result (build passed/failed, task done/running, risk level), you may also add inline badges or small icons inside sentences. Read read_guide only after deciding to use it."
   },
   "category": "UI",
   "enabledByDefault": true,
   "tools": [
     {
       "name": "read_guide",
-      "description": {"zh": "生成前必读：何时用文字/纯展示/交互、Express 语法、组件参数和排版。", "en": "Read before generation: when to use prose, display-only or interactive UI, Express syntax, components and layout."},
+      "description": {"zh": "生成前必读：何时用文字/纯展示/交互、Express 语法、组件参数和排版；也包含段落内徽章和小图标的写法。", "en": "Read before generation: when to use prose, display-only or interactive UI, Express syntax, components and layout; also covers inline badge and icon syntax."},
       "parameters": []
     },
     {
@@ -75,13 +75,19 @@ Markdown around blocks rather than inside them. Trends: line; categories: bar; s
 numeric relationships: scatter. Branching or many-node graphs: Mermaid in Markdown, or Vector.
 Use actual user/tool data for factual charts; label demos and assumptions. Never invent measurements.
 
-INLINE IN PARAGRAPHS (no tool call)
-Short status inside a sentence stays in Markdown: write :badge[label]{tone=success icon=check}
-or :icon[time] directly in the paragraph, e.g. "Build :badge[passed]{tone=success icon=check},
-took :icon[time] **2 min**." Label <=16 chars (badges never wrap); tone and icon are optional; tones as in FLOW,
-icons from the FLOW list (unknown icons are dropped). Only badges and icons go inline; buttons,
-charts and layouts are blocks. Use a few per answer for real status, never as decoration.
-Copy and speech keep the badge label and skip icons. Inside inline code the syntax stays literal.
+INLINE IN PARAGRAPHS (no prepare_card)
+Short status inside a sentence stays in Markdown: write the syntax directly in the paragraph.
+Badge :badge[label]{tone=success icon=check} marks an evidence-backed status or result: build
+passed/failed, task done/running, supported or not, risk level. Label <=16 chars (badges never wrap);
+tone and icon are optional.
+Icon :icon[time] is a small marker before the text it labels: ":icon[time] 2 min",
+":icon[folder] /sdcard/Download", ":icon[calendar] Oct 12". Add color with :icon[check]{tone=success}.
+An icon never carries meaning alone; always follow it with text.
+Example: "Build :badge[passed]{tone=success icon=check}, took :icon[time] **2 min**."
+Tones and icon names as in FLOW (unknown icons are dropped). Only badges and icons go inline; buttons,
+charts and layouts are blocks. Use 0-2 per answer, never as decoration. Skip them for general
+explanations, hypothetical results, or when the user asks for plain text, code or JSON.
+Copy and speech keep the badge label and skip icons. Never put the syntax in backticks; it would stay literal.
 
 VISUAL RULES
 Keep heading levels clear: never h1/h2 inside blocks. Display blocks introduced by prose need no title;
