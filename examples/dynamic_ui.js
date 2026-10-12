@@ -3,8 +3,8 @@
   "name": "dynamic_ui",
   "display_name": {"zh": "动态界面", "en": "Dynamic UI"},
   "description": {
-    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。决定使用后再读取 read_guide。段落里的状态可直接写行内徽章 :badge[已完成]{tone=success icon=check} 和小图标 :icon[time]，不用调用工具；tone：success/info/warning/error/accent；图标：check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,fire,food,code,upload,download,lock,chat,build。只在表达真实状态或结果时用。",
-    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. Read read_guide only after deciding to use it. Inside a paragraph, write inline badges :badge[Done]{tone=success icon=check} and icons :icon[time] directly, without any tool; tone: success/info/warning/error/accent; icons: check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,fire,food,code,upload,download,lock,chat,build. Use them only for real status or results."
+    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。决定使用后再读取 read_guide。",
+    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. Read read_guide only after deciding to use it."
   },
   "category": "UI",
   "enabledByDefault": true,
