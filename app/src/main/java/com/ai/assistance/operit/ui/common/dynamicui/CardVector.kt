@@ -5,6 +5,9 @@ import androidx.a2ui.compose.ui.A2uiComponent
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.ui.res.stringResource
+import com.ai.assistance.operit.R
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clipToBounds
@@ -27,6 +30,20 @@ internal data class CardVectorData(val label: String, val width: Float, val heig
     data class Shape(val type: String, val tone: String, val filled: Boolean, val stroke: Float,
         val values: Map<String, Float>, val points: List<Offset>, val text: String)
     companion object {
+        fun validateDefinition(value: JsonObject) {
+            val shapes = value["shapes"] as? JsonArray
+            require(shapes != null && shapes.size in 1..64) { "Vector needs 1-64 shapes" }
+            shapes.forEach {
+                val shape = it as? JsonObject ?: error("Invalid vector shape")
+                require(shape["type"] is JsonPrimitive && shape["type"]?.jsonPrimitive?.isString == true) {
+                    "Vector shape type must be literal"
+                }
+                shape["points"]?.let { points ->
+                    require(points is JsonArray && points.size <= 128 &&
+                        points.all { p -> p is JsonArray && p.size == 2 }) { "Invalid vector points" }
+                }
+            }
+        }
         fun parse(value: JsonObject): CardVectorData {
             fun number(obj: JsonObject, key: String, range: ClosedFloatingPointRange<Float>): Float {
                 val n = (obj[key] as? JsonPrimitive)?.takeIf { !it.isString }?.floatOrNull
@@ -43,7 +60,7 @@ internal data class CardVectorData(val label: String, val width: Float, val heig
                 val s = element as? JsonObject ?: error("Invalid vector shape")
                 val type = s["type"]?.jsonPrimitive?.content
                 val keys = when (type) {
-                    "line" -> setOf("x1", "y1", "x2", "y2")
+                    "line", "arrow" -> setOf("x1", "y1", "x2", "y2")
                     "quadratic" -> setOf("x1", "y1", "cx", "cy", "x2", "y2")
                     "cubic" -> setOf("x1", "y1", "cx1", "cy1", "cx2", "cy2", "x2", "y2")
                     "rect" -> setOf("x", "y", "width", "height")
@@ -96,22 +113,26 @@ internal data class CardVectorData(val label: String, val width: Float, val heig
 
 internal object CardVector : A2uiComponent {
     override val name = "Vector"
-    override val description = "Static, bounded vector primitives; no scripts, URLs or SVG markup."
-    private val label = A2uiProperty.dynamicString("label")
-    private val width = A2uiProperty.dynamicNumber("width")
-    private val height = A2uiProperty.dynamicNumber("height")
-    private val shapes = A2uiProperty.dynamicValue("shapes")
+    override val description = "Bounded vector primitives with data-bound properties; no scripts or SVG markup."
+    private val label = A2uiProperty.any("label")
+    private val width = A2uiProperty.any("width")
+    private val height = A2uiProperty.any("height")
+    private val shapes = A2uiProperty.any("shapes")
     override val properties = listOf(label, width, height, shapes)
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
-        val l = properties.bind(label).orEmpty()
-        val w = properties.bind(width)
-        val h = properties.bind(height)
-        val s = properties.bind(shapes)
-        val data = remember(l, w, h, s) {
-            CardVectorData.parse(buildJsonObject {
-                put("label", l); put("width", w); put("height", h); put("shapes", DynamicUiProtocol.toJson(s))
-            })
+        val resolve = LocalCardValueResolver.current
+        // Keep invalid expressions inside the visual's boundary. AndroidX bind reports an
+        // irreversible registry error; this pure evaluator lets the user correct input.
+        val data = runCatching {
+            CardVectorData.parse(CardRepeat.evaluate(DynamicUiProtocol.toJson(mapOf(
+                "label" to properties[label], "width" to properties[width],
+                "height" to properties[height], "shapes" to properties[shapes],
+            )), resolve).jsonObject)
+        }.getOrNull()
+        if (data == null) {
+            Text(stringResource(R.string.dynamic_ui_invalid), modifier, color = MaterialTheme.colorScheme.error)
+            return
         }
         val scheme = MaterialTheme.colorScheme
         val measurer = rememberTextMeasurer()
@@ -128,6 +149,24 @@ internal object CardVector : A2uiComponent {
                 val style = if (shape.filled) androidx.compose.ui.graphics.drawscope.Fill else Stroke(shape.stroke*scale)
                 when (shape.type) {
                     "line" -> drawLine(color, point(n.getValue("x1"),n.getValue("y1")), point(n.getValue("x2"),n.getValue("y2")), shape.stroke*scale)
+                    "arrow" -> {
+                        val start = point(n.getValue("x1"), n.getValue("y1"))
+                        val end = point(n.getValue("x2"), n.getValue("y2"))
+                        drawLine(color, start, end, shape.stroke * scale)
+                        val delta = end - start
+                        val length = delta.getDistance()
+                        if (length > 0f) {
+                            val unit = delta / length
+                            val head = min(length / 2f, 8f * scale + shape.stroke * scale)
+                            val side = Offset(-unit.y, unit.x) * head * 0.5f
+                            drawPath(Path().apply {
+                                moveTo(end.x, end.y)
+                                val left = end - unit * head + side
+                                val right = end - unit * head - side
+                                lineTo(left.x, left.y); lineTo(right.x, right.y); close()
+                            }, color)
+                        }
+                    }
                     "quadratic", "cubic" -> {
                         val start = point(n.getValue("x1"), n.getValue("y1"))
                         val end = point(n.getValue("x2"), n.getValue("y2"))

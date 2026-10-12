@@ -18,7 +18,7 @@ internal object DynamicUiProtocol {
         "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
         "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
-        "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame",
+        "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame", "Pressable", "Tooltip", "Stepper", "Formula",
         "RadioGroup", "Select", "DatePicker", "TextArea", "Form", "Expandable",
         "Segmented", "Tabs", "Carousel", "Conditional", "Chart", "RichText",
         "Image", "Video", "Audio", "Link", "File", "Product", "Place", "Map", "Draft",
@@ -95,6 +95,8 @@ internal object DynamicUiProtocol {
             "Invalid vector fill", "Vector shape outside viewport", "Invalid vector points", "Invalid vector point count",
             "Invalid vector point", "Invalid vector text",
             "Popovers cannot be nested",
+            "Invalid date bounds", "Invalid or unsupported formula", "Invalid table column widths",
+            "minLines must not exceed maxLines", "Invalid step index",
             "Repeat cannot be nested", "Repeat exceeds maxItems", "Repeat items must be an array",
             "Repeat items must be objects", "Repeat keys must be unique nonempty strings",
             "item is only available inside Repeat templates", "Expanded Repeat is too large",
@@ -144,6 +146,7 @@ internal object DynamicUiProtocol {
                     val ids = mutableSetOf<String>()
                     updates.forEach { item ->
                         val component = item.jsonObject
+                        require(!component.toString().contains(CardRowState.ROOT)) { "Reserved row state" }
                         val id = component["id"]?.jsonPrimitive?.content.orEmpty()
                         require(idPattern.matches(id) && ids.add(id)) { "Invalid or duplicate component ID" }
                         require(component["component"]?.jsonPrimitive?.content in components) {
@@ -159,6 +162,7 @@ internal object DynamicUiProtocol {
                     require(!containsCall(body)) { "Initial data must not contain function calls" }
                     require(surfaceId in surfaces) { "Create the surface first" }
                     validatePath(body["path"]?.jsonPrimitive?.content ?: "/")
+                    require(!body.toString().contains(CardRowState.ROOT)) { "Reserved row state" }
                     require(body["value"].toString().length <= MAX_STATE) { "Data model too large" }
                 }
                 "deleteSurface" -> require(surfaces.remove(surfaceId) != null) { "Unknown surface" }
@@ -173,16 +177,28 @@ internal object DynamicUiProtocol {
             val it = graph
             require("root" in it) { "Missing root component" }
             validateGraph(it, requireReferences = true)
-            if (it.values.any { c -> c["component"]?.jsonPrimitive?.content == "Repeat" || containsItem(c) }) {
-                val data = CardRepeat.initialData(completeLines, surface)
-                validateExpanded(CardRepeat.expand(it, data), data)
-            }
+            val data = CardRowState.prepare(it, CardRepeat.initialData(completeLines, surface), CardLiveStore.isLive(surface))
+            validateExpanded(CardRepeat.expand(it, data), data, strictInitial = true)
         }
         return Batch(completeLines, surfaces.keys.toSet(), closed, surfaces.mapValues { it.value.toMap() })
     }
 
-    private fun validateComponent(c: JsonObject) {
+    private fun validateComponent(c: JsonObject, validateDisplay: Boolean = true) {
         val kind = c["component"]?.jsonPrimitive?.content.orEmpty()
+        fun validateEventValues(value: JsonElement, allowed: Boolean) {
+            when (value) {
+                is JsonObject -> {
+                    if ("event_value" in value) require(allowed && value.keys == setOf("event_value") &&
+                        (value["event_value"] as? JsonPrimitive)?.content in setOf("value", "previous", "index")) {
+                        "event_value is only available in onChange context"
+                    }
+                    value.values.forEach { validateEventValues(it, allowed) }
+                }
+                is JsonArray -> value.forEach { validateEventValues(it, allowed) }
+                else -> Unit
+            }
+        }
+        c.forEach { (key, value) -> validateEventValues(value, key == "onChange") }
         CardAuthoringCatalog.enums.forEach { (key, allowed) ->
             if (key.substringBefore('.') == kind) c[key.substringAfter('.')]?.let { value ->
                 if (value is JsonPrimitive) require(value.isString && value.content in allowed) { "Invalid style token" }
@@ -194,7 +210,15 @@ internal object DynamicUiProtocol {
                 require(it is JsonPrimitive && !it.isString && it.intOrNull in range) { "Invalid layout size" }
             }
         }
-        if (kind == "Vector") CardVectorData.parse(c)
+        if (kind == "Vector") CardVectorData.validateDefinition(c)
+        if (kind == "TextArea") require(
+            (c["minLines"]?.jsonPrimitive?.int ?: 3) <= (c["maxLines"]?.jsonPrimitive?.int ?: 8)
+        ) { "minLines must not exceed maxLines" }
+        if (validateDisplay && kind == "Formula" && c["text"] is JsonPrimitive)
+            require(validCardFormula(c.getValue("text").jsonPrimitive.content)) { "Invalid or unsupported formula" }
+        if (validateDisplay && kind == "DatePicker" && listOf("minDate", "maxDate").all { c[it] == null || c[it] is JsonPrimitive })
+            require(cardDateBounds(c["minDate"]?.jsonPrimitive?.content.orEmpty(),
+                c["maxDate"]?.jsonPrimitive?.content.orEmpty()) != null) { "Invalid date bounds" }
         if (kind == "Frame") {
             fun n(key: String, fallback: Double) = c[key]?.jsonPrimitive?.double ?: fallback
             require(n("minWidth", 0.0) <= n("maxWidth", 960.0) &&
@@ -243,9 +267,20 @@ internal object DynamicUiProtocol {
             require(it.keys == setOf("event")) { "Only event actions are allowed" }
             require(it["event"]!!.jsonObject["name"]?.jsonPrimitive?.content in actions) { "Unsupported action" }
         }
+        c["onChange"]?.let { action ->
+            require(kind in CardAuthoringCatalog.changeComponents && action is JsonObject &&
+                action.keys == setOf("event") &&
+                (action["event"] as? JsonObject)?.get("name")?.jsonPrimitive?.content == "local_action") {
+                "onChange only supports local_action"
+            }
+        }
         if (c["component"]?.jsonPrimitive?.content == "Table") {
             val columns = c["columns"]!!.jsonArray
             require(columns.size in 1..8) { "Table too large" }
+            c["columnWidths"]?.let { widths ->
+                require(widths is JsonArray && widths.size == columns.size &&
+                    widths.all { it is JsonPrimitive && !it.isString && it.intOrNull in 64..480 }) { "Invalid table column widths" }
+            }
             (c["rows"] as? JsonArray)?.let { rows ->
                 require(rows.size <= 32 && rows.all { row ->
                     row is JsonArray && row.size == columns.size && row.all { it is JsonPrimitive }
@@ -255,19 +290,29 @@ internal object DynamicUiProtocol {
     }
 
     private fun containsItem(value: JsonElement): Boolean = when (value) {
-        is JsonObject -> "item" in value || value.values.any(::containsItem)
+        is JsonObject -> "item" in value || "item_state" in value || value.values.any(::containsItem)
         is JsonArray -> value.any(::containsItem)
         else -> false
     }
 
-    fun validateExpanded(graph: Map<String, JsonObject>, data: JsonObject) {
+    fun validateExpanded(graph: Map<String, JsonObject>, data: JsonObject) = validateExpanded(graph, data, false)
+
+    fun validateExpanded(graph: Map<String, JsonObject>, data: JsonObject, strictInitial: Boolean) {
         require(graph.size <= 512) { "Too many rendered components" }
         val calls = intArrayOf(0)
         graph.values.forEach { c ->
             checkValue(c, callCount = calls)
             require(!containsItem(c)) { "item is only available inside Repeat templates" }
-            validateComponent(c)
+            validateComponent(c, validateDisplay = strictInitial)
             val kind = c.getValue("component").jsonPrimitive.content
+            if (kind == "Vector") CardVectorData.parse(CardRepeat.evaluate(c, data).jsonObject)
+            if (strictInitial && kind in setOf("DatePicker", "Formula"))
+                validateComponent(CardRepeat.evaluate(c, data).jsonObject)
+            if (kind == "Stepper") {
+                val labels = CardRepeat.evaluate(c.getValue("labels"), data).jsonArray
+                val current = CardRepeat.evaluate(c.getValue("current"), data).jsonPrimitive.double
+                require(labels.size in 1..32 && current % 1.0 == 0.0 && current >= 0 && current < labels.size) { "Invalid step index" }
+            }
             if (kind == "Chart") {
                 val labels = c["labels"]?.let { CardRepeat.evaluate(it, data).jsonArray.map { v -> v.jsonPrimitive.content } }.orEmpty()
                 cardChartSeries(DynamicUiProtocol.toValue(CardRepeat.evaluate(c.getValue("series"), data)), labels,
@@ -316,9 +361,11 @@ internal object DynamicUiProtocol {
                 require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Popover" }) {
                     "Popovers cannot be nested"
                 }
-            if (node["component"]?.jsonPrimitive?.content == "Repeat")
-                require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Repeat" }) {
-                    "Repeat cannot be nested"
+            if (ancestors.any { graph[it]?.get("component")?.jsonPrimitive?.content == "Pressable" })
+                require(node["component"]?.jsonPrimitive?.content in setOf("Text", "Icon", "Heading",
+                    "Header", "InfoRow", "Display", "Badge", "Progress", "Divider", "Code", "Vector",
+                    "Row", "Column", "Grid", "Frame", "Panel", "Card", "Conditional", "List")) {
+                    "Pressable content must not contain interactive controls"
                 }
             var count = 1
             references(node).forEach {

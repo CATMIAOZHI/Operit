@@ -57,8 +57,9 @@ class DynamicUiProtocolTest {
 
     @Test fun malformedFieldUpdateIsReportedInsteadOfCrashingUi() {
         var reported = false
-        updateCardField({ reported = true }) { throw IllegalStateException("Invalid parent container") }
+        assertFalse(updateCardField({ reported = true }) { throw IllegalStateException("Invalid parent container") })
         assertTrue(reported)
+        assertTrue(updateCardField({ fail("Successful update must not report an error") }) {})
         assertTrue(runCatching {
             updateCardField({}) { throw kotlinx.coroutines.CancellationException("disposed") }
         }.exceptionOrNull() is kotlinx.coroutines.CancellationException)

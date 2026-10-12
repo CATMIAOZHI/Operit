@@ -28,6 +28,9 @@ internal object CardFunctions {
         put("arrayFilter", Spec(setOf("items", "field", "operator", "value"), emptySet(), A2uiFunctionReturnType.ANY))
         listOf("arraySum", "arrayAverage").forEach { put(it, Spec(setOf("items"), setOf("field"), A2uiFunctionReturnType.NUMBER)) }
         put("arrayJoin", Spec(setOf("items", "separator"), emptySet(), A2uiFunctionReturnType.STRING))
+        put("arraySort", Spec(setOf("items"), setOf("field", "direction"), A2uiFunctionReturnType.ANY))
+        put("arrayFind", Spec(setOf("items", "field", "value", "fallback"), emptySet(), A2uiFunctionReturnType.ANY))
+        put("arrayUpdateByKey", Spec(setOf("items", "key", "value", "patch"), emptySet(), A2uiFunctionReturnType.ANY))
         put("stringContains", Spec(setOf("text", "query"), setOf("ignoreCase"), A2uiFunctionReturnType.BOOLEAN))
         put("stringReplace", Spec(setOf("text", "search", "replacement"), emptySet(), A2uiFunctionReturnType.STRING))
         put("stringTrim", Spec(setOf("text"), emptySet(), A2uiFunctionReturnType.STRING))

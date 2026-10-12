@@ -43,7 +43,7 @@
     {
       "name": "read_example",
       "description": {"zh": "直接生成已校验的演示卡片，返回展示短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo and return its display reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "calculator、cost_calculator、charts、form、info、stats、progress、responsive、data、vector、repeat 或 curves", "en": "calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat or curves"}}]
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "p2_controls、p2_lists、interactive_flow、calculator、cost_calculator、charts、form、info、stats、progress、responsive、data、vector、repeat 或 curves", "en": "p2_controls, p2_lists, interactive_flow, calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat or curves"}}]
     }
   ]
 }
@@ -95,9 +95,31 @@ DYNAMIC LISTS
 Repeat(items=$/issues,key="id",child=issueRow,maxItems=20) repeats one component template.
 Initialize issues as object arrays with stable, unique nonempty string IDs (not array indexes).
 Template fields use item(field="title") or item(field="author/name"); functions may consume item values.
-Item data is read-only. Absolute $/ bindings still refer to shared card state, not row-local form fields.
+Item data is read-only. Use item_state(field="done",default=false) for independent writable row fields.
+Defaults must be scalar literals; declarations of the same field must agree. State follows Repeat ID +
+stable item key across reorder/filter/reopen. Hidden rows retain state within the 32K quota.
+Absolute $/ bindings still refer to shared card state. Never write the internal _operit_rows branch.
+local_action {op:"row_set",repeat:"rows",key:"issue-id",field:"done",value:true} edits a declared field
+of a currently present row. Removing a row rejects its old events; reusing its key restores its state.
 Arrays may come from arrayFilter. Default maxItems=20, maximum32; overflow is rejected, never truncated.
-Repeat cannot nest. Empty arrays render no rows; use Conditional for an empty-state explanation.
+Repeat can nest: inner items=item(field="children"). item/item_state always refer to the nearest row.
+State includes every ancestor's stable key; the whole card shares the 512 rendered-node budget.
+For nested row_set, pass parents:["outerKey",...] in outermost-first order plus the named inner Repeat ID.
+Empty arrays render no rows; use Conditional for an empty-state explanation.
+
+NATIVE INTERACTION
+Pressable(label="View step",child=...,selected=booleanBinding,disabled=false,action=Event(...))
+makes an entire display/layout node clickable with a 48dp minimum target and accessibility semantics.
+Its descendants must be noninteractive; keep inputs, links and other buttons outside the node.
+For interactive flow diagrams combine Pressable + Column/Row + Vector arrows + Conditional details.
+Completed is different from disabled: completed steps remain clickable; Next depends only on position.
+Input controls support onChange=Event(name="local_action",context={op:"set",path:"/selection",
+value:event_value(field="value")}). event_value fields: value, previous, index (or -1 when not indexed).
+Only actual changed user input fires onChange, after its bound value is saved. Initialization,
+restore and programmatic state changes do not fire. onChange cannot submit to AI or call tools.
+Vector shapes retain literal types/array structure; coordinates, tone, stroke, filled and text may bind
+to state or calculations. arrow uses x1,y1,x2,y2 and draws its own arrowhead. All geometry remains
+bounded to the viewport. Invalid runtime geometry shows a local error; no arbitrary SVG/JS.
 
 LIVE TASK DATA
 prepare_card(source,live=true) enables data-only updates during this active turn.
@@ -142,7 +164,22 @@ Retain decimal precision unless asked to round. Long Display values scroll rathe
 Text variants: h1/h2/h3/body/caption. Icon names: info,check,settings,person,home,star,warning,
 search,calendarToday,folder. Bind Expandable.expanded and Tabs/Carousel.value to retain state.
 Navigation value is a named child's ID; use named declarations for navigation children.
-DatePicker uses yyyy-MM-dd and expands inline. Controls do not open Activity dialogs.
+DatePicker uses yyyy-MM-dd and expands inline; minDate/maxDate bound 1900..2100.
+clearable=true adds Clear (writes an empty string). Changing bounds does not rewrite existing data.
+TextField/TextArea error="..." shows a field error. TextArea minLines/maxLines are 1..12 (default3/8).
+TextField mask=none|password|digits: password masks DISPLAY ONLY (the value remains plain local state);
+digits accepts ASCII digits only, without reformatting the stored value. No arbitrary mask patterns.
+Button loading=true keeps its label and shows a spinner; clicks are blocked until loading=false.
+Controls do not open Activity dialogs.
+Tooltip(label="What is this?",text="Explanation") opens on tap/long-press, using the same closable
+in-card overlay as Popover. Stepper(label="Steps",labels=["Start","Finish"],current=$/step)
+shows connected numbered steps (zero-based integer); prior steps are shown as passed, not independent
+completion flags. Past steps remain clickable and onChange is local.
+Formula(label="Equation",text="\\frac{1}{2}") renders native bounded math, never arbitrary TeX.
+Maximum1024 chars/64 commands/12 brace levels. Allowed: frac,sqrt,sum,prod,int,lim,infty,left,right,
+alpha,beta,gamma,delta,theta,lambda,mu,pi,sigma,phi,omega,Delta,Sigma,Omega,times,cdot,div,pm,
+le,leq,ge,geq,ne,neq,approx,sin,cos,tan,log,ln,exp,text,mathrm,mathbf,overline,vec,hat.
+No macros, environments, external files or size commands. Express quoted strings escape backslashes.
 
 DATA AND MEDIA
 Chart type="line"|"bar"|"pie"|"scatter", labels=["A","B"], series=[{label:"Sales",values:[1,2]}].
@@ -150,8 +187,15 @@ Scatter: series=[{label:"Demo",points:[{x:1,y:2,label:"A"}]}].
 Max 4 series/128 points, category lengths must agree. Pie: one nonnegative series.
 Charts provide inspection and a data table; do not duplicate it by default.
 Table: string columns and array rows, max 8 columns/32 rows.
+columnWidths=[120,180] sets one literal64..480dp width per column (default140).
+maxHeight=80..480 bounds the vertically scrolling body; the header stays visible and aligns on horizontal scroll.
 Rows may bind to state or array expressions; every row must match columns and contain scalar cells.
 Pure collection functions use items (max128) and optional field="object/nestedField", never callbacks.
+arraySort(items,field?,direction="asc"|"desc") is stable and requires same-type sortable values.
+arrayFind(items,field,value,fallback) returns the first equal item or explicit fallback.
+arrayUpdateByKey(items,key="id",value="a",patch={done:true}) returns a new array; keys must be unique
+scalars and patch cannot change the key. No match leaves it unchanged. Write with a local_action set.
+RichText runs may use strike=true, highlight=true, tabular=true along with bold/italic/underline.
 arrayMap projects a required field; arrayFilter requires field,operator,value.
 Filter operators: eq/ne/gt/gte/lt/lte/contains. arraySum/arrayAverage use optional field.
 arrayJoin requires separator; arrayLength counts items. Missing fields or invalid numbers are unresolved;
@@ -173,9 +217,10 @@ Frame(child=...,minWidth=0,maxWidth=600,minHeight=0,maxHeight=300,aspectRatio=1.
 bounds one region; aspectRatio is width/height (0.25..4). Available screen constraints take priority.
 Use ratios for graphics/media, not growing prose or forms. Width0..960dp, height0..480dp;
 defaults are min0,maxWidth960,maxHeight480. Content is clipped to the requested region.
-Vector(label="Accessible description",width=320,height=180,shapes=[...]) draws static geometry.
+Vector(label="Accessible description",width=320,height=180,shapes=[...]) draws data-bound geometry.
+Shape types and point topology stay literal; coordinates, text and style may use bindings/functions.
 Viewport integer dimensions1..1000; coordinates stay inside it. Max64 shapes,128 points/shape.
-Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100},
+Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100}, {type:"arrow",x1:0,y1:0,x2:100,y2:100},
 {type:"rect",x:10,y:10,width:80,height:50}, {type:"circle",cx:50,cy:50,r:20},
 {type:"polyline",points:[[0,0],[100,50]]}, {type:"polygon",points:[[0,0],[100,0],[50,50]]},
 {type:"text",x:10,y:10,text:"Label",size:16}. Text uses TOP-LEFT coordinates; allow space for it.
@@ -252,6 +297,27 @@ exports.update_card = async ({reference, changes, remove = []}) => {
 
 const q = JSON.stringify;
 function example(name) {
+    if (name === "interactive_flow") return String.raw`
+$/flow = {step:0,flavor:"原味"}
+$/steps = [
+ {id:"step0",order:0,title:"开始",detail:"点击任意步骤查看说明。准备好后，勾选完成并前往下一步。"},
+ {id:"step1",order:1,title:"准备食材",detail:"准备番茄、鸡蛋、葱、食用油和适量盐。清洗番茄并切块。"},
+ {id:"step2",order:2,title:"打散鸡蛋",detail:"鸡蛋打入碗中，加少量盐搅匀。生熟食材分开放置。"},
+ {id:"step3",order:3,title:"炒鸡蛋",detail:"锅热后加油，倒入蛋液，轻推至凝固后盛出备用。"},
+ {id:"step4",order:4,title:"炒番茄",detail:"锅中补少量油，放入番茄炒软，按需加一点水。"},
+ {id:"step5",order:5,title:"口味选择",detail:"选择甜口或原味。可以随时返回更改，不影响其他步骤记录。"},
+ {id:"step6",order:6,title:"混合出锅",detail:"倒回鸡蛋轻轻翻匀，按口味调盐，确认鸡蛋熟透后出锅。"},
+ {id:"step7",order:7,title:"结束",detail:"完成！已经完成的步骤仍可点开查看，也可以返回上一步。"}
+]
+root = Column(children=[Header(text="番茄炒蛋",label="点步骤查看说明，勾选记录进度",status="本地交互"),steps])
+steps = Repeat(items=$/steps,key="id",maxItems=8,child=stepRow)
+stepRow = Column(gap="xs",children=[node,details,connector])
+node = Pressable(label=concat(values=[item(field="title"),if(condition=item_state(field="done",default=false),then="，已完成",else="，未完成")]),selected=equals(a=$/flow/step,b=item(field="order")),child=Header(text=item(field="title"),status=if(condition=item_state(field="done",default=false),then="已完成",else="待完成"),tone=if(condition=item_state(field="done",default=false),then="success",else="neutral")),action=Event(name="local_action",context={op:"set",path:"/flow/step",value:item(field="order")}))
+details = Conditional(visible=equals(a=$/flow/step,b=item(field="order")),children=[Text(text=item(field="detail")),branch,CheckBox(label="本步骤已完成",value=item_state(field="done",default=false)),navigation])
+branch = Conditional(visible=equals(a=item(field="order"),b=5),children=[Frame(maxWidth=120,child=Vector(label="判断节点：选择口味",width=120,height=64,shapes=[{type:"polygon",points:[[60,2],[118,32],[60,62],[2,32]],tone:"info",filled:true}])),Segmented(label="选择口味",options=["甜口","原味"],value=$/flow/flavor),Text(text=if(condition=equals(a=$/flow/flavor,b="甜口"),then="甜口分支：加入少量糖，先少放，再尝味调整。",else="原味分支：不加糖，保留番茄的酸甜。"))])
+connector = Conditional(visible=lessThan(a=item(field="order"),b=7),children=[Vector(label="前往下一步骤",width=320,height=28,shapes=[{type:"arrow",x1:160,y1:2,x2:160,y2:26,tone:if(condition=item_state(field="done",default=false),then="success",else="neutral")}])])
+navigation = Row(wrap=true,children=[Button(child=Text(text="上一步"),checks=[{condition:greaterThan(a=$/flow/step,b=0),message:"当前是第一步"}],action=Event(name="local_action",context={op:"add",path:"/flow/step",value:-1})),Button(child=Text(text="下一步"),variant="primary",checks=[{condition:lessThan(a=$/flow/step,b=7),message:"已到最后一步"}],action=Event(name="local_action",context={op:"add",path:"/flow/step",value:1}))])
+`;
     if (name === "repeat") return [
         '$/issues = [{id:"login",title:"修复登录",status:"处理中"},{id:"layout",title:"调整排版",status:"待处理"}]',
         '$/query = ""',
@@ -355,6 +421,38 @@ root = Column(children=[
  ]),
  Text(text="矢量图用于解释关系；真实统计数据请使用图表。",variant="caption")
 ])`;
-    throw new Error("Choose calculator, cost_calculator, charts, form, info, stats, progress, responsive, data or vector.");
+    if (name === "p2_controls") return String.raw`
+$/form={date:"2026-10-12",notes:"",code:"",busy:false,step:0,formula:"\\frac{1}{2}"}
+root=Column(children=[
+ Header(text="原生控件演示",label="所有输入与切换均在本地"),
+ Stepper(label="准备步骤",labels=["填写","检查","完成"],current=$/form/step),
+ DatePicker(label="日期",value=$/form/date,minDate="2026-10-01",maxDate="2026-10-31",clearable=true),
+ TextField(label="数字编号",value=$/form/code,mask="digits",error=if(condition=equals(a=$/form/code,b=""),then="请输入数字编号",else="")),
+ TextArea(label="备注",value=$/form/notes,minLines=2,maxLines=5),
+ Switch(label="预览按钮忙碌状态",checked=$/form/busy),
+ Button(child=Text(text="保存"),loading=$/form/busy,action=Event(name="local_action",context={op:"save"})),
+ Tooltip(label="为什么按钮不能点？",text="忙碌时会显示进度圈并禁止点击。关闭上方开关后即可使用。"),
+ RichText(runs=[{text:"旧值 ",strike:true},{text:"重要信息 ",highlight:true},{text:"1234.56",tabular:true}]),
+ TextField(label="公式源码",value=$/form/formula),
+ Formula(label="公式预览",text=$/form/formula),
+ Table(columns=["项目","数量"],rows=[["甲",12],["乙",24],["丙",36],["丁",48],["戊",60],["己",72]],columnWidths=[160,100],maxHeight=160)
+])`;
+    if (name === "p2_lists") return String.raw`
+$/groups=[{id:"a",title:"厨房",rank:2,children:[{id:"one",title:"准备食材"},{id:"two",title:"整理台面"}]},{id:"b",title:"客厅",rank:1,children:[{id:"one",title:"整理书架"}]}]
+root=Column(children=[
+ Header(text="分组任务",label="相同子任务 ID 在不同分组中独立保存"),
+ Row(wrap=true,children=[
+  Button(child=Text(text="按顺序排列"),action=Event(name="local_action",context={op:"set",path:"/groups",value:arraySort(items=$/groups,field="rank")})),
+  Button(child=Text(text="重命名厨房"),action=Event(name="local_action",context={op:"set",path:"/groups",value:arrayUpdateByKey(items=$/groups,key="id",value="a",patch={title:"厨房与餐厅"})}))
+ ]),
+ groups
+])
+groups=Repeat(items=$/groups,key="id",child=Panel(child=Column(children=[
+ Heading(text=item(field="title")),
+ tasks
+]),background="inset"))
+tasks=Repeat(items=item(field="children"),key="id",child=CheckBox(label=item(field="title"),value=item_state(field="done",default=false)))
+`;
+    throw new Error("Choose p2_controls, p2_lists, calculator, cost_calculator, charts, form, info, stats, progress, responsive, data, vector, repeat, curves or interactive_flow.");
 }
 exports.read_example = async ({name}) => complete(prepare(example(name)));

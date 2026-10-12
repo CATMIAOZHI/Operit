@@ -7,10 +7,13 @@ import androidx.a2ui.compose.ui.catalog.A2uiBasicCatalogV1
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.selection.selectable
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.HelpOutline
 import androidx.compose.material.icons.outlined.ExpandMore
@@ -31,7 +34,6 @@ import java.time.ZoneOffset
 import com.ai.assistance.operit.R
 
 internal val LocalCardInteractive = compositionLocalOf { false }
-internal val LocalCardInputError = compositionLocalOf<() -> Unit> { {} }
 internal val LocalCardIconWarning = compositionLocalOf<() -> Unit> { {} }
 internal val LocalCardReadOnly = compositionLocalOf { false }
 internal val LocalCardBrowse = compositionLocalOf { false }
@@ -40,9 +42,9 @@ internal val LocalCardGridCell = compositionLocalOf { false }
 internal fun cardNumberLabel(value: Float): String =
     if (!value.isFinite()) "—" else java.math.BigDecimal(value.toString()).setScale(3, java.math.RoundingMode.HALF_UP).stripTrailingZeros().toPlainString()
 
-internal fun updateCardField(onError: () -> Unit, update: () -> Unit) {
-    try { update() } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-    catch (_: Exception) { onError() }
+internal fun updateCardField(onError: () -> Unit, update: () -> Unit): Boolean {
+    return try { update(); true } catch (e: kotlinx.coroutines.CancellationException) { throw e }
+    catch (_: Exception) { onError(); false }
 }
 
 /** Official protocol and Material components, plus small Operit catalog extensions. */
@@ -50,12 +52,12 @@ internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
         catalogId = DynamicUiProtocol.CATALOG,
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
-            listOf(CardIcon, FramedCard, divider, CardButton, CardCheckBox, CardVector, CardPopover) +
+            listOf(CardIcon, FramedCard, divider, CardButton, CardPressable, CardVector, CardPopover, CardTooltip, CardStepper, CardFormula) +
                 listOf("Text", "Row", "Column", "List", "Panel", "Scroll", "Frame").map(::CardLayoutComponent) +
                 listOf(
                     "Heading", "Header", "InfoRow", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
                     "Select", "ChoicePicker", "DatePicker", "TextArea", "TextField", "Slider",
-                    "Grid", "Form", "Expandable",
+                    "Grid", "Form", "Expandable", "CheckBox",
                 ).map(::OperitCardComponent) + cardAdvancedNames.map(::AdvancedCardComponent)
         },
         functions = CardFunctions.functions,
@@ -84,15 +86,28 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
     private val tone = A2uiProperty.dynamicString("tone")
     private val status = A2uiProperty.dynamicString("status")
     private val align = A2uiProperty.dynamicString("align")
+    private val disabled = A2uiProperty.dynamicBoolean("disabled")
+    private val checkboxValue = A2uiProperty.dynamicBoolean("value")
+    private val error = A2uiProperty.dynamicString("error")
+    private val mask = A2uiProperty.dynamicString("mask")
+    private val minLines = A2uiProperty.dynamicNumber("minLines")
+    private val maxLines = A2uiProperty.dynamicNumber("maxLines")
+    private val minDate = A2uiProperty.dynamicString("minDate")
+    private val maxDate = A2uiProperty.dynamicString("maxDate")
+    private val clearable = A2uiProperty.dynamicBoolean("clearable")
+    private val widths = A2uiProperty.dynamicValue("columnWidths")
+    private val tableHeight = A2uiProperty.dynamicNumber("maxHeight")
     override val description = "Operit native $name. Local field changes do not send model requests."
-    override val properties = listOf(text, label, value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, minItemWidth, expandedProperty, inputType, tone, status, align)
+    override val properties = listOf(text, label, if (name == "CheckBox") checkboxValue else value, checked, number, options, rows, columns, children, minimum, maximum, stepCount, columnCount, columnSpans, minItemWidth, expandedProperty, inputType, tone, status, align, disabled, error, mask, minLines, maxLines, minDate, maxDate, clearable, widths, tableHeight, A2uiProperty.dynamicValue("onChange"))
 
     @OptIn(ExperimentalMaterial3Api::class)
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
         val title = properties.bind(label).orEmpty()
-        val interactive = LocalCardInteractive.current
-        val inputError = LocalCardInputError.current
+        val interactive = LocalCardInteractive.current && properties.bind(disabled) != true
+        val change = cardChangeHandler(properties, when (name) {
+            "Switch" -> "checked"; "Slider" -> "number"; "Expandable" -> "expanded"; else -> "value"
+        })
         when (name) {
             "Heading" -> Text(properties.bind(text).orEmpty(), modifier,
                 style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
@@ -132,17 +147,31 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
             "TextField", "TextArea" -> {
                 val current = properties.bind(value).orEmpty()
                 val update = properties.bindUpdater(value)
+                val fieldError = properties.bind(error).orEmpty()
+                val fieldMask = properties.bind(mask)
                 if (LocalCardReadOnly.current) Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(title, style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Text(current.ifBlank { stringResource(R.string.dynamic_ui_empty_value) }, style = MaterialTheme.typography.bodyMedium)
+                    Text((if (fieldMask == "password") "•".repeat(current.length.coerceAtMost(32)) else current)
+                        .ifBlank { stringResource(R.string.dynamic_ui_empty_value) }, style = MaterialTheme.typography.bodyMedium)
+                    if (fieldError.isNotBlank()) Text(fieldError, color = MaterialTheme.colorScheme.error)
                 } else OutlinedTextField(
                     value = current, onValueChange = { next ->
-                        if (next.length <= 8192) updateCardField(inputError) { update?.invoke(next) }
+                        if (interactive && update != null && next.length <= 8192 &&
+                            (fieldMask != "digits" || next.all { it in '0'..'9' })) change(current, next, -1) { update(next) }
                     },
                     readOnly = update == null || !interactive, enabled = interactive, label = { Text(title) },
                     modifier = modifier.fillMaxWidth(), singleLine = name == "TextField",
-                    keyboardOptions = KeyboardOptions(keyboardType = if (properties.bind(inputType) == "number") KeyboardType.Decimal else KeyboardType.Text),
-                    minLines = if (name == "TextArea") 3 else 1, maxLines = 8,
+                    keyboardOptions = KeyboardOptions(keyboardType = when {
+                        fieldMask == "password" -> KeyboardType.Password
+                        fieldMask == "digits" -> KeyboardType.Number
+                        properties.bind(inputType) == "number" -> KeyboardType.Decimal
+                        else -> KeyboardType.Text
+                    }),
+                    visualTransformation = if (fieldMask == "password") PasswordVisualTransformation() else VisualTransformation.None,
+                    isError = fieldError.isNotBlank(),
+                    supportingText = if (fieldError.isNotBlank()) ({ Text(fieldError) }) else null,
+                    minLines = if (name == "TextArea") properties.bind(minLines)?.toInt() ?: 3 else 1,
+                    maxLines = if (name == "TextArea") properties.bind(maxLines)?.toInt() ?: 8 else 1,
                 )
             }
             "Switch" -> {
@@ -150,7 +179,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 val update = properties.bindUpdater(checked)
                 Row(modifier.fillMaxWidth().toggleable(
                     current, enabled = update != null && interactive, role = Role.Switch,
-                    onValueChange = { next -> updateCardField(inputError) { update?.invoke(next) } },
+                    onValueChange = { next -> if (interactive && update != null) change(current, next, -1) { update(next) } },
                 ), horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text(title, Modifier.weight(1f))
                     Switch(current, onCheckedChange = null, enabled = update != null && interactive)
@@ -172,7 +201,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 48.dp).selectable(
                                 selected = current == choice, enabled = update != null && interactive, role = Role.RadioButton,
-                                onClick = { updateCardField(inputError) { update?.invoke(choice) }; expanded = false },
+                                onClick = { if (interactive && update != null) change(current, choice, choices.indexOf(choice)) { update(choice) }; expanded = false },
                             ),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(10.dp),
@@ -194,7 +223,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                         Text(cardNumberLabel(current), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.primary)
                     }
                     if (current.isFinite() && min.isFinite() && max.isFinite() && max > min) {
-                        Slider(current.coerceIn(min, max), { next -> updateCardField(inputError) { update?.invoke(next) } }, enabled = update != null && interactive, valueRange = min..max,
+                        Slider(current.coerceIn(min, max), { next -> if (interactive && update != null) change(current, next, -1) { update(next) } }, enabled = update != null && interactive, valueRange = min..max,
                             steps = (properties.bind(stepCount)?.toInt() ?: 0).coerceIn(0, 999))
                     } else Text(stringResource(R.string.dynamic_ui_bad_number), color = MaterialTheme.colorScheme.error)
                 }
@@ -202,33 +231,63 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
             "DatePicker" -> {
                 val current = properties.bind(value).orEmpty()
                 val update = properties.bindUpdater(value)
+                val lower = properties.bind(minDate).orEmpty()
+                val upper = properties.bind(maxDate).orEmpty()
+                val bounds = remember(lower, upper) { cardDateBounds(lower, upper) }
                 var expanded by remember { mutableStateOf(false) }
                 Column(modifier) {
                     Text(title, style = MaterialTheme.typography.labelLarge)
+                    if (bounds == null) {
+                        Text(stringResource(R.string.dynamic_ui_invalid), color = MaterialTheme.colorScheme.error)
+                        return@Column
+                    }
+                    val selectedDate = remember(current, bounds) {
+                        runCatching { LocalDate.parse(current) }.getOrNull()?.takeIf { it in bounds }
+                    }
+                    if (current.isNotEmpty() && selectedDate == null)
+                        Text(stringResource(R.string.dynamic_ui_date_outside_range), color = MaterialTheme.colorScheme.error)
                     if (LocalCardReadOnly.current) Text(current.ifBlank { stringResource(R.string.dynamic_ui_empty_value) })
                     else OutlinedButton(onClick = { expanded = !expanded }, enabled = update != null && interactive, modifier = Modifier.fillMaxWidth()) {
                         Text(current.ifBlank { stringResource(R.string.dynamic_ui_select_date) }, Modifier.weight(1f))
                         Icon(Icons.Outlined.ExpandMore, contentDescription = null)
                     }
+                    if (!LocalCardReadOnly.current && properties.bind(clearable) == true && current.isNotEmpty())
+                        TextButton(onClick = {
+                            if (interactive && update != null) change(current, "", -1) { update("") }
+                        }, enabled = interactive && update != null) { Text(stringResource(R.string.dynamic_ui_clear)) }
                     if (expanded && interactive) {
-                        val initial = remember(current) {
-                            runCatching {
-                                LocalDate.parse(current).takeIf { it.year in 1900..2100 }
-                                    ?.atStartOfDay()?.toInstant(ZoneOffset.UTC)?.toEpochMilli()
-                            }.getOrNull()
-                        }
-                        val state = rememberDatePickerState(initialSelectedDateMillis = initial)
+                        val initial = selectedDate?.atStartOfDay()?.toInstant(ZoneOffset.UTC)?.toEpochMilli()
+                        // Recreate only when the bound date changes. Programmatic updates
+                        // update the highlight but never masquerade as a user's selection.
+                        key(current, lower, upper) {
+                        val selectable = remember(bounds) { object : SelectableDates {
+                            override fun isSelectableDate(utcTimeMillis: Long) =
+                                java.time.Instant.ofEpochMilli(utcTimeMillis).atOffset(ZoneOffset.UTC).toLocalDate() in bounds
+                            override fun isSelectableYear(year: Int) = year in bounds.start.year..bounds.endInclusive.year
+                        } }
+                        val state = rememberDatePickerState(initialSelectedDateMillis = initial, selectableDates = selectable)
                         Box(Modifier.horizontalScroll(rememberScrollState())) {
                             DatePicker(state, modifier = Modifier.width(328.dp), showModeToggle = false)
                         }
                         LaunchedEffect(state.selectedDateMillis) {
                             state.selectedDateMillis?.let {
-                                updateCardField(inputError) {
-                                    update?.invoke(java.time.Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate().toString())
-                                }
+                                val next = java.time.Instant.ofEpochMilli(it).atOffset(ZoneOffset.UTC).toLocalDate().toString()
+                                if (interactive && update != null && it != initial && LocalDate.parse(next) in bounds) change(current, next, -1) { update(next) }
                             }
                         }
+                        }
                     }
+                }
+            }
+            "CheckBox" -> {
+                val current = properties.bind(checkboxValue) ?: false
+                val update = properties.bindUpdater(checkboxValue)
+                val enabled = interactive && update != null
+                Row(modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(current, enabled = enabled, role = Role.Checkbox,
+                    onValueChange = { next -> if (enabled) change(current, next, -1) { update?.invoke(next) } }),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    Checkbox(current, onCheckedChange = null, enabled = enabled)
+                    Text(title, Modifier.weight(1f).padding(vertical = 8.dp))
                 }
             }
             "Table" -> {
@@ -239,11 +298,16 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                     Text(stringResource(R.string.dynamic_ui_bad_table), color = MaterialTheme.colorScheme.error)
                     return
                 }
+                val columnWidths = (properties.bind(widths) as? List<*>)?.map { (it as Number).toInt() }
+                    ?: List(headers.size) { 140 }
+                val height = properties.bind(tableHeight)?.toInt()
                 Column(modifier.horizontalScroll(rememberScrollState())) {
-                    Row { headers.forEach { Text(it, Modifier.width(140.dp).padding(8.dp), style = MaterialTheme.typography.labelLarge) } }
+                    Row { headers.forEachIndexed { i, heading -> Text(heading, Modifier.width(columnWidths[i].dp).padding(8.dp), style = MaterialTheme.typography.labelLarge) } }
                     HorizontalDivider()
-                    data.take(32).forEach { row ->
-                        Row { (row as? List<*>).orEmpty().take(8).forEach { Text(it?.toString().orEmpty(), Modifier.width(140.dp).padding(8.dp)) } }
+                    Column(if (height != null) Modifier.heightIn(max = height.dp).verticalScroll(rememberScrollState()) else Modifier) {
+                        data.take(32).forEach { row ->
+                            Row { (row as? List<*>).orEmpty().take(8).forEachIndexed { i, cell -> Text(cell?.toString().orEmpty(), Modifier.width(columnWidths[i].dp).padding(8.dp)) } }
+                        }
                     }
                 }
             }
@@ -269,8 +333,8 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 }
                 Column(modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     if (name == "Expandable") TextButton(onClick = {
-                        if (updateExpanded != null && !readOnly) updateCardField(inputError) { updateExpanded(!expanded) } else localExpanded = !expanded
-                    }, enabled = LocalCardBrowse.current) { Text(title) }
+                        if (updateExpanded != null && !readOnly) change(expanded, !expanded, -1) { updateExpanded(!expanded) } else localExpanded = !expanded
+                    }, enabled = LocalCardBrowse.current && properties.bind(disabled) != true) { Text(title) }
                     else if (title.isNotBlank()) Text(title, style = MaterialTheme.typography.titleMedium)
                     if (name != "Expandable" || expanded) {
                         if (name == "Grid") BoxWithConstraints(Modifier.fillMaxWidth()) {
@@ -305,7 +369,20 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
 }
 
 /** Keep the official schemas while disabling input during incremental replay. */
-private object CardButton : A2uiBasicCatalogV1.Button {
+private val LocalCardButtonLoading = compositionLocalOf { false }
+private object CardButton : A2uiComponent {
+    override val name = "Button"
+    override val description = "Button with checks and local busy state"
+    private val loading = A2uiProperty.dynamicBoolean("loading")
+    override val properties = BaseCardButton.properties + loading
+    @Composable
+    override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
+        CompositionLocalProvider(LocalCardButtonLoading provides (properties.bind(loading) == true)) {
+            with(BaseCardButton) { Content(properties, modifier) }
+        }
+    }
+}
+private object BaseCardButton : A2uiBasicCatalogV1.Button {
     @Composable
     override fun A2uiComponentScope.TypedContent(
         childId: String, variant: A2uiBasicCatalogV1.Button.Variant,
@@ -315,8 +392,13 @@ private object CardButton : A2uiBasicCatalogV1.Button {
         val child = observeA2uiComponentState(childId)
         val event = action["event"] as? Map<*, *>
         if (LocalCardReadOnly.current && event?.get("name") == "local_action") return
-        val enabled = LocalCardBrowse.current && child is A2uiComponentState.Success && checks.all { it.condition }
+        val loading = LocalCardButtonLoading.current
+        val enabled = !loading && LocalCardBrowse.current && child is A2uiComponentState.Success && checks.all { it.condition }
         val content: @Composable RowScope.() -> Unit = {
+            if (loading) {
+                CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Spacer(Modifier.width(8.dp))
+            }
             when (child) {
                 is A2uiComponentState.Success -> A2uiComponent(child.component)
                 else -> Text("…")
@@ -333,25 +415,6 @@ private object CardButton : A2uiBasicCatalogV1.Button {
                 A2uiBasicCatalogV1.Button.Variant.Borderless -> TextButton({ dispatchAction(action) }, modifier = buttonModifier, contentPadding = buttonPadding, enabled = enabled, content = content)
             }
             checks.firstOrNull { !it.condition }?.let { Text(it.message, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error) }
-        }
-    }
-}
-
-private object CardCheckBox : A2uiBasicCatalogV1.CheckBox {
-    @Composable
-    override fun A2uiComponentScope.TypedContent(
-        label: String, value: Boolean, onValueChange: (Boolean) -> Unit, enabled: Boolean,
-        accessibility: A2uiBasicCatalogV1.AccessibilityAttributes?,
-        checks: List<A2uiBasicCatalogV1.CheckRule>, modifier: Modifier,
-    ) {
-        val inputError = LocalCardInputError.current
-        val canEdit = enabled && LocalCardInteractive.current
-        Row(modifier.fillMaxWidth().heightIn(min = 48.dp).toggleable(value, enabled = canEdit, role = Role.Checkbox,
-            onValueChange = { next -> updateCardField(inputError) { onValueChange(next) } }),
-            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            Checkbox(value, onCheckedChange = null, enabled = canEdit)
-            Text(label, Modifier.weight(1f).padding(vertical = 8.dp))
         }
     }
 }
