@@ -1,6 +1,5 @@
 
 root = Column(children=[
- Header(text="数据处理流程",status="示意图"),
  Vector(label="输入经过本地处理，产生结果",width=320,height=150,shapes=[
  {type:"rect",x:5,y:40,width:85,height:65,tone:"info",filled:true},
  {type:"rect",x:120,y:40,width:85,height:65,tone:"success"},

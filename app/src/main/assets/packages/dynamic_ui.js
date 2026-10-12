@@ -3,8 +3,8 @@
   "name": "dynamic_ui",
   "display_name": {"zh": "动态界面", "en": "Dynamic UI"},
   "description": {
-    "zh": "在回答正文中嵌入原生流程图、步骤图、图表、表格和数据面板，与文字自然穿插；只有需要用户操作时才加交互控件。讲解步骤、比较数据、展示趋势或关系时，若视觉结构比文字更清楚，应主动使用，无需用户要求。简单回答用普通文字。使用前先读取 read_guide。",
-    "en": "Embed native flows, step diagrams, charts, tables and metrics inside the answer, interleaved with prose; add interactive controls only when the user must act. Proactively use them when visual structure explains steps, comparisons, trends or relationships better than text. Use plain text for simple answers. Read read_guide first."
+    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。决定使用后再读取 read_guide。",
+    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. Read read_guide only after deciding to use it."
   },
   "category": "UI",
   "enabledByDefault": true,
@@ -50,6 +50,12 @@
 */
 
 const guide = String.raw`
+DECIDE FIRST
+Reading this guide does not oblige you to create a block. If Markdown explains the answer well,
+answer in Markdown and call nothing else. Typical no-UI requests: definitions ("what is X"),
+opinions, short facts, code changes, plain lists. Typical UI requests: multi-step processes,
+several numbers over time or across categories, records with many attributes, parameters to try.
+
 WHAT THIS IS
 Native rich content embedded INSIDE your normal answer, not a separate card app. Each reference
 renders as a borderless block exactly where you place it between Markdown paragraphs, using the
@@ -68,6 +74,15 @@ Do not add buttons, forms, toggles or "tap to..." hints that nothing needs. Keep
 Markdown around blocks rather than inside them. Trends: line; categories: bar; shares: pie;
 numeric relationships: scatter. Branching or many-node graphs: Mermaid in Markdown, or Vector.
 Use actual user/tool data for factual charts; label demos and assumptions. Never invent measurements.
+
+VISUAL RULES
+Keep heading levels clear: never h1/h2 inside blocks. Display blocks introduced by prose need no title;
+Header is for self-contained blocks (tools, records, live status); Heading marks a sub-section.
+Repeated items use the same component, text size and order. Badges and tones carry meaning
+(status, risk, result), never decoration; at most a few per block. Do not wrap summaries,
+recommendations or conclusions in colored panels; write them as prose. Every Button must do
+something real. Images only when they help understanding. One block per idea; avoid stacking
+several blocks that repeat the same information.
 
 FRAMING
 Blocks have no border, background or padding by default and line up with paragraphs.
@@ -381,7 +396,7 @@ navigation = Row(wrap=true,children=[Button(child=Text(text="上一步"),checks=
         'empty = Conditional(visible=equals(a=arrayLength(items=arrayFilter(items=$/issues,field="title",operator="contains",value=$/query)),b=0),children=[Text(text="没有匹配的任务")])',
     ].join("\n");
     if (name === "curves") return [
-        'root = Column(children=[Header(text="曲线示意",status="静态图形"),Frame(maxWidth=480,maxHeight=240,aspectRatio=2,child=Vector(label="两条不同形状的曲线",width=320,height=160,shapes=[{type:"quadratic",x1:10,y1:80,cx:160,cy:0,x2:310,y2:80,tone:"accent"},{type:"cubic",x1:10,y1:100,cx1:100,cy1:20,cx2:220,cy2:160,x2:310,y2:100,tone:"success"}]))])',
+        'root = Column(children=[Frame(maxWidth=480,maxHeight=240,aspectRatio=2,child=Vector(label="两条不同形状的曲线",width=320,height=160,shapes=[{type:"quadratic",x1:10,y1:80,cx:160,cy:0,x2:310,y2:80,tone:"accent"},{type:"cubic",x1:10,y1:100,cx1:100,cy1:20,cx2:220,cy2:160,x2:310,y2:100,tone:"success"}]))])',
     ].join("\n");
     if (name === "calculator") {
         const keys = [["AC","AC"],["backspace","⌫"],["sign","±"],["/","÷"],
@@ -426,7 +441,6 @@ root = Card(child=Column(children=[
 ]))`;
     if (name === "stats") return String.raw`
 root = Column(children=[
- Header(text="Token 使用统计",status="演示数据"),
  Grid(children=[Display(label="总 Token",text="9.0M"),Display(label="缓存命中率",text="94.2%")]),
  Chart(label="每日 Token 用量",type="bar",labels=["周一","周二","周三","周四","周五"],
  series=[{label:"Token",values:[1200000,1800000,1500000,2100000,2400000]}])
@@ -442,7 +456,6 @@ root = Card(child=Column(children=[
 ]))`;
     if (name === "responsive") return String.raw`
 root = Column(gap="md",children=[
- Header(text="项目概览",status="演示数据"),
  Row(wrap=true,gap="sm",align="center",children=[Badge(text="Android",tone="info"),Badge(text="本地交互",tone="success"),Badge(text="响应式布局")]),
  Grid(minItemWidth=120,children=[Display(label="已完成",text="12"),Display(label="待处理",text="3"),Display(label="完成率",text="80%")]),
  Panel(background="inset",padding="md",radius="lg",child=Text(text="屏幕变窄或字体变大时，数据面板自动换行。",textAlign="center")),
@@ -462,7 +475,6 @@ root = Column(gap="md",children=[
 ])`;
     if (name === "vector") return String.raw`
 root = Column(children=[
- Header(text="数据处理流程",status="示意图"),
  Vector(label="输入经过本地处理，产生结果",width=320,height=150,shapes=[
  {type:"rect",x:5,y:40,width:85,height:65,tone:"info",filled:true},
  {type:"rect",x:120,y:40,width:85,height:65,tone:"success"},
