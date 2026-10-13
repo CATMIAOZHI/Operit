@@ -347,6 +347,17 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         )
     }
 
+    for (action in listOf("poll", "cancel")) {
+        handler.registerTool(
+            name = "${action}_shell_task",
+            descriptionGenerator = { tool ->
+                s(if (action == "poll") R.string.shell_task_poll_desc else R.string.shell_task_cancel_desc,
+                    tool.parameters.find { it.name == "run_id" }?.value ?: "")
+            },
+            executor = { tool -> ToolGetter.getShellToolExecutor(context).task(tool, action) }
+        )
+    }
+
     // 不在提示词加入的工具
     handler.registerTool(
             name = "execute_shell",

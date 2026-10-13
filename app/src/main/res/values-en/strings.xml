@@ -8976,6 +8976,15 @@
     <string name="resource_download_failed_generic">Download failed. Please retry.</string>
     <string name="plugin_terminal_resource_required">The Ubuntu terminal environment must be downloaded first (about 64 MB)</string>
     <string name="terminal_task_start_desc">Start terminal task: %1$s</string>
+    <string name="shell_task_poll_desc">Check Shell task: %1$s</string>
+    <string name="shell_status_running">Shell is still running</string>
+    <string name="shell_status_cancelling">Shell is stopping and cleaning up</string>
+    <string name="shell_status_completed">Shell completed</string>
+    <string name="shell_status_failed">Shell failed</string>
+    <string name="shell_status_timed_out">Shell timed out</string>
+    <string name="shell_status_cancelled">Shell cancelled</string>
+    <string name="shell_status_unknown">Shell ended; result unknown</string>
+    <string name="shell_task_cancel_desc">Cancel Shell task: %1$s</string>
     <string name="terminal_task_poll_desc">Check terminal task: %1$s</string>
     <string name="terminal_task_cancel_desc">Cancel terminal task: %1$s</string>
     <string name="composer_predictions">Composer Predictions</string>

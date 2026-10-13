@@ -795,6 +795,13 @@ fun getJsToolsDefinition(): String {
                     }
                 },
                 shell: (command) => toolCall("execute_shell", { command }),
+                shellTask: {
+                    start: (command, options = {}) => toolCall("execute_shell", {
+                        command, managed: "true", timeout_ms: options.timeoutMs, yield_ms: options.yieldMs
+                    }),
+                    poll: (runId, yieldMs) => toolCall("poll_shell_task", { run_id: runId, yield_ms: yieldMs }),
+                    cancel: (runId) => toolCall("cancel_shell_task", { run_id: runId })
+                },
                 // 执行终端命令 - 一次性收集输出
                 terminal: {
                     create: (sessionName) => toolCall("create_terminal_session", { session_name: sessionName }),
