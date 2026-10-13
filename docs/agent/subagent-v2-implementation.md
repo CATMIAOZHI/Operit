@@ -82,12 +82,13 @@ by replacement and invoked with `am instrument`.
 
 ## Using the two versions
 
-The Subagent settings screen selects the version for new conversations. v2 is
-the default. A conversation keeps the version assigned when its tool surface is
-first prepared; changing the setting does not change an existing agent tree.
-Reading Companion's internal tasks always keep the v1 coordinator contract.
+User conversations always use v2; settings no longer offer a version selector.
+Old global and per-chat version preferences are ignored, including saved v1 choices.
+Existing task records are retained. Reading Companion, permission review and other
+internal tasks keep the v1 coordinator contract and call it directly; they do not
+receive collaboration tools or recursively delegate.
 
-v1 exposes `task` and waits for one child task result. v2 exposes six separate
+The legacy `task` tool is not exposed to chat models. v2 exposes six separate
 collaboration operations and the on-demand `list_agent_models` discovery tool.
 `send_message` queues input without waking an idle agent;
 `followup_task` starts an idle agent and reuses its identity and transcript.

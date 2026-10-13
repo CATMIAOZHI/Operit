@@ -37,7 +37,7 @@
     <string name="phone_control_title">Opeirt is controlling your phone</string>
     <string name="phone_control_stop">Stop control</string>
     <string name="phone_control_overlay_required">Allow Operit to display overlays so you can always stop phone control.</string>
-    <string name="subagent_v2_limits">v2 runtime limits</string>
+    <string name="subagent_v2_limits">Subagent runtime limits</string>
     <string name="subagent_v2_max_active">Concurrent child agents</string>
     <string name="subagent_v2_max_depth">Maximum child depth</string>
     <string name="subagent_v2_min_wait">Minimum wait (ms)</string>
@@ -51,10 +51,6 @@
     <string name="subagent_message_note">Has an update</string>
     <string name="subagent_message_midway">Interim message</string>
     <string name="subagent_message_open_detail">View message details</string>
-    <string name="subagent_version_title">Subagent version</string>
-    <string name="subagent_version_description">Choose collaboration tools for new conversations. Existing agents retain their version; Reading Companion continues to use v1.</string>
-    <string name="subagent_version_v2">v2 · Multi-agent collaboration (default)</string>
-    <string name="subagent_version_v1">v1 · Synchronous task</string>
     <string name="chat_live_elapsed">Elapsed %1$s</string>
     <string name="chat_estimated_cost">Estimated conversation cost: ¥%1$s</string>
     <string name="chat_estimated_cost_partial">Estimated conversation cost: ¥%1$s (partly unknown)</string>
