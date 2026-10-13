@@ -61,8 +61,11 @@
     },
     {
       "name": "read_example",
-      "description": {"zh": "直接生成已校验的演示界面块，返回短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo block and return its reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "背景示例：backgrounds（原生四色面板）、surfaces（HTML/CSS 四种动态背景切换）；纯展示：flow_steps、flowchart、data_story、stats、charts、info、vector、curves；混合：mixed_branch、responsive；交互：profile（图标标题、自适应功能网格与本地详情）、interactive_flow、calculator、cost_calculator、form、progress、data、repeat、p2_controls、p2_lists", "en": "Backgrounds: backgrounds (native colored panels), surfaces (four switchable HTML/CSS surfaces); display-only: flow_steps, flowchart, data_story, stats, charts, info, vector, curves; mixed: mixed_branch, responsive; interactive: profile (logo/header, adaptive feature grid, local details), interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls, p2_lists"}}]
+      "description": {"zh": "按需学习或展示示例。source_only=true 只返回 Express 源码，不生成卡片；默认编译演示并返回短引用。自定义后用 prepare_card。", "en": "Learn from or display a demo. source_only=true returns Express source without creating a card; default compiles the demo and returns a reference. Use prepare_card after adapting it."},
+      "parameters": [
+        {"name": "name", "type": "string", "required": true, "description": {"zh": "完整交互：shopping_list（人数联动购物清单）、trip_budget（出行费用试算）、filtered_chart（地区筛选图表）；背景：backgrounds、surfaces（HTML，需用户明确要求）；布局：profile、responsive；展示：flow_steps、flowchart、data_story、stats、charts、info、vector、curves；其他：mixed_branch、interactive_flow、calculator、cost_calculator、form、progress、data、repeat、p2_controls、p2_lists", "en": "Working tools: shopping_list (portions and checklist), trip_budget (travel cost estimate), filtered_chart (region filter); backgrounds: backgrounds, surfaces (HTML, explicit user request required); layout: profile, responsive; display: flow_steps, flowchart, data_story, stats, charts, info, vector, curves; other: mixed_branch, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls, p2_lists"}},
+        {"name": "source_only", "type": "boolean", "required": false, "description": {"zh": "true：只学习源码，不创建展示引用；默认 false。按需读一个相关例子。", "en": "true: inspect source without creating a display reference; default false. Read only a relevant example."}}
+      ]
     }
   ]
 }
@@ -146,6 +149,33 @@ Do not start every block with a Header; the surrounding text usually introduces 
 Use root=Card(child=...) only for a self-contained tool or record (calculator, form, status record)
 that benefits from a visible boundary. Panel groups a sub-area. Never nest frames for decoration.
 
+PLAN THE WHOLE BLOCK BEFORE CHOOSING COMPONENTS
+Start with the user's question and the information they need to see first. Arrange a short overview,
+the main evidence/result, then optional controls/details in reading order. Use named declarations
+for meaningful regions; keep one idea per region. Do not make a grid of unrelated boxes.
+For local exploration, put the controls next to or above the result they change. Keep inputs and
+their results in ONE card; identify which state path drives which text, list or chart before coding.
+Store editable inputs and source records; derive totals, labels and chart values from those same
+records with pure functions. Never hard-code a second total or maintain a duplicate result state.
+Named declarations refer to components only; put calculations in properties (no formula aliases).
+Every control must change a visible result or collect a value needed by an explicitly requested
+submission. A slider/checklist/filter needs no "Ask AI" or "Apply" button for a local calculation.
+Use ai_submit only for a new request requiring reasoning or external information.
+Choose Row(weights=[0,1]) for a small icon beside growing text, and auto Grid(minItemWidth=160)
+for comparable metrics or features. Preserve reading order when stacked. Keep essential text free
+to wrap; fixed heights/Frame are for graphics, not headings, descriptions or form fields.
+Before prepare_card, check the smallest/largest inputs and empty selections: no zero divisor,
+mismatched chart labels/values, stale totals or button without an effect. Initial values alone
+are not enough. Do not claim visual or cross-model testing merely because compilation succeeds.
+
+LEARN A WORKING PATTERN ONLY WHEN NEEDED
+Call read_example(name="shopping_list",source_only=true) for a portion slider -> derived quantities
+and independent checklist state; "trip_budget" for inputs -> total and per-person cost;
+"filtered_chart" for a region selector -> chart labels, values and total derived from the same rows.
+These are demonstration data, not researched prices or facts. Adapt the source and call prepare_card;
+never present a learning example as the user's requested result. Read one relevant example, not all.
+For an explicit demo request, omit source_only to prepare that example for display.
+
 MINIMAL DISPLAY BLOCK (no state, no actions)
 root = Flow(label="Three cooking stages",steps=[{title:"Prepare",caption:"2 min",icon:"list"},
  {title:"Cook separately",caption:"4 min",icon:"fire"},{title:"Combine",caption:"1 min",icon:"check",tone:"success"}])
@@ -164,7 +194,8 @@ Old cards and user inputs are preserved. New revisions start from their declared
 Patch errors use merged source locations. For previous turns, prepare complete new source.
 valid:false is a completed inspection: fix the reported line/column and field. Do not retry identical
 input or infer unsupported nesting. Validation does not prove visual quality or arithmetic intent.
-read_example prepares an unmodified demo. Custom cards are freely composed, not fixed templates.
+read_example prepares an unmodified demo by default; source_only=true only returns source for learning.
+Custom cards are freely composed, not fixed templates.
 
 EXPRESS (Operit named-argument subset, compiled locally to AndroidX A2UI v0.9)
 One assignment per line; multiline constructors allowed. No enclosing tags or Markdown fences.
@@ -452,6 +483,40 @@ exports.update_card = async ({reference, changes, remove = []}) => {
 
 const q = JSON.stringify;
 function example(name) {
+    if (name === "shopping_list") return String.raw`
+$/form = {people:2}
+$/ingredients = [{id:"rice",name:"大米",perPerson:150,unit:"克"},{id:"egg",name:"鸡蛋",perPerson:1,unit:"个"},{id:"greens",name:"青菜",perPerson:200,unit:"克"}]
+root = Card(child=Column(children=[intro,people,portions,ingredients,note]))
+intro = Header(text="备餐购物清单",label="演示份量 · 按人数调整")
+people = Slider(label="用餐人数",min=1,max=8,steps=6,number=$/form/people)
+portions = Text(text=concat(values=["当前准备 ",formatNumber(value=$/form/people,decimals=0)," 人份；勾选已备齐的食材。"]))
+ingredients = Repeat(items=$/ingredients,key="id",child=ingredient)
+ingredient = CheckBox(label=concat(values=[item(field="name")," · ",formatNumber(value=multiply(a=item(field="perPerson"),b=$/form/people),decimals=0)," ",item(field="unit")]),value=item_state(field="done",default=false))
+note = Text(text="人数变化只调整数量，已勾选状态保留；增加人数后请重新核对是否备齐。",variant="caption")
+`;
+    if (name === "trip_budget") return String.raw`
+$/form = {people:2,nights:2,rooms:1}
+root = Card(child=Column(children=[intro,inputs,results,note]))
+intro = Header(text="出行费用试算",label="演示价格 · 交通每人 ¥120，住宿每间每晚 ¥280")
+inputs = Column(children=[people,nights,rooms])
+people = Slider(label="出行人数",min=1,max=6,steps=4,number=$/form/people)
+nights = Slider(label="住宿晚数",min=1,max=7,steps=5,number=$/form/nights)
+rooms = Slider(label="房间数",min=1,max=3,steps=1,number=$/form/rooms)
+results = Grid(minItemWidth=160,children=[total,perPerson])
+total = Display(label="合计（元）",text=formatNumber(value=add(a=multiply(a=$/form/people,b=120),b=multiply(a=multiply(a=$/form/nights,b=$/form/rooms),b=280)),decimals=2))
+perPerson = Display(label="人均（元）",text=formatNumber(value=divide(a=add(a=multiply(a=$/form/people,b=120),b=multiply(a=multiply(a=$/form/nights,b=$/form/rooms),b=280)),b=max(a=$/form/people,b=1)),decimals=2))
+note = Text(text="只估算交通和住宿，不含餐饮等费用；这里不会预订或付款。",variant="caption")
+`;
+    if (name === "filtered_chart") return String.raw`
+$/filter = {region:"北区"}
+$/sales = [{region:"北区",month:"一月",amount:12},{region:"北区",month:"二月",amount:18},{region:"北区",month:"三月",amount:15},{region:"南区",month:"一月",amount:9},{region:"南区",month:"二月",amount:14},{region:"南区",month:"三月",amount:24}]
+root = Card(child=Column(children=[intro,region,total,chart,note]))
+intro = Header(text="地区销售趋势",label="演示数据 · 单位：万元")
+region = Segmented(label="地区",options=["北区","南区"],value=$/filter/region)
+total = Display(label=concat(values=[$/filter/region," · 三个月合计（万元）"]),text=formatNumber(value=arraySum(items=arrayFilter(items=$/sales,field="region",operator="eq",value=$/filter/region),field="amount"),decimals=0))
+chart = Chart(label=concat(values=[$/filter/region,"月度销售额 · 演示数据"]),type="bar",labels=arrayMap(items=arrayFilter(items=$/sales,field="region",operator="eq",value=$/filter/region),field="month"),series=[{label:"销售额（万元）",values:arrayMap(items=arrayFilter(items=$/sales,field="region",operator="eq",value=$/filter/region),field="amount")}])
+note = Text(text="切换地区会同步更新图表和合计，直接在本地完成。",variant="caption")
+`;
     if (name === "surfaces") {
         const html = `<div class="demo">
 <input class="choice" type="radio" name="scene" id="aurora" checked><input class="choice" type="radio" name="scene" id="nebula"><input class="choice" type="radio" name="scene" id="cyber"><input class="choice" type="radio" name="scene" id="soft">
@@ -680,6 +745,15 @@ groups=Repeat(items=$/groups,key="id",child=Panel(child=Column(children=[
 ]),background="inset"))
 tasks=Repeat(items=item(field="children"),key="id",child=CheckBox(label=item(field="title"),value=item_state(field="done",default=false)))
 `;
-    throw new Error("Choose backgrounds, surfaces, profile, flow_steps, flowchart, data_story, mixed_branch, stats, charts, info, vector, curves, responsive, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls or p2_lists.");
+    throw new Error("Choose shopping_list, trip_budget, filtered_chart, backgrounds, surfaces, profile, flow_steps, flowchart, data_story, mixed_branch, stats, charts, info, vector, curves, responsive, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls or p2_lists.");
 }
-exports.read_example = async ({name}) => complete(prepare(example(name)));
+exports.read_example = async ({name, source_only = false}) => {
+    if (typeof source_only !== "boolean") {
+        complete({success:true,valid:false,message:"source_only must be a boolean."});
+        return;
+    }
+    const source = example(name);
+    complete(source_only
+        ? {success:true,source,message:"Example source only; no card was created. Adapt it to the user's data, then call prepare_card to validate and display."}
+        : prepare(source));
+};

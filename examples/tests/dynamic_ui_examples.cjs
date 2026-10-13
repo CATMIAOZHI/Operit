@@ -51,7 +51,7 @@ vm.runInNewContext(source, sandbox);
     assert.ok(checked.includes('maxHeight=720'));
     await sandbox.exports.prepare_html({label:"Visual",html:"<p>x</p>",max_height:999});
     assert.equal(result.valid,false);
-    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists","flow_steps","flowchart","data_story","mixed_branch","profile","backgrounds","surfaces"]) {
+    for (const name of ["shopping_list","trip_budget","filtered_chart","calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists","flow_steps","flowchart","data_story","mixed_branch","profile","backgrounds","surfaces"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
         assert.equal(result.valid, true);
@@ -60,7 +60,16 @@ vm.runInNewContext(source, sandbox);
         const file = path.join(root, "app/src/test/resources/dynamicui", name + ".express");
         if (process.argv.includes("--update")) fs.writeFileSync(file, checked);
         else assert.equal(fs.readFileSync(file, "utf8"), checked);
+        const compiledSource = checked;
+        checked = undefined;
+        await sandbox.exports.read_example({name,source_only:true});
+        assert.equal(checked, undefined, "Inspecting source must not create a card");
+        assert.equal(result.source, compiledSource);
+        assert.equal(result.reference, undefined);
     }
+    await sandbox.exports.read_example({name:"shopping_list",source_only:"true"});
+    assert.equal(result.valid,false);
+    assert.equal(checked,undefined);
     await sandbox.exports.prepare_card({source:'root = Text(text="hello")'});
     assert.equal(checked, 'root = Text(text="hello")');
     assert.equal(liveFlag, false);

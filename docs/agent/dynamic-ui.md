@@ -80,6 +80,18 @@ mixed_branch 只在分支选择处交互；交互示例有 calculator、cost_cal
 同样编译后返回短引用，不修改真实应用配置。
 每张卡片独立初始化，不能跨卡片更新状态。
 
+需要学习后自定义时，用 `read_example(name="...", source_only=true)` 只取 Express
+源码，不创建卡片或展示引用。按需读一个相关示例，替换演示数据后调用 `prepare_card`；
+默认 `source_only=false` 仍直接编译并展示原示例。新增三个完整本地交互示例：
+
+- `shopping_list`：人数滑块同步调整食材数量，每行勾选状态独立保存。
+- `trip_budget`：人数、晚数、房间数同步计算合计和人均，均为明确标注的演示价格。
+- `filtered_chart`：地区选择同步改变图表标签、数值与汇总，全部取自同一组原始记录。
+
+指南先引导组织整块内容的阅读顺序和控件依赖，再选择组件；宽度与字号由客户端
+响应式布局决定。公式直接写在组件属性中，普通命名声明只用于组件，不能声明公式别名。
+示例沿用 Express → A2UI → Compose，无新增网页引擎、脚本权限或 HTML 使用条件变化。
+
 ## Express 编写与交付
 
 参考 [A2UI Express 规范](https://a2ui.org/specification/proposals/express/a2ui_express/)及
