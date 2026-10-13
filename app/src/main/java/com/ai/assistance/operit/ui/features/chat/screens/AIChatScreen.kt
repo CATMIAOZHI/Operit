@@ -1947,7 +1947,7 @@ private fun ChatInputBottomBar(
         }
     }
 
-    Column(modifier = Modifier.fillMaxWidth()) {
+    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         ChatTodoDock(
             chatId = currentChatId,
             todos = todos,

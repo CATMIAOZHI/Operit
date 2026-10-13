@@ -3012,7 +3012,7 @@
     <string name="function_desc_ui_controller">用于UI界面的自动遍历与操作，对应的 UI 控制器模型仅在用户明确要求使用“智能体”控制时才会启用，例如可选择 autoglm 等专用模型。</string>
     <string name="function_desc_translation">提供多语言翻译功能，支持文本内容的语言转换。建议使用支持多语言的模型。</string>
     <string name="function_desc_role_response_planner">用于在群组中动态决定本轮发言顺序与跳过策略，支持多轮讨论</string>
-    <string name="function_desc_permission_reviewer">用于“自动审核”档位独立审查工具调用。审批代理只能使用内部结果提交工具，不能执行被审核操作；失败、超时或无有效结果时将转由你确认。</string>
+    <string name="function_desc_permission_reviewer">用于“自动审核”档位独立审查工具调用。审批代理不能执行被审核操作；失败、超时或无有效结果时，操作不执行，原因直接返回给 AI，不弹出人工审批。</string>
     <string name="function_desc_permission_risk_scorer">用于“自动审核”快速档的异步风险评分：派发工具时用一个轻量模型判断当前这组操作的风险高低。用便宜、响应快的模型就够。保持默认配置时跟随“权限审批”的模型。</string>
     <string name="function_desc_image_recognition">用于图像内容识别和分析，调用read_file工具读取图片时支持intent参数进行深度理解。建议使用支持视觉的多模态模型。</string>
     <string name="function_desc_audio_recognition">用于音频内容识别和分析，调用read_file工具读取音频时可使用intent参数进行深度理解（如转写/总结/识别说话内容）。建议使用支持音频输入或高质量转写的模型。</string>
@@ -5520,7 +5520,7 @@
     <string name="permission_level_allow_description">这些工具将自动运行。</string>
     <string name="permission_level_allow_default_hint">子代理协作工具（spawn_agent 等）默认就允许，没有单独的开关。想让它们换档位，就在其他分组里用 + 添加。</string>
     <string name="permission_level_auto_review">自动审核</string>
-    <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余原本需要询问的操作交给隔离的独立代理审批，失败、超时或无有效结果时转回由你确认。单工具永久允许或拒绝始终优先。此模式不是系统沙箱。</string>
+    <string name="permission_level_auto_review_description">可确认位于当前工作区内的操作直接放行；其余需要审核的操作交给独立代理批准或拒绝。审核失败、超时或无有效结果时，操作不执行，原因返回给 AI，由 AI 重试或向你说明配置问题。单工具规则优先，此模式不是系统沙箱。</string>
     <string name="permission_level_forbid">禁止</string>
     <string name="permission_level_forbid_description">这些工具永远不会运行。</string>
     <string name="permission_level_ask">询问</string>
@@ -5530,7 +5530,7 @@
     <string name="permission_stop_forbid_description">所有工具都不会运行。</string>
     <string name="permission_stop_ask_description">每次调用工具前都弹窗问你。</string>
     <string name="permission_stop_auto_review_strict_description">工作区内可确认安全的操作直接放行；其余交给审批代理，每次调用都重新判断。最安全，也最慢。</string>
-    <string name="permission_stop_auto_review_fast_description">在严格审核的基础上，复用近期的低风险判断，减少重复审核。仍需审核的操作会交给审批代理，审批代理可以批准或拒绝；审核失败时转为询问你。</string>
+    <string name="permission_stop_auto_review_fast_description">在严格审核的基础上，复用近期的低风险判断，减少重复审核。审批代理仍可批准或拒绝；审核失败时不执行操作，将原因返回给 AI，由 AI 重试或向你说明配置问题。</string>
     <string name="permission_stop_full_access">完全访问权限</string>
     <string name="permission_stop_allow_description">警告：默认跳过工具审批，AI 可直接修改或删除文件、执行命令及访问网络，可能造成数据丢失或泄露。仍受系统权限和单独工具规则限制。</string>
     <string name="add_tool">添加工具</string>
@@ -5650,14 +5650,14 @@
     <string name="agent_profile_builtin_permission_reviewer_description">独立审查工具调用并给出一次性放行或拒绝决定。</string>
     <string name="permission_review_task_title">权限审核：%1$s</string>
     <string name="permission_review_submitted">权限审核决定已提交。</string>
-    <string name="permission_review_fallback_invalid">自动审核连续返回了无效结果，已转由你确认。</string>
-    <string name="permission_review_fallback_timeout">自动审核超时，已转由你确认。</string>
-    <string name="permission_review_fallback_error">自动审核运行失败，已转由你确认。</string>
+    <string name="permission_review_fallback_invalid">自动审核返回了无效结果，操作未执行，原因已返回给 AI。</string>
+    <string name="permission_review_fallback_timeout">自动审核超时，操作未执行，原因已返回给 AI。</string>
+    <string name="permission_review_fallback_error">自动审核运行失败，操作未执行，原因已返回给 AI。</string>
     <string name="permission_review_status_allowed">已允许</string>
     <string name="permission_review_status_denied">已拒绝</string>
-    <string name="permission_review_status_invalid">输出无效，已转人工</string>
+    <string name="permission_review_status_invalid">输出无效，操作未执行</string>
     <string name="permission_review_status_timeout_or_cancelled">审核超时或已取消</string>
-    <string name="permission_review_status_error">审核失败，已转人工</string>
+    <string name="permission_review_status_error">审核失败，操作未执行</string>
     <string name="functional_config_permission_reviewer_test_invalid">模型已连接，但未按审批协议调用结果工具。</string>
     <string name="functional_config_permission_reviewer_test_success">审批协议测试成功：outcome=%1$s，risk=%2$s，authorization=%3$s</string>
     <string name="functional_config_risk_scorer_test_invalid">模型已连接，但没有按要求只回答 high 或 low。</string>
@@ -9064,4 +9064,5 @@
     <string name="composer_prediction_adopt">采纳预测消息</string>
     <string name="token_stats_category_composer_prediction">输入预测</string>
     <string name="voice_dictation_cannot_keep_up">识别速度跟不上录音，请分短一些录制后重试。</string>
+    <string name="permission_review_failed_result">自动审核未完成，操作未执行</string>
 </resources>
