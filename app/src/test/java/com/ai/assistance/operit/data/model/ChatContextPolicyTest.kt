@@ -6,6 +6,12 @@ import org.junit.Test
 class ChatContextPolicyTest {
     private val model = ModelConfigData(id = "test", name = "test", maxContextLength = 1000f)
 
+    @Test fun missingCompactionChoiceDefaultsOnButExplicitOffSurvives() {
+        assertTrue(ChatContextPolicy.decode("""{"windowK":400}""").autoCompact)
+        assertFalse(ChatContextPolicy.decode(ChatContextPolicy(autoCompact = false).encode()).autoCompact)
+        assertTrue(ChatContextPolicy.fromLegacy(model).autoCompact)
+    }
+
     @Test fun maxModeDoesNotOverwriteCustomBudget() {
         val policy = ChatContextPolicy(windowK = 300f)
         assertEquals(300f, resolveChatContext(policy, model).windowK, 0f)

@@ -18,7 +18,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -28,9 +27,7 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Link
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -64,11 +61,9 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -82,7 +77,6 @@ import com.ai.assistance.operit.core.config.FunctionalPrompts
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.SummarySectionConfig
-import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
@@ -95,29 +89,16 @@ import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.drop
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 @Composable
 fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
     val context = LocalContext.current
-    val apiPreferences = remember { ApiPreferences.getInstance(context) }
     val userPreferences = remember { UserPreferencesManager.getInstance(context) }
     val functionalConfigManager = remember { FunctionalConfigManager(context) }
     val modelConfigManager = remember { ModelConfigManager(context) }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
-
-    var maxImageHistoryUserTurnsInput by remember { mutableStateOf("") }
-    var maxMediaHistoryUserTurnsInput by remember { mutableStateOf("") }
-    val savedMaxImageHistoryUserTurns by
-        apiPreferences.maxImageHistoryUserTurnsFlow.collectAsState(
-            initial = ApiPreferences.DEFAULT_MAX_IMAGE_HISTORY_USER_TURNS
-        )
-    val savedMaxMediaHistoryUserTurns by
-        apiPreferences.maxMediaHistoryUserTurnsFlow.collectAsState(
-            initial = ApiPreferences.DEFAULT_MAX_MEDIA_HISTORY_USER_TURNS
-        )
 
     val hasBackgroundImage by userPreferences.useBackgroundImage.collectAsState(initial = false)
     val componentBackgroundColor =
@@ -126,11 +107,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
         } else {
             MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
         }
-
-    LaunchedEffect(Unit) {
-        maxImageHistoryUserTurnsInput = apiPreferences.maxImageHistoryUserTurnsFlow.first().toString()
-        maxMediaHistoryUserTurnsInput = apiPreferences.maxMediaHistoryUserTurnsFlow.first().toString()
-    }
 
     val functionMappings by
         functionalConfigManager.functionConfigMappingWithIndexFlow.collectAsState(initial = emptyMap())
@@ -183,23 +159,11 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
     val errorSaveFailed = stringResource(id = R.string.model_config_error_save_failed)
 
     var showSaveSuccessMessage by remember { mutableStateOf(false) }
-    var historyError by remember { mutableStateOf<String?>(null) }
 
     val currentConfigDisplayName = remember(currentConfig, currentChatConfigId) {
         buildBoundConfigDisplayName(currentConfig, currentChatConfigId)
     }
 
-    HistoryRetentionAutoSaveEffects(
-        historyInputsProvider = {
-            maxImageHistoryUserTurnsInput to maxMediaHistoryUserTurnsInput
-        },
-        savedHistoryValuesProvider = {
-            savedMaxImageHistoryUserTurns to savedMaxMediaHistoryUserTurns
-        },
-        apiPreferences = apiPreferences,
-        errorSaveFailed = errorSaveFailed,
-        onHistoryErrorChange = { historyError = it }
-    )
     ContextSummarySectionsAutoSaveEffect(
         currentConfig = currentConfig,
         summarySectionsInputProvider = { summarySectionsInput },
@@ -290,26 +254,7 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                     }
                 )
 
-                Spacer(modifier = Modifier.size(12.dp))
-                RenderHistoryRetentionSection(
-                    componentBackgroundColor = componentBackgroundColor,
-                    maxImageHistoryUserTurnsInput = maxImageHistoryUserTurnsInput,
-                    onMaxImageHistoryUserTurnsInputChange = { maxImageHistoryUserTurnsInput = it },
-                    maxMediaHistoryUserTurnsInput = maxMediaHistoryUserTurnsInput,
-                    onMaxMediaHistoryUserTurnsInputChange = { maxMediaHistoryUserTurnsInput = it },
-                    onReset = {
-                        scope.launch {
-                            historyError = null
-                            apiPreferences.resetHistoryRetentionSettings()
-                            maxImageHistoryUserTurnsInput =
-                                apiPreferences.maxImageHistoryUserTurnsFlow.first().toString()
-                            maxMediaHistoryUserTurnsInput =
-                                apiPreferences.maxMediaHistoryUserTurnsFlow.first().toString()
-                            showSaveSuccessMessage = true
-                        }
-                    },
-                    historyError = historyError
-                )
+
                 }
 
                 Spacer(modifier = Modifier.size(16.dp))
@@ -326,45 +271,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun HistoryRetentionAutoSaveEffects(
-    historyInputsProvider: () -> Pair<String, String>,
-    savedHistoryValuesProvider: () -> Pair<Int, Int>,
-    apiPreferences: ApiPreferences,
-    errorSaveFailed: String,
-    onHistoryErrorChange: (String?) -> Unit
-) {
-    val latestSavedHistoryValues by rememberUpdatedState(savedHistoryValuesProvider())
-
-    LaunchedEffect(apiPreferences) {
-        snapshotFlow { historyInputsProvider() }
-            .drop(1)
-            .debounce(700)
-            .distinctUntilChanged()
-            .collectLatest { (imageTurnsText, mediaTurnsText) ->
-                val imageTurns = imageTurnsText.toIntOrNull()
-                val mediaTurns = mediaTurnsText.toIntOrNull()
-                if (imageTurns == null || imageTurns < 0 || mediaTurns == null || mediaTurns < 0) {
-                    return@collectLatest
-                }
-
-                val (savedImageTurns, savedMediaTurns) = latestSavedHistoryValues
-                if (imageTurns == savedImageTurns && mediaTurns == savedMediaTurns) {
-                    onHistoryErrorChange(null)
-                    return@collectLatest
-                }
-
-                try {
-                    apiPreferences.saveMaxImageHistoryUserTurns(imageTurns)
-                    apiPreferences.saveMaxMediaHistoryUserTurns(mediaTurns)
-                    onHistoryErrorChange(null)
-                } catch (e: Exception) {
-                    onHistoryErrorChange(e.message ?: errorSaveFailed)
-                }
-            }
     }
 }
 
@@ -734,62 +640,6 @@ private fun SummaryEditorHeader(
 }
 
 @Composable
-private fun RenderHistoryRetentionSection(
-    componentBackgroundColor: Color,
-    maxImageHistoryUserTurnsInput: String,
-    onMaxImageHistoryUserTurnsInputChange: (String) -> Unit,
-    maxMediaHistoryUserTurnsInput: String,
-    onMaxMediaHistoryUserTurnsInputChange: (String) -> Unit,
-    onReset: () -> Unit,
-    historyError: String?
-) {
-    SectionTitle(
-        text = stringResource(id = R.string.settings_history_retention_title),
-        icon = Icons.Default.History
-    )
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_max_image_history_user_turns),
-        subtitle = stringResource(id = R.string.settings_max_image_history_user_turns_subtitle),
-        value = maxImageHistoryUserTurnsInput,
-        onValueChange = onMaxImageHistoryUserTurnsInputChange,
-        unitText = stringResource(id = R.string.context_unit_times),
-        backgroundColor = componentBackgroundColor
-    )
-
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_max_media_history_user_turns),
-        subtitle = stringResource(id = R.string.settings_max_media_history_user_turns_subtitle),
-        value = maxMediaHistoryUserTurnsInput,
-        onValueChange = onMaxMediaHistoryUserTurnsInputChange,
-        unitText = stringResource(id = R.string.context_unit_times),
-        backgroundColor = componentBackgroundColor
-    )
-
-    Button(
-        onClick = onReset,
-        modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-        colors =
-            ButtonDefaults.buttonColors(
-                containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                contentColor = MaterialTheme.colorScheme.onSecondaryContainer
-            )
-    ) {
-        Icon(imageVector = Icons.Default.RestartAlt, contentDescription = null, modifier = Modifier.size(20.dp))
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(text = stringResource(id = R.string.context_reset_all_settings), style = MaterialTheme.typography.bodyLarge)
-    }
-
-    historyError?.let {
-        Text(
-            text = it,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp)
-        )
-    }
-}
-
-@Composable
 private fun BoxScope.RenderContextSummaryDialogs(
     showSaveSuccessMessage: Boolean,
     onDismissSaveSuccess: () -> Unit
@@ -810,11 +660,6 @@ private fun BoxScope.RenderContextSummaryDialogs(
             Text(stringResource(id = R.string.settings_saved))
         }
     }
-}
-
-private fun formatFloatValue(value: Float?): String {
-    if (value == null) return ""
-    return if (value % 1f == 0f) value.toInt().toString() else value.toString()
 }
 
 private fun buildBoundConfigDisplayName(config: ModelConfigData?, fallbackConfigId: String): String {
@@ -922,98 +767,6 @@ private fun SettingsSwitchRow(
         }
         Switch(checked = checked, onCheckedChange = onCheckedChange, enabled = enabled)
     }
-}
-
-@Composable
-private fun SettingsInputField(
-    title: String,
-    subtitle: String,
-    value: String,
-    onValueChange: (String) -> Unit,
-    unitText: String? = null,
-    backgroundColor: Color,
-    enabled: Boolean = true,
-    allowDecimal: Boolean = false,
-    keyboardOptions: KeyboardOptions =
-        KeyboardOptions(keyboardType = KeyboardType.Number, imeAction = ImeAction.Done)
-) {
-    val focusManager = LocalFocusManager.current
-    val contentAlpha = if (enabled) 1f else 0.38f
-    Row(
-        modifier =
-            Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(backgroundColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-                .alpha(contentAlpha),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween
-    ) {
-        Column(
-            modifier = Modifier.weight(1f).padding(end = 12.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp)
-        ) {
-            Text(text = title, style = MaterialTheme.typography.bodyMedium, fontWeight = FontWeight.Medium)
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            BasicTextField(
-                value = value,
-                onValueChange = { newText ->
-                    if (enabled) {
-                        onValueChange(if (allowDecimal) filterDecimalInput(newText) else newText.filter { it.isDigit() })
-                    }
-                },
-                enabled = enabled,
-                modifier =
-                    Modifier.width(if (allowDecimal) 88.dp else 72.dp)
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
-                        .padding(horizontal = 8.dp, vertical = 6.dp),
-                textStyle =
-                    TextStyle(
-                        color = MaterialTheme.colorScheme.primary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 13.sp,
-                        textAlign = TextAlign.Center
-                    ),
-                keyboardOptions = keyboardOptions,
-                keyboardActions = KeyboardActions(onDone = { if (enabled) focusManager.clearFocus() }),
-                singleLine = true
-            )
-            if (unitText != null) {
-                Text(
-                    text = unitText,
-                    style =
-                        MaterialTheme.typography.bodySmall.copy(
-                            color = MaterialTheme.colorScheme.primary,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        ),
-                    modifier = Modifier.padding(start = 4.dp)
-                )
-            }
-        }
-    }
-}
-
-private fun filterDecimalInput(input: String): String {
-    var dotSeen = false
-    val result = StringBuilder()
-    input.forEachIndexed { index, c ->
-        when {
-            c.isDigit() -> result.append(c)
-            c == '.' && !dotSeen -> {
-                dotSeen = true
-                if (result.isEmpty() && index == 0) result.append("0.") else result.append(c)
-            }
-        }
-    }
-    return result.toString()
 }
 
 @Composable

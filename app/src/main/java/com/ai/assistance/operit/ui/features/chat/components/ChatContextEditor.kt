@@ -11,6 +11,7 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatContextPolicy
 import com.ai.assistance.operit.ui.features.chat.util.parseContextK
+import com.ai.assistance.operit.ui.features.chat.util.formatContextK
 
 data class ChatContextEditorTarget(
     val chatId: String,
@@ -27,10 +28,10 @@ fun ChatContextPolicyEditor(
     onSave: (ChatContextPolicy) -> Unit,
     saving: Boolean = false,
 ) {
-    var window by remember(initial) { mutableStateOf("${initial.windowK}K") }
+    var window by remember(initial) { mutableStateOf("${formatContextK(initial.windowK)}K") }
     var maxMode by remember(initial) { mutableStateOf(initial.maxMode) }
     var enabled by remember(initial) { mutableStateOf(initial.autoCompact) }
-    var trigger by remember(initial) { mutableStateOf(initial.compactAtK?.let { "${it}K" } ?: "") }
+    var trigger by remember(initial) { mutableStateOf(initial.compactAtK?.let { "${formatContextK(it)}K" } ?: "") }
     var retainTurnLimit by remember(initial) { mutableStateOf(initial.compactEveryUserTurns != null) }
     val windowValue = parseContextK(window)
     val triggerValue = parseContextK(trigger)
@@ -47,9 +48,10 @@ fun ChatContextPolicyEditor(
         }
         Text(stringResource(R.string.chat_context_max_hint), style = MaterialTheme.typography.bodySmall)
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Text(stringResource(R.string.settings_enable_summary), modifier = Modifier.weight(1f))
+            Text(stringResource(R.string.chat_context_auto_compact), modifier = Modifier.weight(1f))
             Switch(enabled, { enabled = it }, enabled = !saving)
         }
+        Text(stringResource(R.string.chat_context_auto_compact_hint), style = MaterialTheme.typography.bodySmall)
         OutlinedTextField(
             value = trigger, onValueChange = { trigger = it }, singleLine = true,
             label = { Text(stringResource(R.string.chat_context_compact_at)) },
@@ -85,7 +87,7 @@ fun ChatContextEditorDialog(target: ChatContextEditorTarget, onDismiss: () -> Un
         title = { Text(stringResource(R.string.chat_context_current)) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState())) {
-                Text(stringResource(R.string.chat_context_capacity, target.capacityK.toString()))
+                Text(stringResource(R.string.chat_context_capacity, formatContextK(target.capacityK)))
                 Spacer(Modifier.height(12.dp))
                 ChatContextPolicyEditor(target.policy, onSave, saving)
             }
