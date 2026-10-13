@@ -2321,22 +2321,6 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             }
     )
 
-    // Grep上下文搜索
-    handler.registerTool(
-            name = "grep_context",
-            descriptionGenerator = { tool ->
-                val path = tool.parameters.find { it.name == "path" }?.value ?: ""
-                val intent = tool.parameters.find { it.name == "intent" }?.value ?: ""
-                val environment = tool.parameters.find { it.name == "environment" }?.value
-                val envInfo = formatEnvInfo(environment)
-                val preview = if (intent.length > 40) "${intent.take(40)}..." else intent
-                s(R.string.toolreg_grep_context_desc, path, preview, envInfo)
-            },
-            executor = { tool ->
-                runBlocking(Dispatchers.IO) { fileSystemTools.grepContext(tool) }
-            }
-    )
-
     // 下载文件
     handler.registerTool(
             name = "download_file",

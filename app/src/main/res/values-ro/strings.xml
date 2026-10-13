@@ -2892,7 +2892,6 @@
     <string name="function_type_file_binding">Procesarea legării fișierelor</string>
     <string name="function_type_ui_controller">UIControler</string>
     <string name="function_type_translation">Funcția de traducere</string>
-    <string name="function_type_grep">GrepCăutare</string>
     <string name="function_type_role_response_planner">Planificarea grupurilor</string>
     <string name="function_type_image_recognition">Recunoașterea imaginilor</string>
     <string name="function_type_audio_recognition">Recunoașterea sunetelor</string>
@@ -2906,7 +2905,6 @@
     <string name="function_desc_file_binding">Combinarea și integrarea inteligentă a conținutului documentelor, oferind o capacitate mai precisă de procesare a codului. Se recomandă utilizarea unor modele rapide și ieftine, cum ar fiGemini Flash, nu se recomandă utilizareaDeepSeek R1</string>
     <string name="function_desc_ui_controller">utilizat pentruUIParcurgerea și operațiunile automate ale interfeței, corespunzătoare UI Modelul de controlor este activat numai atunci când utilizatorul solicită în mod explicit utilizarea controlului de tip „agent inteligent”, de exemplu, opțional autoglm și alte modele specializate.</string>
     <string name="function_desc_translation">Oferă funcții de traducere multilingvă, permițând conversia limbii conținutului text. Se recomandă utilizarea unui model care acceptă mai multe limbi.</string>
-    <string name="function_desc_grep">utilizat pentrugrep_contextPlanificarea căutării și filtrarea rezultatelor (în mai multe etape)grep_code)</string>
     <string name="function_desc_role_response_planner">Se utilizează pentru a stabili în mod dinamic, în cadrul unui grup, ordinea de intervenție și strategia de omitere pentru runda curentă, fiind compatibil cu discuțiile pe mai multe runde</string>
     <string name="function_desc_image_recognition">Utilizat pentru recunoașterea și analiza conținutului imaginilor, apelareread_fileInstrumentul acceptă citirea imaginilorintentÎnțelegerea aprofundată a parametrilor. Se recomandă utilizarea unor modele multimodale care integrează informații vizuale.</string>
     <string name="function_desc_audio_recognition">Utilizat pentru recunoașterea și analiza conținutului audio, apelread_fileInstrumentul poate fi utilizat atunci când se citește un fișier audiointentÎnțelegerea aprofundată a parametrilor (de exemplu, transcrierea/Concluzii/(Recunoașterea conținutului vorbirii). Se recomandă utilizarea unui model care acceptă intrare audio sau care oferă transcriere de înaltă calitate.</string>
@@ -3128,7 +3126,6 @@
 
     <!-- Workspace Attachment Processor (AI工具响应) -->
     <string name="workspace_unknown_error">Eroare necunoscută</string>
-    <string name="workspace_suggestion_search_first">În ceea ce privește intenția utilizatorului, se recomandă să se utilizeze mai întâi grep_context(căutarea documentelor relevante pe baza intenției) și grep_code(Căutarea unor tipare de cod specifice) Folosiți acest instrument pentru a analiza starea actuală a proiectului, înainte de a efectua modificări.</string>
     <string name="workspace_suggestion_separate_files">Vă rugăm săHTML, CSS, și JavaScript Codul este stocat în fișiere separate.</string>
     <string name="workspace_suggestion_create_folders">Dacă proiectul este mai complex, se poate lua în considerare crearea unui nou proiectjsDosare șicssCreați un dosar și mai multe fișiere.</string>
     <string name="workspace_no_suggestions">Nu există recomandări deocamdată</string>
@@ -5914,7 +5911,6 @@
     <string name="toolreg_share_file_desc">Partajare de fișiere: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">în %1$s Căutare cod în: „%2$s»%3$s (Tipul fișierului: %4$s)</string>
     <string name="toolreg_grep_code_desc">în %1$s Căutare cod în: „%2$s»%3$s</string>
-    <string name="toolreg_grep_context_desc">în %1$s Căutarea documentelor relevante pe baza intenției: „%2$s»%3$s</string>
     <string name="toolreg_download_file_desc">Descărcare fișiere: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, Index: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">Faceți clic pe element [ResurseID: %1$s%2$s]</string>
@@ -6419,9 +6415,6 @@
     <string name="theme_avatar_description">Notă: Avatarul utilizatorului din stânga este o setare specifică fiecărei fișe de personaj; dacă este necompletat, se va utiliza avatarul general al utilizatorului din dreapta. Avatarul general al utilizatorului este comun pentru toate fișele de personaj.</string>
     <string name="functional_config_model_count">%1$dun model</string>
     <string name="functional_config_test_title_generation_user_text">Aș dori să-mi planific o călătorie de trei zile la Tokyo, care să includă informații despre transport, cazare și recomandări culinare.</string>
-    <string name="functional_config_test_grep_intent">Găsiți fragmentele care conțin formule de salut.</string>
-    <string name="functional_config_test_grep_display_path">&lt;Testare&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [file: example.txt]\nBună, lume!\n#2 [file: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">În prezent UI Stare: [Button(label=„Da”, bounds="[0,0][100,50]")]\nObiectivele misiunii: Faceți clic pe „OK”.\nIstoric de execuție: []</string>
     <string name="functional_config_test_memory_prompt">Conținutul dialogului:\nUtilizator: Probleme legate de testarea conexiunii.\nasistent: Răspuns la testul de conexiune.</string>
     <string name="tool_permission_instruction_title">Instrucțiuni de utilizare</string>

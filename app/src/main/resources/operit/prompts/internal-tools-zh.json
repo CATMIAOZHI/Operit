@@ -3562,7 +3562,7 @@
           {
             "name": "function_type",
             "type": "string",
-            "description": "功能类型枚举名（CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/GREP/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION）",
+            "description": "功能类型枚举名（CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION）",
             "required": true,
             "default": null
           }
@@ -3578,7 +3578,7 @@
           {
             "name": "function_type",
             "type": "string",
-            "description": "功能类型枚举名（CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/GREP/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION）",
+            "description": "功能类型枚举名（CHAT/SUMMARY/MEMORY/UI_CONTROLLER/TRANSLATION/IMAGE_RECOGNITION/AUDIO_RECOGNITION/VIDEO_RECOGNITION）",
             "required": true,
             "default": null
           },

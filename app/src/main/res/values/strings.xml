@@ -2996,7 +2996,6 @@
     <string name="function_type_file_binding">文件绑定处理</string>
     <string name="function_type_ui_controller">UI控制器</string>
     <string name="function_type_translation">翻译功能</string>
-    <string name="function_type_grep">Grep检索</string>
     <string name="function_type_role_response_planner">群组规划</string>
     <string name="function_type_permission_reviewer">权限审批</string>
     <string name="function_type_permission_risk_scorer">审核风险评分</string>
@@ -3012,7 +3011,6 @@
     <string name="function_desc_file_binding">处理文件内容的智能绑定与混合，提供更精确的代码处理能力。建议使用快速的廉价模型如Gemini Flash，不建议使用DeepSeek R1</string>
     <string name="function_desc_ui_controller">用于UI界面的自动遍历与操作，对应的 UI 控制器模型仅在用户明确要求使用“智能体”控制时才会启用，例如可选择 autoglm 等专用模型。</string>
     <string name="function_desc_translation">提供多语言翻译功能，支持文本内容的语言转换。建议使用支持多语言的模型。</string>
-    <string name="function_desc_grep">用于grep_context的检索规划与结果筛选（多轮grep_code）</string>
     <string name="function_desc_role_response_planner">用于在群组中动态决定本轮发言顺序与跳过策略，支持多轮讨论</string>
     <string name="function_desc_permission_reviewer">用于“自动审核”档位独立审查工具调用。审批代理只能使用内部结果提交工具，不能执行被审核操作；失败、超时或无有效结果时将转由你确认。</string>
     <string name="function_desc_permission_risk_scorer">用于“自动审核”快速档的异步风险评分：派发工具时用一个轻量模型判断当前这组操作的风险高低。用便宜、响应快的模型就够。保持默认配置时跟随“权限审批”的模型。</string>
@@ -3248,7 +3246,7 @@
 
     <!-- Workspace Attachment Processor (AI工具响应) -->
     <string name="workspace_unknown_error">未知错误</string>
-    <string name="workspace_suggestion_search_first">对于用户意图，建议先使用 grep_context（基于意图搜索相关文件）和 grep_code（搜索特定代码模式）工具去了解项目当前情况，再进行修改。</string>
+    <string name="workspace_suggestion_search_first">修改前，建议先使用 grep_code 搜索相关代码，再用 read_file_part 读取上下文，了解项目当前情况。</string>
     <string name="workspace_suggestion_separate_files">请将HTML, CSS, 和 JavaScript 代码分别存放到独立的文件中。</string>
     <string name="workspace_suggestion_create_folders">如果项目较为复杂，可以考虑新建js文件夹和css文件夹并创建多个文件。</string>
     <string name="workspace_no_suggestions">暂无建议</string>
@@ -5532,8 +5530,9 @@
     <string name="permission_stop_forbid_description">所有工具都不会运行。</string>
     <string name="permission_stop_ask_description">每次调用工具前都弹窗问你。</string>
     <string name="permission_stop_auto_review_strict_description">工作区内可确认安全的操作直接放行；其余交给审批代理，每次调用都重新判断。最安全，也最慢。</string>
-    <string name="permission_stop_auto_review_fast_description">和严格档一样，另外用一个轻量模型异步评估当前这组操作；结论是低风险时，后面的调用直接放行。它只会减少审核次数，不会自己拒绝操作，也没有系统级沙箱。</string>
-    <string name="permission_stop_allow_description">所有工具直接运行，不再询问。</string>
+    <string name="permission_stop_auto_review_fast_description">在严格审核的基础上，复用近期的低风险判断，减少重复审核。仍需审核的操作会交给审批代理，审批代理可以批准或拒绝；审核失败时转为询问你。</string>
+    <string name="permission_stop_full_access">完全访问权限</string>
+    <string name="permission_stop_allow_description">警告：默认跳过工具审批，AI 可直接修改或删除文件、执行命令及访问网络，可能造成数据丢失或泄露。仍受系统权限和单独工具规则限制。</string>
     <string name="add_tool">添加工具</string>
     <string name="no_tools_in_group">此组中未添加任何工具。</string>
     <string name="remove_tool">移除</string>
@@ -6489,7 +6488,6 @@
     <string name="toolreg_share_file_desc">分享文件: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">在 %1$s 中搜索代码: 「%2$s」%3$s (文件类型: %4$s)</string>
     <string name="toolreg_grep_code_desc">在 %1$s 中搜索代码: 「%2$s」%3$s</string>
-    <string name="toolreg_grep_context_desc">在 %1$s 中基于意图搜索相关文件: 「%2$s」%3$s</string>
     <string name="toolreg_download_file_desc">下载文件: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, 索引: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">点击元素 [资源ID: %1$s%2$s]</string>
@@ -7008,9 +7006,6 @@
     <string name="theme_avatar_description">说明：左侧的用户头像是角色卡专属设置，为空时将使用右侧的全局用户头像。全局用户头像在所有角色卡中共享使用。</string>
     <string name="functional_config_model_count">%1$d个模型</string>
     <string name="functional_config_test_title_generation_user_text">我想规划一次三天的东京旅行，包括交通、住宿和美食推荐。</string>
-    <string name="functional_config_test_grep_intent">找到包含问候语的片段。</string>
-    <string name="functional_config_test_grep_display_path">&lt;测试&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [file: example.txt]\n你好世界\n#2 [file: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">当前 UI 状态: [Button(label="确定", bounds="[0,0][100,50]")]\n任务目标: 点击确定。\n执行历史: []</string>
     <string name="functional_config_test_memory_prompt">对话内容:\n用户: 连接测试问题。\n助手: 连接测试回答。</string>
     <string name="tool_permission_instruction_title">使用说明</string>

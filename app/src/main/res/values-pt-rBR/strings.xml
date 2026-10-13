@@ -2507,7 +2507,6 @@
     <string name="function_type_file_binding">Processamento de vinculação de arquivo</string>
     <string name="function_type_ui_controller">Controlador de IU</string>
     <string name="function_type_translation">Função de tradução</string>
-    <string name="function_type_grep">Pesquisa grep</string>
     <string name="function_type_role_response_planner">Planejamento de grupo</string>
     <string name="function_type_image_recognition">reconhecimento de imagem</string>
     <string name="function_type_audio_recognition">reconhecimento de áudio</string>
@@ -2519,7 +2518,6 @@
     <string name="function_desc_file_binding">Lide com vinculação e mistura inteligentes de conteúdo de arquivo para fornecer recursos de processamento de código mais precisos. Recomenda-se usar modelos rápidos e baratos como Gemini Flash, DeepSeek R1 não é recomendado</string>
     <string name="function_desc_ui_controller">Usado para passagem e operação automática da interface UI. O modelo de controlador de UI correspondente só será habilitado quando o usuário solicitar explicitamente o uso do controle "inteligente". Por exemplo, modelos especiais como o autoglm podem ser selecionados.</string>
     <string name="function_desc_translation">Fornece função de tradução multilíngue e suporta conversão de idioma de conteúdo de texto. Recomenda-se usar um modelo que suporte vários idiomas.</string>
-    <string name="function_desc_grep">Planejamento de pesquisa e filtragem de resultados para grep_context (várias rodadas de grep_code)</string>
     <string name="function_desc_role_response_planner">Usado para determinar dinamicamente a ordem de fala e a estratégia de pular desta rodada no grupo, apoiando múltiplas rodadas de discussões</string>
     <string name="function_desc_image_recognition">Usado para reconhecimento e análise de conteúdo de imagem. Ao chamar a ferramenta read_file para ler imagens, ela suporta parâmetros de intenção para uma compreensão aprofundada. Recomenda-se a utilização de modelos multimodais que apoiem a visão.</string>
     <string name="function_desc_audio_recognition">Usado para reconhecimento e análise de conteúdo de áudio. Ao chamar a ferramenta read_file para ler áudio, você pode usar o parâmetro intent para compreensão aprofundada (como transliteração/resumo/identificação de conteúdo falado). Recomenda-se usar um modelo que suporte entrada de áudio ou transcrição de alta qualidade.</string>
@@ -2701,7 +2699,6 @@
     <string name="chat_speak_message_failed">Falha ao ler a mensagem: %1$s</string>
     <string name="chat_prefill_check_file">Ajude-me a ver este arquivo</string>
     <string name="workspace_unknown_error">erro desconhecido</string>
-    <string name="workspace_suggestion_search_first">Para a intenção do usuário, é recomendado usar as ferramentas grep_context (pesquisar arquivos relevantes com base na intenção) e grep_code (pesquisar padrões de código específicos) para entender a situação atual do projeto antes de fazer modificações.</string>
     <string name="workspace_suggestion_separate_files">Armazene o código HTML, CSS e JavaScript em arquivos separados.</string>
     <string name="workspace_suggestion_create_folders">Se o projeto for mais complexo, você pode considerar a criação de uma nova pasta js e uma nova pasta css e a criação de vários arquivos.</string>
     <string name="workspace_no_suggestions">Ainda não há sugestões</string>
@@ -4771,7 +4768,6 @@
     <string name="toolreg_share_file_desc">Arquivo compartilhado: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">Pesquise %1$s pelo código: "%2$s" %3$s (Tipo de arquivo: %4$s)</string>
     <string name="toolreg_grep_code_desc">Pesquise %1$s pelo código: "%2$s" %3$s</string>
-    <string name="toolreg_grep_context_desc">Pesquisa baseada em intenção de documentos relacionados em %1$s: "%2$s" %3$s</string>
     <string name="toolreg_download_file_desc">Baixar arquivo: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, índice: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">Clique no elemento [ID do recurso: %1$s%2$s]</string>
@@ -5203,9 +5199,6 @@
     <string name="theme_avatar_description">Observação: o avatar do usuário à esquerda é uma configuração específica do cartão de função. Se estiver vazio, será utilizado o avatar global do usuário à direita. O avatar global do usuário é compartilhado entre todos os cartões de personagem.</string>
     <string name="functional_config_model_count">%1$d modelos</string>
     <string name="functional_config_test_title_generation_user_text">Quero planejar uma viagem de três dias para Tóquio, incluindo transporte, hotéis e recomendações de comida.</string>
-    <string name="functional_config_test_grep_intent">Encontre o fragmento que contém a saudação.</string>
-    <string name="functional_config_test_grep_display_path">&lt;Teste&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [arquivo: exemplo.txt]\nOlá, mundo\n#2 [arquivo: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">Estado atual da UI: [Button(label="OK",bounds="[0,0][100,50]")]\nMeta da tarefa: Clique em OK. \nHistórico de execução: []</string>
     <string name="functional_config_test_memory_prompt">Conteúdo da conversa:\nUsuário: Problema no teste de conexão. \nAssistente: Resposta do teste de conexão.</string>
     <string name="tool_permission_instruction_title">Instruções de uso</string>

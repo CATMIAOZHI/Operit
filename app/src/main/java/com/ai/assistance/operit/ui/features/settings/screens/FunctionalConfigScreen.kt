@@ -661,29 +661,6 @@ fun FunctionConfigCard(
                                                         .collect { chunk -> buffer.append(chunk) }
                                                     buffer.toString()
                                                 }
-                                                FunctionType.GREP -> {
-                                                    val prompt =
-                                                        FunctionalPrompts.grepContextSelectPrompt(
-                                                            intent = context.getString(R.string.functional_config_test_grep_intent),
-                                                            displayPath = context.getString(R.string.functional_config_test_grep_display_path),
-                                                            candidatesDigest = context.getString(R.string.functional_config_test_grep_candidates_digest),
-                                                            maxResults = 1,
-                                                            useEnglish = useEnglish
-                                                        )
-                                                    val parameters =
-                                                        modelConfigManager.getModelParametersForConfig(configWithSelectedModel.id)
-                                                    val buffer = StringBuilder()
-                                                    service.sendMessage(
-                                                        context,
-                                                        listOf(PromptTurn(kind = PromptTurnKind.USER, content = prompt)),
-                                                        parameters,
-                                                        stream = false,
-                                                        enableRetry = false,
-                                                        statsCategory = com.ai.assistance.operit.data.stats.TokenStatCategory.CONNECTION_TEST
-                                                    )
-                                                        .collect { chunk -> buffer.append(chunk) }
-                                                    buffer.toString()
-                                                }
                                                 FunctionType.UI_CONTROLLER -> {
                                                     val systemPrompt = FunctionalPrompts.uiControllerPrompt(useEnglish)
                                                     val userPrompt =
@@ -1140,7 +1117,6 @@ fun getFunctionDisplayName(functionType: FunctionType): String {
         FunctionType.MEMORY -> stringResource(id = R.string.function_type_memory)
         FunctionType.UI_CONTROLLER -> stringResource(id = R.string.function_type_ui_controller)
         FunctionType.TRANSLATION -> stringResource(id = R.string.function_type_translation)
-        FunctionType.GREP -> stringResource(id = R.string.function_type_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_type_role_response_planner)
         FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_type_permission_reviewer)
         FunctionType.PERMISSION_RISK_SCORER ->
@@ -1161,7 +1137,6 @@ fun getFunctionDescription(functionType: FunctionType): String {
         FunctionType.MEMORY -> stringResource(id = R.string.function_desc_memory)
         FunctionType.UI_CONTROLLER -> stringResource(id = R.string.function_desc_ui_controller)
         FunctionType.TRANSLATION -> stringResource(id = R.string.function_desc_translation)
-        FunctionType.GREP -> stringResource(id = R.string.function_desc_grep)
         FunctionType.ROLE_RESPONSE_PLANNER -> stringResource(id = R.string.function_desc_role_response_planner)
         FunctionType.PERMISSION_REVIEWER -> stringResource(id = R.string.function_desc_permission_reviewer)
         FunctionType.PERMISSION_RISK_SCORER ->

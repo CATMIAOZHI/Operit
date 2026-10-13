@@ -31,6 +31,12 @@ data class FunctionConfigMapping(
     val modelName: String? = null,
 )
 
+/** Removed function keys must not reset the other saved model bindings. */
+internal fun <T> Map<String, T>.knownFunctionMappings(): Map<FunctionType, T> =
+    entries.mapNotNull { (name, value) ->
+        FunctionType.entries.find { it.name == name }?.let { it to value }
+    }.toMap()
+
 internal fun FunctionConfigMapping.bindModelName(models: String): FunctionConfigMapping =
     if (modelName != null || (getModelList(models).isEmpty() && modelIndex == 0)) this
     else copy(modelName = getModelList(models).getOrNull(modelIndex).orEmpty())
@@ -105,12 +111,12 @@ class FunctionalConfigManager(private val context: Context) {
                     try {
                         // 尝试新格式（包含modelIndex）
                         val rawMap = json.decodeFromString<Map<String, FunctionConfigMapping>>(mappingJson)
-                        rawMap.entries.associate { FunctionType.valueOf(it.key) to it.value.configId }
+                        rawMap.knownFunctionMappings().mapValues { it.value.configId }
                     } catch (e: Exception) {
                         try {
                             // 回退到旧格式（只有configId）
                             val rawMap = json.decodeFromString<Map<String, String>>(mappingJson)
-                            rawMap.entries.associate { FunctionType.valueOf(it.key) to it.value }
+                            rawMap.knownFunctionMappings()
                         } catch (e2: Exception) {
                             FunctionType.values().associateWith { DEFAULT_CONFIG_ID }
                         }
@@ -127,13 +133,13 @@ class FunctionalConfigManager(private val context: Context) {
                 } else {
                     try {
                         val rawMap = json.decodeFromString<Map<String, FunctionConfigMapping>>(mappingJson)
-                        rawMap.entries.associate { FunctionType.valueOf(it.key) to it.value }
+                        rawMap.knownFunctionMappings()
                     } catch (e: Exception) {
                         try {
                             // 从旧格式迁移
                             val rawMap = json.decodeFromString<Map<String, String>>(mappingJson)
-                            rawMap.entries.associate { 
-                                FunctionType.valueOf(it.key) to FunctionConfigMapping(it.value, 0) 
+                            rawMap.knownFunctionMappings().mapValues {
+                                FunctionConfigMapping(it.value, 0)
                             }
                         } catch (e2: Exception) {
                             FunctionType.values().associateWith { FunctionConfigMapping(DEFAULT_CONFIG_ID, 0) }
@@ -182,11 +188,11 @@ class FunctionalConfigManager(private val context: Context) {
         if (raw == "{}") return FunctionType.values().associateWith { FunctionConfigMapping() }
         return try {
             json.decodeFromString<Map<String, FunctionConfigMapping>>(raw)
-                .mapKeys { FunctionType.valueOf(it.key) }
+                .knownFunctionMappings()
         } catch (_: Exception) {
             // Preserve old config-id-only settings when upgrading.
             json.decodeFromString<Map<String, String>>(raw)
-                .mapKeys { FunctionType.valueOf(it.key) }
+                .knownFunctionMappings()
                 .mapValues { FunctionConfigMapping(it.value) }
         }
     }

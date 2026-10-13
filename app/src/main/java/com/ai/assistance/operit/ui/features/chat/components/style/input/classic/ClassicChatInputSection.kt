@@ -86,6 +86,8 @@ import com.ai.assistance.operit.ui.features.chat.components.SimpleLinearProgress
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingMessageQueuePanel
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.PendingQueueMessageItem
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ThinkingStrengthControl
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.ComposerPermissionControl
+import com.ai.assistance.operit.ui.permissions.ToolPermissionStop
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.VoiceRecordingWaveform
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -141,6 +143,9 @@ fun ClassicChatInputSection(
     onAttachmentPanelStateChange: ((Boolean) -> Unit)? = null,
     showInputProcessingStatus: Boolean = true,
     enableTools: Boolean = true,
+    permissionStop: ToolPermissionStop = ToolPermissionStop.DEFAULT,
+    onSetPermissionStop: (ToolPermissionStop) -> Unit = {},
+    onToggleTools: () -> Unit = {},
     enableThinkingMode: Boolean = false,
     onSetThinkingMode: (Boolean) -> Unit = {},
     thinkingQualityLevel: Int = ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL,
@@ -914,6 +919,14 @@ fun ClassicChatInputSection(
                         modifier = Modifier.size(18.dp)
                     )
                 }
+
+                        Spacer(modifier = Modifier.width(6.dp))
+                        ComposerPermissionControl(
+                            enableTools = enableTools,
+                            permissionStop = permissionStop,
+                            onSetPermissionStop = onSetPermissionStop,
+                            onToggleTools = onToggleTools,
+                        )
 
                         Spacer(modifier = Modifier.weight(1f))
 

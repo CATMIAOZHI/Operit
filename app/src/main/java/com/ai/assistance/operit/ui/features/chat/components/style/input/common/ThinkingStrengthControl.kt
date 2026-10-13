@@ -296,7 +296,7 @@ private fun ThinkingStrengthPopup(
                     }
                 },
                 track = { state ->
-                    ThinkingSliderTrack(
+                    ComposerSliderTrack(
                         state = state,
                         activeColor = activeColor,
                         inactiveColor = MaterialTheme.colorScheme.surfaceVariant,
@@ -378,7 +378,7 @@ private fun ThinkingStrengthPopup(
  */
 @Composable
 @OptIn(ExperimentalMaterial3Api::class)
-private fun ThinkingSliderTrack(
+internal fun ComposerSliderTrack(
     state: SliderState,
     activeColor: Color,
     inactiveColor: Color,

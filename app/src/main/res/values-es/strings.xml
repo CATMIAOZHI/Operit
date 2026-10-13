@@ -3251,13 +3251,11 @@
     <string name="functional_config_warning_audio_unsupported">Advertencia: el modelo seleccionado actualmente no tiene habilitada la opción "Soporte de análisis de audio". Es posible que el reconocimiento/transcripción de audio no esté disponible. Cambie a un modelo que admita entrada/transcripción de audio y active "El modelo admite análisis de audio".</string>
     <string name="functional_config_warning_video_unsupported">Advertencia: el modelo seleccionado actualmente no tiene habilitada la opción "Soporte de análisis de video". Es posible que la comprensión de video no esté disponible. Cambie a un modelo que admita entrada de video/imagen y active "El modelo admite análisis de video".</string>
     <string name="function_type_translation">Función de traducción</string>
-    <string name="function_type_grep">Búsqueda Grep</string>
     <string name="function_type_role_response_planner">Planificación de grupo</string>
     <string name="function_type_image_recognition">Reconocimiento de imágenes</string>
     <string name="function_type_audio_recognition">Reconocimiento de audio</string>
     <string name="function_type_video_recognition">Reconocimiento de video</string>
     <string name="function_desc_translation">Proporciona funciones de traducción multilingüe, admite la conversión de idioma del contenido de texto. Se recomienda usar un modelo que admita varios idiomas.</string>
-    <string name="function_desc_grep">Planificación de búsqueda y filtrado de resultados para grep_context (grep_code en múltiples rondas)</string>
 
     <string name="chat_preparing_resend">Preparando para reenviar el mensaje</string>
     <string name="chat_rolled_back_message_in_input">Reversión realizada, el contenido del mensaje se ha colocado en el campo de entrada</string>
@@ -3277,7 +3275,6 @@
     <string name="chat_speak_message_failed">Error al leer el mensaje: %1$s</string>
     <string name="chat_prefill_check_file">Ayúdame a revisar este archivo</string>
     <string name="workspace_unknown_error">Error desconocido</string>
-    <string name="workspace_suggestion_search_first">Para la intención del usuario, se recomienda usar primero las herramientas grep_context (buscar archivos relevantes según la intención) y grep_code (buscar patrones de código específicos) para comprender el estado actual del proyecto, antes de realizar modificaciones.</string>
     <string name="workspace_suggestion_separate_files">Por favor, guarde el código HTML, CSS y JavaScript en archivos separados.</string>
     <string name="workspace_suggestion_create_folders">Si el proyecto es complejo, considere crear carpetas js y css y crear múltiples archivos.</string>
     <string name="workspace_no_suggestions">Sin sugerencias por ahora</string>
@@ -5518,9 +5515,6 @@
 
     <string name="functional_config_model_count">%1$d modelos</string>
     <string name="functional_config_test_title_generation_user_text">Quiero planear un viaje de tres días a Tokio, incluyendo transporte, hoteles y recomendaciones de comida.</string>
-    <string name="functional_config_test_grep_intent">Encuentra fragmentos que contengan saludos.</string>
-    <string name="functional_config_test_grep_display_path">&lt;测试&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [file: example.txt]\nHola mundo\n#2 [file: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">Estado actual de la UI: [Button(label="Aceptar", bounds="[0,0][100,50]")]\nObjetivo de la tarea: Hacer clic en Aceptar.\nHistorial de ejecución: []</string>
     <string name="functional_config_test_memory_prompt">Contenido del diálogo:\nUsuario: Pregunta de prueba de conexión.\nAsistente: Respuesta de prueba de conexión.</string>
     <string name="tool_permission_instruction_title">Instrucciones de uso</string>
@@ -5777,7 +5771,6 @@
     <string name="toolreg_share_file_desc">Compartir archivo: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">Buscar código en %1$s: «%2$s»%3$s (tipo de archivo: %4$s)</string>
     <string name="toolreg_grep_code_desc">Buscar código en %1$s: «%2$s»%3$s</string>
-    <string name="toolreg_grep_context_desc">Buscar archivos relevantes por intención en %1$s: «%2$s»%3$s</string>
     <string name="toolreg_download_file_desc">Descargar archivo: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, índice: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">Hacer clic en elemento [ID de recurso: %1$s%2$s]</string>
