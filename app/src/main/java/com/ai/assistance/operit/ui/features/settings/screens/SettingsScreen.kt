@@ -64,6 +64,7 @@ fun SettingsScreen(
         navigateToChatBackupSettings: () -> Unit,
         navigateToLanguageSettings: () -> Unit,
         navigateToSpeechServicesSettings: () -> Unit,
+        navigateToComponents: () -> Unit,
         navigateToExternalHttpChatSettings: () -> Unit,
         navigateToPersonaCardGeneration: () -> Unit,
         navigateToWaifuModeSettings: () -> Unit,
@@ -240,6 +241,13 @@ fun SettingsScreen(
                         icon = Icons.Default.Security,
                         containerColor = cardContainerColor
                 ) {
+                        CompactSettingsItem(
+                                title = stringResource(R.string.components_title),
+                                subtitle = stringResource(R.string.components_subtitle),
+                                icon = Icons.Default.Extension,
+                                onClick = navigateToComponents
+                        )
+
                         CompactSettingsItem(
                                 title = stringResource(id = R.string.settings_tool_permissions),
                                 subtitle = stringResource(id = R.string.settings_tool_permissions_subtitle),
