@@ -5070,7 +5070,7 @@
     <!-- Chat component hardcoded strings -->
     <string name="reply">Reply</string>
     <string name="image">Image</string>
-    <string name="image_expired">Image (Expired)</string>
+    <string name="image_expired">Image unavailable</string>
     <string name="chat_viewed_images">Viewed %1$d image(s)</string>
     <string name="copy_content">Copy Content</string>
     <string name="user_reply_instruction">User is replying to your previous message:</string>
@@ -9022,4 +9022,26 @@
     <string name="chat_shortcut_invalid">Invalid argument. Follow the example, or send it as ordinary text.</string>
     <string name="chat_shortcut_busy">Wait for the current reply to finish before compacting.</string>
     <string name="chat_context_legacy_turns">Keep legacy rule: compact every %1$d turns</string>
+    <string name="storage_title">Storage management</string>
+    <string name="storage_subtitle">View usage, clear previews, and manage downloaded components</string>
+    <string name="storage_data_total">App data usage</string>
+    <string name="storage_calculating">Calculating…</string>
+    <string name="storage_refresh">Refresh usage</string>
+    <string name="storage_scope">File sizes in app-private directories. Excludes the installed app, public Downloads, and user workspaces. System settings may report a different size.</string>
+    <string name="storage_failed">Operation incomplete. Try again. Displayed sizes may be out of date.</string>
+    <string name="storage_partial">Some directories could not be read. Only measured sizes are shown.</string>
+    <string name="storage_media">Chat media</string>
+    <string name="storage_media_hint">Images, audio, and video used by chat history. Restarting or reaching the memory limit no longer deletes them. Clearing preview cache preserves them.</string>
+    <string name="storage_components">Models and components</string>
+    <string name="storage_components_hint">Includes downloaded models, templates, and terminal environment. Component management removes downloaded resources. The installed terminal and its personal files are only measured, never deleted here.</string>
+    <string name="storage_databases">Databases</string>
+    <string name="storage_databases_hint">Structured data including chats and memory databases. Manage chats below and back up before deleting. Database size may not shrink immediately.</string>
+    <string name="chat_image_loading">Loading image…</string>
+    <string name="storage_preview_cache">Image preview cache</string>
+    <string name="storage_preview_hint">Speeds up image display and can be reloaded. Images may load more slowly after clearing.</string>
+    <string name="storage_other">Other files</string>
+    <string name="storage_other_hint">Settings, plugins, source attachments, logs, and temporary files. No bulk deletion is offered to protect chats and work files.</string>
+    <string name="storage_clear_preview">Clear preview cache</string>
+    <string name="storage_clear_preview_confirm">Only clear reloadable image previews. Keep chat media, conversations, models, and work files.</string>
+    <string name="storage_cache_cleared">Preview cache cleared. Visible images may recreate a small amount of cache.</string>
 </resources>

@@ -65,6 +65,7 @@ fun SettingsScreen(
         navigateToLanguageSettings: () -> Unit,
         navigateToSpeechServicesSettings: () -> Unit,
         navigateToComponents: () -> Unit,
+        navigateToStorage: () -> Unit,
         navigateToExternalHttpChatSettings: () -> Unit,
         navigateToPersonaCardGeneration: () -> Unit,
         navigateToWaifuModeSettings: () -> Unit,
@@ -246,6 +247,13 @@ fun SettingsScreen(
                                 subtitle = stringResource(R.string.components_subtitle),
                                 icon = Icons.Default.Extension,
                                 onClick = navigateToComponents
+                        )
+
+                        CompactSettingsItem(
+                                title = stringResource(R.string.storage_title),
+                                subtitle = stringResource(R.string.storage_subtitle),
+                                icon = Icons.Default.Storage,
+                                onClick = navigateToStorage
                         )
 
                         CompactSettingsItem(
