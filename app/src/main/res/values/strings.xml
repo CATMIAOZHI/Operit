@@ -1,4 +1,7 @@
 <resources>
+    <string name="memory_editor_dynamic_ui">动态 UI 卡片</string>
+    <string name="memory_editor_dynamic_ui_hint">源码已折叠，修改正文不会影响卡片</string>
+    <string name="memory_editor_edit_source">编辑卡片源码</string>
     <string name="codex_auth_sign_in_required">Codex 未登录，请在模型设置中登录。</string>
     <string name="codex_auth_login_changed">Codex 登录已改变，已停止旧请求，请重新发送。</string>
     <string name="codex_auth_login_required">Codex 登录凭据已失效，请在模型设置中重新登录。</string>

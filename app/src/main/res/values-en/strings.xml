@@ -1,4 +1,7 @@
 <resources>
+    <string name="memory_editor_dynamic_ui">Dynamic UI card</string>
+    <string name="memory_editor_dynamic_ui_hint">Source collapsed. Editing the surrounding text keeps the card unchanged.</string>
+    <string name="memory_editor_edit_source">Edit card source</string>
     <string name="codex_auth_sign_in_required">Sign in to Codex in model settings.</string>
     <string name="codex_auth_login_changed">Codex login changed. The old request was stopped; please resend it.</string>
     <string name="codex_auth_login_required">Codex credentials expired or were revoked. Sign in again in model settings.</string>
