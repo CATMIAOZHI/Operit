@@ -26,6 +26,9 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SegmentedButton
+import androidx.compose.material3.SegmentedButtonDefaults
+import androidx.compose.material3.SingleChoiceSegmentedButtonRow
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -55,6 +58,7 @@ import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.common.displays.MarkdownTextComposable
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import com.ai.assistance.operit.ui.theme.ProvideAiMarkdownTextLayoutSettings
+import com.ai.assistance.operit.ui.theme.TonedIconStyle
 import java.text.DecimalFormat
 import kotlinx.coroutines.launch
 
@@ -72,6 +76,7 @@ fun LayoutAdjustmentSettingsScreen(
     val aiMarkdownLineHeightMultiplier by userPreferences.aiMarkdownLineHeightMultiplier.collectAsState(initial = 1f)
     val aiMarkdownLetterSpacing by userPreferences.aiMarkdownLetterSpacing.collectAsState(initial = 0f)
     val aiMarkdownParagraphSpacing by userPreferences.aiMarkdownParagraphSpacing.collectAsState(initial = 12f)
+    val tonedIconStyle by userPreferences.aiMarkdownTonedIconStyle.collectAsState(initial = TonedIconStyle.Plain)
 
     val sectionContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.22f)
     val itemBackgroundColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
@@ -171,6 +176,41 @@ fun LayoutAdjustmentSettingsScreen(
                     valueRange = 0f..48f,
                     backgroundColor = itemBackgroundColor
                 )
+
+                HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
+
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(itemBackgroundColor, RoundedCornerShape(12.dp))
+                        .padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Text(
+                        text = stringResource(R.string.toned_icon_style),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = stringResource(R.string.toned_icon_style_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    val styles = listOf(
+                        TonedIconStyle.Plain to R.string.toned_icon_style_plain,
+                        TonedIconStyle.Dot to R.string.toned_icon_style_dot,
+                        TonedIconStyle.Halo to R.string.toned_icon_style_halo,
+                    )
+                    SingleChoiceSegmentedButtonRow(modifier = Modifier.fillMaxWidth()) {
+                        styles.forEachIndexed { index, (style, label) ->
+                            SegmentedButton(
+                                selected = tonedIconStyle == style,
+                                onClick = { scope.launch { userPreferences.saveAiMarkdownTonedIconStyle(style) } },
+                                shape = SegmentedButtonDefaults.itemShape(index = index, count = styles.size),
+                            ) { Text(stringResource(label)) }
+                        }
+                    }
+                }
 
             }
 

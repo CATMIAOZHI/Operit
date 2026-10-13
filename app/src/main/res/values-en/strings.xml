@@ -3629,10 +3629,15 @@
     <string name="global_text_letter_spacing_desc">Adjust the letter spacing for AI reply Markdown content</string>
     <string name="global_text_paragraph_spacing">AI Markdown Paragraph Spacing</string>
     <string name="global_text_paragraph_spacing_desc">Adjust the extra spacing added between AI reply Markdown paragraphs</string>
+    <string name="toned_icon_style">Colored inline icons</string>
+    <string name="toned_icon_style_desc">How colored icons in AI replies are drawn. A disc or outline stays readable on image, glass or mid-tone bubbles</string>
+    <string name="toned_icon_style_plain">Plain</string>
+    <string name="toned_icon_style_dot">Disc</string>
+    <string name="toned_icon_style_halo">Outline</string>
     <string name="layout_adjustment_preview_title">AI Markdown Preview</string>
     <string name="layout_adjustment_preview_desc">The example below reflects the currently saved AI Markdown line spacing, letter spacing, and paragraph spacing. The gaps between the first three paragraphs directly show paragraph spacing changes.</string>
     <string name="layout_adjustment_preview_plain_text">This is a plain text preview. You can observe the spacing between letters and the density between lines.</string>
-    <string name="layout_adjustment_preview_markdown">Paragraph one: use this to observe body line spacing and letter spacing.\n\nParagraph two: this paragraph is here specifically so you can judge paragraph spacing.\n\nParagraph three: when you adjust paragraph spacing, the gap above this line should change immediately.\n\n- AI Markdown list item one\n- AI Markdown list item two</string>
+    <string name="layout_adjustment_preview_markdown">Paragraph one: use this to observe body line spacing and letter spacing.\n\nParagraph two: this paragraph is here specifically so you can judge paragraph spacing.\n\nParagraph three: when you adjust paragraph spacing, the gap above this line should change immediately.\n\n- AI Markdown list item one\n- AI Markdown list item two\n\nBuild :icon[check]{tone=success} passed, :icon[warning]{tone=warning} 3 warnings, :icon[time] took 2 min</string>
     <string name="current_value">Current Value</string>
     <string name="closer_to_edge">Closer to Edge</string>
     <string name="farther_from_edge">Farther from Edge</string>
