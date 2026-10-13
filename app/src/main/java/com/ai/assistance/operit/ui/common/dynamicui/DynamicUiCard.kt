@@ -20,10 +20,13 @@ import androidx.compose.material.icons.outlined.Code
 import androidx.compose.ui.Alignment
 import androidx.compose.material3.a2ui.A2uiSurface
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
@@ -64,6 +67,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     }
     var error by remember { mutableStateOf<String?>(null) }
     var validated by remember { mutableStateOf(false) }
+    var expectedSurfaces by remember { mutableStateOf(emptySet<String>()) }
     var processed by remember { mutableStateOf(emptyList<String>()) }
     var components by remember { mutableStateOf<Map<String, Map<String, JsonObject>>>(emptyMap()) }
     var templates by remember { mutableStateOf<Map<String, Map<String, JsonObject>>>(emptyMap()) }
@@ -238,6 +242,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     LaunchedEffect(source, closed) {
         try {
             val batch = withContext(Dispatchers.Default) { DynamicUiProtocol.parse(source, closed) }
+            expectedSurfaces = batch.surfaceIds
             if (!closed && batch.componentsBySurface.values.any { graph ->
                     graph.values.any { it["component"]?.jsonPrimitive?.content == "Repeat" }
                 }) return@LaunchedEffect
@@ -289,8 +294,13 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
         val surface = candidate as A2uiCoreSurfaceModel
         LaunchedEffect(surface, validated) {
             if (!validated) return@LaunchedEffect
-            snapshotFlow { surface.dataModel[A2uiDataPath("/${DynamicUiProtocol.MARKER}")] }.first { it == "ready" }
-            ready[surface.id] = true
+            snapshotFlow {
+                surface.dataModel[A2uiDataPath("/${DynamicUiProtocol.MARKER}")] == "ready" ||
+                    surface.id in surfaceErrors
+            }.first { it }
+            if (surface.id in surfaceErrors) return@LaunchedEffect
+            // Repeat registries still contain the initial rows until their first restored expansion.
+            if (surface.id !in templates) ready[surface.id] = true
             if (CardLiveStore.isLive(surface.id)) currentOwner?.let { identity ->
                 CardLiveStore.observe(identity.chatId, source, surface.id)?.let { updates ->
                     launch {
@@ -345,6 +355,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                                 components = components + (surface.id to fallback)
                             }
                             if (pending?.surfaceId == surface.id) pending = null
+                            ready[surface.id] = true
                         }
                     }
                 }
@@ -364,12 +375,40 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
     ) {
     ProvideTextStyle(MaterialTheme.typography.bodyMedium) {
     CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
-        Column(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val density = LocalDensity.current
+        var measuredHeight by rememberSaveable { mutableIntStateOf(0) }
+        var measuredWidth by rememberSaveable { mutableIntStateOf(0) }
+        var measuredDensity by rememberSaveable { mutableFloatStateOf(0f) }
+        var measuredFontScale by rememberSaveable { mutableFloatStateOf(0f) }
+        val restored = validated &&
+            expectedSurfaces.all { id -> ready[id] == true && surfaces.any { it.id == id } }
+        val waiting = closed && error == null && surfaceErrors.isEmpty() && !restored
+        val compatibleHeight = measuredWidth == constraints.maxWidth &&
+            measuredDensity == density.density && measuredFontScale == density.fontScale
+        if (waiting) {
+            // Save only geometry across LazyColumn disposal, never processors or WebViews.
+            // Replaying defaults and loading disk state must not collapse this slot or paint stale UI.
+            Spacer(Modifier.fillMaxWidth().height(
+                if (compatibleHeight && measuredHeight > 0) with(density) { measuredHeight.toDp() } else 48.dp
+            ))
+        } else {
+        Column(Modifier.fillMaxWidth().onSizeChanged {
+            if (closed && restored && error == null && surfaceErrors.isEmpty() && it.height > 0) {
+                measuredHeight = it.height
+                measuredWidth = constraints.maxWidth
+                measuredDensity = density.density
+                measuredFontScale = density.fontScale
+            }
+        }.padding(vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             if (error != null) {
                 Text(invalidText, color = MaterialTheme.colorScheme.error)
                 Text(stringResource(R.string.dynamic_ui_regenerate), style = MaterialTheme.typography.bodySmall)
             } else {
                 if (!closed) Text(stringResource(if (streaming) R.string.dynamic_ui_generating else R.string.dynamic_ui_interrupted))
+                if (surfaceErrors.keys.any { id -> surfaces.none { it.id == id } }) {
+                    Text(invalidText, color = MaterialTheme.colorScheme.error)
+                }
                 surfaces.forEach { surface ->
                     key(surface.id) {
                         val readOnly = results[surface.id] == true
@@ -504,6 +543,8 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                 error?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                 EnhancedCodeBlock(source.take(DynamicUiProtocol.MAX_SOURCE), "json", enableDialogs = false)
             }
+        }
+        }
         }
     }
     }
