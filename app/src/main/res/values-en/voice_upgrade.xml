@@ -54,8 +54,9 @@
     <string name="voice_model_source">Source and license</string>
     <string name="voice_pitch_unavailable">Pitch control unavailable for this model</string>
     <string name="voice_playback_failed">Playback failed. Check speech settings; the text response continues.</string>
-    <string name="voice_hold_release_to_stop">Release to stop</string>
+    <string name="voice_hold_release_to_stop">Release to stop, slide up to cancel</string>
     <string name="voice_hold_release_to_send">Release to send</string>
+    <string name="voice_hold_release_to_cancel">Release to cancel</string>
     <string name="voice_transcribing">Transcribing…</string>
     <string name="input_question_hint_hold">Type anything or hold to talk</string>
     <string name="input_question_with_workspace_hold">Type anything or hold to talk, use @ to reference files</string>

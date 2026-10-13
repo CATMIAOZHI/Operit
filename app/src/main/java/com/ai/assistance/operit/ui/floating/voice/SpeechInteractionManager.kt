@@ -40,7 +40,9 @@ class SpeechInteractionManager(
     private val context: Context,
     private val coroutineScope: CoroutineScope,
     private val onSpeechResult: (String, Boolean) -> Unit, // (text, isFinal)
-    private val onStateChange: (String) -> Unit // 更新状态提示文本
+    private val onStateChange: (String) -> Unit, // 更新状态提示文本
+    /** A session ended without any recognised words; the microphone is already stopping. */
+    private val onNothingHeard: () -> Unit = {},
 ) {
     companion object {
         private val captureOwnership = Mutex()
@@ -224,7 +226,9 @@ class SpeechInteractionManager(
                     withContext(Dispatchers.IO) { speechService.canStartWithoutPrompt(context) }
                 ) {
                     // Not cancellable: once the microphone opens, its token must reach `finally`.
-                    earlyToken = withContext(NonCancellable + Dispatchers.IO) { EarlyCapture.start(context) }
+                    // Assigned inside: a cancel landing meanwhile still throws when withContext
+                    // returns, and would otherwise drop the token and leave the microphone open.
+                    withContext(NonCancellable + Dispatchers.IO) { earlyToken = EarlyCapture.start(context) }
                     if (earlyToken != 0L && session == generation) {
                         timing?.mark("capturing")
                         isPreparing = false
@@ -482,6 +486,7 @@ class SpeechInteractionManager(
             onSpeechResult(text, true)
         } else {
             onStateChange(context.getString(R.string.floating_didnt_hear_clearly))
+            onNothingHeard()
         }
 
         // 如果不是静默超时触发的，重置文本（静默超时可能意味着这一句结束，准备下一句，或者直接发送）
