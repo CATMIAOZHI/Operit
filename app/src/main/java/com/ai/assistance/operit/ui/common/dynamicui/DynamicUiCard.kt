@@ -23,6 +23,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
@@ -51,6 +52,7 @@ fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockInde
 @Composable
 private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boolean, owner: DynamicUiOwner?, blockIndex: Int, ink: Color) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val submit by rememberUpdatedState(LocalDynamicUiSubmit.current)
     val currentOwner by rememberUpdatedState(owner)
     val storageSource = "$blockIndex:$source"
@@ -477,7 +479,7 @@ private fun DynamicUiCardContent(source: String, closed: Boolean, streaming: Boo
                             put("data", DynamicUiProtocol.toJson(event.context))
                         }
                         val accepted = identity != null && submit?.invoke(identity,
-                            context.getString(R.string.dynamic_ui_request) + "\n" + request.toString()) == true
+                            resources.getString(R.string.dynamic_ui_request) + "\n" + request.toString()) == true
                         if (accepted) {
                             saved[surface.id] = submittedState
                             results[surface.id] = true
