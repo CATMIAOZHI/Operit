@@ -591,7 +591,7 @@ fun ClassicChatInputSection(
                             enabled = classicInputEnabled && keyboardDown && !dictation.isActive,
                             area = holdArea,
                             onStart = { startDictation(true) },
-                            onTargetChange = dictation::setReleaseToSend,
+                            onTargetChange = dictation::setHoldTarget,
                             onRelease = dictation::releaseHold,
                         )
                         .then(
@@ -674,6 +674,7 @@ fun ClassicChatInputSection(
                     if (dictation.isHolding) {
                         HoldToTalkRow(
                             releaseToSend = dictation.releaseToSend,
+                            releaseToCancel = dictation.releaseToCancel,
                             volumeLevelFlow = dictation.volumeLevelFlow,
                             isRecording = dictation.isRecording,
                             isCapturing = dictation.isHearingEarly || recognitionState ==
@@ -1093,10 +1094,14 @@ fun ClassicChatInputSection(
     }
 }
 
-/** The panel's bottom row while a finger holds the composer: stop on the left, send on the right. */
+/**
+ * The panel's bottom row while a finger holds the composer: stop on the left, send on the right;
+ * sliding up turns both off and the label into the cancel warning.
+ */
 @Composable
 private fun HoldToTalkRow(
     releaseToSend: Boolean,
+    releaseToCancel: Boolean,
     volumeLevelFlow: kotlinx.coroutines.flow.StateFlow<Float>,
     isRecording: Boolean,
     isCapturing: Boolean,
@@ -1107,15 +1112,18 @@ private fun HoldToTalkRow(
     ) {
         HoldTarget(
             icon = androidx.compose.material.icons.Icons.Filled.Stop,
-            highlighted = !releaseToSend,
+            highlighted = !releaseToSend && !releaseToCancel,
         )
         Text(
             text = stringResource(
-                if (releaseToSend) R.string.voice_hold_release_to_send
-                else R.string.voice_hold_release_to_stop
+                when {
+                    releaseToCancel -> R.string.voice_hold_release_to_cancel
+                    releaseToSend -> R.string.voice_hold_release_to_send
+                    else -> R.string.voice_hold_release_to_stop
+                }
             ),
             style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            color = if (releaseToCancel) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
             maxLines = 1,
             modifier = Modifier.padding(start = 10.dp),
         )

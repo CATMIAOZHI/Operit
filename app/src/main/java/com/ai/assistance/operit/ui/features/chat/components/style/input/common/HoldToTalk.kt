@@ -22,6 +22,9 @@ import androidx.compose.ui.platform.LocalViewConfiguration
 import androidx.compose.ui.platform.ViewConfiguration
 import androidx.compose.ui.unit.dp
 
+/** What letting go of a hold does: keep the words in the draft, send them, or throw them away. */
+enum class HoldRelease { Draft, Send, Cancel }
+
 /**
  * Remembers where the draft field sits inside the composer, so a hold can start on the field and
  * still be followed after the dictation panel has taken the field's place.
@@ -48,17 +51,17 @@ internal fun rememberKeyboardDown(): Boolean {
 /**
  * Hold to talk, for the composer node that also reports [HoldToTalkArea.container] at the same
  * point of its modifier chain. A hold that starts on the field calls [onStart]; while the finger
- * stays down, dragging right past a short distance flips [onTargetChange] to send, and letting go
- * reports the last target to [onRelease]. Taps and scrolling are only watched, never taken, until
- * the hold fires.
+ * stays down, dragging right past a short distance targets send and sliding up targets cancel
+ * (cancel wins when both apply), each change reported to [onTargetChange]; letting go reports the
+ * last target to [onRelease]. Taps and scrolling are only watched, never taken, until the hold fires.
  */
 @Composable
 internal fun Modifier.holdToTalk(
     enabled: Boolean,
     area: HoldToTalkArea,
     onStart: () -> Boolean,
-    onTargetChange: (send: Boolean) -> Unit,
-    onRelease: (send: Boolean) -> Unit,
+    onTargetChange: (HoldRelease) -> Unit,
+    onRelease: (HoldRelease) -> Unit,
 ): Modifier {
     val latestEnabled by rememberUpdatedState(enabled)
     val latestStart by rememberUpdatedState(onStart)
@@ -92,7 +95,8 @@ internal fun Modifier.holdToTalk(
             haptic.performHapticFeedback(HapticFeedbackType.LongPress)
             val started = latestStart()
             val sendDistance = 48.dp.toPx()
-            var send = false
+            val cancelDistance = 64.dp.toPx()
+            var target = HoldRelease.Draft
             var released = false
             var cancelled = false
             try {
@@ -108,18 +112,25 @@ internal fun Modifier.holdToTalk(
                         cancelled = cancel
                         break
                     }
-                    val nowSend = change.position.x - down.position.x > sendDistance
-                    if (started && nowSend != send) {
-                        send = nowSend
+                    val now = when {
+                        down.position.y - change.position.y > cancelDistance -> HoldRelease.Cancel
+                        change.position.x - down.position.x > sendDistance -> HoldRelease.Send
+                        else -> HoldRelease.Draft
+                    }
+                    if (started && now != target) {
+                        target = now
                         haptic.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        latestTarget(send)
+                        latestTarget(target)
                     }
                 }
                 released = true
-                if (started) latestRelease(send && !cancelled)
+                // A system-cancelled gesture keeps the words but never sends them.
+                if (started) {
+                    latestRelease(if (cancelled && target == HoldRelease.Send) HoldRelease.Draft else target)
+                }
             } finally {
                 // A cancelled gesture only stops the recording; it never sends.
-                if (started && !released) latestRelease(false)
+                if (started && !released) latestRelease(HoldRelease.Draft)
             }
         }
     }

@@ -44,7 +44,9 @@ internal constructor(
     private var errorState by mutableStateOf<String?>(null)
     private var failedTextState by mutableStateOf<String?>(null)
     private var holdingState by mutableStateOf(false)
-    private var releaseToSendState by mutableStateOf(false)
+    private var holdTargetState by mutableStateOf(HoldRelease.Draft)
+    /** Started by holding the composer: nothing heard then just closes, there is no retry. */
+    private var heldSession = false
     private var sendAfterResult = false
 
     internal val manager: SpeechInteractionManager by lazy {
@@ -53,6 +55,8 @@ internal constructor(
             coroutineScope = scope,
             onSpeechResult = { text, final -> if (final) closeFromResult(text) },
             onStateChange = { setStatus(it) },
+            // The manager has already stopped; a held session just goes back to the composer.
+            onNothingHeard = { if (heldSession) close() },
         )
     }
 
@@ -72,7 +76,9 @@ internal constructor(
      * Whether letting go now sends instead of only filling the message box. Before anything is
      * being heard, letting go can only cancel, so the send side does not light up yet.
      */
-    val releaseToSend: Boolean get() = releaseToSendState && manager.isRecording
+    val releaseToSend: Boolean get() = holdTargetState == HoldRelease.Send && manager.isRecording
+    /** Letting go now throws the recording away. */
+    val releaseToCancel: Boolean get() = holdTargetState == HoldRelease.Cancel
 
     /** What has been recognised so far, partial results included. */
     val liveText: String get() = failedTextState ?: manager.userMessage
@@ -95,7 +101,8 @@ internal constructor(
         errorState = null
         failedTextState = null
         holdingState = holding
-        releaseToSendState = false
+        heldSession = holding
+        holdTargetState = HoldRelease.Draft
         sendAfterResult = false
         activeState = true
         manager.claimFocusWithoutKeyboard(view)
@@ -114,19 +121,21 @@ internal constructor(
         manager.stopListening(isCancel = false)
     }
 
-    fun setReleaseToSend(send: Boolean) {
-        releaseToSendState = send
+    fun setHoldTarget(target: HoldRelease) {
+        holdTargetState = target
     }
 
     /**
      * The holding finger let go. A session that already finished on its own has put its text in
-     * the message box, so sending then means sending that draft.
+     * the message box, so sending then means sending that draft; cancelling then leaves it there.
      */
-    fun releaseHold(send: Boolean) {
+    fun releaseHold(target: HoldRelease) {
         if (!holdingState) return
         holdingState = false
-        releaseToSendState = false
+        holdTargetState = HoldRelease.Draft
+        val send = target == HoldRelease.Send
         when {
+            target == HoldRelease.Cancel -> if (activeState) cancel()
             !activeState -> if (send) requestSend()
             isPreparing -> cancel()
             isRecording -> finishRecording(thenSend = send)
@@ -148,6 +157,11 @@ internal constructor(
         activeState = false
     }
 
+    private fun close() {
+        resetHold()
+        activeState = false
+    }
+
     /**
      * Stops the microphone but keeps the panel up, so the reason stays on screen instead of the
      * composer silently going back to normal.
@@ -160,6 +174,11 @@ internal constructor(
         activeState = true
     }
 
+    /** Nothing was recognised. A held session goes straight back to the empty composer. */
+    fun nothingHeard(message: String) {
+        if (heldSession) cancel() else fail(message)
+    }
+
     internal fun closeFromResult(text: String) {
         val send = sendAfterResult
         sendAfterResult = false
@@ -170,7 +189,7 @@ internal constructor(
 
     private fun resetHold() {
         holdingState = false
-        releaseToSendState = false
+        holdTargetState = HoldRelease.Draft
         sendAfterResult = false
     }
 
@@ -229,7 +248,7 @@ fun rememberDraftVoiceController(
                             (controller.isRecording &&
                                 !controller.manager.speechService.supportsContinuousDictation))
                 ) {
-                    controller.fail(didNotHearText)
+                    controller.nothingHeard(didNotHearText)
                     return@collect
                 }
                 // Finalises into the draft-only callback, never a chat send action.
