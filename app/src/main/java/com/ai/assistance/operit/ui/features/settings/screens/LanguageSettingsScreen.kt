@@ -62,7 +62,15 @@ fun LanguageSettingsScreen(
 ) {
     val context = LocalContext.current
     var currentLanguage by remember { mutableStateOf(LocaleUtils.getCurrentLanguage(context)) }
-    val supportedLanguages = remember { LocaleUtils.getSupportedLanguages() }
+    val supportedLanguages = remember {
+        // Limit the settings choices to maintained translations without removing legacy support.
+        val settingsLanguages = setOf(
+            LocaleUtils.LanguageCodes.AUTO,
+            LocaleUtils.LanguageCodes.CHINESE,
+            LocaleUtils.LanguageCodes.ENGLISH,
+        )
+        LocaleUtils.getSupportedLanguages().filter { it.code in settingsLanguages }
+    }
     var isChangingLanguage by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
 
