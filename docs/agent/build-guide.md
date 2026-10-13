@@ -109,15 +109,13 @@ sdk.dir=C\:\\AndroidSdk
 
 ```powershell
 rg -n 'CMAKE_MAKE_PROGRAM|cmake[\\/]3\.31\.6' `
-  app/.cxx dragonbones/.cxx fbx/.cxx mmd/.cxx quickjs/.cxx `
-  app/build/intermediates/cxx dragonbones/build/intermediates/cxx `
-  fbx/build/intermediates/cxx mmd/build/intermediates/cxx quickjs/build/intermediates/cxx
+  app/.cxx quickjs/.cxx `
+  app/build/intermediates/cxx quickjs/build/intermediates/cxx
 ```
 
 从仓库原始长路径执行以下验证：
 
 ```powershell
-.\gradlew.bat :mmd:assembleDebug
 .\gradlew.bat :app:assembleDebug
 .\gradlew.bat :app:lintDebug
 ```
@@ -230,7 +228,7 @@ gh run watch <run-id> --exit-status --interval 60 >/dev/null 2>&1
 
 ## 原生依赖
 
-10 个原生第三方依赖已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`。CMake 配置时自动下载对应 GitHub archive，不需要手动获取。
+原生第三方依赖已固定到具体 commit SHA，锁定清单见 `cmake/NATIVE_DEPENDENCY_LOCK.md`。CMake 配置时自动下载对应 GitHub archive，不需要手动获取。
 
 升级依赖时：
 
