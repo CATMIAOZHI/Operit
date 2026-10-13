@@ -9009,7 +9009,9 @@
     <string name="chat_context_capacity">Current model capacity: %1$sK</string>
     <string name="chat_context_model_hint">Enter the API context capacity. Models in this configuration share it; conversation budgets are adjusted separately in chat.</string>
     <string name="chat_context_defaults">Defaults for new conversations</string>
-    <string name="chat_context_advanced">Summary format and media history</string>
+    <string name="chat_context_advanced">Summary format</string>
+    <string name="chat_context_auto_compact">Automatically compact context</string>
+    <string name="chat_context_auto_compact_hint">On by default. Summarizes earlier content near the budget. When off, long chats may exceed model capacity.</string>
     <string name="chat_context_saved">Saved. Applies to the next request.</string>
     <string name="chat_context_save_failed">Could not save context settings. Please retry.</string>
     <string name="chat_shortcuts">Chat shortcuts · Click to run; Send sends ordinary text</string>

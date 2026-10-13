@@ -8983,7 +8983,9 @@
     <string name="chat_context_capacity">当前模型上限：%1$sK</string>
     <string name="chat_context_model_hint">填写接口支持的上下文上限。同一配置中的模型共用此值；对话预算在聊天中单独调整。</string>
     <string name="chat_context_defaults">新对话默认设置</string>
-    <string name="chat_context_advanced">总结格式与历史媒体设置</string>
+    <string name="chat_context_advanced">总结格式设置</string>
+    <string name="chat_context_auto_compact">自动压缩上下文</string>
+    <string name="chat_context_auto_compact_hint">默认开启，接近预算时自动总结较早内容。关闭后，长对话可能超出模型容量。</string>
     <string name="chat_context_saved">已保存，下次请求生效</string>
     <string name="chat_context_save_failed">上下文设置保存失败，请重试</string>
     <string name="chat_shortcuts">聊天指令 · 点击执行，发送仍是普通消息</string>

@@ -4,6 +4,9 @@ enum class ChatShortcut(val command: String) {
     COMPACT("compact"), AUTO_COMPACT("autocompact"), CONTEXT("context"), MAX("max")
 }
 
+fun formatContextK(value: Float): String =
+    java.math.BigDecimal(value.toString()).stripTrailingZeros().toPlainString()
+
 /** Discovery only. Sending this text must never execute a shortcut. */
 fun chatShortcutSuggestions(text: String): List<ChatShortcut> {
     if (!text.startsWith("/") || text.any { it == '\n' || it == '\r' }) return emptyList()

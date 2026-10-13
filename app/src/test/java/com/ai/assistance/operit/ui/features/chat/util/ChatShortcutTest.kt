@@ -4,6 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class ChatShortcutTest {
+    @Test fun contextDisplayDropsOnlyRedundantDecimalZeros() {
+        assertEquals("400", formatContextK(400f))
+        assertEquals("300.5", formatContextK(300.5f))
+        assertEquals("0.25", formatContextK(0.25f))
+        assertEquals(300.5f, parseContextK("${formatContextK(300.5f)}K")!!, 0f)
+    }
     @Test fun onlyWholeSingleLineDraftGetsCommandCandidates() {
         assertEquals(listOf(ChatShortcut.COMPACT), chatShortcutSuggestions("/comp"))
         assertEquals(4, chatShortcutSuggestions("/").size)
