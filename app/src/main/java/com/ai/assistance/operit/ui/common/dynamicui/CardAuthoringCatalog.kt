@@ -13,8 +13,9 @@ internal object CardAuthoringCatalog {
         "Select", "ChoicePicker", "Slider", "DatePicker", "Segmented", "Tabs", "Carousel", "Expandable", "Stepper")
     val components = linkedMapOf(
         "Text" to "text:string variant?:string textAlign?:string lineClamp?:number tone?:string",
-        "Icon" to "name:string",
-        "Row" to "children:children gap?:string align?:string justify?:string wrap?:boolean",
+        "Icon" to "name:string tone?:string size?:number",
+        "Html" to "label:string html:string css?:string maxHeight?:number",
+        "Row" to "children:children gap?:string align?:string justify?:string wrap?:boolean weights?:array minItemWidth?:number",
         "Column" to "children:children gap?:string align?:string",
         "Panel" to "child:child padding?:string radius?:string background?:string border?:boolean maxWidth?:number",
         "Scroll" to "child:child maxHeight:number",
@@ -66,7 +67,7 @@ internal object CardAuthoringCatalog {
     val staticFields = setOf("variant", "min", "max", "steps", "columnCount", "columnSpans", "minItemWidth",
         "type", "align", "gap", "justify", "wrap", "padding", "radius", "background", "border", "maxWidth", "direction",
         "maxHeight", "minWidth", "minHeight", "aspectRatio", "textAlign", "lineClamp", "width", "height", "key", "maxItems",
-        "columnWidths", "minLines", "maxLines", "mask")
+        "columnWidths", "minLines", "maxLines", "mask", "weights", "size")
     val enums = mapOf(
         "Text.variant" to setOf("h1", "h2", "h3", "h4", "h5", "body", "caption"),
         "Button.variant" to setOf("primary", "default", "borderless"),
@@ -80,6 +81,7 @@ internal object CardAuthoringCatalog {
         "InfoRow.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Badge.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Text.tone" to setOf("neutral", "success", "info", "warning", "error"),
+        "Icon.tone" to setOf("neutral", "accent", "success", "info", "warning", "error"),
         "Text.textAlign" to setOf("start", "center", "end"),
         "Row.gap" to setOf("none", "xs", "sm", "md", "lg"),
         "Column.gap" to setOf("none", "xs", "sm", "md", "lg"),
@@ -88,11 +90,15 @@ internal object CardAuthoringCatalog {
         "Row.justify" to setOf("start", "center", "end", "between"),
         "Panel.padding" to setOf("none", "xs", "sm", "md", "lg"),
         "Panel.radius" to setOf("none", "sm", "md", "lg"),
-        "Panel.background" to setOf("transparent", "surface", "inset", "accentMuted"),
+        "Panel.background" to setOf("transparent", "surface", "inset", "accentMuted",
+            "light", "dark", "blue", "green", "orange", "red", "info", "success", "warning", "error"),
     )
     val ranges = mapOf(
+        "Html.maxHeight" to 120..900,
+        "Icon.size" to 12..96,
         "Text.lineClamp" to 1..8, "Panel.maxWidth" to 120..960, "Scroll.maxHeight" to 80..480,
-        "Grid.minItemWidth" to 80..320, "Vector.width" to 1..1000, "Vector.height" to 1..1000,
+        "Grid.minItemWidth" to 80..320, "Row.minItemWidth" to 80..320,
+        "Vector.width" to 1..1000, "Vector.height" to 1..1000,
         "Repeat.maxItems" to 1..32,
         "Table.maxHeight" to 80..480, "TextArea.minLines" to 1..12, "TextArea.maxLines" to 1..12,
         "Frame.minWidth" to 0..960, "Frame.maxWidth" to 1..960,
@@ -100,13 +106,16 @@ internal object CardAuthoringCatalog {
     )
     // Flow.steps is content data (may come from state or a Repeat item); Slider.steps is a literal count.
     fun isStatic(component: String, field: String) =
-        field in staticFields && !(component == "Flow" && field == "steps") || component == "Table" && field == "columns"
+        field in staticFields && !(component == "Flow" && field == "steps") || component == "Table" && field == "columns" ||
+            component == "Html" && field in setOf("html", "css")
 
     fun guide(): String = buildString {
         appendLine("Use named arguments for every component and function. Inline child components or reference named declarations.")
+        appendLine("Icon(name=\"lucide:orbit\",tone=\"accent\",size=32) uses Lucide 0.456.0. Use list_icons(query=\"English keyword\") to discover names; do not guess or load the entire catalog. Legacy names retain their artwork; new bare names also work when unambiguous. Icon tone supports neutral/accent/success/info/warning/error and bindings, size is literal12..96dp (default24), constrained by its parent. Inline :icon[lucide:orbit]{tone=info size=lg} supports sm/md/lg relative to the text; badges keep text-sized icons.")
         appendLine("Object entries use key:value; component/function arguments use key=value. A single unambiguous punctuation mistake may be repaired locally and reported as repaired=true; values, functions and validation limits are never rewritten.")
         appendLine("Local calculations allow at most 128 calls across the complete card document. There is no separate 6-level function nesting limit; overall source and JSON structure limits still apply.")
         appendLine("List lays out its static children vertically at natural height and scrolls with the chat. For a separately scrolling area, wrap it in Scroll(child=..., maxHeight=80..480).")
+        appendLine("Layout values express intent; actual available width and font size take priority. Row wraps by default; wrap=false prefers a single line but stacks when it cannot fit. Optional literal weights has one integer0..12 per child, at least one positive: 0 keeps natural width, positive values share remaining width. Example weights=[0,1] for a logo and title/description Column, [1,1] for equal regions. Weighted rows fill available width and stack when a flexible region gets less than minItemWidth (80..320dp, default120, scaled with font size), even with wrap=false. Panel inside a Row hugs its content. A row's Vector uses viewport width as preferred dp width; standalone Vector expands. Wrap graphics in Frame for explicit bounds. Prefer auto Grid for feature tiles, not fixed heights for text.")
         appendLine("Repeat(items=arrayBindingOrCalculation,key=\"id\",child=template,maxItems=20) renders object items with stable unique nonempty string keys. Maximum 32 rows per list and 512 rendered nodes across all nested lists. Nested Repeat uses items=item(field=\"children\"); item/item_state refer to the nearest row. Use item_state(field=\"done\",default=false) for independent scalar row state. Defaults must agree; state follows Repeat ID and all ancestor keys across filters, reorder and restore, including hidden rows within the 32K quota. Absolute bindings remain shared. Empty arrays render no rows.")
         appendLine("Pressable(label,child,action,selected?,disabled?) makes display-only content clickable; nested interactive descendants are rejected. Completed nodes should remain clickable. Input onChange supports only local_action. event_value(field=\"value\"|\"previous\"|\"index\") is restricted to its context; index is -1 when not indexed. Initialization, restore and programmatic updates do not fire changes.")
         appendLine("Vector shape arrays, types and point structures are literal; coordinates, tone, stroke, filled and text can bind to state. arrow(x1,y1,x2,y2) draws a terminal arrowhead. Runtime invalid geometry displays a recoverable local error. row_set uses {op:\"row_set\",repeat:\"listId\",key:\"itemKey\",field:\"done\",value:true,parents:[\"outerKey\"]}; parents is optional for top-level lists and lists every ancestor key from outermost inward. Only declared fields of currently present rows can change.")

@@ -1617,6 +1617,10 @@ class JsEngine(private val context: Context) {
             com.ai.assistance.operit.ui.common.dynamicui.CardAuthoringCatalog.guide()
 
         @JavascriptInterface
+        fun dynamicUiIcons(query: String, limit: Int, offset: Int): String =
+            com.ai.assistance.operit.ui.common.dynamicui.CardIcons.search(query, limit, offset)
+
+        @JavascriptInterface
         fun prepareDynamicUi(callId: String, source: String, live: Boolean): String {
             val session = resolveExecutionSession(callId)?.takeIf {
                 it.packageName == "dynamic_ui" && boundToolPkgContainerName == null

@@ -338,7 +338,7 @@ internal object CardExpress {
             if (node.token.text == "Flow" && !hasItem(node)) {
                 val steps = node.fields.getValue("steps")
                 try { cardFlowSteps(DynamicUiProtocol.toValue(initial(steps))) }
-                catch (e: Exception) { fail(steps.token, "Invalid Flow steps: ${e.message ?: "use 1..8 {title,caption?,icon?,tone?} objects"}. Icons: ${cardFlowIcons.keys.joinToString(",")}.") }
+                catch (e: Exception) { fail(steps.token, "Invalid Flow steps: ${e.message ?: "use 1..8 {title,caption?,icon?,tone?} objects"}. Use list_icons to find supported icon names.") }
             }
             if (node.token.text == "Table" && !hasItem(node)) {
                 val rows = node.fields.getValue("rows")

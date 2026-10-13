@@ -49,4 +49,19 @@ class InlineDirectivesTest {
             InlineDirectives.toPlainText("构建 :badge[通过]{tone=success}，耗时 :icon[time] 2 分钟"),
         )
     }
+
+    @Test
+    fun lucideNamesAndSizesDoNotRelaxBadgeTextLimits() {
+        val icon = "lucide:arrow-down-left"
+        val source = ":icon[$icon]{tone=info size=lg}"
+        assertEquals(listOf(Icon(icon, "info", "lg")), InlineDirectives.parse(source) { it == icon })
+        assertEquals("", InlineDirectives.toPlainText(source))
+        assertEquals(listOf(Icon(icon, null)), InlineDirectives.parse(":icon[$icon]{size=huge}") { it == icon })
+        val longBadge = ":badge[${"长".repeat(17)}]{tone=info}"
+        assertEquals(listOf(Text(longBadge)), InlineDirectives.parse(longBadge) { true })
+        assertEquals(longBadge, InlineDirectives.toPlainText(longBadge))
+        val longName = "lucide:" + "a".repeat(57)
+        assertEquals(listOf(Badge("通过", "success", longName)),
+            InlineDirectives.parse(":badge[通过]{tone=success icon=$longName}") { it == longName })
+    }
 }

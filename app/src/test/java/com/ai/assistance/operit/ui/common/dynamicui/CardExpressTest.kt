@@ -19,7 +19,7 @@ class CardExpressTest {
     }
 
     @Test fun examplesPassNativeProtocol() {
-        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector", "repeat", "curves", "interactive_flow", "p2_controls", "p2_lists", "flow_steps", "flowchart", "data_story", "mixed_branch")) {
+        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats", "progress", "responsive", "data", "vector", "repeat", "curves", "interactive_flow", "p2_controls", "p2_lists", "flow_steps", "flowchart", "data_story", "mixed_branch", "profile", "backgrounds", "surfaces")) {
             val source = javaClass.getResource("/dynamicui/$name.express")!!.readText()
             val report = CardExpress.report(source)
             assertEquals("$name: $report", JsonPrimitive(true), report["valid"])
@@ -55,7 +55,7 @@ class CardExpressTest {
             "root = Display(text=\"42\",align=\"center\")",
             "root = Flow(label=\"x\",steps=[])",
             "root = Flow(label=\"x\",steps=[{title:\"\"}])",
-            "root = Flow(label=\"x\",steps=[{title:\"a\",icon:\"rocket\"}])",
+            "root = Flow(label=\"x\",steps=[{title:\"a\",icon:\"not-an-icon\"}])",
             "root = Flow(label=\"x\",steps=[{title:\"a\",onClick:\"b\"}])",
             "root = Flow(label=\"x\",steps=[{title:\"a\"}],direction=\"diagonal\")",
             "root = Flow(label=\"x\",steps=[" + List(9) { "{title:\"s$it\"}" }.joinToString(",") + "])",
@@ -71,7 +71,7 @@ class CardExpressTest {
     @Test fun flowStepsMayComeFromStateButStayValidated() {
         val ok = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\"},{title:\"B\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
         assertEquals(ok.toString(), JsonPrimitive(true), ok["valid"])
-        val bad = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\",icon:\"rocket\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
+        val bad = CardExpress.report("${'$'}/plan = {steps:[{title:\"A\",icon:\"not-an-icon\"}]}\nroot = Flow(label=\"x\",steps=${'$'}/plan/steps)")
         assertEquals(bad.toString(), JsonPrimitive(false), bad["valid"])
     }
 

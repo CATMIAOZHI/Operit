@@ -24,6 +24,7 @@
     <string name="dynamic_ui_regenerate">Ask the AI to regenerate the complete card in a single code block.</string>
     <string name="dynamic_ui_partial_error">Some content is invalid. Actions are disabled until the AI fixes this card.</string>
     <string name="dynamic_ui_icon_missing">Some icons are unavailable</string>
+    <string name="dynamic_ui_html_click_to_load">This is an HTML card. Tap to load.</string>
     <string name="dynamic_ui_empty_value">Not filled in</string>
     <string name="dynamic_ui_select">Choose an option</string>
     <string name="dynamic_ui_select_date">Choose a date</string>

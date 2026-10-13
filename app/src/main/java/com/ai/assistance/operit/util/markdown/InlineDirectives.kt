@@ -13,12 +13,13 @@ object InlineDirectives {
     sealed interface Segment
     data class Text(val text: String) : Segment
     data class Badge(val label: String, val tone: String?, val icon: String?) : Segment
-    data class Icon(val name: String, val tone: String?) : Segment
+    data class Icon(val name: String, val tone: String?, val size: String? = null) : Segment
 
     /** Badges never wrap, so the label stays short enough to fit a narrow bubble or table cell. */
     const val MAX_LABEL = 16
+    const val MAX_ICON_NAME = 64
 
-    private val pattern = Regex(""":(badge|icon)\[([^\[\]\n]{1,$MAX_LABEL})\](?:\{([^{}\n]{0,80})\})?""")
+    private val pattern = Regex(""":(badge|icon)\[([^\[\]\n]{1,$MAX_ICON_NAME})\](?:\{([^{}\n]{0,160})\})?""")
 
     fun mayContain(text: String): Boolean = text.contains(":badge[") || text.contains(":icon[")
 
@@ -43,7 +44,7 @@ object InlineDirectives {
         return pattern.replace(text) { match ->
             val body = match.groupValues[2].trim()
             when {
-                body.isEmpty() -> match.value
+                body.isEmpty() || (match.groupValues[1] == "badge" && match.groupValues[2].length > MAX_LABEL) -> match.value
                 match.groupValues[1] == "badge" -> body
                 else -> ""
             }
@@ -52,13 +53,13 @@ object InlineDirectives {
 
     private fun toSegment(match: MatchResult, isKnownIcon: (String) -> Boolean): Segment? {
         val body = match.groupValues[2].trim()
-        if (body.isEmpty()) return null
+        if (body.isEmpty() || (match.groupValues[1] == "badge" && match.groupValues[2].length > MAX_LABEL)) return null
         val attrs = parseAttributes(match.groupValues[3])
         val tone = attrs["tone"]?.takeIf { it in TONES }
         return if (match.groupValues[1] == "badge") {
             Badge(body, tone, attrs["icon"]?.takeIf(isKnownIcon))
         } else {
-            if (isKnownIcon(body)) Icon(body, tone) else Text("")
+            if (isKnownIcon(body)) Icon(body, tone, attrs["size"]?.takeIf { it in setOf("sm", "md", "lg") }) else Text("")
         }
     }
 

@@ -10,6 +10,25 @@
   "enabledByDefault": true,
   "tools": [
     {
+      "name": "prepare_html",
+      "description": {"zh": "仅当用户明确要求高级视觉效果或 HTML/CSS 卡片时使用，不得为了美化主动调用。普通内容用原生 UI。创建渐变、纹理、动画等离线 HTML/CSS 绘制块；用户点击后才加载。禁止作者 JS、联网或工具调用。返回短引用。", "en": "Only use when the user explicitly requests advanced visual effects or an HTML/CSS card; never invoke proactively for decoration. Prefer native UI for normal content. Offline HTML/CSS visual, loaded only after the user taps. No author JS, network or tool access. Returns a reference."},
+      "parameters": [
+        {"name":"label","type":"string","required":true,"description":"Short descriptive title."},
+        {"name":"html","type":"string","required":true,"description":"HTML body fragment, up to 8192 characters; no scripts, frames, links or forms. Radio/checkbox, labels, details and inline SVG are supported."},
+        {"name":"css","type":"string","required":false,"description":"Inline CSS, up to 8192 characters. Gradients, keyframes, filters and responsive layouts are supported; no external resources."},
+        {"name":"max_height","type":"number","required":false,"description":"Height limit in dp, 120..900, default720; fits content until this limit, then scrolls."}
+      ]
+    },
+    {
+      "name": "list_icons",
+      "description": {"zh": "按英文名称或关键词搜索 Lucide 图标，返回可用名称；需要图标时按需查找，无需读取全库。", "en": "Search Lucide icons by English name or keyword; returns supported names. Look up only what you need."},
+      "parameters": [
+        {"name": "query", "type": "string", "required": false, "description": {"zh": "英文关键词，如 orbit、brain、music", "en": "English keyword, e.g. orbit, brain, music"}},
+        {"name": "limit", "type": "number", "required": false, "description": {"zh": "每页 1～100 个，默认 30", "en": "Results per page, 1..100, default 30"}},
+        {"name": "offset", "type": "number", "required": false, "description": {"zh": "分页起点，使用返回的 next_offset，默认 0", "en": "Pagination offset; use returned next_offset, default 0"}}
+      ]
+    },
+    {
       "name": "read_guide",
       "description": {"zh": "生成前必读：何时用文字/纯展示/交互、Express 语法、组件参数和排版；也包含段落内徽章和小图标的写法。", "en": "Read before generation: when to use prose, display-only or interactive UI, Express syntax, components and layout; also covers inline badge and icon syntax."},
       "parameters": []
@@ -43,7 +62,7 @@
     {
       "name": "read_example",
       "description": {"zh": "直接生成已校验的演示界面块，返回短引用。自定义需求使用 prepare_card。", "en": "Prepare a tested demo block and return its reference. Use prepare_card for custom content."},
-      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "纯展示：flow_steps、flowchart、data_story、stats、charts、info、vector、curves；混合：mixed_branch、responsive；交互：interactive_flow、calculator、cost_calculator、form、progress、data、repeat、p2_controls、p2_lists", "en": "Display-only: flow_steps, flowchart, data_story, stats, charts, info, vector, curves; mixed: mixed_branch, responsive; interactive: interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls, p2_lists"}}]
+      "parameters": [{"name": "name", "type": "string", "required": true, "description": {"zh": "背景示例：backgrounds（原生四色面板）、surfaces（HTML/CSS 四种动态背景切换）；纯展示：flow_steps、flowchart、data_story、stats、charts、info、vector、curves；混合：mixed_branch、responsive；交互：profile（图标标题、自适应功能网格与本地详情）、interactive_flow、calculator、cost_calculator、form、progress、data、repeat、p2_controls、p2_lists", "en": "Backgrounds: backgrounds (native colored panels), surfaces (four switchable HTML/CSS surfaces); display-only: flow_steps, flowchart, data_story, stats, charts, info, vector, curves; mixed: mixed_branch, responsive; interactive: profile (logo/header, adaptive feature grid, local details), interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls, p2_lists"}}]
     }
   ]
 }
@@ -60,6 +79,27 @@ WHAT THIS IS
 Native rich content embedded INSIDE your normal answer, not a separate card app. Each reference
 renders as a borderless block exactly where you place it between Markdown paragraphs, using the
 chat theme. One answer may hold several blocks: text -> flow -> text -> chart/table -> text.
+
+HTML/CSS VISUALS
+STRICT OPT-IN: only use Html, prepare_html or the surfaces example when the user explicitly requests
+advanced visual effects or HTML/CSS. A generic request for a card, diagram, attractive layout or icons
+does NOT authorize HTML. Use native components by default. Never substitute HTML for a native error.
+The user sees "This is an HTML card. Tap to load." first; no WebView is created before that tap.
+Offscreen/background visuals are destroyed; they reload on return and local CSS state resets.
+For custom gradients, patterns, glass-like layers or CSS animations, use prepare_html(label,html,css).
+It returns the same a2ui-ref placement as a native card. Supply a body fragment plus CSS; no document
+wrapper, JS, scripts, frames, forms, links, remote images/fonts or network requests. Inline SVG
+basic shapes, details/summary, and radio/checkbox+label CSS selectors support local visual interaction.
+Use native components for tool actions, AI requests, data-entry forms or persistent state.
+Keep widths responsive (100%, grid minmax, media queries), avoid viewport heights/fixed page widths.
+Height fits content up to max_height (120..900dp, default720), then scrolls. At most four per card.
+Styles are isolated to this block: arbitrary CSS colors are allowed here. Use --operit-text,
+--operit-surface and --operit-accent for theme defaults, or explicitly pair text with custom backgrounds.
+Respect prefers-reduced-motion. Blur/backdrop-filter support depends on the installed Android WebView.
+CSS toggle state lasts while the visual stays visible; it is not saved in the native card state.
+read_example(name="surfaces") shows four locally switchable complex backgrounds without Javascript.
+Advanced composition can use Html(label="...",html="...",css="...",maxHeight=720) inside an Express tree.
+Each html/css string <=8192 characters, max256 HTML elements; source is validated before display.
 
 CHOOSE THE LIGHTEST FORM (most blocks should be display-only)
 1. Prose/Markdown when words are clear. Lists, code, short tables and math stay in Markdown.
@@ -82,6 +122,8 @@ passed/failed, task done/running, supported or not, risk level. Label <=16 chars
 tone and icon are optional.
 Icon :icon[time] is a small marker before the text it labels: ":icon[time] 2 min",
 ":icon[folder] /sdcard/Download", ":icon[calendar] Oct 12". Add color with :icon[check]{tone=success}.
+Lucide works here too: :icon[lucide:orbit]{tone=accent size=lg}. Optional size=sm|md|lg scales to
+0.85/1/1.25 times the surrounding text (default md); baseline stays centered. Icon names <=64 chars.
 An icon never carries meaning alone; always follow it with text.
 Example: "Build :badge[passed]{tone=success icon=check}, took :icon[time] **2 min**."
 Tones and icon names as in FLOW (unknown icons are dropped). Only badges and icons go inline; buttons,
@@ -189,7 +231,11 @@ Cross-card sharing is not implicit: use multiple Panels in one card for shared c
 FLOW (static steps and linear flowcharts)
 Flow(label="Accessible summary",steps=[{title:"...",caption:"...",icon:"check",tone:"success"}],
 direction="auto"|"horizontal"|"vertical"). 1..8 steps; title required (<=80 chars), caption <=160.
-Icons: check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,
+1535 Lucide v0.456.0 icons are built in. Search list_icons(query="orbit") or another English
+keyword, then use the returned name, e.g. lucide:orbit, lucide:brain, lucide:music.
+Prefer the lucide: prefix for an exact library match. Bare new names also work; legacy names retain
+their original artwork. Do not list the whole catalog in the answer or request all pages unnecessarily.
+Legacy icons: check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,
 fire,food,code,upload,download,lock,chat,build,phone (alias smartphone),globe (alias language),
 browser,computer,terminal,server,storage,cloud,extension,shield,mic,audio,image,video,document,link,
 chart,science,lightbulb,robot,wifi,delete. All are native outlined vector icons; use phone for a
@@ -211,13 +257,31 @@ Display(text=...,label=...,align="start") gives statistics a large value on an i
 Default alignment is start; calculators use align="end". Badge and Text tone=
 neutral, success, info, warning, error. Use colors for meaning, never as decoration.
 Stack forms vertically. Table aligns tabular data; Grid suits short metrics or keypads, not prose.
-Row is for short content. Avoid decorative nesting and duplicating titles in the surrounding text.
-Row(wrap=true) wraps short items at the available width. gap=none|xs|sm|md|lg means 0/4/8/16/24 dp.
+Plan the whole component tree first: header (icon + title/description), body, related feature grid,
+then optional detail/actions. Compose these freely; do not design a collection of fixed-pixel boxes.
+Your layout values express intent; the client decides final sizes and reflow from available width,
+font scale and content. Row wraps items by default instead of squeezing later text; wrap=false
+prefers one line but the client still stacks the items if they do not fit.
+For a logo beside growing text, use Row(weights=[0,1],children=[logo,titleColumn]).
+weights is one literal integer0..12 per child: 0 uses natural width, positive values share the remaining
+width. [1,1] gives equal regions; [1,2] gives the second twice the space. Weighted rows fill the width
+and stack in source order when any flexible region would get less than minItemWidth (default120dp,
+optional80..320, adjusted for font scale). This readability fallback also applies with wrap=false.
+Panel directly inside a Row hugs its content. Use Grid for repeated feature tiles; omit columnCount
+to adapt to screen width and large text. Let text determine height; never crop prose with Frame.
+read_example(name="profile") demonstrates a composed header, responsive feature tiles and local
+selection/details. It uses the same basic components, not a special product-card renderer.
+Avoid decorative nesting and duplicating titles in the surrounding text.
+gap=none|xs|sm|md|lg means 0/4/8/16/24 dp.
 Row align=start|center|end is vertical; justify=start|center|end|between is horizontal.
-Rows keep their content width by default; explicit justify uses the available full width.
+Unweighted rows keep their content width by default; explicit justify uses the available full width.
 Column align=start|center|end is horizontal. Both default to an 8 dp gap.
 Panel(child=...,padding="md",radius="md",background="inset",border=false,maxWidth=600)
-groups content with bounded styles. Background: transparent|surface|inset|accentMuted; radius:none|sm|md|lg.
+groups content with bounded styles. Background: transparent|surface|inset|accentMuted|light|dark|blue|green|orange|red;
+info|success|warning|error are aliases for blue|green|orange|red. Colored fills follow the local light/dark
+palette; light/dark explicitly choose a light-gray/deep-blue-gray panel. Text and icons inside adapt to that
+panel (including nested panels), without changing the rest of the answer. radius:none|sm|md|lg.
+Use read_example(name="backgrounds") for a four-color panel demo. No HEX/RGB or gradient backgrounds.
 Text textAlign=start|center|end, tone=success|...; optional lineClamp=1..8 truncates nonessential text only.
 Scroll(child=...,maxHeight=240) creates a bounded vertical region (80..480 dp). Avoid nested scrolling.
 Blocks are frameless; see FRAMING. Keep commentary in Markdown outside the block.
@@ -228,7 +292,10 @@ and font scale. Prefer auto columns for metrics; explicit columns for keypads.
 Items pack in order and incomplete rows keep empty cells. A zero key can span 2 columns.
 Slider steps counts INTERMEDIATE stops: min=0,max=100,steps=99 gives integers; default continuous.
 Retain decimal precision unless asked to round. Long Display values shrink to fit, then wrap; never truncated.
-Text variants: h1/h2/h3/body/caption. Icon(name="...") uses the outlined names listed in FLOW.
+Text variants: h1/h2/h3/body/caption.
+Icon(name="lucide:orbit",tone="accent",size=32) supports semantic tone=neutral|accent|success|info|warning|error
+(can bind to local state); no tone follows surrounding content color. Literal size=12..96 dp, default24.
+Size is a preference constrained by the available layout. Colors follow the theme and bubble contrast.
 Bind Expandable.expanded and Tabs/Carousel.value to retain state.
 Navigation value is a named child's ID; use named declarations for navigation children.
 DatePicker uses yyyy-MM-dd and expands inline; minDate/maxDate bound 1900..2100.
@@ -286,6 +353,9 @@ bounds one region; aspectRatio is width/height (0.25..4). Available screen const
 Use ratios for graphics/media, not growing prose or forms. Width0..960dp, height0..480dp;
 defaults are min0,maxWidth960,maxHeight480. Content is clipped to the requested region.
 Vector(label="Accessible description",width=320,height=180,shapes=[...]) draws data-bound geometry.
+width/height define the drawing coordinate viewport, not fixed screen pixels. In a Row (also through
+a Panel), viewport width is the preferred display width in dp, bounded by available space; standalone
+diagrams expand to available width. Frame supplies explicit bounds when needed.
 Shape types and point topology stay literal; coordinates, text and style may use bindings/functions.
 Viewport integer dimensions1..1000; coordinates stay inside it. Max64 shapes,128 points/shape.
 Shapes: {type:"line",x1:0,y1:0,x2:100,y2:100}, {type:"arrow",x1:0,y1:0,x2:100,y2:100},
@@ -334,6 +404,24 @@ function prepare(source, live = false) {
     return {success:true, ...JSON.parse(String(native().prepareDynamicUi(callId, source, live === true)))};
 }
 exports.read_guide = async () => complete({success:true,message:guide + native().dynamicUiGuide()});
+exports.prepare_html = async ({label, html, css = "", max_height = 720} = {}) => {
+    if (typeof label !== "string" || !label.trim() || label.length > 200 ||
+        typeof html !== "string" || !html.trim() || html.length > 8192 ||
+        typeof css !== "string" || css.length > 8192 ||
+        !Number.isInteger(max_height) || max_height < 120 || max_height > 900) {
+        complete({success:true,valid:false,message:"Provide label (1..200 chars), html/css (up to 8192 each), and max_height (120..900)."});
+        return;
+    }
+    complete(prepare(`root=Html(label=${JSON.stringify(label)},html=${JSON.stringify(html)},css=${JSON.stringify(css)},maxHeight=${max_height})`));
+};
+exports.list_icons = async ({query = "", limit = 30, offset = 0} = {}) => {
+    if (typeof query !== "string" || query.length > 80 || !Number.isInteger(limit) ||
+        limit < 1 || limit > 100 || !Number.isInteger(offset) || offset < 0 || offset > 10000) {
+        complete({success:true,valid:false,message:"Use a query up to 80 characters, limit 1..100, and offset 0..10000."});
+        return;
+    }
+    complete({success:true,...JSON.parse(String(native().dynamicUiIcons(query, limit, offset)))});
+};
 exports.prepare_card = async ({source, live = false}) => {
     if (typeof source !== "string" || source.length > 65536) {
         complete({success:true,valid:false,code:"invalid_source",message:"Pass Express source (maximum 65536 characters)."});
@@ -364,6 +452,56 @@ exports.update_card = async ({reference, changes, remove = []}) => {
 
 const q = JSON.stringify;
 function example(name) {
+    if (name === "surfaces") {
+        const html = `<div class="demo">
+<input class="choice" type="radio" name="scene" id="aurora" checked><input class="choice" type="radio" name="scene" id="nebula"><input class="choice" type="radio" name="scene" id="cyber"><input class="choice" type="radio" name="scene" id="soft">
+<nav class="tabs"><label for="aurora">极光</label><label for="nebula">星云</label><label for="cyber">赛博</label><label for="soft">柔光</label></nav>
+<section class="art"><div class="glow"></div><div class="texture"></div><div class="content">
+<header><span class="dot"></span> OPERIT DESIGN LAB <span class="star">✦</span></header>
+<p class="eyebrow">DYNAMIC SURFACES / 2026</p><h1>超越纯色的<br><span>动态背景艺术。</span></h1>
+<p class="intro">光影、渐变与纹理交织，让每一张卡片拥有自己的空间感。</p>
+<section class="glass"><div class="live">◇ LIVE PREVIEW <small>● ACTIVE</small></div><div class="stats"><div><strong>04</strong><span>背景风格</span></div><div><strong>CSS</strong><span>实时绘制</span></div><div><strong>0</strong><span>外部图片</span></div></div><div class="track"><i></i></div></section>
+</div></section></div>`;
+        const css = `.demo{width:100%}.choice{position:absolute;width:1px;height:1px;opacity:0}.tabs{display:flex;gap:6px;margin:0 0 14px}.tabs label{flex:1;text-align:center;padding:9px 2px;border-radius:24px;color:var(--operit-text);cursor:pointer}
+#aurora:checked~.tabs [for=aurora],#nebula:checked~.tabs [for=nebula],#cyber:checked~.tabs [for=cyber],#soft:checked~.tabs [for=soft]{background:var(--operit-surface);box-shadow:inset 0 0 0 1px currentColor}
+.choice:focus-visible~.tabs{outline:2px solid var(--operit-accent)}
+.art{--fg:#f4f7ff;--muted:#d8e3f6;--accent:#aff8ef;--glass:#ffffff12;position:relative;overflow:hidden;isolation:isolate;border-radius:26px;background:radial-gradient(ellipse at 4% 0%,#2a838e,transparent 68%),radial-gradient(ellipse at 100% 15%,#4163d5,transparent 70%),linear-gradient(150deg,#12273e,#21173d 75%,#643f91);color:var(--fg)}
+.content{position:relative;padding:28px;z-index:2}.glow{position:absolute;inset:-35%;background:conic-gradient(from 30deg,transparent,#44bccc45,transparent,#9e75ff55,transparent);filter:blur(28px);animation:drift 16s ease-in-out infinite alternate;pointer-events:none}.texture{position:absolute;inset:0;pointer-events:none}header{display:flex;align-items:center;gap:9px;font-size:11px;font-weight:700;letter-spacing:2px}.dot{width:7px;height:7px;border-radius:50%;background:var(--accent);box-shadow:0 0 18px var(--accent)}.star{margin-left:auto;font-size:28px;color:var(--accent)}
+.eyebrow{margin:42px 0 16px;color:var(--muted);font-size:11px;letter-spacing:3px}h1{font-size:clamp(26px,7vw,40px);line-height:1.3;margin:0;font-weight:750}h1 span{color:var(--accent)}.intro{font-size:15px;color:var(--muted);margin:24px 0 30px;line-height:1.8}.glass{padding:20px;border-radius:22px;background:var(--glass);border:1px solid #ffffff40;backdrop-filter:blur(18px);box-shadow:0 10px 30px #00000010}.live{display:flex;justify-content:space-between;gap:8px;font-size:10px;letter-spacing:1.5px;color:var(--muted)}small{font-size:9px}.stats{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:22px 0}.stats strong{display:block;font-size:clamp(23px,6vw,33px);font-weight:650}.stats span{font-size:11px;color:var(--muted)}.track{height:4px;background:#ffffff24;border-radius:8px;overflow:hidden}.track i{display:block;width:78%;height:100%;background:linear-gradient(90deg,var(--accent),#af90ed);border-radius:8px}
+#nebula:checked~.art{--accent:#f2c6f7;background:radial-gradient(ellipse at 15% 30%,#5d316f,transparent 70%),radial-gradient(ellipse at 100% 80%,#383fa0,transparent 65%),#111329}
+#nebula:checked~.art .texture{background-image:radial-gradient(#ffffff70 .7px,transparent 1px);background-size:23px 29px}
+#cyber:checked~.art{--accent:#6effd4;--muted:#c4e4e7;background:radial-gradient(ellipse at 80% 10%,#263c70,transparent 75%),#091c25}
+#cyber:checked~.art .texture{background-image:linear-gradient(#5ef9d518 1px,transparent 1px),linear-gradient(90deg,#5ef9d518 1px,transparent 1px);background-size:27px 27px;transform:perspective(300px) rotateX(16deg) scale(1.15);transform-origin:bottom}
+#soft:checked~.art{--fg:#252c40;--muted:#47536b;--accent:#624487;--glass:#ffffff66;background:radial-gradient(ellipse at 0 0,#f1d8e5,transparent 65%),radial-gradient(ellipse at 100% 0,#cbd9fa,transparent 68%),radial-gradient(ellipse at 50% 100%,#c6e9df,transparent 75%),#f6f5ee}
+#soft:checked~.art .texture{background:radial-gradient(#55556612 .7px,transparent 1px);background-size:7px 7px}#soft:checked~.art .glow{opacity:.18}
+@keyframes drift{to{transform:translate(6%,4%) rotate(25deg)}}@media(prefers-reduced-motion:reduce){.glow{animation:none}}@media(max-width:320px){.content{padding:20px}.glass{padding:15px}.live{letter-spacing:0}.eyebrow{margin-top:28px}}`;
+        return `root=Html(label="可切换的四种动态背景",html=${JSON.stringify(html)},css=${JSON.stringify(css)},maxHeight=900)`;
+    }
+    if (name === "backgrounds") return String.raw`
+root=Grid(minItemWidth=150,children=[light,blue,green,dark])
+light=Panel(background="light",radius="lg",child=Column(gap="md",children=[Icon(name="lucide:layers",size=32),Heading(text="浅色背景"),RichText(runs=[{text:"柔和的次级表面",tone:"muted"}])]))
+blue=Panel(background="blue",radius="lg",child=Column(gap="md",children=[Icon(name="lucide:droplets",tone="info",size=32),Heading(text="蓝色背景"),RichText(runs=[{text:"淡蓝色卡片",tone:"muted"}])]))
+green=Panel(background="green",radius="lg",child=Column(gap="md",children=[Icon(name="lucide:leaf",tone="success",size=32),Heading(text="绿色背景"),RichText(runs=[{text:"柔和的绿色",tone:"muted"}])]))
+dark=Panel(background="dark",radius="lg",child=Column(gap="md",children=[Icon(name="lucide:moon",tone="info",size=32),Heading(text="深色背景"),RichText(runs=[{text:"深蓝灰色卡片",tone:"muted"}])]))`;
+    if (name === "profile") {
+        const features = [
+            ["role", "person", "自由选择角色", "任何角色卡都可以成为伴侣", "选择适合自己的角色与交流方式。"],
+            ["memory", "storage", "长期记忆", "持续理解经历与偏好", "在本地展开这一项的说明，再次点击同一项即可收起。"],
+            ["companion", "chat", "主动陪伴", "让交流自然地延续", "这里是交互演示，不会启动后台任务或发送模型请求。"],
+            ["tasks", "calendar", "自主任务", "计划、提醒与检查", "需要真实执行时，再设置明确的操作入口与确认流程。"],
+        ];
+        return String.raw`
+$/selected=""
+root=Panel(border=true,radius="lg",child=Column(gap="md",children=[header,Divider(),Text(text="一个长期陪伴你、了解你、主动帮助你的 AI 助理。"),features,details]))
+header=Row(weights=[0,1],gap="md",align="center",children=[logo,Column(gap="xs",children=[Text(text="Orbit",variant="h1"),RichText(runs=[{text:"Your companion, your choice.",tone:"muted"}])])])
+logo=Panel(padding="sm",radius="lg",background="inset",child=Vector(label="Orbit 环形标志",width=40,height=40,shapes=[{type:"circle",cx:20,cy:20,r:13,stroke:3},{type:"circle",cx:10,cy:30,r:4,filled:true}]))
+features=Grid(minItemWidth=140,children=[${features.map(([id]) => id).join(",")}])
+details=Column(children=[${features.map(([id, , title, , detail]) =>
+    `Conditional(visible=equals(a=$/selected,b=${q(id)}),children=[Panel(background="inset",child=Column(children=[Heading(text=${q(title)}),Text(text=${q(detail)})]))])`).join(",")}])
+${features.map(([id, icon, title, description]) =>
+    `${id}=Pressable(label=${q(title)},selected=equals(a=$/selected,b=${q(id)}),action=Event(name="local_action",context={op:"set",path:"/selected",value:if(condition=equals(a=$/selected,b=${q(id)}),then="",else=${q(id)})}),child=Panel(background="inset",child=Column(gap="sm",children=[Icon(name=${q(icon)}),Heading(text=${q(title)}),Text(text=${q(description)})])))`).join("\n")}
+`;
+    }
     if (name === "flow_steps") return String.raw`
 root = Flow(label="番茄炒蛋三个阶段",steps=[{title:"准备食材",caption:"2 分钟",icon:"list"},{title:"分别炒制",caption:"4 分钟",icon:"fire"},{title:"混合出锅",caption:"1 分钟",icon:"check",tone:"success"}])`;
     if (name === "flowchart") return String.raw`
@@ -542,6 +680,6 @@ groups=Repeat(items=$/groups,key="id",child=Panel(child=Column(children=[
 ]),background="inset"))
 tasks=Repeat(items=item(field="children"),key="id",child=CheckBox(label=item(field="title"),value=item_state(field="done",default=false)))
 `;
-    throw new Error("Choose flow_steps, flowchart, data_story, mixed_branch, stats, charts, info, vector, curves, responsive, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls or p2_lists.");
+    throw new Error("Choose backgrounds, surfaces, profile, flow_steps, flowchart, data_story, mixed_branch, stats, charts, info, vector, curves, responsive, interactive_flow, calculator, cost_calculator, form, progress, data, repeat, p2_controls or p2_lists.");
 }
 exports.read_example = async ({name}) => complete(prepare(example(name)));
