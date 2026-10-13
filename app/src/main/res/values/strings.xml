@@ -1,4 +1,7 @@
 <resources>
+    <string name="memory_editor_process_records">过程记录 · 思考与工具</string>
+    <string name="memory_editor_expand_process">展开过程记录</string>
+    <string name="memory_editor_collapse_process">收起过程记录</string>
     <string name="memory_editor_dynamic_ui">动态 UI 卡片</string>
     <string name="memory_editor_dynamic_ui_hint">源码已折叠，修改正文不会影响卡片</string>
     <string name="memory_editor_edit_source">编辑卡片源码</string>
