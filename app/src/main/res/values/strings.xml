@@ -5453,7 +5453,7 @@
     <!-- 聊天组件硬编码字符串 -->
     <string name="reply">回复</string>
     <string name="image">图片</string>
-    <string name="image_expired">图片 (已过期)</string>
+    <string name="image_expired">图片不可用</string>
     <string name="chat_viewed_images">已查看 %1$d 张图像</string>
     <string name="copy_content">复制内容</string>
     <string name="user_reply_instruction">用户正在回复你之前的这条消息：</string>
@@ -8996,4 +8996,26 @@
     <string name="chat_shortcut_invalid">参数无效，请按示例填写；仍可作为普通消息发送</string>
     <string name="chat_shortcut_busy">请等当前回复结束后再压缩</string>
     <string name="chat_context_legacy_turns">保留旧规则：每 %1$d 轮自动压缩</string>
+    <string name="storage_title">存储管理</string>
+    <string name="storage_subtitle">查看占用、清理预览缓存、管理下载组件</string>
+    <string name="storage_data_total">应用数据占用</string>
+    <string name="storage_calculating">正在统计…</string>
+    <string name="storage_refresh">重新统计</string>
+    <string name="storage_scope">统计应用私有目录中的文件大小，不含安装包、公共下载目录和用户工作区。与系统设置显示的占用可能有差异。</string>
+    <string name="storage_failed">操作未完成，请重试。已显示的统计可能不是最新结果。</string>
+    <string name="storage_partial">部分目录无法读取，显示的是已统计到的大小。</string>
+    <string name="storage_media">聊天媒体</string>
+    <string name="storage_media_hint">供历史消息使用的图片、音频和视频。不再因数量上限或重启而自动删除，也不会随预览缓存一起清理。</string>
+    <string name="storage_components">模型与组件</string>
+    <string name="storage_components_hint">包括下载的模型、模板和终端环境。组件管理可删除下载资源；已安装的终端环境及其中的个人文件仅统计，不会被删除。</string>
+    <string name="storage_databases">数据库</string>
+    <string name="storage_databases_hint">聊天记录和记忆库等结构化数据。可进入历史记录管理；删除前建议先备份，数据库占用不一定立即缩小。</string>
+    <string name="chat_image_loading">图片加载中…</string>
+    <string name="storage_preview_cache">图片预览缓存</string>
+    <string name="storage_preview_hint">用于加速图片显示，可重新加载。清理后首次查看图片可能稍慢。</string>
+    <string name="storage_other">其他文件</string>
+    <string name="storage_other_hint">设置、插件、附件源文件、日志及临时文件等。为避免误删聊天和工作文件，不提供一键清空。</string>
+    <string name="storage_clear_preview">清理预览缓存</string>
+    <string name="storage_clear_preview_confirm">仅清理可重新加载的图片预览缓存，保留聊天媒体、聊天记录、模型和工作文件。</string>
+    <string name="storage_cache_cleared">预览缓存已清理，正在显示的图片可能重新生成少量缓存。</string>
 </resources>
