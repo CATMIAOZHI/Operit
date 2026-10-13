@@ -1,4 +1,7 @@
 <resources>
+    <string name="memory_editor_process_records">Process · Reasoning and tools</string>
+    <string name="memory_editor_expand_process">Expand process records</string>
+    <string name="memory_editor_collapse_process">Collapse process records</string>
     <string name="memory_editor_dynamic_ui">Dynamic UI card</string>
     <string name="memory_editor_dynamic_ui_hint">Source collapsed. Editing the surrounding text keeps the card unchanged.</string>
     <string name="memory_editor_edit_source">Edit card source</string>

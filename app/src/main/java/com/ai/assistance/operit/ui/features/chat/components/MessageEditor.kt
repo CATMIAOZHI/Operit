@@ -63,6 +63,20 @@ internal fun memoryEditorParts(fragments: List<MemoryEditFragment>): List<Parsed
         }
     }
 
+/** Display grouping only: indices and source timestamps retain the original storage order. */
+internal fun memoryEditorProcessIndices(
+    parts: List<ParsedMessagePart>,
+    fragments: List<MemoryEditFragment>,
+): Set<Int> {
+    val processRows = fragments.filter { it.isProcess }.map { it.timestamp }.toSet()
+    val processTags = setOf("think", "thinking", "tool", "tool_result", "search", "status")
+    return parts.indices.filterTo(mutableSetOf()) { index ->
+        val part = parts[index]
+        part.type == PartType.COLLABORATION || part.sourceTimestamp in processRows ||
+            (part.type == PartType.XML && part.tag in processTags)
+    }
+}
+
 internal fun updatedMemoryEditorFragments(
     originals: List<MemoryEditFragment>,
     initialParts: List<ParsedMessagePart>,
@@ -163,6 +177,13 @@ internal fun MessageEditor(
     var partToEdit by remember { mutableStateOf<Pair<Int, ParsedMessagePart>?>(null) }
     var showCreateTagDialog by remember { mutableStateOf(false) }
     var isRawEditMode by remember { mutableStateOf(false) }
+    var processExpanded by remember { mutableStateOf(false) }
+    val processIndices = remember(partsState, memoryFragments, isRawEditMode) {
+        if (isRawEditMode) emptySet() else memoryEditorProcessIndices(partsState, memoryFragments)
+    }
+    fun revealProcessPart(index: Int) {
+        if (index in memoryEditorProcessIndices(partsState, memoryFragments)) processExpanded = true
+    }
 
     LaunchedEffect(partsState) {
         if (!isRawEditMode && memoryFragments.isEmpty()) {
@@ -306,7 +327,26 @@ internal fun MessageEditor(
 
                             // Rows the reply is made of. Each one is its own message, so what is
                             // edited here is written back to that message, not into this body.
+                            // Fold process records together, without moving or rewriting the parts.
+                            listOf(true, false).forEach { processGroup ->
+                            if (processGroup && processIndices.isNotEmpty()) {
+                                TextButton(
+                                    onClick = { processExpanded = !processExpanded },
+                                    modifier = Modifier.fillMaxWidth(),
+                                ) {
+                                    Text(stringResource(R.string.memory_editor_process_records),
+                                        modifier = Modifier.weight(1f),
+                                        textAlign = androidx.compose.ui.text.style.TextAlign.Start)
+                                    Icon(Icons.Default.KeyboardArrowDown,
+                                        contentDescription = stringResource(if (processExpanded)
+                                            R.string.memory_editor_collapse_process else R.string.memory_editor_expand_process),
+                                        modifier = Modifier.rotate(if (processExpanded) 180f else 0f))
+                                }
+                            }
+                            if (!processGroup || processExpanded) {
                             partsState.forEachIndexed { index, part ->
+                              if ((index in processIndices) == processGroup) {
+                              key(index) {
                               if (part.type == PartType.COLLABORATION) {
                                 val fragment = memoryFragments.first { it.timestamp == part.sourceTimestamp }
                                 key(fragment.messageIndex) {
@@ -400,6 +440,10 @@ internal fun MessageEditor(
                                     PartType.COLLABORATION -> Unit
                                 }
                               }
+                              }
+                              }
+                            }
+                            }
                             }
 
                             // Add part buttons
@@ -411,7 +455,10 @@ internal fun MessageEditor(
                             ) {
                                 // Add text button
                                 OutlinedButton(
-                                    onClick = { partsState = partsState + ParsedMessagePart(PartType.TEXT, "", sourceTimestamp = memoryFragments.lastOrNull { it.isAssistant }?.timestamp) },
+                                    onClick = {
+                                        partsState = partsState + ParsedMessagePart(PartType.TEXT, "", sourceTimestamp = memoryFragments.lastOrNull { it.isAssistant }?.timestamp)
+                                        revealProcessPart(partsState.lastIndex)
+                                    },
                                     shape = RoundedCornerShape(16.dp),
                                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
                                     colors = ButtonDefaults.outlinedButtonColors(
@@ -542,11 +589,13 @@ internal fun MessageEditor(
                 showCreateTagDialog = false
             },
             onSave = { updatedPart ->
+                val updatedIndex = partToEdit?.first ?: partsState.size
                 if (partToEdit != null) {
                     partsState = partsState.toMutableList().apply { set(partToEdit!!.first, updatedPart.copy(sourceTimestamp = partToEdit!!.second.sourceTimestamp)) }
                 } else {
                     partsState = partsState + updatedPart.copy(sourceTimestamp = memoryFragments.lastOrNull { it.isAssistant }?.timestamp)
                 }
+                revealProcessPart(updatedIndex)
                 partToEdit = null
                 showCreateTagDialog = false
             }
