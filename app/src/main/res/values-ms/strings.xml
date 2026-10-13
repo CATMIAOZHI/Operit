@@ -2704,7 +2704,6 @@
     <string name="function_type_file_binding">Pemprosesan pengikatan fail</string>
     <string name="function_type_ui_controller">Pengawal UI</string>
     <string name="function_type_translation">Fungsi terjemahan</string>
-    <string name="function_type_grep">Pencarian Grep</string>
     <string name="function_type_role_response_planner">Perancangan kumpulan</string>
     <string name="function_type_image_recognition">Pengenalan imej</string>
     <string name="function_type_audio_recognition">Pengenalan audio</string>
@@ -2821,7 +2820,6 @@
     <string name="chat_speak_message_failed">Gagal membaca mesej: %1$s</string>
     <string name="chat_prefill_check_file">Tolong lihat fail ini</string>
     <string name="workspace_unknown_error">Ralat tidak diketahui</string>
-    <string name="workspace_suggestion_search_first">Untuk niat pengguna, disyorkan untuk menggunakan alat grep_context (cari fail berkaitan berdasarkan niat) dan grep_code (cari corak kod tertentu) untuk memahami keadaan projek semasa sebelum membuat pengubahsuaian.</string>
     <string name="workspace_suggestion_separate_files">Sila simpan kod HTML, CSS, dan JavaScript dalam fail berasingan.</string>
     <string name="workspace_suggestion_create_folders">Jika projek agak kompleks, pertimbangkan untuk membuat folder js dan css serta mencipta beberapa fail.</string>
     <string name="workspace_no_suggestions">Tiada cadangan buat masa ini</string>
@@ -2914,7 +2912,6 @@
     <string name="function_desc_file_binding">Memproses pengikatan dan percampuran pintar kandungan fail, menyediakan keupayaan pemprosesan kod yang lebih tepat. Disyorkan menggunakan model murah pantas seperti Gemini Flash, tidak disyorkan menggunakan DeepSeek R1</string>
     <string name="function_desc_ui_controller">Digunakan untuk penerokaan dan pengendalian automatik antara muka UI, model pengawal UI yang sepadan hanya akan diaktifkan apabila pengguna secara eksplisit meminta penggunaan kawalan "agen", contohnya boleh memilih model khusus seperti autoglm.</string>
     <string name="function_desc_translation">Menyediakan fungsi terjemahan pelbagai bahasa, menyokong penukaran bahasa kandungan teks. Disyorkan menggunakan model yang menyokong pelbagai bahasa.</string>
-    <string name="function_desc_grep">Digunakan untuk perancangan pencarian grep_context dan penapisan hasil (grep_code berbilang pusingan)</string>
     <string name="function_desc_role_response_planner">Digunakan untuk menentukan urutan bercakap dan strategi langkauan secara dinamik dalam kumpulan, menyokong perbincangan berbilang pusingan</string>
     <string name="function_desc_image_recognition">Digunakan untuk pengenalan dan analisis kandungan imej, memanggil alat read_file untuk membaca gambar dengan menyokong parameter intent untuk pemahaman mendalam. Disyorkan menggunakan model multimodal yang menyokong penglihatan.</string>
     <string name="function_desc_audio_recognition">Digunakan untuk pengenalan dan analisis kandungan audio, memanggil alat read_file untuk membaca audio dengan menggunakan parameter intent untuk pemahaman mendalam (seperti transkripsi/ringkasan/pengenalan kandungan pertuturan). Disyorkan menggunakan model yang menyokong input audio atau transkripsi berkualiti tinggi.</string>
@@ -5117,7 +5114,6 @@
     <string name="toolreg_share_file_desc">Kongsi fail: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">Cari kod dalam %1$s: "%2$s"%3$s (jenis fail: %4$s)</string>
     <string name="toolreg_grep_code_desc">Cari kod dalam %1$s: "%2$s"%3$s</string>
-    <string name="toolreg_grep_context_desc">Cari fail berkaitan berdasarkan niat dalam %1$s: "%2$s"%3$s</string>
     <string name="toolreg_download_file_desc">Muat turun fail: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, indeks: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">Klik elemen [ID sumber: %1$s%2$s]</string>
@@ -6132,9 +6128,6 @@
     <string name="theme_avatar_description">Penerangan: Avatar pengguna di sebelah kiri adalah tetapan eksklusif untuk kad watak, dan akan menggunakan avatar pengguna global di sebelah kanan apabila kosong. Avatar pengguna global dikongsi dalam semua kad watak.</string>
     <string name="functional_config_model_count">%1$d model</string>
     <string name="functional_config_test_title_generation_user_text">Saya mahu merancang perjalanan tiga hari ke Tokyo, termasuk pengangkutan, hotel dan cadangan makanan.</string>
-    <string name="functional_config_test_grep_intent">Cari segmen yang mengandungi ucapan salam.</string>
-    <string name="functional_config_test_grep_display_path">&lt;测试&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [fail: example.txt]\nHai dunia\n#2 [fail: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">Status UI semasa: [Button(label="OK", bounds="[0,0][100,50]")]\nObjektif tugas: Klik OK.\nSejarah pelaksanaan: []</string>
     <string name="functional_config_test_memory_prompt">Kandungan perbualan:\nPengguna: Masalah ujian sambungan.\nPembantu: Jawapan ujian sambungan.</string>
     <string name="tool_permission_instruction_title">Arahan penggunaan</string>

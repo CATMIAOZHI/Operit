@@ -2609,7 +2609,6 @@
     <string name="function_type_file_binding">파일 바인딩 처리</string>
     <string name="function_type_ui_controller">UI 컨트롤러</string>
     <string name="function_type_translation">번역 기능</string>
-    <string name="function_type_grep">Grep 검색</string>
     <string name="function_type_role_response_planner">그룹 플래너</string>
     <string name="function_type_image_recognition">이미지 인식</string>
     <string name="function_type_audio_recognition">오디오 인식</string>
@@ -2621,7 +2620,6 @@
     <string name="function_desc_file_binding">파일 내용의 지능적인 바인딩 및 혼합을 처리하여 보다 정확한 코드 처리 기능을 제공합니다. Gemini Flash와 같은 빠르고 저렴한 모델 사용을 권장하며 DeepSeek R1 사용은 권장하지 않습니다.</string>
     <string name="function_desc_ui_controller">UI 인터페이스의 자동 순회 및 작동에 사용됩니다. 해당 UI 컨트롤러 모델은 사용자가 제어를 위해 "에이전트"를 사용하도록 명시적으로 요청하는 경우에만 활성화됩니다(예: autoglm-phone-9b와 같은 전용 모델 선택).</string>
     <string name="function_desc_translation">다국어 번역 기능을 제공하여 텍스트 콘텐츠의 언어 변환을 지원합니다. 다국어를 지원하는 모델을 사용하는 것이 좋습니다.</string>
-    <string name="function_desc_grep">grep_context 계획 및 결과 필터링에 사용됩니다(다중 grep_code).</string>
     <string name="function_desc_role_response_planner">그룹 내 말하기 순서 및 건너뛰기 결정을 동적으로 계획하고 다단계 토론을 지원합니다.</string>
     <string name="function_desc_image_recognition">이미지 내용 인식 및 분석에 사용되며, 깊은 이해를 위해 read_file 도구 호출 시 intent 매개변수를 지원합니다. 비전 기능을 갖춘 다중 모드 모델을 사용하는 것이 좋습니다.</string>
     <string name="function_desc_audio_recognition">오디오 콘텐츠 인식 및 분석에 사용됩니다. 오디오에 대해 read_file을 호출할 때 더 깊은 이해를 위해 intent(예: 전사, 요약, 화자별 내용)를 전달할 수 있습니다. 오디오 입력 또는 고품질 전사를 지원하는 모델 사용을 권장합니다.</string>
@@ -2817,7 +2815,6 @@
     <string name="chat_speak_message_failed">메시지 말하기 실패: %1$s</string>
     <string name="chat_prefill_check_file">이 파일을 살펴보세요.</string>
     <string name="workspace_unknown_error">알 수 없는 오류</string>
-    <string name="workspace_suggestion_search_first">사용자 의도를 처리할 때는 변경하기 전에 먼저 grep_context(의도 기반 관련 파일 검색) 및 grep_code(특정 코드 패턴 검색) 도구를 사용해 현재 프로젝트 상황을 파악하는 것이 좋습니다.</string>
     <string name="workspace_suggestion_separate_files">HTML, CSS, JavaScript 코드를 별도의 파일에 저장하세요.</string>
     <string name="workspace_suggestion_create_folders">프로젝트가 복잡하다면 js, css 폴더를 생성하고 여러 파일을 생성하는 것을 고려해 보세요.</string>
     <string name="workspace_no_suggestions">제안 없음</string>
@@ -5199,7 +5196,6 @@
     <string name="toolreg_share_file_desc">파일 공유: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">%1$s에서 코드 검색: [%2$s]%3$s(파일 형식: %4$s)</string>
     <string name="toolreg_grep_code_desc">%1$s의 검색 코드: [%2$s]%3$s</string>
-    <string name="toolreg_grep_context_desc">%1$s에서 intent 기준으로 관련 파일 찾기: [%2$s]%3$s</string>
     <string name="toolreg_download_file_desc">다운로드: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, 색인: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">[resourceId: %1$s%2$s] 요소 클릭</string>
@@ -5635,9 +5631,6 @@
     <string name="theme_avatar_description">참고: 왼쪽의 사용자 아바타는 캐릭터 카드 전용 설정입니다. 비어 있으면 오른쪽의 전역 사용자 아바타가 사용됩니다. 전역 사용자 아바타는 모든 캐릭터 카드에서 공유됩니다.</string>
     <string name="functional_config_model_count">%1$d 모델</string>
     <string name="functional_config_test_title_generation_user_text">교통, 숙소, 음식 추천을 포함해 3일간의 도쿄 여행을 계획하고 싶습니다.</string>
-    <string name="functional_config_test_grep_intent">스니펫에서 인사말을 찾으세요.</string>
-    <string name="functional_config_test_grep_display_path">&lt;test&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [파일: example.txt]\nHello world\n#2 [파일: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">현재 UI 상태: [Button(label="OK",bounds="[0,0][100,50]")]\n작업 목표: OK를 누릅니다.\n실행 기록: []</string>
     <string name="functional_config_test_memory_prompt">대화:\nUser: 연결 테스트 질문.\nAssistant: 연결 테스트 답변.</string>
     <string name="tool_permission_instruction_title">지침</string>

@@ -2943,7 +2943,6 @@
     <string name="function_type_memory">Memory Management</string>
     <string name="function_type_file_binding">File Binding Processing</string>
     <string name="function_type_ui_controller">UI Controller</string>
-    <string name="function_type_grep">Grep Retrieval</string>
     <string name="function_type_role_response_planner">Group Planner</string>
     <string name="function_type_permission_reviewer">Permission Approval</string>
     <string name="function_type_permission_risk_scorer">Review Risk Scoring</string>
@@ -2955,7 +2954,6 @@
     <string name="function_desc_memory">Process memories and store them in the memory library</string>
     <string name="function_desc_file_binding">Process intelligent binding and mixing of file content, providing more precise code processing capabilities. Recommend using fast, inexpensive models like Gemini Flash, not recommended to use DeepSeek R1</string>
     <string name="function_desc_ui_controller">Used for automatic traversal and operation of UI interfaces. The corresponding UI controller model is only activated when the user explicitly requests to use an "agent" for control, for example by choosing dedicated models such as autoglm-phone-9b.</string>
-    <string name="function_desc_grep">Used for grep_context planning and result filtering (multi-round grep_code)</string>
     <string name="function_desc_role_response_planner">Dynamically plans speaking order and skip decisions in groups, supports multi-turn discussions</string>
     <string name="function_desc_permission_reviewer">Used by the “auto review” level to review tool calls independently. The reviewer can only use an internal result-submission tool and cannot execute the reviewed action; failures, timeouts, and invalid responses are handed back to you.</string>
     <string name="function_desc_permission_risk_scorer">Used by the “auto review” fast level to score the risk of the tool calls being dispatched. A cheap, fast model is enough. Left on the default configuration, it follows the Permission Approval model.</string>
@@ -3176,9 +3174,6 @@
     <string name="theme_avatar_description">Note: The user avatar on the left is a character card exclusive setting. When empty, it will use the global user avatar on the right. The global user avatar is shared across all character cards.</string>
     <string name="functional_config_model_count">%1$d models</string>
     <string name="functional_config_test_title_generation_user_text">I want to plan a three-day trip to Tokyo, including transport, hotels, and food recommendations.</string>
-    <string name="functional_config_test_grep_intent">Find the greeting in the snippet.</string>
-    <string name="functional_config_test_grep_display_path">&lt;test&gt;</string>
-    <string name="functional_config_test_grep_candidates_digest">#1 [file: example.txt]\nHello world\n#2 [file: main.kt]\nfun main() {}</string>
     <string name="functional_config_test_ui_controller_prompt">Current UI State: [Button(label="OK", bounds="[0,0][100,50]")]\nTask Goal: Tap OK.\nExecution History: []</string>
     <string name="functional_config_test_memory_prompt">Conversation:\nUser: Connection test question.\nAssistant: Connection test answer.</string>
     <string name="tool_permission_instruction_title">Instructions</string>
@@ -3363,7 +3358,7 @@
 
     <!-- Workspace Attachment Processor (AI tool responses) -->
     <string name="workspace_unknown_error">Unknown error</string>
-    <string name="workspace_suggestion_search_first">For user intent, it is recommended to first use grep_context (search for relevant files based on intent) and grep_code (search for specific code patterns) tools to understand the current project situation before making changes.</string>
+    <string name="workspace_suggestion_search_first">Before making changes, use grep_code to locate relevant code and read_file_part to read its context and understand the project.</string>
     <string name="workspace_suggestion_separate_files">Please store HTML, CSS, and JavaScript code in separate files.</string>
     <string name="workspace_suggestion_create_folders">If the project is complex, consider creating js and css folders and creating multiple files.</string>
     <string name="workspace_no_suggestions">No suggestions</string>
@@ -5151,8 +5146,9 @@
     <string name="permission_stop_forbid_description">No tool will run.</string>
     <string name="permission_stop_ask_description">Ask you before every tool call.</string>
     <string name="permission_stop_auto_review_strict_description">Operations proven to stay in the workspace run directly; everything else goes to the approval agent, which judges every call on its own. Safest, and slowest.</string>
-    <string name="permission_stop_auto_review_fast_description">Like strict, plus a lightweight model scores the current course of action asynchronously; a recent low-risk verdict lets the next calls run without the approval agent. It only ever removes reviews, never refuses an action on its own, and is not a system sandbox.</string>
-    <string name="permission_stop_allow_description">Every tool runs directly, without asking.</string>
+    <string name="permission_stop_auto_review_fast_description">Uses strict review with recent low-risk assessments reused to reduce repeated reviews. Calls that still need review go to the approval agent, which can approve or reject them. If review fails, you are asked to decide.</string>
+    <string name="permission_stop_full_access">Full access</string>
+    <string name="permission_stop_allow_description">Warning: tool approval is skipped by default. AI can modify or delete files, run commands, and access the network, risking data loss or exposure. System permissions and individual tool rules still apply.</string>
     <string name="permission_level_ask_description">These tools ask you before every call.</string>
     <string name="add_tool">Add Tool</string>
     <string name="no_tools_in_group">No tools added to this group.</string>
@@ -6076,7 +6072,6 @@
     <string name="toolreg_share_file_desc">Share file: %1$s%2$s</string>
     <string name="toolreg_grep_code_with_file_pattern_desc">Search code in %1$s: [%2$s]%3$s (file type: %4$s)</string>
     <string name="toolreg_grep_code_desc">Search code in %1$s: [%2$s]%3$s</string>
-    <string name="toolreg_grep_context_desc">Find related files in %1$s by intent: [%2$s]%3$s</string>
     <string name="toolreg_download_file_desc">Download: %1$s -&gt; %2$s%3$s</string>
     <string name="toolreg_index_suffix">, index: %1$s</string>
     <string name="toolreg_click_element_resourceid_desc">Click element [resourceId: %1$s%2$s]</string>
