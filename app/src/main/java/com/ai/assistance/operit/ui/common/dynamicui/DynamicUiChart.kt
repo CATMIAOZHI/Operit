@@ -23,7 +23,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.semantics.contentDescription
@@ -134,15 +134,15 @@ internal fun CardChart(type: String, title: String, data: List<CardChartSeries>,
     val empty = points.isEmpty() || (type == "pie" && points.sumOf { it.y } <= 0)
     // Screen readers hear the values here; sighted users inspect by tapping, so no data table is shown.
     // The title is its own text node, and very dense charts are capped so focus does not read for minutes.
-    val context = LocalContext.current
-    val chartValues = remember(data, type, context) {
+    val resources = LocalResources.current
+    val chartValues = remember(data, type, resources) {
         // Split the budget so every series keeps some values, and say how many were left out.
         val perSeries = 64 / data.size.coerceAtLeast(1)
         data.joinToString("; ") { series ->
             val shown = series.points.take(perSeries)
             val values = (shown.map { p ->
                 "${p.label} ${cardChartNumber(p.y)}" + if (type == "scatter") " (x ${cardChartNumber(p.x)})" else ""
-            } + listOfNotNull((series.points.size - shown.size).takeIf { it > 0 }?.let { context.getString(R.string.dynamic_ui_chart_more, it) }))
+            } + listOfNotNull((series.points.size - shown.size).takeIf { it > 0 }?.let { resources.getString(R.string.dynamic_ui_chart_more, it) }))
                 .joinToString(", ")
             if (series.label.isBlank()) values else "${series.label}: $values"
         }

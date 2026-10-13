@@ -1,11 +1,20 @@
 package com.ai.assistance.operit.ui.common.dynamicui
 
+import android.annotation.SuppressLint
 import androidx.a2ui.engine.catalog.A2uiCoreCatalog
 import androidx.a2ui.engine.schema.A2uiCoreSchemaValidator
 import androidx.a2ui.model.protocol.A2uiException
 import kotlinx.serialization.json.JsonObject
 
-/** Validate the same lowered component payloads that the official renderer receives. */
+/**
+ * Validate the same lowered component payloads that the official renderer receives.
+ *
+ * The A2UI engine only ships the core validator and restricts it to the androidx library group,
+ * while the public A2uiCatalog exposes no validation entry point. Checking the payload against
+ * anything else would accept components the official renderer then rejects, so the suppression
+ * is deliberate and stays inside this object.
+ */
+@SuppressLint("RestrictedApi")
 internal object CardRendererSchema {
     // The AndroidX Compose catalog factory implements both public catalog interfaces.
     private val catalog by lazy { operitDynamicUiCatalog as A2uiCoreCatalog }

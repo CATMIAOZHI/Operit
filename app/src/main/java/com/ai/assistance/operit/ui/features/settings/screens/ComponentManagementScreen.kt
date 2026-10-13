@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
@@ -23,6 +24,7 @@ private data class ComponentStorage(val bytes: Long, val ready: Boolean)
 fun ComponentManagementScreen() {
     com.ai.assistance.operit.ui.components.InlineResourceDownloadHost()
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val groups = remember(context) { OnDemandResources.componentGroups(context) }
     val downloads by OnDemandResources.downloads.collectAsState()
@@ -34,7 +36,7 @@ fun ComponentManagementScreen() {
     var deletion by remember { mutableStateOf<String?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     fun label(id: String): String = LocalVoiceModels.models.firstOrNull { "voice-${it.id}" == id }?.name
-        ?: context.getString(groups.first { it.id == id }.labelRes)
+        ?: resources.getString(groups.first { it.id == id }.labelRes)
 
     LaunchedEffect(context) {
         while (isActive) {
@@ -116,7 +118,7 @@ fun ComponentManagementScreen() {
                                 scope.launch {
                                     try { withContext(Dispatchers.IO) { OnDemandResources.downloadComponent(context, group.id) } }
                                     catch (e: CancellationException) { throw e }
-                                    catch (e: Exception) { error = e.message ?: context.getString(R.string.resource_download_failed_generic) }
+                                    catch (e: Exception) { error = e.message ?: resources.getString(R.string.resource_download_failed_generic) }
                                     finally { busy = null }
                                 }
                             }) { Text(stringResource(if (progress?.error != null) R.string.resource_download_retry else R.string.component_download)) }
@@ -144,7 +146,7 @@ fun ComponentManagementScreen() {
                     scope.launch {
                         try { OnDemandResources.deleteComponent(context, id) }
                         catch (e: CancellationException) { throw e }
-                        catch (e: Exception) { error = e.message ?: context.getString(R.string.voice_model_delete_failed) }
+                        catch (e: Exception) { error = e.message ?: resources.getString(R.string.voice_model_delete_failed) }
                         finally { busy = null }
                     }
                 }) { Text(stringResource(R.string.voice_model_delete_action)) }
