@@ -633,6 +633,7 @@ sealed class Screen(
                     navigateToChatBackupSettings = { navigateTo(ChatBackupSettings) },
                     navigateToLanguageSettings = { navigateTo(LanguageSettings) },
                     navigateToSpeechServicesSettings = { navigateTo(SpeechServicesSettings) },
+                    navigateToComponents = { navigateTo(ComponentManagement) },
                     navigateToExternalHttpChatSettings = { navigateTo(ExternalHttpChatSettings) },
                     navigateToPersonaCardGeneration = { navigateTo(PersonaCardGeneration) },
                     navigateToWaifuModeSettings = { navigateTo(WaifuModeSettings) },
@@ -867,6 +868,22 @@ sealed class Screen(
             )
         }
     }
+    data object ComponentManagement :
+        Screen(navItem = NavItem.Settings, titleRes = R.string.components_title) {
+        @Composable
+        override fun Content(
+            navController: NavController,
+            navigateTo: ScreenNavigationHandler,
+            onGoBack: () -> Unit,
+            hasBackgroundImage: Boolean,
+            onLoading: (Boolean) -> Unit,
+            onError: (String) -> Unit,
+            onGestureConsumed: (Boolean) -> Unit
+        ) {
+            com.ai.assistance.operit.ui.features.settings.screens.ComponentManagementScreen()
+        }
+    }
+
     // 添加SpeechServicesSettings屏幕定义
     data object SpeechServicesSettings :
             Screen(navItem = NavItem.Settings, titleRes = R.string.screen_title_speech_services_settings) {

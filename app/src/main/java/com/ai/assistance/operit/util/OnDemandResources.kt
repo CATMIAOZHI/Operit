@@ -4,6 +4,10 @@ import android.content.Context
 import android.content.Intent
 import android.os.SystemClock
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.api.speech.LocalVoiceModels
+import com.ai.assistance.operit.api.speech.SpeechServiceFactory
+import com.ai.assistance.operit.api.voice.VoiceServiceFactory
+import com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences
 import com.ai.assistance.operit.ui.components.ResourceDownloadConfirmActivity
 import com.ai.assistance.operit.ui.components.ResourceDownloadDialogHost
 import java.io.File
@@ -20,6 +24,8 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.async
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
@@ -107,6 +113,101 @@ internal data class DownloadGroup(
 
 /** Fixed, checksummed feature resources; nothing downloads until the user approves it. */
 object OnDemandResources {
+    private val templateFiles = ConcurrentHashMap<String, Mutex>()
+    private val terminalArchiveFiles = Mutex()
+
+    /** Keep a template pinned until its reader has finished, including APK repacking. */
+    suspend fun <T> withExportTemplate(context: Context, android: Boolean, action: suspend (File) -> T): T {
+        val id = if (android) androidTemplate.id else windowsTemplate.id
+        return templateFiles.getOrPut(id) { Mutex() }.withLock { action(exportTemplate(context, android)) }
+    }
+
+    internal fun componentGroups(context: Context): List<DownloadGroup> = listOf(
+        DownloadGroup(ubuntu.id, R.string.resource_terminal,
+            listOf(DownloadItem(File(context.filesDir, "downloaded_resources/terminal/${ubuntu.id}"), ubuntu))),
+        DownloadGroup(SPEECH_DIRECTORY, R.string.resource_offline_speech,
+            speech.map { DownloadItem(File(File(OperitPaths.sherpaNcnnModelsDir(context), SPEECH_DIRECTORY), it.id), it) }),
+    ) + LocalVoiceModels.models.map { model ->
+        DownloadGroup("voice-${model.id}", R.string.voice_local_models,
+            model.files.map { DownloadItem(File(model.directory(context), it.id), it) })
+    } + listOf(
+        DownloadGroup(androidTemplate.id, R.string.resource_android_export,
+            listOf(DownloadItem(File(context.filesDir, "downloaded_resources/templates-v1/${androidTemplate.id}"), androidTemplate))),
+        DownloadGroup(windowsTemplate.id, R.string.resource_windows_export,
+            listOf(DownloadItem(File(context.filesDir, "downloaded_resources/templates-v1/${windowsTemplate.id}"), windowsTemplate))),
+    )
+
+    internal fun terminalInstalled(context: Context): Boolean {
+        val root = File(context.filesDir, "usr/var/lib/proot-distro/installed-rootfs/ubuntu")
+        return File(root, ".operit_installed_ok").isFile || File(root, "etc/issue.net").isFile
+    }
+
+    /** The settings download button grants approval without changing the chosen speech profile. */
+    internal suspend fun downloadComponent(context: Context, id: String) {
+        val group = componentGroups(context).first { it.id == id }
+        groups[id] = group
+        declinedAt.remove(id)
+        synchronized(approvalLock) { approvals[id] }?.complete(true)
+        groupLocks.getOrPut(id) { Mutex() }.withLock {
+            startDownload(context.applicationContext, group).await()
+        }
+    }
+
+    internal suspend fun deleteComponent(context: Context, id: String) = withContext(Dispatchers.IO) {
+        val group = componentGroups(context).first { it.id == id }
+        check(!isGroupActive(id)) { context.getString(R.string.voice_model_delete_busy) }
+        when {
+            id.startsWith("voice-") -> {
+                val modelId = id.removePrefix("voice-")
+                check(modelId !in selectedVoiceModels(context)) {
+                    context.getString(R.string.voice_model_delete_selected)
+                }
+                LocalVoiceModels.delete(context, modelId)
+            }
+            id == SPEECH_DIRECTORY -> {
+                check(id !in selectedVoiceModels(context)) {
+                    context.getString(R.string.voice_model_delete_selected)
+                }
+                deleteLegacySpeech(context)
+            }
+            id == ubuntu.id -> {
+                check(terminalArchiveFiles.tryLock()) { context.getString(R.string.component_in_use) }
+                try { deleteComponentFiles(context, group) } finally { terminalArchiveFiles.unlock() }
+            }
+            else -> {
+                val lock = templateFiles.getOrPut(id) { Mutex() }
+                check(lock.tryLock()) { context.getString(R.string.component_in_use) }
+                try { deleteComponentFiles(context, group) } finally { lock.unlock() }
+            }
+        }
+    }
+
+    private fun deleteComponentFiles(context: Context, group: DownloadGroup) =
+        deleteInactiveGroup(context, group.id) {
+            group.items.forEach { item ->
+                listOf(item.target, partOf(item.target)).forEach { file ->
+                    check(!file.exists() || (file.isFile && file.delete())) {
+                        context.getString(R.string.voice_model_delete_failed)
+                    }
+                }
+                verified.remove(item.resource.id)
+            }
+        }
+
+    internal suspend fun selectedVoiceModels(context: Context): Set<String> {
+        val prefs = SpeechServiceProfilesPreferences(context)
+        val stt = prefs.getCurrentSttProfile()
+        val tts = prefs.getCurrentTtsProfile()
+        return buildSet {
+            if (stt.serviceType == SpeechServiceFactory.SpeechServiceType.SHERPA_ONNX)
+                add(stt.localModelId)
+            if (stt.serviceType == SpeechServiceFactory.SpeechServiceType.SHERPA_NCNN)
+                add(SPEECH_DIRECTORY)
+            if (tts.serviceType == VoiceServiceFactory.VoiceServiceType.SHERPA_ONNX)
+                add(tts.localModelId)
+        }
+    }
+
     private val legacySpeechFiles = Mutex()
     internal suspend fun <T> withLegacySpeechFiles(action: suspend () -> T): T =
         legacySpeechFiles.withLock { action() }
@@ -259,10 +360,33 @@ object OnDemandResources {
     }
 
     suspend fun ensureUbuntu(context: Context, target: File) {
-        val group =
-            DownloadGroup(ubuntu.id, R.string.resource_terminal, listOf(DownloadItem(target, ubuntu)))
         try {
-            ensureGroup(context, group)
+            terminalArchiveFiles.withLock {
+                // Older installs may already have a verified staging archive.
+                if (!VerifiedResourceStore.isValid(target, ubuntu)) {
+                    val group = componentGroups(context).first { it.id == ubuntu.id }
+                    ensureGroup(context, group)
+                    verifyFreeSpace(context.cacheDir, ubuntu, 0L)
+                    val staging = File(context.cacheDir, "${target.name}.copying")
+                    try {
+                        group.items.single().target.inputStream().use { input ->
+                            staging.outputStream().use { output ->
+                                val buffer = ByteArray(64 * 1024)
+                                while (true) {
+                                    currentCoroutineContext().ensureActive()
+                                    val read = input.read(buffer)
+                                    if (read < 0) break
+                                    output.write(buffer, 0, read)
+                                }
+                            }
+                        }
+                        currentCoroutineContext().ensureActive()
+                        check(staging.renameTo(target)) { "Cannot prepare terminal archive" }
+                    } finally {
+                        staging.delete()
+                    }
+                }
+            }
             ubuntuFailure = null
         } catch (e: CancellationException) {
             throw e
