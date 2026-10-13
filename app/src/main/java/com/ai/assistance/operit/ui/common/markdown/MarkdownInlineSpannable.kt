@@ -26,6 +26,7 @@ import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import com.ai.assistance.operit.util.streamnative.NativeMarkdownSplitter
 import ru.noties.jlatexmath.JLatexMathDrawable
+import com.ai.assistance.operit.ui.theme.TonedIconStyle
 import kotlin.math.ceil
 import kotlin.math.floor
 
@@ -383,7 +384,8 @@ private fun appendInlineNode(
     density: Density? = null,
     fontSize: TextUnit? = null,
     visitedNodes: Set<MarkdownNodeStable> = emptySet(),
-    depth: Int = 0
+    depth: Int = 0,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ) {
     if (depth >= MAX_INLINE_RENDER_DEPTH) {
         builder.append(resolveNestedInlineText(child))
@@ -414,7 +416,8 @@ private fun appendInlineNode(
                         density,
                         fontSize,
                         nextVisitedNodes,
-                        nextDepth
+                        nextDepth,
+                        iconStyle,
                     )
                 }
             } else {
@@ -450,7 +453,8 @@ private fun appendInlineNode(
                         density,
                         fontSize,
                         nextVisitedNodes,
-                        nextDepth
+                        nextDepth,
+                        iconStyle,
                     )
                 }
             } else {
@@ -558,7 +562,7 @@ private fun appendInlineNode(
         }
 
         MarkdownProcessorType.PLAIN_TEXT -> {
-            appendPlainTextWithInlineElements(builder, content, textColor, primaryColor, density?.density)
+            appendPlainTextWithInlineElements(builder, content, textColor, primaryColor, density?.density, iconStyle)
         }
 
         else -> {
@@ -572,11 +576,12 @@ internal fun buildMarkdownInlineSpannableFromChildren(
     textColor: Color,
     primaryColor: Color,
     density: Density? = null,
-    fontSize: TextUnit? = null
+    fontSize: TextUnit? = null,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ): SpannableStringBuilder {
     val builder = SpannableStringBuilder()
     children.coalescePlainText().forEach { child ->
-        appendInlineNode(builder, child, textColor, primaryColor, density, fontSize)
+        appendInlineNode(builder, child, textColor, primaryColor, density, fontSize, iconStyle = iconStyle)
     }
     return builder
 }
@@ -586,7 +591,8 @@ internal fun buildMarkdownInlineSpannableFromText(
     textColor: Color,
     primaryColor: Color,
     density: Density? = null,
-    fontSize: TextUnit? = null
+    fontSize: TextUnit? = null,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ): SpannableStringBuilder {
     if (text.isEmpty()) return SpannableStringBuilder()
 
@@ -600,6 +606,7 @@ internal fun buildMarkdownInlineSpannableFromText(
         textColor = textColor,
         primaryColor = primaryColor,
         density = density,
-        fontSize = fontSize
+        fontSize = fontSize,
+        iconStyle = iconStyle,
     )
 }

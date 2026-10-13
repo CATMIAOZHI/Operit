@@ -59,6 +59,7 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.ai.assistance.operit.ui.common.displays.LatexCache
 import com.ai.assistance.operit.ui.theme.LocalAiMarkdownTextLayoutSettings
+import com.ai.assistance.operit.ui.theme.TonedIconStyle
 import com.ai.assistance.operit.util.markdown.MarkdownNodeStable
 import com.ai.assistance.operit.util.markdown.MarkdownProcessorType
 import com.ai.assistance.operit.util.stream.Stream
@@ -253,7 +254,8 @@ private fun createSafeInlineStaticLayout(
     textPaint: TextPaint,
     width: Int,
     lineSpacingMultiplier: Float,
-    contextLabel: String
+    contextLabel: String,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ): StaticLayout {
     return try {
         val spannable = buildSpannableFromChildren(
@@ -261,7 +263,8 @@ private fun createSafeInlineStaticLayout(
             textColor = textColor,
             primaryColor = primaryColor,
             density = density,
-            fontSize = fontSize
+            fontSize = fontSize,
+            iconStyle = iconStyle,
         )
         createStaticLayout(spannable, textPaint, width, lineSpacingMultiplier)
     } catch (t: Throwable) {
@@ -389,6 +392,7 @@ private data class MarkdownLayoutKey(
     val lineHeight: Float,
     val letterSpacing: Float,
     val paragraphSpacing: Float,
+    val iconStyle: TonedIconStyle,
 )
 
 private object CompletedMarkdownLayoutCache {
@@ -927,6 +931,7 @@ private fun UnifiedCanvasRenderer(
             normalTypeface, boldTypeface, localDensity.density, localDensity.fontScale,
             availableWidthPx, isLastNode, textLayoutSettings.lineHeightMultiplier,
             textLayoutSettings.letterSpacingSp, textLayoutSettings.paragraphSpacingDp,
+            textLayoutSettings.tonedIconStyle,
         )
         // A collapsed body leaves composition. Keep completed text layouts across re-expansion;
         // live tail versions remain local so token updates cannot evict the transcript cache.
@@ -952,6 +957,7 @@ private fun UnifiedCanvasRenderer(
                     globalLineHeightMultiplier = textLayoutSettings.lineHeightMultiplier,
                     globalLetterSpacingSp = textLayoutSettings.letterSpacingSp,
                     globalParagraphSpacingDp = textLayoutSettings.paragraphSpacingDp,
+                    inlineIconStyle = textLayoutSettings.tonedIconStyle,
                 ).also { if (useCache) CompletedMarkdownLayoutCache.put(layoutKey, it) }
         }
 
@@ -1266,7 +1272,8 @@ private fun calculateLayout(
     typewriterTailAlpha: Float = 1f,
     globalLineHeightMultiplier: Float = 1f,
     globalLetterSpacingSp: Float = 0f,
-    globalParagraphSpacingDp: Float = 0f
+    globalParagraphSpacingDp: Float = 0f,
+    inlineIconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ): LayoutResult {
     if (availableWidthPx <= 0) return LayoutResult(0f, 0f, emptyList())
 
@@ -1334,7 +1341,8 @@ private fun calculateLayout(
                     textPaint = textPaint,
                     width = safeAvailableWidthPx,
                     lineSpacingMultiplier = lineSpacingMultiplier,
-                    contextLabel = "header"
+                    contextLabel = "header",
+                    iconStyle = inlineIconStyle,
                 )
             } else {
                 LayoutCache.getLayout(
@@ -1417,7 +1425,8 @@ private fun calculateLayout(
                     textPaint = textPaint,
                     width = contentWidth,
                     lineSpacingMultiplier = lineSpacingMultiplier,
-                    contextLabel = "ordered-list"
+                    contextLabel = "ordered-list",
+                    iconStyle = inlineIconStyle,
                 )
             } else {
                 LayoutCache.getLayout(
@@ -1494,7 +1503,8 @@ private fun calculateLayout(
                     textPaint = textPaint,
                     width = contentWidth,
                     lineSpacingMultiplier = lineSpacingMultiplier,
-                    contextLabel = "unordered-list"
+                    contextLabel = "unordered-list",
+                    iconStyle = inlineIconStyle,
                 )
             } else {
                 LayoutCache.getLayout(
@@ -1553,7 +1563,8 @@ private fun calculateLayout(
                             textColor = textColor,
                             primaryColor = primaryColor,
                             density = density,
-                            fontSize = bodyMediumSize
+                            fontSize = bodyMediumSize,
+                            iconStyle = inlineIconStyle,
                         ).trimAllPreservingSpans()
                     } catch (t: Throwable) {
                         AppLogger.w(TAG, "Inline markdown layout failed in plain-text, fallback to raw text", t)
@@ -1632,14 +1643,16 @@ private fun buildSpannableFromChildren(
     textColor: Color,
     primaryColor: Color,
     density: Density? = null,
-    fontSize: TextUnit? = null
+    fontSize: TextUnit? = null,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ): SpannableStringBuilder {
     return buildMarkdownInlineSpannableFromChildren(
         children = children,
         textColor = textColor,
         primaryColor = primaryColor,
         density = density,
-        fontSize = fontSize
+        fontSize = fontSize,
+        iconStyle = iconStyle,
     )
 }
 

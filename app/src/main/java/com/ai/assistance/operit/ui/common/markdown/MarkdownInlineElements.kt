@@ -11,6 +11,7 @@ import android.text.style.ReplacementSpan
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
 import androidx.compose.ui.graphics.asAndroidPath
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
@@ -19,6 +20,7 @@ import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.graphics.vector.toPath
 import com.ai.assistance.operit.ui.common.dynamicui.cardFlowIcons
 import com.ai.assistance.operit.ui.common.dynamicui.cardSemanticToneColors
+import com.ai.assistance.operit.ui.theme.TonedIconStyle
 import com.ai.assistance.operit.util.markdown.InlineDirectives
 import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
@@ -58,7 +60,10 @@ private object InlineIconPaths {
     }
 }
 
-private fun drawInlineIcon(canvas: Canvas, name: String, left: Float, top: Float, size: Float, color: Int) {
+private fun drawInlineIcon(
+    canvas: Canvas, name: String, left: Float, top: Float, size: Float, color: Int,
+    halo: Int? = null, haloWidth: Float = 0f,
+) {
     val icon = InlineIconPaths.get(name) ?: return
     val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         this.color = color
@@ -66,7 +71,19 @@ private fun drawInlineIcon(canvas: Canvas, name: String, left: Float, top: Float
     }
     canvas.save()
     canvas.translate(left, top)
-    canvas.scale(size / icon.viewport, size / icon.viewport)
+    val scale = size / icon.viewport
+    canvas.scale(scale, scale)
+    if (halo != null) {
+        // Stroke under the fill: only the outer half of the stroke shows, as a thin ring.
+        val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            this.color = halo
+            style = Paint.Style.STROKE
+            strokeWidth = haloWidth / scale
+            strokeJoin = Paint.Join.ROUND
+            strokeCap = Paint.Cap.ROUND
+        }
+        icon.paths.forEach { canvas.drawPath(it, ring) }
+    }
     icon.paths.forEach { canvas.drawPath(it, paint) }
     canvas.restore()
 }
@@ -145,16 +162,29 @@ internal class InlineBadgeSpan(
     }
 }
 
-/** A text-sized icon; without a tone it follows the surrounding text color. */
+/**
+ * A text-sized icon; without a tone it follows the surrounding text color. A [fill] sets it on a
+ * small disc and a [halo] rings it, both centered on the same text midline as the bare icon.
+ */
 internal class InlineIconSpan(
     private val name: String,
     private val color: Int?,
     density: Float,
+    private val fill: Int? = null,
+    private val halo: Int? = null,
 ) : ReplacementSpan() {
-    private val margin = 1.5f * density
+    private val margin = (if (fill != null) 2f else 1.5f) * density
+    private val haloWidth = 2.4f * density
+
+    /** Outer box: the disc is a little larger than the glyph; the halo pokes out by half its width. */
+    private fun boxSize(paint: Paint) = when {
+        fill != null -> paint.textSize * 1.12f
+        halo != null -> paint.textSize + haloWidth / 2f
+        else -> paint.textSize
+    }
 
     override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
-        val size = paint.textSize
+        val size = boxSize(paint)
         fitCentered(paint, size, fm)
         return ceil(size + margin * 2).toInt()
     }
@@ -163,9 +193,18 @@ internal class InlineIconSpan(
         canvas: Canvas, text: CharSequence, start: Int, end: Int,
         x: Float, top: Int, baseline: Int, bottom: Int, paint: Paint,
     ) {
-        val size = paint.textSize
+        val box = boxSize(paint)
         val center = baseline + (paint.ascent() + paint.descent()) / 2f
-        drawInlineIcon(canvas, name, x + margin, center - size / 2f, size, color ?: paint.color)
+        val middle = x + margin + box / 2f
+        val ink = color ?: paint.color
+        if (fill != null) {
+            canvas.drawCircle(middle, center, box / 2f, Paint(Paint.ANTI_ALIAS_FLAG).apply { this.color = fill })
+            val glyph = box * 0.7f
+            drawInlineIcon(canvas, name, middle - glyph / 2f, center - glyph / 2f, glyph, ink)
+        } else {
+            val glyph = paint.textSize
+            drawInlineIcon(canvas, name, middle - glyph / 2f, center - glyph / 2f, glyph, ink, halo, haloWidth)
+        }
     }
 }
 
@@ -176,6 +215,7 @@ internal fun appendPlainTextWithInlineElements(
     textColor: Color,
     primaryColor: Color,
     density: Float?,
+    iconStyle: TonedIconStyle = TonedIconStyle.Plain,
 ) {
     if (!InlineDirectives.mayContain(text)) {
         builder.append(text)
@@ -205,14 +245,19 @@ internal fun appendPlainTextWithInlineElements(
                 )
             }
             is InlineDirectives.Icon -> {
-                val color = when (segment.tone) {
-                    "accent" -> accentInk
-                    else -> cardSemanticToneColors(segment.tone, dark)?.first
+                val tone = when (segment.tone) {
+                    "accent" -> accentInk to primaryColor.copy(alpha = 0.14f)
+                        .compositeOver(if (dark) Color(0xFF202124) else Color.White)
+                    else -> cardSemanticToneColors(segment.tone, dark)
                 }
+                // Untoned icons are text-colored and stay bare in every style.
+                val fill = tone?.second?.takeIf { iconStyle == TonedIconStyle.Dot }
+                val halo = (if (dark) Color(0xFF1B1B1E) else Color.White)
+                    .takeIf { tone != null && iconStyle == TonedIconStyle.Halo }
                 val start = builder.length
                 builder.append(INLINE_LATEX_PLACEHOLDER)
                 builder.setSpan(
-                    InlineIconSpan(segment.name, color?.toArgb(), density),
+                    InlineIconSpan(segment.name, tone?.first?.toArgb(), density, fill?.toArgb(), halo?.toArgb()),
                     start, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }

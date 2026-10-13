@@ -3515,10 +3515,15 @@
     <string name="global_text_letter_spacing_desc">调整 AI 回复中 Markdown 正文的字间距</string>
     <string name="global_text_paragraph_spacing">AI Markdown 段间距</string>
     <string name="global_text_paragraph_spacing_desc">调整 AI 回复中 Markdown 段落之间额外增加的间距</string>
+    <string name="toned_icon_style">彩色小图标样式</string>
+    <string name="toned_icon_style_desc">AI 回复正文里带颜色的小图标怎么显示。气泡用了图片、玻璃或中灰色时，小圆底或描边更容易看清</string>
+    <string name="toned_icon_style_plain">直接显示</string>
+    <string name="toned_icon_style_dot">小圆底</string>
+    <string name="toned_icon_style_halo">描边</string>
     <string name="layout_adjustment_preview_title">AI Markdown 预览</string>
     <string name="layout_adjustment_preview_desc">下方示例会展示当前已保存的 AI Markdown 行距、字距与段间距效果。前三段之间的留白会直接反映段间距设置。</string>
     <string name="layout_adjustment_preview_plain_text">这是一段普通文本预览。你可以观察字与字之间的距离，以及每一行之间的疏密变化。</string>
-    <string name="layout_adjustment_preview_markdown">第一段预览：用来观察正文行距与字距。\n\n第二段预览：这一段专门用来观察段落之间的留白。\n\n第三段预览：如果你调整了段间距，这里和上一段之间的距离会立即变化。\n\n- AI Markdown 列表项一\n- AI Markdown 列表项二</string>
+    <string name="layout_adjustment_preview_markdown">第一段预览：用来观察正文行距与字距。\n\n第二段预览：这一段专门用来观察段落之间的留白。\n\n第三段预览：如果你调整了段间距，这里和上一段之间的距离会立即变化。\n\n- AI Markdown 列表项一\n- AI Markdown 列表项二\n\n构建 :icon[check]{tone=success} 通过，:icon[warning]{tone=warning} 3 条警告，:icon[time] 用时 2 分钟</string>
     <string name="current_value">当前值</string>
     <string name="closer_to_edge">靠近边缘</string>
     <string name="farther_from_edge">远离边缘</string>

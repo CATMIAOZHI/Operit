@@ -450,6 +450,8 @@ class UserPreferencesManager private constructor(private val context: Context) {
             floatPreferencesKey("global_text_letter_spacing")
         private val AI_MARKDOWN_PARAGRAPH_SPACING =
             floatPreferencesKey("ai_markdown_paragraph_spacing")
+        private val AI_MARKDOWN_TONED_ICON_STYLE =
+            stringPreferencesKey("ai_markdown_toned_icon_style")
 
         // 最近使用颜色
         private val RECENT_COLORS = stringPreferencesKey("recent_colors")
@@ -1321,6 +1323,11 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences[AI_MARKDOWN_PARAGRAPH_SPACING] ?: 12f
         }
 
+    val aiMarkdownTonedIconStyle: Flow<com.ai.assistance.operit.ui.theme.TonedIconStyle> =
+        context.userPreferencesDataStore.data.map { preferences ->
+            com.ai.assistance.operit.ui.theme.TonedIconStyle.fromKey(preferences[AI_MARKDOWN_TONED_ICON_STYLE])
+        }
+
     // 获取最近使用颜色
     val recentColorsFlow: Flow<List<Int>> =
         context.userPreferencesDataStore.data.map { preferences ->
@@ -1387,6 +1394,12 @@ class UserPreferencesManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun saveAiMarkdownTonedIconStyle(value: com.ai.assistance.operit.ui.theme.TonedIconStyle) {
+        context.userPreferencesDataStore.edit { preferences ->
+            preferences[AI_MARKDOWN_TONED_ICON_STYLE] = value.key
+        }
+    }
+
     // 重置布局设置
     suspend fun resetLayoutSettings() {
         context.userPreferencesDataStore.edit { preferences ->
@@ -1395,6 +1408,7 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences.remove(AI_MARKDOWN_LINE_HEIGHT_MULTIPLIER)
             preferences.remove(AI_MARKDOWN_LETTER_SPACING)
             preferences.remove(AI_MARKDOWN_PARAGRAPH_SPACING)
+            preferences.remove(AI_MARKDOWN_TONED_ICON_STYLE)
         }
     }
 
