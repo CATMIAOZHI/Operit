@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.common.dynamicui
 import android.content.Context
 import android.view.MotionEvent
 import android.webkit.*
+import android.widget.FrameLayout
 import androidx.a2ui.compose.runtime.*
 import androidx.a2ui.compose.ui.A2uiComponent
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -71,7 +72,7 @@ internal object CardHtml : A2uiComponent {
             } else {
                 // Keep the measured slot stable during offscreen disposal, so chat does not jump.
                 Box(Modifier.fillMaxWidth().height(measured.coerceIn(120, limit).dp)) {
-                    if (visible && active) HtmlVisual(source, styles, description, measured.coerceIn(120, limit)) {
+                    HtmlVisual(source, styles, description, measured.coerceIn(120, limit), visible && active) {
                         measured = it
                     }
                 }
@@ -81,7 +82,7 @@ internal object CardHtml : A2uiComponent {
 }
 
 @Composable
-private fun HtmlVisual(source: String, styles: String, description: String?, height: Int, onHeight: (Int) -> Unit) {
+private fun HtmlVisual(source: String, styles: String, description: String?, height: Int, active: Boolean, onHeight: (Int) -> Unit) {
         val scheme = MaterialTheme.colorScheme
         fun hex(color: Color) = "#%06X".format(color.toArgb() and 0xFFFFFF)
         val heightToken = remember(source, styles, scheme) { UUID.randomUUID().toString() }
@@ -92,8 +93,15 @@ private fun HtmlVisual(source: String, styles: String, description: String?, hei
         val zoom = (LocalDensity.current.fontScale * 100).roundToInt()
         AndroidView(
             modifier = Modifier.fillMaxWidth().height(height.dp),
-            factory = { context -> OfflineCardWebView(context) },
-            update = { view ->
+            // Keep the Compose interop node stable when viewport visibility changes. Removing it
+            // during lazy layout reuse can leave the parent placing a detached LayoutNode.
+            factory = { context -> HtmlVisualHost(context) },
+            update = { host ->
+                if (!active) {
+                    host.releaseVisual()
+                    return@AndroidView
+                }
+                val view = host.visual()
                 view.contentDescription = description
                 view.settings.textZoom = zoom
                 view.onContentHeight = onHeight
@@ -103,13 +111,31 @@ private fun HtmlVisual(source: String, styles: String, description: String?, hei
                     view.loadDataWithBaseURL(null, document, "text/html", "UTF-8", null)
                 }
             },
-            onRelease = { view ->
-                view.onContentHeight = {}
-                view.stopLoading()
-                view.onPause()
-                view.destroy()
-            },
+            onReset = { it.releaseVisual() },
+            onRelease = { it.releaseVisual() },
         )
+}
+
+/** Only this empty, lightweight host survives offscreen; the WebView itself is destroyed. */
+internal class HtmlVisualHost(context: Context) : FrameLayout(context) {
+    private var webView: OfflineCardWebView? = null
+
+    fun visual(): OfflineCardWebView = webView ?: OfflineCardWebView(context).also {
+        webView = it
+        addView(it, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+    }
+
+    fun releaseVisual() {
+        val view = webView ?: return
+        webView = null
+        view.onContentHeight = {}
+        view.heightToken = null
+        // WebView must be detached before destroy; late height callbacks must not update the card.
+        removeView(view)
+        view.stopLoading()
+        view.onPause()
+        view.destroy()
+    }
 }
 
 /** No JavascriptInterface is ever attached to generated content. */

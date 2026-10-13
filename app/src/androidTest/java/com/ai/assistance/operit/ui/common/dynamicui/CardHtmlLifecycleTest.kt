@@ -5,12 +5,15 @@ import android.view.ViewGroup
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.dp
 import androidx.test.ext.junit.runners.AndroidJUnit4
@@ -49,7 +52,9 @@ class CardHtmlLifecycleTest {
             }
         }
         compose.runOnIdle { assertTrue(visuals(root).isEmpty()) }
-        compose.onNodeWithText(root.context.getString(R.string.dynamic_ui_html_click_to_load)).performClick()
+        val loadLabel = root.context.getString(R.string.dynamic_ui_html_click_to_load)
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(loadLabel).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(loadLabel).performClick()
         compose.waitUntil(10_000) { compose.runOnIdle { visuals(root).size == 1 } }
         val first = compose.runOnIdle { visuals(root).single() }
         compose.runOnIdle { scope.launch { scroll.scrollTo(scroll.maxValue) } }
@@ -57,5 +62,54 @@ class CardHtmlLifecycleTest {
         compose.runOnIdle { scope.launch { scroll.scrollTo(0) } }
         compose.waitUntil(10_000) { compose.runOnIdle { visuals(root).size == 1 } }
         compose.runOnIdle { assertNotSame(first, visuals(root).single()) }
+    }
+
+    @Test fun loadedHtmlSurvivesRepeatedLazyItemReuse() {
+        lateinit var root: View
+        lateinit var list: androidx.compose.foundation.lazy.LazyListState
+        lateinit var scope: CoroutineScope
+        val document = CardExpress.compile("""
+            root=Html(label="Glass",html="<div class='glass'>Glass preview</div>",css=".glass{height:600px;background:linear-gradient(45deg,#aaf,#afa);backdrop-filter:blur(12px)}")
+        """.trimIndent())
+        compose.setContent {
+            root = LocalView.current.rootView
+            list = rememberLazyListState()
+            scope = rememberCoroutineScope()
+            MaterialTheme {
+                LazyColumn(Modifier.width(300.dp).height(260.dp), state = list) {
+                    item(key = "html") {
+                        DynamicUiCard(document, closed = true, streaming = false, blockIndex = 0)
+                    }
+                    items(30, key = { "spacer-$it" }) { Spacer(Modifier.height(200.dp)) }
+                }
+            }
+        }
+        val loadLabel = root.context.getString(R.string.dynamic_ui_html_click_to_load)
+        compose.waitUntil(10_000) { compose.onAllNodesWithText(loadLabel).fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText(loadLabel).performClick()
+        fun awaitLoadedVisual() {
+            compose.waitUntil(10_000) {
+                compose.runOnIdle {
+                    val view = visuals(root).singleOrNull()
+                    val prefix = view?.heightToken?.let { "$it:" }
+                    val title = view?.title.orEmpty()
+                    prefix != null && title.startsWith(prefix) &&
+                        (title.removePrefix(prefix).toIntOrNull() ?: 0) >= 600
+                }
+            }
+        }
+        awaitLoadedVisual()
+        repeat(5) {
+            val previous = compose.runOnIdle { visuals(root).single() }
+            compose.runOnIdle { scope.launch { list.scrollToItem(25) } }
+            compose.waitUntil(10_000) { compose.runOnIdle { visuals(root).isEmpty() } }
+            compose.runOnIdle {
+                assertNull(previous.parent)
+                assertNull(previous.heightToken)
+            }
+            compose.runOnIdle { scope.launch { list.scrollToItem(0) } }
+            awaitLoadedVisual()
+            compose.runOnIdle { assertNotSame(previous, visuals(root).single()) }
+        }
     }
 }
