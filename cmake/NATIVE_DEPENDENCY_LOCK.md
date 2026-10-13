@@ -9,9 +9,6 @@ Resolved on 2026-07-22 and verified by a full Nightly build.
 | ncnn | https://github.com/Tencent/ncnn.git | `a4d2ea1d4422c9e849f166fd7a4aefb52f942f6a` | master |
 | WAMR | https://github.com/bytecodealliance/wasm-micro-runtime.git | `2ae370d2219b56fa294294b3dae67e588c431eae` | main |
 | QuickJS | https://github.com/bellard/quickjs.git | `04be246001599f5995fa2f2d8c91a0f198d3f34c` | master |
-| Saba | https://github.com/benikabocha/saba.git | `29b8efa8b31c8e746f9a88020fb0ad9dcdcf3332` | master |
-| Bullet3 | https://github.com/bulletphysics/bullet3.git | `63c4d67e337017f9d8b298c900e9aabdb69296e7` | master |
-| ufbx | https://github.com/ufbx/ufbx.git | `fcc5d6ba444cfd3eb80677dba5e37e493941abe5` | main |
 
 ## Why pin
 

@@ -32,8 +32,6 @@ import com.ai.assistance.operit.data.preferences.CharacterCardToolAccessResolver
 import com.ai.assistance.operit.data.model.PromptFunctionType
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
 import com.ai.assistance.operit.data.preferences.preferencesManager
-import com.ai.assistance.operit.core.avatar.impl.factory.AvatarModelFactoryImpl
-import com.ai.assistance.operit.data.repository.AvatarRepository
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.core.tools.ToolProgressBus
@@ -54,8 +52,6 @@ import com.ai.assistance.operit.api.chat.enhance.MultiServiceManager
 import com.ai.assistance.operit.data.repository.CustomEmojiRepository
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkBuilder
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
-import com.ai.assistance.operit.data.repository.getCustomMoodDefinitions
-import com.ai.assistance.operit.data.repository.getMoodAnimationMapping
 
 private val toolExecutionMetadataAttributeRegex = Regex(
     """\s+(?:call_id|invocation_index|duration_ms|execution_state|final)="[^"]*"""",
@@ -116,9 +112,6 @@ class ConversationService(
     private val characterCardToolAccessResolver = CharacterCardToolAccessResolver.getInstance(context)
     private val activePromptManager = ActivePromptManager.getInstance(context)
     private val userProfileDocumentRepository = UserProfileDocumentRepository.getInstance(context)
-    private val avatarRepository by lazy {
-        AvatarRepository.getInstance(context, AvatarModelFactoryImpl())
-    }
     private val conversationMutex = Mutex()
 
     /**
@@ -689,18 +682,8 @@ class ConversationService(
                     } else {
                         ""
                     }
-                // 语音头像模式：添加 <mood> 标签协议
-                val avatarMoodRulesText =
-                    if (allowPersonalContext && shouldInjectMoodRules(promptFunctionType)) {
-                        buildAvatarMoodRulesText(useEnglish)
-                    } else {
-                        ""
-                    }
-                AppLogger.d("petRules", avatarMoodRulesText)
-
                 // 构建最终的系统提示词
                 val finalSystemPrompt = buildString {
-                    append(avatarMoodRulesText)
                     append(systemPrompt)
                     if (!additionalSystemPrompt.isNullOrBlank()) {
                         append("\n\n<subagent_profile source=\"agent_profile\">\n")
@@ -1151,41 +1134,6 @@ class ConversationService(
                 }
             }
         } else ""
-    }
-
-    /**
-     * 虚拟形象的 <mood> 标签规则，仅在语音头像环境下添加到系统提示中。
-     * 会自动拼接当前头像启用的自定义 mood 类型。
-     */
-    private fun buildAvatarMoodRulesText(useEnglish: Boolean): String {
-        val currentAvatarId = avatarRepository.currentAvatar.value?.id
-        val currentConfig =
-            avatarRepository.configs.value.firstOrNull { config ->
-                config.id == currentAvatarId
-            }
-
-        val moodAnimationMapping = currentConfig?.getMoodAnimationMapping().orEmpty()
-        val customMoodDefinitions =
-            currentConfig?.getCustomMoodDefinitions()
-                .orEmpty()
-                .filter { definition ->
-                    moodAnimationMapping[definition.key]?.isNotBlank() == true
-                }
-
-        return FunctionalPrompts.avatarMoodRulesText(
-            customMoodDefinitions = customMoodDefinitions,
-            useEnglish = useEnglish
-        )
-    }
-
-    private fun shouldInjectMoodRules(promptFunctionType: PromptFunctionType): Boolean {
-        if (promptFunctionType != PromptFunctionType.VOICE) {
-            return false
-        }
-
-        val settings = avatarRepository.settings.value
-        val currentAvatar = avatarRepository.currentAvatar.value
-        return settings.isVoiceCallAvatarEnabled && currentAvatar != null
     }
 
     /**
