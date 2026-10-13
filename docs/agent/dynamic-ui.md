@@ -25,12 +25,27 @@ DECIDE FIRST 说明读取指南不等于必须生成界面；VISUAL RULES 约束
 解析器可能把 `[已完成]{…}` 拆成多个纯文本节点，渲染和复制前会先合并相邻纯文本。
 复制全文和朗读保留徽章文字、去掉图标。
 
-卡片 `Icon`、`Flow` 和行内图标共用 `cardFlowIcons`，包括 `phone` / `smartphone`（手机）、
+卡片 `Icon`、`Flow`、行内图标和徽章共用 `CardIcons`。内置 Lucide v0.456.0 的 1535 个图标，
+以 `lucide:orbit` 等明确名称访问；无冲突时也接受裸名称。`list_icons(query,limit,offset)`
+按英文名称和关键词查找，返回名称、总数和下一页起点，不向全局提示词注入完整清单。
+`cardFlowIcons` 继续保存旧 Material 名称，包括 `phone` / `smartphone`（手机）、
 `globe` / `language`（地球）、`browser`（网页）以及电脑、终端、服务器、模块、语音等图标。
 保留原 AndroidX 内置图标名称（包括 `calendarToday`），旧卡片可继续显示。
 例如 `Row(children=[Icon(name="phone"),Text(text="Operit Core")])`；
 普通正文写 `:icon[globe]{tone=info}`。只有行内 Badge 接受 `icon` 属性，
 卡片 Badge 仍只支持文字和语义色。
+
+卡片写 `Icon(name="lucide:orbit",tone="accent",size=32)`，`tone` 支持
+neutral/accent/success/info/warning/error（可绑定状态），不指定则继承内容颜色；
+`size` 为 12～96 的整数字面量，单位 dp、默认 24，最终受父布局限制。
+正文写 `:icon[lucide:orbit]{tone=info size=lg}`，尺寸 sm/md/lg 分别为正文的
+0.85/1/1.25 倍，默认 md；徽章内图标继续随标签字号。图标名上限 64 字符，
+徽章标签仍为 16 字符。行内绘制保留填充、描边、圆头和透明度，继续支持 Plain/Dot/Halo。
+
+图标数据由 `tools/icons/generate_lucide.py` 从固定 SHA-512 的官方 npm 压缩包生成，
+不在运行时加载 SVG/脚本或联网；Compose 图标与 Android Path 各有 128 项 LRU 缓存。
+许可证随 APK 放在 `assets/licenses/lucide-0.456.0.txt` 和 `feather-4.29.2.txt`。
+生成与升级方式见 `tools/icons/README.md`。
 
 工具包描述和 `read_guide` 会引导 AI 主动选择有助于理解的可视化，无需用户明确要求：
 线性步骤和流程用 `Flow`，趋势用折线图，数量对比用柱状图，占比用饼图，数值关系用散点图；
@@ -111,7 +126,8 @@ Expandable 可将 `expanded` 绑定数据路径，跨页面恢复展开状态。
 
 固定 AndroidX A2UI alpha01，使用其 parser、processor、数据绑定和 Compose surface。
 协议固定 **v0.9**；自有目录 ID 为 `https://operit.ai/a2ui/catalog/v1`。
-这是标识符，不是网络加载地址。没有第三方 React、WebView 或脚本执行路径。
+这是标识符，不是网络加载地址。原生组件继续使用官方 Compose；
+仅用户点开高级 `Html` 视觉时创建独立离线 WebView，不引入第三方 React。
 
 - `DynamicUiProtocol`：围栏事件校验、静态图和资源边界。
 - `DynamicUiCatalog`：官方基础组件，以及原生 Form/Table/Grid 等目录扩展。
@@ -140,7 +156,7 @@ DatePicker、Form、Expandable。Select 和 DatePicker 在卡片内展开，不�
 | 草稿 | Draft 本地编辑、保存、复制；需要发送给 AI 时另放明确提交按钮，不会发送邮件或发布文章 |
 
 公式、Mermaid、Markdown 表格继续使用既有普通消息渲染；不在 A2UI 内嵌套
-Markdown 围栏或工具标记。不引入任意脚本执行、自由 HTML、设备权限或隐式请求。
+Markdown 围栏或工具标记。高级 Html 仅接受白名单 HTML/CSS，不开放作者脚本、设备权限或隐式请求。
 以上是 Operit 自有目录能力，不声称使用了 ChatGPT 私有 UI SDK。
 
 按键计算器仍由 Form/Grid/Button 等普通组件组合，不新增固定 Calculator 界面组件。
@@ -184,6 +200,26 @@ stringContains/stringReplace/stringTrim、dateAddDays/dateDiffDays/formatDate。
   Column 支持 gap、align。Grid 未指定列数时按
   实际可用宽度、minItemWidth 和字体缩放选择 1–4 列；键盘仍使用明确列数及跨度。
 - Panel 集中提供有限间距、圆角、背景、边框和最大宽度；Text 支持对齐、1–8 行截断和语义色 `tone`（与 Badge 同一组，不开放任意色值；自定义气泡上自动校正到 4.5:1）。
+- `Panel.background`：原有 `transparent/surface/inset/accentMuted`，另支持 `light/dark/blue/green/orange/red`。
+  `info/success/warning/error` 分别是蓝/绿/橙/红的别名；彩色底跟随当前局部明暗配色，
+  `light/dark` 则明确指定浅灰/深蓝灰底。面板内文字、图标和控件使用该面板的局部配色，
+  嵌套透明面板继承；不会改变面板外的气泡或其他内容。不接受 HEX/RGB、渐变或背景图。
+  `read_example(name="backgrounds")` 提供浅色、蓝色、绿色、深色四格示例。
+- 复杂视觉可用 `prepare_html(label, html, css, max_height?)`，仍返回正文短引用，也可在 Express 里组合
+  `Html(label=...,html=...,css=...,maxHeight=720)`。支持自定义 CSS 颜色、渐变、纹理、动画、
+  filter/backdrop-filter（实际效果依赖系统 WebView），以及 radio/checkbox + label、details 的本地交互。
+  HTML 是 body 片段，HTML/CSS 各限 8192 字符、最多 256 元素，每卡最多 4 个 Html；
+  高度按内容适配至 120～900dp 上限（默认720），超出滚动。宽度由容器决定。
+  `--operit-text/surface/accent` 提供当前主题色；自行指定背景时同时指定清晰的前景色。
+  作者不可执行 JS；仅应用内置的随机 nonce 授权脚本测量内容高度，CSP 拒绝其他脚本。
+  页面无原生桥、网络、文件/Content 访问、导航、表单提交或存储能力。
+  CSS 交互状态只在当前视图存活期间保留，持久状态、工具/AI 操作和输入表单继续使用原生组件。
+  `read_example(name="surfaces")` 演示极光、星云、赛博、柔光四种背景与本地切换。
+  **使用条件**：仅用户明确要求高级视觉效果或 HTML/CSS 卡片时允许模型使用；普通卡片、
+  图标和排版需求仍用原生组件，禁止为装饰或绕过原生错误而主动使用。
+  **运行门槛**：默认只显示“这是一个 HTML 卡片，点击进行加载。”，点击前不创建 WebView。
+  完全离屏或应用进入后台后销毁网页实例，回到可见前台时重新加载；保留占位高度防止聊天跳动，
+  HTML 内部临时选择状态会重置。加载许可按该组件的 HTML/CSS 内容保留，源码改变需要重新点击。
   正文默认不截断。Scroll 必须给出 80–480 dp 的最大高度，避免聊天无限高度约束。
 - 数组运算限制 128 项、32K 结果；字段投影/筛选使用相对对象路径，不能执行回调。
   Table 可使用派生行，仍要求 8 列/32 行及标量单元格。空数组平均值、缺失字段、

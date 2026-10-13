@@ -10,6 +10,12 @@ const sandbox = {
     exports: {}, __operitCurrentCallId:"host-call", complete:value => { result = value; },
     NativeInterface: {
         dynamicUiGuide:() => "NATIVE SIGNATURES",
+        dynamicUiIcons:(query,limit,offset) => {
+            assert.equal(query,"orbit");
+            assert.equal(limit,30);
+            assert.equal(offset,0);
+            return JSON.stringify({icons:["lucide:orbit"],total:1,next_offset:null});
+        },
         updateDynamicUi:(callId,reference,changes,remove) => {
             assert.equal(callId,"host-call");
             assert.equal(reference,"demo");
@@ -36,7 +42,16 @@ vm.runInNewContext(source, sandbox);
 (async () => {
     await sandbox.exports.read_guide();
     assert.ok(result.message.endsWith("NATIVE SIGNATURES"));
-    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists","flow_steps","flowchart","data_story","mixed_branch"]) {
+    await sandbox.exports.list_icons({query:"orbit"});
+    assert.deepEqual(Array.from(result.icons),["lucide:orbit"]);
+    await sandbox.exports.list_icons({query:"orbit",limit:0});
+    assert.equal(result.valid,false);
+    await sandbox.exports.prepare_html({label:"Visual",html:'<div class="x">Hi</div>',css:".x{color:red}"});
+    assert.ok(checked.startsWith('root=Html('));
+    assert.ok(checked.includes('maxHeight=720'));
+    await sandbox.exports.prepare_html({label:"Visual",html:"<p>x</p>",max_height:999});
+    assert.equal(result.valid,false);
+    for (const name of ["calculator","cost_calculator","charts","form","info","stats","progress","responsive","data","vector","repeat","curves","interactive_flow","p2_controls","p2_lists","flow_steps","flowchart","data_story","mixed_branch","profile","backgrounds","surfaces"]) {
         await sandbox.exports.read_example({name});
         assert.equal(result.success, true);
         assert.equal(result.valid, true);

@@ -53,7 +53,7 @@ internal val operitDynamicUiCatalog by lazy {
     A2uiCatalog(
         catalogId = DynamicUiProtocol.CATALOG,
         components = with(MaterialA2uiBasicCatalogV1Defaults) {
-            listOf(CardIcon, FramedCard, divider, CardButton, CardPressable, CardVector, CardPopover, CardTooltip, CardStepper, CardFormula, CardFlow) +
+            listOf(CardIcon, CardHtml, FramedCard, divider, CardButton, CardPressable, CardVector, CardPopover, CardTooltip, CardStepper, CardFormula, CardFlow) +
                 listOf("Text", "Row", "Column", "List", "Panel", "Scroll", "Frame").map(::CardLayoutComponent) +
                 listOf(
                     "Heading", "Header", "InfoRow", "Display", "Badge", "Progress", "Code", "Table", "Switch", "RadioGroup",
@@ -347,6 +347,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                         when (val state = observeA2uiComponentState(ref)) {
                             is A2uiComponentState.Success ->
                                 CompositionLocalProvider(
+                                    LocalCardRowItem provides false,
                                     LocalCardGridCell provides (gridCell && state.component.type == "Button"),
                                     LocalCardRowFill provides rowFill?.takeIf { state.component.type == "Display" },
                                 ) {
@@ -452,25 +453,31 @@ private object CardIcon : A2uiComponent {
     override val name = "Icon"
     override val description = "A native outlined icon from the shared Operit icon catalog."
     private val iconName = A2uiProperty.dynamicString("name")
+    private val tone = A2uiProperty.dynamicString("tone")
+    private val size = A2uiProperty.dynamicNumber("size")
     override val properties = listOf(iconName, A2uiBasicCatalogV1.Icon.AccessibilityProperty,
-        A2uiBasicCatalogV1.WeightProperty)
+        A2uiBasicCatalogV1.WeightProperty, tone, size)
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
         val name = properties.bind(iconName)
         val accessibility = properties.bind(A2uiBasicCatalogV1.Icon.AccessibilityProperty)
-        val vector = cardFlowIcons[name]
+        val vector = CardIcons.get(name)
+        val iconSize = (properties.bind(size)?.toInt() ?: 24).coerceIn(12, 96).dp
+        val boundTone = properties.bind(tone)
+        val tint = cardToneInk(if (boundTone == "accent") "primary" else boundTone,
+            MaterialTheme.colorScheme, LocalDynamicUiBackdrop.current)
+            ?: LocalContentColor.current
         if (vector == null) {
             val warn = LocalCardIconWarning.current
             LaunchedEffect(name) { warn() }
-            Icon(Icons.Outlined.HelpOutline, stringResource(R.string.dynamic_ui_icon_missing), modifier.size(24.dp),
+            Icon(Icons.Outlined.HelpOutline, stringResource(R.string.dynamic_ui_icon_missing), modifier.size(iconSize),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         } else {
             val description = accessibility?.let {
                 listOfNotNull(it.label?.takeIf(String::isNotBlank), it.description?.takeIf(String::isNotBlank))
                     .joinToString(", ").takeIf(String::isNotBlank)
             }
-            Icon(vector, description, modifier.size(24.dp),
-                tint = MaterialTheme.colorScheme.onSurface)
+            Icon(vector, description, modifier.size(iconSize), tint = tint)
         }
     }
 }

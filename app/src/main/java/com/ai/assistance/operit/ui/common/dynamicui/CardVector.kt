@@ -136,7 +136,11 @@ internal object CardVector : A2uiComponent {
         }
         val scheme = MaterialTheme.colorScheme
         val measurer = rememberTextMeasurer()
-        Canvas(modifier.fillMaxWidth().heightIn(max = 320.dp).aspectRatio(data.width / data.height)
+        // In a row, a small coordinate viewport is also the graphic's preferred
+        // width. A standalone diagram still expands; Frame can set an explicit size.
+        Canvas(modifier
+            .then(if (LocalCardRowItem.current) Modifier.widthIn(max = data.width.dp) else Modifier)
+            .fillMaxWidth().heightIn(max = 320.dp).aspectRatio(data.width / data.height)
             .clipToBounds().semantics { contentDescription = data.label }) {
             val scale = min(size.width / data.width, size.height / data.height)
             val origin = Offset((size.width-data.width*scale)/2, (size.height-data.height*scale)/2)

@@ -101,7 +101,8 @@ internal fun CardPopoverHost(content: @Composable () -> Unit) {
                     .coerceIn(topLimit,bottomLimit)
                 CompositionLocalProvider(entry.locals) {
                 CompositionLocalProvider(LocalCardInteractive provides interactive,
-                    LocalCardReadOnly provides readOnly, LocalCardBrowse provides enabled) {
+                    LocalCardReadOnly provides readOnly, LocalCardBrowse provides enabled,
+                    LocalCardRowItem provides false) {
                     Surface(Modifier.offset { IntOffset(x.roundToInt(),y.roundToInt()) }.width(width)
                         .heightIn(max=with(density){height.toDp()})
                         .clickable(interactionSource=remember { MutableInteractionSource() },indication=null) {},

@@ -27,6 +27,13 @@ class DynamicUiProtocolTest {
         rejected("$create\n${components("""{"id":"root","component":"Text","text":"x","weight":0}""")}")
     }
 
+    @Test fun nativeSingleChildRowRemainsValidButCannotSupplyAmbiguousWeights() {
+        val nodes = """{"id":"root","component":"Row","child":"t","wrap":false},{"id":"t","component":"Text","text":"Title"}"""
+        assertEquals(JsonPrimitive(true), DynamicUiProtocol.validationReport("$create\n${components(nodes)}")["valid"])
+        val ambiguous = nodes.replace("\"child\":\"t\"", "\"child\":\"t\",\"children\":[\"t\"],\"weights\":[1]")
+        rejected("$create\n${components(ambiguous)}")
+    }
+
     @Test fun rejectUnsafeExpressionsAndSparseArrays() {
         rejected("$create\n${components("""{"id":"root","component":"TextField","value":{"path":"/a/99999999"}}""")}")
         rejected("$create\n${components("""{"id":"root","component":"Text","text":{"call":"openUrl"}}""")}")

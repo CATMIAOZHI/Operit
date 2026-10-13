@@ -10,6 +10,8 @@ import android.text.Spanned
 import android.text.style.ReplacementSpan
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.graphics.asAndroidPath
 import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.lerp
@@ -18,43 +20,55 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.VectorGroup
 import androidx.compose.ui.graphics.vector.VectorPath
 import androidx.compose.ui.graphics.vector.toPath
-import com.ai.assistance.operit.ui.common.dynamicui.cardFlowIcons
+import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
 import com.ai.assistance.operit.ui.common.dynamicui.cardSemanticToneColors
 import com.ai.assistance.operit.ui.theme.TonedIconStyle
 import com.ai.assistance.operit.util.markdown.InlineDirectives
-import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.ceil
 import kotlin.math.floor
 
 private const val BADGE_TEXT_SCALE = 0.82f
 
 /** Android paths for the shared icon set, so spans can draw them on a plain Canvas. */
-private object InlineIconPaths {
-    class Icon(val viewport: Float, val paths: List<android.graphics.Path>)
+internal object InlineIconPaths {
+    class DrawPath(
+        val path: android.graphics.Path,
+        val fillAlpha: Float?,
+        val strokeAlpha: Float?,
+        val strokeWidth: Float,
+        val cap: Paint.Cap,
+        val join: Paint.Join,
+    )
+    class Icon(val viewport: Float, val paths: List<DrawPath>)
 
-    private val cache = ConcurrentHashMap<String, Icon>()
-
-    fun isKnown(name: String): Boolean = name in cardFlowIcons
-
-    fun get(name: String): Icon? {
-        cache[name]?.let { return it }
-        val vector = cardFlowIcons[name] ?: return null
-        val paths = ArrayList<android.graphics.Path>()
-        collect(vector.root, paths)
-        return cache.getOrPut(name) { Icon(vector.viewportWidth, paths) }
+    private val cache = object : LinkedHashMap<String, Icon>(128, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Icon>?) = size > 128
     }
 
-    private fun collect(group: VectorGroup, out: MutableList<android.graphics.Path>) {
+    fun isKnown(name: String): Boolean = CardIcons.contains(name)
+
+    fun get(name: String): Icon? = synchronized(cache) {
+        val vector = CardIcons.get(name) ?: return@synchronized null
+        cache[vector.name] ?: run {
+            val paths = ArrayList<DrawPath>()
+            collect(vector.root, paths)
+            Icon(vector.viewportWidth, paths).also { cache[vector.name] = it }
+        }
+    }
+
+    private fun collect(group: VectorGroup, out: MutableList<DrawPath>) {
         for (node in group) {
             when (node) {
                 is VectorGroup -> collect(node, out)
-                is VectorPath -> out += node.pathData.toPath().asAndroidPath().apply {
+                is VectorPath -> out += DrawPath(node.pathData.toPath().asAndroidPath().apply {
                     fillType = if (node.pathFillType == PathFillType.EvenOdd) {
                         android.graphics.Path.FillType.EVEN_ODD
                     } else {
                         android.graphics.Path.FillType.WINDING
                     }
-                }
+                }, node.fill?.let { node.fillAlpha }, node.stroke?.let { node.strokeAlpha }, node.strokeLineWidth,
+                    when (node.strokeLineCap) { StrokeCap.Round -> Paint.Cap.ROUND; StrokeCap.Square -> Paint.Cap.SQUARE; else -> Paint.Cap.BUTT },
+                    when (node.strokeLineJoin) { StrokeJoin.Round -> Paint.Join.ROUND; StrokeJoin.Bevel -> Paint.Join.BEVEL; else -> Paint.Join.MITER })
             }
         }
     }
@@ -74,17 +88,33 @@ private fun drawInlineIcon(
     val scale = size / icon.viewport
     canvas.scale(scale, scale)
     if (halo != null) {
-        // Stroke under the fill: only the outer half of the stroke shows, as a thin ring.
+        // Include the icon's own stroke width, or a halo disappears under Lucide's outlines.
         val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             this.color = halo
             style = Paint.Style.STROKE
-            strokeWidth = haloWidth / scale
             strokeJoin = Paint.Join.ROUND
             strokeCap = Paint.Cap.ROUND
         }
-        icon.paths.forEach { canvas.drawPath(it, ring) }
+        icon.paths.forEach {
+            ring.strokeWidth = (if (it.strokeAlpha != null) it.strokeWidth else 0f) + haloWidth / scale
+            canvas.drawPath(it.path, ring)
+        }
     }
-    icon.paths.forEach { canvas.drawPath(it, paint) }
+    icon.paths.forEach { path ->
+        path.fillAlpha?.let {
+            paint.style = Paint.Style.FILL
+            paint.alpha = (android.graphics.Color.alpha(color) * it).toInt()
+            canvas.drawPath(path.path, paint)
+        }
+        path.strokeAlpha?.let {
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = path.strokeWidth
+            paint.strokeCap = path.cap
+            paint.strokeJoin = path.join
+            paint.alpha = (android.graphics.Color.alpha(color) * it).toInt()
+            canvas.drawPath(path.path, paint)
+        }
+    }
     canvas.restore()
 }
 
@@ -172,15 +202,16 @@ internal class InlineIconSpan(
     density: Float,
     private val fill: Int? = null,
     private val halo: Int? = null,
+    private val iconScale: Float = 1f,
 ) : ReplacementSpan() {
     private val margin = (if (fill != null) 2f else 1.5f) * density
     private val haloWidth = 2.4f * density
 
     /** Outer box: the disc is a little larger than the glyph; the halo pokes out by half its width. */
     private fun boxSize(paint: Paint) = when {
-        fill != null -> paint.textSize * 1.12f
-        halo != null -> paint.textSize + haloWidth / 2f
-        else -> paint.textSize
+        fill != null -> paint.textSize * iconScale * 1.12f
+        halo != null -> paint.textSize * iconScale + haloWidth / 2f
+        else -> paint.textSize * iconScale
     }
 
     override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, fm: Paint.FontMetricsInt?): Int {
@@ -202,7 +233,7 @@ internal class InlineIconSpan(
             val glyph = box * 0.7f
             drawInlineIcon(canvas, name, middle - glyph / 2f, center - glyph / 2f, glyph, ink)
         } else {
-            val glyph = paint.textSize
+            val glyph = paint.textSize * iconScale
             drawInlineIcon(canvas, name, middle - glyph / 2f, center - glyph / 2f, glyph, ink, halo, haloWidth)
         }
     }
@@ -257,7 +288,8 @@ internal fun appendPlainTextWithInlineElements(
                 val start = builder.length
                 builder.append(INLINE_LATEX_PLACEHOLDER)
                 builder.setSpan(
-                    InlineIconSpan(segment.name, tone?.first?.toArgb(), density, fill?.toArgb(), halo?.toArgb()),
+                    InlineIconSpan(segment.name, tone?.first?.toArgb(), density, fill?.toArgb(), halo?.toArgb(),
+                        when (segment.size) { "sm" -> 0.85f; "lg" -> 1.25f; else -> 1f }),
                     start, builder.length, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE,
                 )
             }

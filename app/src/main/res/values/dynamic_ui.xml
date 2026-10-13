@@ -29,6 +29,7 @@
     <string name="dynamic_ui_regenerate">请让 AI 在同一个代码块中重新生成完整卡片</string>
     <string name="dynamic_ui_partial_error">部分内容有误，暂不能操作此卡片。请让 AI 修正</string>
     <string name="dynamic_ui_icon_missing">部分图标不可用</string>
+    <string name="dynamic_ui_html_click_to_load">这是一个 HTML 卡片，点击进行加载。</string>
     <string name="dynamic_ui_empty_value">未填写</string>
     <string name="dynamic_ui_select">请选择</string>
     <string name="dynamic_ui_select_date">选择日期</string>

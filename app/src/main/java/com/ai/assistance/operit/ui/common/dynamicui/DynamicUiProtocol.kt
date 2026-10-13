@@ -15,7 +15,7 @@ internal object DynamicUiProtocol {
     const val MARKER = "_operit_ready"
     val actions = setOf("local_action", "ai_submit", "tool_action", "open_url", "copy")
     val components = setOf(
-        "Text", "Icon", "Row", "Column", "Card", "Divider", "Button", "List",
+        "Text", "Icon", "Html", "Row", "Column", "Card", "Divider", "Button", "List",
         "TextField", "CheckBox", "ChoicePicker", "Slider",
         "Heading", "Header", "InfoRow", "Display", "Badge", "Grid", "Progress", "Table", "Code", "Switch",
         "Panel", "Scroll", "Popover", "Vector", "Repeat", "Frame", "Pressable", "Tooltip", "Stepper", "Formula", "Flow",
@@ -84,6 +84,7 @@ internal object DynamicUiProtocol {
             "Unsupported A2UI event", "Missing root component", "Functions cannot change component structure",
             "Invalid weight", "Invalid slider range", "Invalid slider steps", "Grid columns must be 1 to 4",
             "Grid spans require explicit columns and one integer span per child",
+            "Row weights need one integer 0..12 per child and at least one positive weight",
             "Use up to 32 static child IDs", "Duplicate children", "Only event actions are allowed",
             "Unsupported action", "Table too large", "Invalid table rows", "Cyclic or deeply nested components",
             "Too many rendered components", "Invalid data path", "Reserved or array-index data path",
@@ -104,6 +105,12 @@ internal object DynamicUiProtocol {
             "Repeat cannot be nested", "Repeat exceeds maxItems", "Repeat items must be an array",
             "Repeat items must be objects", "Repeat keys must be unique nonempty strings",
             "item is only available inside Repeat templates", "Expanded Repeat is too large",
+            "Html html must be a literal string", "Html css must be a literal string",
+            "Html and CSS must each fit 8192 characters; HTML cannot be empty", "Html exceeds 256 elements",
+            "Unsupported Html tag; use offline HTML/CSS without scripts, frames, images or links",
+            "Unsupported Html attribute; event handlers and resource URLs are not supported",
+            "Html inputs support only radio/checkbox visual toggles; use native fields for user data",
+            "Use at most four Html visuals per card",
         )
         return generateSequence<Throwable>(error) { it.cause }.take(8)
             .mapNotNull { it.message?.takeIf(known::contains) }.firstOrNull()
@@ -215,6 +222,15 @@ internal object DynamicUiProtocol {
             }
         }
         if (kind == "Vector") CardVectorData.validateDefinition(c)
+        if (kind == "Html") CardHtmlDocument.validateDefinition(c)
+        if (kind == "Row") c["weights"]?.let { weights ->
+            val refs = c["children"] as? JsonArray
+            require("child" !in c && weights is JsonArray && refs != null && weights.size == refs.size &&
+                weights.all { it is JsonPrimitive && !it.isString && it.intOrNull in 0..12 } &&
+                weights.any { it.jsonPrimitive.int > 0 }) {
+                "Row weights need one integer 0..12 per child and at least one positive weight"
+            }
+        }
         if (kind == "TextArea") require(
             (c["minLines"]?.jsonPrimitive?.int ?: 3) <= (c["maxLines"]?.jsonPrimitive?.int ?: 8)
         ) { "minLines must not exceed maxLines" }
@@ -358,12 +374,17 @@ internal object DynamicUiProtocol {
 
     private fun validateGraph(graph: Map<String, JsonObject>, requireReferences: Boolean) {
         // Count expanded occurrences, not just unique IDs: a small DAG can render exponentially.
+        var htmlCount = 0
         fun visit(id: String, ancestors: Set<String>, depth: Int): Int {
             require(depth <= 12 && id !in ancestors) { "Cyclic or deeply nested components" }
             val node = graph[id]
             if (node == null) {
                 require(!requireReferences) { "Missing child: $id" }
                 return 1
+            }
+            if (node["component"]?.jsonPrimitive?.content == "Html") {
+                htmlCount++
+                require(htmlCount <= 4) { "Use at most four Html visuals per card" }
             }
             if (node["component"]?.jsonPrimitive?.content == "Popover")
                 require(ancestors.none { graph[it]?.get("component")?.jsonPrimitive?.content == "Popover" }) {
@@ -382,7 +403,7 @@ internal object DynamicUiProtocol {
             }
             return count
         }
-        graph.keys.forEach { visit(it, emptySet(), 0) }
+        graph.keys.forEach { htmlCount = 0; visit(it, emptySet(), 0) }
     }
 
     fun validatePath(path: String) {

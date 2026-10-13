@@ -117,7 +117,9 @@ internal class AdvancedCardComponent(override val name: String) : A2uiComponent 
                     refs.getOrNull(index)?.let { ref ->
                         key(ref.id, ref.baseDataPath) {
                             when (val child = observeA2uiComponentState(ref)) {
-                                is A2uiComponentState.Success -> A2uiComponent(child.component, modifier = Modifier.fillMaxWidth())
+                                is A2uiComponentState.Success -> CompositionLocalProvider(LocalCardRowItem provides false) {
+                                    A2uiComponent(child.component, modifier = Modifier.fillMaxWidth())
+                                }
                                 is A2uiComponentState.Error -> Text(stringResource(R.string.dynamic_ui_partial_error), color = MaterialTheme.colorScheme.error)
                                 A2uiComponentState.Loading -> LinearProgressIndicator(Modifier.fillMaxWidth())
                             }

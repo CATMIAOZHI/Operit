@@ -91,7 +91,7 @@ internal fun cardFlowSteps(raw: Any?): List<CardFlowStep> {
         val caption = step["caption"]?.let { it as? String ?: error("Invalid flow caption") }.orEmpty()
         require(caption.length <= 160) { "Flow caption too long" }
         val icon = step["icon"]?.let { it as? String ?: error("Invalid flow icon") }
-        require(icon == null || icon in cardFlowIcons) { "Unknown flow icon" }
+        require(icon == null || CardIcons.contains(icon)) { "Unknown flow icon" }
         val tone = step["tone"]?.let { it as? String ?: error("Invalid flow tone") }
         require(tone == null || tone in flowTones) { "Unknown flow tone" }
         CardFlowStep(title, caption, icon, tone)
@@ -157,7 +157,7 @@ private fun FlowTile(step: CardFlowStep, modifier: Modifier, centered: Boolean) 
     }
     val iconTint = if (step.tone == "accent") ensureReadableOn(scheme.primary, fill.compositeOver(scheme.surface), 3.0) else ink
     Surface(modifier, shape = MaterialTheme.shapes.medium, color = fill) {
-        val icon = step.icon?.let(cardFlowIcons::get)
+        val icon = CardIcons.get(step.icon)
         if (centered) Column(Modifier.padding(horizontal = 8.dp, vertical = 12.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(4.dp, Alignment.CenterVertically)) {

@@ -24,6 +24,10 @@ import androidx.compose.ui.unit.dp
 internal fun cardSpacing(token: String?, default: Int = 8) =
     when (token) { "none" -> 0; "xs" -> 4; "sm" -> 8; "md" -> 16; "lg" -> 24; else -> default }.dp
 
+// Panels are transparent wrappers for sizing: a logo inside a row must not claim
+// the entire row. Vertical containers reset this before laying out their children.
+internal val LocalCardRowItem = compositionLocalOf { false }
+
 internal fun cardAutoColumns(width: Float, minimum: Float, fontScale: Float): Int =
     ((width + 8) / (minimum * fontScale.coerceAtLeast(1f) + 8)).toInt().coerceIn(1, 4)
 
@@ -45,6 +49,8 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
     private val gap = A2uiProperty.dynamicString("gap")
     private val justify = A2uiProperty.dynamicString("justify")
     private val wrap = A2uiProperty.dynamicBoolean("wrap")
+    private val weights = A2uiProperty.dynamicValue("weights")
+    private val minItemWidth = A2uiProperty.dynamicNumber("minItemWidth")
     private val padding = A2uiProperty.dynamicString("padding")
     private val radius = A2uiProperty.dynamicString("radius")
     private val background = A2uiProperty.dynamicString("background")
@@ -58,25 +64,28 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
     private val tone = A2uiProperty.dynamicString("tone")
     override val description = "Bounded responsive $name layout."
     override val properties = listOf(children, child, text, variant, align, textAlign, gap, justify,
-        wrap, padding, radius, background, border, maxWidth, maxHeight, minWidth, minHeight, aspectRatio, lineClamp, tone)
+        wrap, weights, minItemWidth, padding, radius, background, border, maxWidth, maxHeight, minWidth, minHeight, aspectRatio, lineClamp, tone)
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
     override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
         val refs = properties.bindChildReferences(children).orEmpty()
         val single = properties.bind(child)
-        val render: @Composable () -> Unit = {
-            if (single != null) CardChild(single)
+        val render: @Composable (Boolean) -> Unit = { wrapItems ->
+            if (single != null) {
+                if (wrapItems) Box(propagateMinConstraints = true) { CardChild(single) } else CardChild(single)
+            }
             else refs.forEach { ref ->
                 key(ref.id, ref.baseDataPath) {
-                    when (val state = observeA2uiComponentState(ref)) {
+                    val item: @Composable () -> Unit = { when (val state = observeA2uiComponentState(ref)) {
                         is A2uiComponentState.Success -> A2uiComponent(state.component)
                         is A2uiComponentState.Error -> {
                             LaunchedEffect(state.exception) { reportError(state.exception) }
                             Text("⚠", color = MaterialTheme.colorScheme.error)
                         }
                         A2uiComponentState.Loading -> LinearProgressIndicator()
-                    }
+                    } }
+                    if (wrapItems) Box(propagateMinConstraints = true) { item() } else item()
                 }
             }
         }
@@ -97,7 +106,7 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                         val size = cardFrameSize(bounds, ratio)
                         val measured = measurable.measure(Constraints.fixed(size.width, size.height))
                         layout(size.width, size.height) { measured.place(0, 0) }
-                    } else Modifier).clipToBounds()) { render() }
+                    } else Modifier).clipToBounds()) { render(false) }
             }
             "Text" -> Text(properties.bind(text).orEmpty(),
                 (if (properties.bind(textAlign) != null) modifier.fillMaxWidth() else modifier)
@@ -119,11 +128,15 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                 },
                 maxLines = properties.bind(lineClamp)?.toInt()?.coerceIn(1, 8) ?: Int.MAX_VALUE,
                 overflow = TextOverflow.Ellipsis)
-            "Column" -> Column(modifier, Arrangement.spacedBy(spacing), horizontal) { render() }
+            "Column" -> Column(modifier, Arrangement.spacedBy(spacing), horizontal) {
+                CompositionLocalProvider(LocalCardRowItem provides false) { render(false) }
+            }
             // Chat items (and Scroll children) receive unbounded height. The public List
             // contract is at most 32 static children, so let the enclosing container scroll
             // instead of nesting AndroidX's unbounded LazyColumn here.
-            "List" -> Column(modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) { render() }
+            "List" -> Column(modifier.fillMaxWidth(), Arrangement.spacedBy(8.dp)) {
+                CompositionLocalProvider(LocalCardRowItem provides false) { render(false) }
+            }
             "Row" -> {
                 val rowModifier = if (properties.bind(justify) != null) modifier.fillMaxWidth() else modifier
                 val arrangement = when (properties.bind(justify)) {
@@ -132,31 +145,40 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                     "end" -> Arrangement.spacedBy(spacing, Alignment.End)
                     else -> Arrangement.spacedBy(spacing)
                 }
-                if (properties.bind(wrap) == true) FlowRow(rowModifier,
-                    horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(spacing),
-                    itemVerticalAlignment = vertical) { render() }
-                else Row(rowModifier, arrangement, vertical) { render() }
+                CompositionLocalProvider(LocalCardRowItem provides true) {
+                    val shares = (properties.bind(weights) as? List<*>)?.map { (it as Number).toInt() }
+                    // Measure items against the available line width, then move an item
+                    // to the next line instead of squeezing it into the previous remainder.
+                    if (shares != null || properties.bind(wrap) == false) CardAdaptiveRow(
+                        weights = shares ?: List(if (single != null) 1 else refs.size) { 0 }, gap = spacing,
+                        minimum = (properties.bind(minItemWidth)?.toInt() ?: 120).dp,
+                        arrangement = arrangement, vertical = vertical, modifier = rowModifier,
+                    ) { render(true) }
+                    else FlowRow(rowModifier,
+                        horizontalArrangement = arrangement, verticalArrangement = Arrangement.spacedBy(spacing),
+                        itemVerticalAlignment = vertical) { render(false) }
+                }
             }
             "Panel" -> {
-                val colors = MaterialTheme.colorScheme
-                val fill = when (properties.bind(background)) {
-                    "surface" -> colors.surface
-                    "inset" -> colors.surfaceContainerHigh
-                    "accentMuted" -> colors.primaryContainer
-                    else -> Color.Transparent
-                }
-                val ink = if (properties.bind(background) == "accentMuted") colors.onPrimaryContainer else colors.onSurface
-                Surface(modifier.widthIn(max = (properties.bind(maxWidth)?.toInt() ?: 960).dp).fillMaxWidth(),
-                    color = fill, contentColor = ink,
+                val style = cardPanelStyle(properties.bind(background), MaterialTheme.colorScheme, LocalDynamicUiBackdrop.current)
+                Surface(modifier.widthIn(max = (properties.bind(maxWidth)?.toInt() ?: 960).dp)
+                    .then(if (LocalCardRowItem.current) Modifier else Modifier.fillMaxWidth()),
+                    color = style.fill, contentColor = style.colors.onSurface,
                     shape = RoundedCornerShape(cardSpacing(properties.bind(radius), 16)),
-                    border = if (properties.bind(border) == true) BorderStroke(1.dp, colors.outlineVariant) else null) {
-                    Box(Modifier.padding(cardSpacing(properties.bind(padding), 16))) { render() }
+                    border = if (properties.bind(border) == true) BorderStroke(1.dp, style.colors.outlineVariant) else null) {
+                    MaterialTheme(colorScheme = style.colors) {
+                        CompositionLocalProvider(LocalDynamicUiBackdrop provides style.backdrop) {
+                            Box(Modifier.padding(cardSpacing(properties.bind(padding), 16))) { render(false) }
+                        }
+                    }
                 }
             }
             // The height constraint MUST precede scrolling inside a vertically unbounded chat.
             "Scroll" -> Box(modifier.fillMaxWidth()
                 .heightIn(max = (properties.bind(maxHeight)?.toInt() ?: 240).coerceIn(80, 480).dp)
-                .verticalScroll(rememberScrollState())) { render() }
+                .verticalScroll(rememberScrollState())) {
+                CompositionLocalProvider(LocalCardRowItem provides false) { render(false) }
+            }
         }
     }
 }
