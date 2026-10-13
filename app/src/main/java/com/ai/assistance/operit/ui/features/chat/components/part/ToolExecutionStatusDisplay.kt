@@ -844,6 +844,13 @@ internal fun ToolExecutionResultDisplay(
     val displayedResult = remember(context, result, isSuccess) {
         if (isSuccess) result else permissionDenialDisplayText(context, result)
     }
+    val shellState = remember(toolName, displayedResult, isSuccess) {
+        if (isSuccess) shellResultState(toolName, displayedResult) else null
+    }
+    if (shellState != null) {
+        ShellTaskResultDisplay(toolName, displayedResult, shellState, modifier, summaryPrefix, enableDialog)
+        return
+    }
     val fileDiff = remember(toolName, displayedResult, isSuccess) {
         parseFileDiffResult(toolName, displayedResult, isSuccess)
     }

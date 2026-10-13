@@ -8950,6 +8950,15 @@
     <string name="resource_download_failed_generic">下载失败，请重试</string>
     <string name="plugin_terminal_resource_required">需要先下载 Ubuntu 终端环境（约 64 MB）</string>
     <string name="terminal_task_start_desc">启动终端任务：%1$s</string>
+    <string name="shell_task_poll_desc">查看 Shell 任务：%1$s</string>
+    <string name="shell_status_running">Shell 仍在运行</string>
+    <string name="shell_status_cancelling">Shell 正在停止并清理</string>
+    <string name="shell_status_completed">Shell 执行完成</string>
+    <string name="shell_status_failed">Shell 执行失败</string>
+    <string name="shell_status_timed_out">Shell 执行超时</string>
+    <string name="shell_status_cancelled">Shell 已取消</string>
+    <string name="shell_status_unknown">Shell 已结束，结果未知</string>
+    <string name="shell_task_cancel_desc">取消 Shell 任务：%1$s</string>
     <string name="terminal_task_poll_desc">查看终端任务：%1$s</string>
     <string name="terminal_task_cancel_desc">取消终端任务：%1$s</string>
     <string name="composer_predictions">智能输入预测（Composer Predictions）</string>
