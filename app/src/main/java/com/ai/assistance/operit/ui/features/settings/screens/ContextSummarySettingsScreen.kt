@@ -146,26 +146,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
             value = config
         }
     }
-    var contextLengthInput by remember(currentConfig?.id) {
-        mutableStateOf(formatFloatValue(currentConfig?.contextLength))
-    }
-    var maxContextLengthInput by remember(currentConfig?.id) {
-        mutableStateOf(formatFloatValue(currentConfig?.maxContextLength))
-    }
-    var contextError by remember { mutableStateOf<String?>(null) }
-
-    var enableSummary by remember(currentConfig?.id) {
-        mutableStateOf(currentConfig?.enableSummary ?: false)
-    }
-    var summaryTokenThresholdInput by remember(currentConfig?.id) {
-        mutableStateOf(formatFloatValue(currentConfig?.summaryTokenThreshold))
-    }
-    var enableSummaryByMessageCount by remember(currentConfig?.id) {
-        mutableStateOf(currentConfig?.enableSummaryByMessageCount ?: false)
-    }
-    var summaryMessageCountThresholdInput by remember(currentConfig?.id) {
-        mutableStateOf(currentConfig?.summaryMessageCountThreshold?.toString().orEmpty())
-    }
     var summaryCustomRulesInput by remember(currentConfig?.id) {
         mutableStateOf(currentConfig?.summaryCustomRules.orEmpty())
     }
@@ -184,25 +164,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
     }
     var summaryError by remember { mutableStateOf<String?>(null) }
 
-    LaunchedEffect(currentConfig?.id, currentConfig?.contextLength) {
-        contextLengthInput = formatFloatValue(currentConfig?.contextLength)
-    }
-    LaunchedEffect(currentConfig?.id, currentConfig?.maxContextLength) {
-        maxContextLengthInput = formatFloatValue(currentConfig?.maxContextLength)
-    }
-    LaunchedEffect(currentConfig?.id, currentConfig?.enableSummary) {
-        enableSummary = currentConfig?.enableSummary ?: false
-    }
-    LaunchedEffect(currentConfig?.id, currentConfig?.summaryTokenThreshold) {
-        summaryTokenThresholdInput = formatFloatValue(currentConfig?.summaryTokenThreshold)
-    }
-    LaunchedEffect(currentConfig?.id, currentConfig?.enableSummaryByMessageCount) {
-        enableSummaryByMessageCount = currentConfig?.enableSummaryByMessageCount ?: false
-    }
-    LaunchedEffect(currentConfig?.id, currentConfig?.summaryMessageCountThreshold) {
-        summaryMessageCountThresholdInput =
-            currentConfig?.summaryMessageCountThreshold?.toString().orEmpty()
-    }
     LaunchedEffect(currentConfig?.id, currentConfig?.summaryCustomRules) {
         summaryCustomRulesInput = currentConfig?.summaryCustomRules.orEmpty()
     }
@@ -219,13 +180,7 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
         )
     }
 
-    val errorValidContextLength = stringResource(id = R.string.model_config_error_valid_context_length)
-    val errorValidMaxContextLength =
-        stringResource(id = R.string.model_config_error_valid_max_context_length)
     val errorSaveFailed = stringResource(id = R.string.model_config_error_save_failed)
-    val errorSummaryThresholdRange =
-        stringResource(id = R.string.model_config_error_summary_threshold_range)
-    val errorValidMessageCount = stringResource(id = R.string.model_config_error_valid_message_count)
 
     var showSaveSuccessMessage by remember { mutableStateOf(false) }
     var historyError by remember { mutableStateOf<String?>(null) }
@@ -234,26 +189,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
         buildBoundConfigDisplayName(currentConfig, currentChatConfigId)
     }
 
-    ContextSummaryAutoSaveEffects(
-        currentConfig = currentConfig,
-        contextInputsProvider = { contextLengthInput to maxContextLengthInput },
-        summaryInputsProvider = {
-            listOf(
-                enableSummary,
-                summaryTokenThresholdInput,
-                enableSummaryByMessageCount,
-                summaryMessageCountThresholdInput
-            )
-        },
-        modelConfigManager = modelConfigManager,
-        errorValidContextLength = errorValidContextLength,
-        errorValidMaxContextLength = errorValidMaxContextLength,
-        errorSaveFailed = errorSaveFailed,
-        errorSummaryThresholdRange = errorSummaryThresholdRange,
-        errorValidMessageCount = errorValidMessageCount,
-        onContextErrorChange = { contextError = it },
-        onSummaryErrorChange = { summaryError = it }
-    )
     HistoryRetentionAutoSaveEffects(
         historyInputsProvider = {
             maxImageHistoryUserTurnsInput to maxMediaHistoryUserTurnsInput
@@ -281,6 +216,20 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
         onSummaryErrorChange = { summaryError = it }
     )
 
+    // 自定义总结规则自动保存
+    ContextSummaryCustomRulesAutoSaveEffect(
+        currentConfig = currentConfig,
+        summaryCustomRulesInputProvider = { summaryCustomRulesInput },
+        modelConfigManager = modelConfigManager,
+        errorSaveFailed = errorSaveFailed,
+        onSummaryErrorChange = { summaryError = it }
+    )
+
+    val contextDefaults = remember { com.ai.assistance.operit.data.preferences.ChatContextPreferences(context) }
+    val defaultPolicy by contextDefaults.defaults.collectAsState(initial = com.ai.assistance.operit.data.model.ChatContextPolicy())
+    var savingDefaults by remember { mutableStateOf(false) }
+    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+
     CustomScaffold() { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
             Column(
@@ -295,6 +244,21 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.size(12.dp))
 
+                Text(stringResource(R.string.chat_context_defaults), style = MaterialTheme.typography.titleMedium)
+                com.ai.assistance.operit.ui.features.chat.components.ChatContextPolicyEditor(defaultPolicy, saving = savingDefaults, onSave = { policy ->
+                    savingDefaults = true
+                    scope.launch {
+                        try { contextDefaults.saveDefaults(policy); showSaveSuccessMessage = true }
+                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                        catch (e: Exception) { summaryError = errorSaveFailed }
+                        finally { savingDefaults = false }
+                    }
+                })
+                summaryError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
+                    Text(stringResource(R.string.chat_context_advanced))
+                }
+                if (advancedExpanded) {
                 SectionTitle(
                     text = stringResource(id = R.string.model_config),
                     icon = Icons.Default.Link
@@ -305,42 +269,8 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                 )
                 Spacer(modifier = Modifier.size(12.dp))
 
-                // 自定义总结规则自动保存
-                ContextSummaryCustomRulesAutoSaveEffect(
-                    currentConfig = currentConfig,
-                    summaryCustomRulesInputProvider = { summaryCustomRulesInput },
-                    modelConfigManager = modelConfigManager,
-                    errorSaveFailed = errorSaveFailed,
-                    onSummaryErrorChange = { summaryError = it }
-                )
-
                 RenderContextSummaryConfigSections(
                     componentBackgroundColor = componentBackgroundColor,
-                    contextLengthInput = contextLengthInput,
-                    onContextLengthInputChange = {
-                        contextLengthInput = it
-                        contextError = null
-                    },
-                    maxContextLengthInput = maxContextLengthInput,
-                    onMaxContextLengthInputChange = {
-                        maxContextLengthInput = it
-                        contextError = null
-                    },
-                    contextError = contextError,
-                    enableSummary = enableSummary,
-                    onEnableSummaryChange = { enableSummary = it },
-                    summaryTokenThresholdInput = summaryTokenThresholdInput,
-                    onSummaryTokenThresholdInputChange = {
-                        summaryTokenThresholdInput = it
-                        summaryError = null
-                    },
-                    enableSummaryByMessageCount = enableSummaryByMessageCount,
-                    onEnableSummaryByMessageCountChange = { enableSummaryByMessageCount = it },
-                    summaryMessageCountThresholdInput = summaryMessageCountThresholdInput,
-                    onSummaryMessageCountThresholdInputChange = {
-                        summaryMessageCountThresholdInput = it
-                        summaryError = null
-                    },
                     summaryCustomRulesInput = summaryCustomRulesInput,
                     onSummaryCustomRulesInputChange = {
                         summaryCustomRulesInput = it
@@ -357,8 +287,7 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                             value = value,
                             onValueChange = onValueChange
                         )
-                    },
-                    summaryError = summaryError
+                    }
                 )
 
                 Spacer(modifier = Modifier.size(12.dp))
@@ -381,6 +310,7 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                     },
                     historyError = historyError
                 )
+                }
 
                 Spacer(modifier = Modifier.size(16.dp))
             }
@@ -396,133 +326,6 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                 )
             }
         }
-    }
-}
-
-@Composable
-private fun ContextSummaryAutoSaveEffects(
-    currentConfig: ModelConfigData?,
-    contextInputsProvider: () -> Pair<String, String>,
-    summaryInputsProvider: () -> List<Any>,
-    modelConfigManager: ModelConfigManager,
-    errorValidContextLength: String,
-    errorValidMaxContextLength: String,
-    errorSaveFailed: String,
-    errorSummaryThresholdRange: String,
-    errorValidMessageCount: String,
-    onContextErrorChange: (String?) -> Unit,
-    onSummaryErrorChange: (String?) -> Unit
-) {
-    val latestConfig by rememberUpdatedState(currentConfig)
-
-    LaunchedEffect(currentConfig?.id) {
-        val configId = currentConfig?.id ?: return@LaunchedEffect
-        snapshotFlow { contextInputsProvider() }
-            .drop(1)
-            .debounce(700)
-            .distinctUntilChanged()
-            .collectLatest { (contextText, maxText) ->
-                val contextValue = contextText.toFloatOrNull()
-                val maxValue = maxText.toFloatOrNull()
-                when {
-                    contextValue == null || contextValue <= 0f ->
-                        onContextErrorChange(errorValidContextLength)
-                    maxValue == null || maxValue <= 0f ->
-                        onContextErrorChange(errorValidMaxContextLength)
-                    else -> {
-                        val current = latestConfig ?: return@collectLatest
-                        if (current.id != configId) return@collectLatest
-                        if (current.contextLength == contextValue && current.maxContextLength == maxValue) {
-                            onContextErrorChange(null)
-                            return@collectLatest
-                        }
-                        try {
-                            modelConfigManager.updateContextSettings(
-                                configId = current.id,
-                                contextLength = contextValue,
-                                maxContextLength = maxValue,
-                                enableMaxContextMode = current.enableMaxContextMode
-                            )
-                            onContextErrorChange(null)
-                        } catch (e: Exception) {
-                            onContextErrorChange(e.message ?: errorSaveFailed)
-                        }
-                    }
-                }
-            }
-    }
-
-    LaunchedEffect(currentConfig?.id) {
-        val configId = currentConfig?.id ?: return@LaunchedEffect
-        snapshotFlow { summaryInputsProvider() }
-            .drop(1)
-            .debounce(700)
-            .distinctUntilChanged()
-            .collectLatest {
-                val current = latestConfig ?: return@collectLatest
-                if (current.id != configId) return@collectLatest
-
-                val enableSummary = it[0] as Boolean
-                val summaryTokenThresholdInput = it[1] as String
-                val enableSummaryByMessageCount = it[2] as Boolean
-                val summaryMessageCountThresholdInput = it[3] as String
-
-                if (!enableSummary) {
-                    if (current.enableSummary) {
-                        try {
-                            modelConfigManager.updateSummarySettings(
-                                configId = current.id,
-                                enableSummary = false,
-                                summaryTokenThreshold = current.summaryTokenThreshold,
-                                enableSummaryByMessageCount = current.enableSummaryByMessageCount,
-                                summaryMessageCountThreshold = current.summaryMessageCountThreshold
-                            )
-                            onSummaryErrorChange(null)
-                        } catch (e: Exception) {
-                            onSummaryErrorChange(e.message ?: errorSaveFailed)
-                        }
-                    }
-                    return@collectLatest
-                }
-
-                val threshold = summaryTokenThresholdInput.toFloatOrNull()
-                val messageCount = summaryMessageCountThresholdInput.toIntOrNull()
-                when {
-                    threshold == null || threshold <= 0f || threshold >= 1f ->
-                        onSummaryErrorChange(errorSummaryThresholdRange)
-                    enableSummaryByMessageCount && (messageCount == null || messageCount <= 0) ->
-                        onSummaryErrorChange(errorValidMessageCount)
-                    else -> {
-                        val nextMessageCount =
-                            if (enableSummaryByMessageCount) {
-                                messageCount ?: current.summaryMessageCountThreshold
-                            } else {
-                                current.summaryMessageCountThreshold
-                            }
-                        val isNoOp =
-                            current.enableSummary == enableSummary &&
-                                current.summaryTokenThreshold == threshold &&
-                                current.enableSummaryByMessageCount == enableSummaryByMessageCount &&
-                                current.summaryMessageCountThreshold == nextMessageCount
-                        if (isNoOp) {
-                            onSummaryErrorChange(null)
-                            return@collectLatest
-                        }
-                        try {
-                            modelConfigManager.updateSummarySettings(
-                                configId = current.id,
-                                enableSummary = enableSummary,
-                                summaryTokenThreshold = threshold,
-                                enableSummaryByMessageCount = enableSummaryByMessageCount,
-                                summaryMessageCountThreshold = nextMessageCount
-                            )
-                            onSummaryErrorChange(null)
-                        } catch (e: Exception) {
-                            onSummaryErrorChange(e.message ?: errorSaveFailed)
-                        }
-                    }
-                }
-            }
     }
 }
 
@@ -677,19 +480,6 @@ private fun ContextSummaryDialogueReviewAutoSaveEffect(
 @Composable
 private fun RenderContextSummaryConfigSections(
     componentBackgroundColor: Color,
-    contextLengthInput: String,
-    onContextLengthInputChange: (String) -> Unit,
-    maxContextLengthInput: String,
-    onMaxContextLengthInputChange: (String) -> Unit,
-    contextError: String?,
-    enableSummary: Boolean,
-    onEnableSummaryChange: (Boolean) -> Unit,
-    summaryTokenThresholdInput: String,
-    onSummaryTokenThresholdInputChange: (String) -> Unit,
-    enableSummaryByMessageCount: Boolean,
-    onEnableSummaryByMessageCountChange: (Boolean) -> Unit,
-    summaryMessageCountThresholdInput: String,
-    onSummaryMessageCountThresholdInputChange: (String) -> Unit,
     summaryCustomRulesInput: String,
     onSummaryCustomRulesInputChange: (String) -> Unit,
     dialogueReviewEnabled: Boolean,
@@ -698,104 +488,15 @@ private fun RenderContextSummaryConfigSections(
     onDialogueReviewTitleChange: (String) -> Unit,
     summarySectionsInput: List<SummarySectionConfig>,
     onSummarySectionsInputChange: (List<SummarySectionConfig>) -> Unit,
-    onOpenFullscreenEditor: (String, String, (String) -> Unit) -> Unit,
-    summaryError: String?
+    onOpenFullscreenEditor: (String, String, (String) -> Unit) -> Unit
 ) {
-    SectionTitle(
-        text = stringResource(id = R.string.settings_context_title),
-        icon = Icons.Default.Analytics
-    )
-    SettingsInfoBanner(
-        text = stringResource(id = R.string.settings_context_card_content),
-        backgroundColor = componentBackgroundColor
-    )
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_context_length),
-        subtitle = stringResource(id = R.string.settings_context_length_subtitle),
-        value = contextLengthInput,
-        onValueChange = onContextLengthInputChange,
-        unitText = "K",
-        backgroundColor = componentBackgroundColor,
-        allowDecimal = true,
-        keyboardOptions =
-            KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next)
-    )
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_max_context_length),
-        subtitle = stringResource(id = R.string.settings_max_context_length_subtitle),
-        value = maxContextLengthInput,
-        onValueChange = onMaxContextLengthInputChange,
-        unitText = "K",
-        backgroundColor = componentBackgroundColor,
-        allowDecimal = true,
-        keyboardOptions =
-            KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Done)
-    )
-    contextError?.let {
-        Text(
-            text = it,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
-    }
-
-    Spacer(modifier = Modifier.size(8.dp))
-    SectionTitle(
-        text = stringResource(id = R.string.settings_summary_title),
-        icon = Icons.Default.Summarize
-    )
-    SettingsSwitchRow(
-        title = stringResource(id = R.string.settings_enable_summary),
-        subtitle = stringResource(id = R.string.settings_enable_summary_desc),
-        checked = enableSummary,
-        onCheckedChange = onEnableSummaryChange,
-        backgroundColor = componentBackgroundColor
-    )
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_summary_threshold),
-        subtitle = stringResource(id = R.string.settings_summary_threshold_subtitle),
-        value = summaryTokenThresholdInput,
-        onValueChange = onSummaryTokenThresholdInputChange,
-        backgroundColor = componentBackgroundColor,
-        enabled = enableSummary,
-        allowDecimal = true,
-        keyboardOptions =
-            KeyboardOptions(keyboardType = KeyboardType.Decimal, imeAction = ImeAction.Next)
-    )
-    SettingsSwitchRow(
-        title = stringResource(id = R.string.settings_enable_summary_by_message_count),
-        subtitle = stringResource(id = R.string.settings_enable_summary_by_message_count_desc),
-        checked = enableSummaryByMessageCount,
-        onCheckedChange = onEnableSummaryByMessageCountChange,
-        backgroundColor = componentBackgroundColor,
-        enabled = enableSummary
-    )
-    SettingsInputField(
-        title = stringResource(id = R.string.settings_summary_message_count_threshold),
-        subtitle = stringResource(id = R.string.settings_summary_message_count_threshold_subtitle),
-        value = summaryMessageCountThresholdInput,
-        onValueChange = onSummaryMessageCountThresholdInputChange,
-        unitText = stringResource(id = R.string.model_config_unit_items),
-        backgroundColor = componentBackgroundColor,
-        enabled = enableSummary && enableSummaryByMessageCount
-    )
-    summaryError?.let {
-        Text(
-            text = it,
-            color = MaterialTheme.colorScheme.error,
-            style = MaterialTheme.typography.bodySmall,
-            modifier = Modifier.padding(horizontal = 4.dp)
-        )
-    }
-
-    Spacer(modifier = Modifier.size(8.dp))
+    SectionTitle(text = stringResource(R.string.settings_summary_title), icon = Icons.Default.Summarize)
     val globalRulesTitle = stringResource(id = R.string.settings_summary_custom_rules)
     GlobalSummaryRulesEditor(
         title = globalRulesTitle,
         subtitle = stringResource(id = R.string.settings_summary_custom_rules_desc),
         backgroundColor = componentBackgroundColor,
-        enabled = enableSummary,
+        enabled = true,
         value = summaryCustomRulesInput,
         onValueChange = onSummaryCustomRulesInputChange,
         onOpenFullscreenEditor = onOpenFullscreenEditor
@@ -816,7 +517,7 @@ private fun RenderContextSummaryConfigSections(
                 )
             },
             backgroundColor = componentBackgroundColor,
-            enabled = enableSummary,
+            enabled = true,
             onOpenFullscreenEditor = onOpenFullscreenEditor
         )
     }
@@ -826,7 +527,7 @@ private fun RenderContextSummaryConfigSections(
         title = dialogueReviewTitleInput,
         onTitleChange = onDialogueReviewTitleChange,
         backgroundColor = componentBackgroundColor,
-        summaryEnabled = enableSummary
+        summaryEnabled = true
     )
 }
 

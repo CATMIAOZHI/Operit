@@ -171,6 +171,8 @@ class MessageProcessingDelegate(
 
     private val _userMessage = MutableStateFlow(TextFieldValue(""))
     val userMessage: StateFlow<TextFieldValue> = _userMessage.asStateFlow()
+    var draftRevision: Long = 0
+        private set
     private val userMessageDraftsByChatId = ConcurrentHashMap<String, TextFieldValue>()
     @Volatile
     private var activeDraftChatId: String? = null
@@ -654,6 +656,7 @@ class MessageProcessingDelegate(
         if (previousChatId == chatId) {
             return
         }
+        draftRevision++
 
         val currentValue = _userMessage.value
         if (previousChatId != null) {
@@ -690,6 +693,7 @@ class MessageProcessingDelegate(
     }
 
     private fun setUserMessageDraft(value: TextFieldValue) {
+        if (_userMessage.value != value) draftRevision++
         _userMessage.value = value
         val chatId = activeDraftChatId
         if (chatId != null) {
@@ -709,6 +713,7 @@ class MessageProcessingDelegate(
     private fun clearUserMessageDraft(chatId: String) {
         userMessageDraftsByChatId.remove(chatId)
         if (activeDraftChatId == chatId) {
+            draftRevision++
             _userMessage.value = TextFieldValue("")
         }
     }

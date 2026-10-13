@@ -840,7 +840,7 @@
     
     <!-- AI Tools -->
     <string name="max_mode_title">Max Mode</string>
-    <string name="max_mode_info">When Max Mode (extra-large context) is on, the context window is %2$sk. Turn it off to return to %1$sk. You can customize these values in Settings.</string>
+    <string name="max_mode_info">When on, use the current model capacity of %2$sK. When off, restore this conversation budget of %1$sK. Required headroom is reserved.</string>
     <string name="ai_tools_enabled">AI Tools Enabled</string>
     <string name="tools_extracting">Detecting tool calls...</string>
     <string name="tools_executing">Executing tool: %1$s</string>
@@ -3494,9 +3494,9 @@
     <string name="headers_configured_count">%1$d configured</string>
     <string name="settings_system_prompts_subtitle">System and model prompts</string>
     <string name="settings_functional_prompts_subtitle">Functional prompt templates</string>
-    <string name="settings_context_length">Context Length</string>
+    <string name="settings_context_length">Conversation context budget</string>
     <string name="settings_context_length_subtitle">Model memory conversation length (k tokens)</string>
-    <string name="settings_max_context_length">Maximum Context Length</string>
+    <string name="settings_max_context_length">Model context capacity</string>
     <string name="settings_max_context_length_subtitle">Maximum context length supported by the model API (k tokens)</string>
     <string name="settings_summary_threshold">Summary Token Threshold</string>
     <string name="settings_summary_threshold_subtitle">Threshold for triggering chat summary (0.1-0.95)</string>
@@ -7001,9 +7001,9 @@
     <string name="skill_error_import_failed">Import failed: %1$s</string>
 
     <!-- Context Summary Settings -->
-    <string name="context_summary_note">File read limits and text result truncation are now fixed system constants. This page directly adjusts the context and summary settings of the bound model config, along with image and audio/video history retention turns.</string>
+    <string name="context_summary_note">Set defaults for new conversations here; existing chats are unchanged. Use the context indicator in chat to adjust that conversation. Set model capacity in model configuration.</string>
     <string name="context_summary_current_model_config">Current bound model config: %1$s</string>
-    <string name="context_summary_bound_config_description">The context and summary settings on this page are written directly back to the model config bound to the current chat.</string>
+    <string name="context_summary_bound_config_description">The section below edits shared summary formatting and rules, not model capacity or conversation budgets.</string>
     <string name="context_validation_error_positive_number">%1$s must be a valid number greater than 0</string>
     <string name="context_validation_error_positive_integer">%1$s must be a valid integer greater than 0</string>
     <string name="context_validation_error_non_negative_integer">%1$s must be a valid integer greater than or equal to 0</string>
@@ -9000,4 +9000,24 @@
     <string name="token_stats_category_composer_prediction">Composer prediction</string>
     <string name="voice_dictation_cannot_keep_up">Recognition cannot keep up with recording. Try shorter recordings.</string>
     <string name="permission_review_failed_result">Automatic review did not complete; action not executed</string>
+    <string name="chat_context_budget">Conversation context budget</string>
+    <string name="chat_context_budget_hint">For example 300K, 400K or 500K. Actual usage is capped by model capacity.</string>
+    <string name="chat_context_max_hint">Max uses the current model capacity. Turning it off restores your custom budget.</string>
+    <string name="chat_context_compact_at">Auto-compaction threshold (optional)</string>
+    <string name="chat_context_compact_hint">Leave blank for automatic management, or enter 300K. Space is reserved for replies; compaction may occur earlier.</string>
+    <string name="chat_context_current">Current conversation context</string>
+    <string name="chat_context_capacity">Current model capacity: %1$sK</string>
+    <string name="chat_context_model_hint">Enter the API context capacity. Models in this configuration share it; conversation budgets are adjusted separately in chat.</string>
+    <string name="chat_context_defaults">Defaults for new conversations</string>
+    <string name="chat_context_advanced">Summary format and media history</string>
+    <string name="chat_context_saved">Saved. Applies to the next request.</string>
+    <string name="chat_context_save_failed">Could not save context settings. Please retry.</string>
+    <string name="chat_shortcuts">Chat shortcuts · Click to run; Send sends ordinary text</string>
+    <string name="chat_shortcut_compact">Compact conversation context</string>
+    <string name="chat_shortcut_autocompact">Auto-compaction threshold · /autocompact 300K; auto restores automatic management</string>
+    <string name="chat_shortcut_context">Adjust this conversation budget · /context 400K</string>
+    <string name="chat_shortcut_max">Use model capacity · /max on; off restores your budget</string>
+    <string name="chat_shortcut_invalid">Invalid argument. Follow the example, or send it as ordinary text.</string>
+    <string name="chat_shortcut_busy">Wait for the current reply to finish before compacting.</string>
+    <string name="chat_context_legacy_turns">Keep legacy rule: compact every %1$d turns</string>
 </resources>

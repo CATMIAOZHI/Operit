@@ -127,10 +127,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         val query: String,
     )
 
-    private data class MentionDeletionNormalization(
-        val value: TextFieldValue,
-        val removedMentionToken: String? = null,
-    )
+
 
     private fun speechPreview(text: String): String {
         return text.replace("\n", "\\n").take(SPEECH_PREVIEW_MAX)
@@ -553,6 +550,105 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 控制 @ mention 建议面板的可见性
     private val _showMentionSuggestionPanel = MutableStateFlow(false)
+    private val _contextEditor = MutableStateFlow<com.ai.assistance.operit.ui.features.chat.components.ChatContextEditorTarget?>(null)
+    val contextEditor = _contextEditor.asStateFlow()
+    private val _contextEditorSaving = MutableStateFlow(false)
+    val contextEditorSaving = _contextEditorSaving.asStateFlow()
+    private var contextEditorRequest = 0L
+    val resolvedChatContext get() = apiConfigDelegate.effectiveResolvedContext
+
+    fun dismissContextEditor() { contextEditorRequest++; _contextEditor.value = null }
+
+    fun openContextEditor(draft: String? = null) {
+        val chatId = currentChatId.value ?: return
+        val configId = apiConfigDelegate.effectiveChatConfigTarget.value.configId
+        val revision = messageProcessingDelegate.draftRevision
+        val request = ++contextEditorRequest
+        viewModelScope.launch {
+            try {
+                val resolved = apiConfigDelegate.loadChatContext(chatId, configId)
+                if (currentChatId.value != chatId || request != contextEditorRequest) return@launch
+                _contextEditor.value = com.ai.assistance.operit.ui.features.chat.components.ChatContextEditorTarget(
+                    chatId, configId, resolved.policy, resolved.capacityK, draft, revision)
+                hideMentionSuggestionPanel()
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                uiStateDelegate.showToast(context.getString(R.string.chat_context_save_failed))
+            }
+        }
+    }
+
+    fun saveContextEditor(policy: com.ai.assistance.operit.data.model.ChatContextPolicy) {
+        val target = _contextEditor.value ?: return
+        if (_contextEditorSaving.value || currentChatId.value != target.chatId) return
+        _contextEditorSaving.value = true
+        viewModelScope.launch {
+            try {
+                apiConfigDelegate.updateChatContextPolicy(target.chatId, target.configId) { policy }
+                if (_contextEditor.value == target) _contextEditor.value = null
+                clearShortcutDraft(target.chatId, target.draft, target.draftRevision)
+                uiStateDelegate.showToast(context.getString(R.string.chat_context_saved))
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                uiStateDelegate.showToast(context.getString(R.string.chat_context_save_failed))
+            } finally {
+                _contextEditorSaving.value = false
+            }
+        }
+    }
+
+    private fun clearShortcutDraft(chatId: String, draft: String?, revision: Long) {
+        if (draft != null && currentChatId.value == chatId && userMessage.value.text == draft &&
+            userMessage.value.composition == null && messageProcessingDelegate.draftRevision == revision) {
+            messageProcessingDelegate.updateUserMessage(TextFieldValue(""))
+            hideMentionSuggestionPanel()
+        }
+    }
+
+    fun executeChatShortcut(shortcut: com.ai.assistance.operit.ui.features.chat.util.ChatShortcut, draft: String) {
+        val chatId = currentChatId.value ?: return
+        val revision = messageProcessingDelegate.draftRevision
+        if (isCurrentTranscriptReadOnly() || userMessage.value.text != draft ||
+            userMessage.value.composition != null) return
+        val argument = com.ai.assistance.operit.ui.features.chat.util.chatShortcutArgument(draft, shortcut)
+        if (!com.ai.assistance.operit.ui.features.chat.util.isValidShortcutArgument(shortcut, argument)) return
+        if (shortcut == com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.COMPACT) {
+            if (isChatBusy(chatId)) {
+                uiStateDelegate.showToast(context.getString(R.string.chat_shortcut_busy))
+                return
+            }
+            messageCoordinationDelegate.manuallySummarizeConversation(chatId) {
+                clearShortcutDraft(chatId, draft, revision)
+            }
+            hideMentionSuggestionPanel()
+            return
+        }
+        if (argument.isEmpty()) {
+            openContextEditor(draft)
+            return
+        }
+        val configId = apiConfigDelegate.effectiveChatConfigTarget.value.configId
+        viewModelScope.launch {
+            try {
+                apiConfigDelegate.updateChatContextPolicy(chatId, configId) { policy ->
+                    when (shortcut) {
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.CONTEXT ->
+                            policy.copy(windowK = requireNotNull(com.ai.assistance.operit.ui.features.chat.util.parseContextK(argument)), maxMode = false)
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.AUTO_COMPACT ->
+                            policy.copy(compactAtK = com.ai.assistance.operit.ui.features.chat.util.parseContextK(argument), autoCompact = true)
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.MAX ->
+                            policy.copy(maxMode = argument.equals("on", true))
+                        else -> policy
+                    }
+                }
+                clearShortcutDraft(chatId, draft, revision)
+                uiStateDelegate.showToast(context.getString(R.string.chat_context_saved))
+            } catch (e: CancellationException) { throw e
+            } catch (e: Exception) {
+                uiStateDelegate.showToast(context.getString(R.string.chat_context_save_failed))
+            }
+        }
+    }
     val showMentionSuggestionPanel: StateFlow<Boolean> = _showMentionSuggestionPanel.asStateFlow()
 
     // 当前 @ mention 的搜索词
@@ -573,6 +669,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     init {
         // Initialize delegates in correct order to avoid circular references
         initializeDelegates()
+        viewModelScope.launch {
+            currentChatId.collect { dismissContextEditor() }
+        }
         setupComposerPredictions()
 
         // Setup additional components
@@ -1651,7 +1750,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 消息处理相关方法
     fun updateUserMessage(value: TextFieldValue) {
-        val normalization = normalizeMentionDeletion(userMessage.value, value)
+        val normalization = com.ai.assistance.operit.ui.features.chat.util.normalizeAttachedMentionDeletion(
+            userMessage.value, value, attachmentDelegate::isAttachedMention
+        )
         val normalizedValue = normalization.value
         val removedMentionToken = normalization.removedMentionToken
 
@@ -1931,37 +2032,6 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 }
             }
         }
-    }
-
-    private fun normalizeMentionDeletion(
-        previous: TextFieldValue,
-        proposed: TextFieldValue,
-    ): MentionDeletionNormalization {
-        if (previous.selection.start != previous.selection.end) return MentionDeletionNormalization(proposed)
-        if (proposed.selection.start != proposed.selection.end) return MentionDeletionNormalization(proposed)
-        if (previous.text.length != proposed.text.length + 1) return MentionDeletionNormalization(proposed)
-
-        val oldCursor = previous.selection.start.coerceIn(0, previous.text.length)
-        val newCursor = proposed.selection.start.coerceIn(0, proposed.text.length)
-        if (newCursor != oldCursor - 1) return MentionDeletionNormalization(proposed)
-
-        val expectedText = previous.text.removeRange(newCursor, oldCursor)
-        if (expectedText != proposed.text) return MentionDeletionNormalization(proposed)
-
-        val mentionToken =
-            findMentionTokenEndingAtCursor(previous.text, oldCursor)
-                ?: return MentionDeletionNormalization(proposed)
-        val removedMentionToken =
-            previous.text.substring(mentionToken.start + 1, mentionToken.contentEndExclusive).trim()
-        val normalizedText = previous.text.removeRange(mentionToken.start, mentionToken.endExclusive)
-        return MentionDeletionNormalization(
-            value =
-                proposed.copy(
-                    text = normalizedText,
-                    selection = TextRange(mentionToken.start),
-                ),
-            removedMentionToken = removedMentionToken.ifBlank { null },
-        )
     }
 
     private fun attachMentionPackage(packageName: String) {
@@ -2292,6 +2362,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     }
 
     private fun updateMentionSuggestionState(value: TextFieldValue) {
+        if (value.composition == null && value.selection.collapsed &&
+            value.selection.end == value.text.length &&
+            com.ai.assistance.operit.ui.features.chat.util.chatShortcutSuggestions(value.text).isNotEmpty()) {
+            _showMentionSuggestionPanel.value = true
+            _mentionSuggestionTriggerChar.value = '/'
+            _mentionSearchQuery.value = value.text.drop(1)
+            return
+        }
         val activeMention = findActiveMentionTrigger(value)
         if (activeMention == null) {
             clearMentionSuggestionState()
