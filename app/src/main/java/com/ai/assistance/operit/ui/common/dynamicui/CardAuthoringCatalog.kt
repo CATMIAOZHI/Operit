@@ -12,7 +12,7 @@ internal object CardAuthoringCatalog {
     val changeComponents = setOf("CheckBox", "TextField", "TextArea", "Switch", "RadioGroup",
         "Select", "ChoicePicker", "Slider", "DatePicker", "Segmented", "Tabs", "Carousel", "Expandable", "Stepper")
     val components = linkedMapOf(
-        "Text" to "text:string variant?:string textAlign?:string lineClamp?:number",
+        "Text" to "text:string variant?:string textAlign?:string lineClamp?:number tone?:string",
         "Icon" to "name:string",
         "Row" to "children:children gap?:string align?:string justify?:string wrap?:boolean",
         "Column" to "children:children gap?:string align?:string",
@@ -79,6 +79,7 @@ internal object CardAuthoringCatalog {
         "Header.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "InfoRow.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Badge.tone" to setOf("neutral", "success", "info", "warning", "error"),
+        "Text.tone" to setOf("neutral", "success", "info", "warning", "error"),
         "Text.textAlign" to setOf("start", "center", "end"),
         "Row.gap" to setOf("none", "xs", "sm", "md", "lg"),
         "Column.gap" to setOf("none", "xs", "sm", "md", "lg"),
@@ -110,7 +111,7 @@ internal object CardAuthoringCatalog {
         appendLine("Pressable(label,child,action,selected?,disabled?) makes display-only content clickable; nested interactive descendants are rejected. Completed nodes should remain clickable. Input onChange supports only local_action. event_value(field=\"value\"|\"previous\"|\"index\") is restricted to its context; index is -1 when not indexed. Initialization, restore and programmatic updates do not fire changes.")
         appendLine("Vector shape arrays, types and point structures are literal; coordinates, tone, stroke, filled and text can bind to state. arrow(x1,y1,x2,y2) draws a terminal arrowhead. Runtime invalid geometry displays a recoverable local error. row_set uses {op:\"row_set\",repeat:\"listId\",key:\"itemKey\",field:\"done\",value:true,parents:[\"outerKey\"]}; parents is optional for top-level lists and lists every ancestor key from outermost inward. Only declared fields of currently present rows can change.")
         appendLine("DatePicker minDate/maxDate are ISO dates in 1900..2100, clearable writes empty string. Bounds do not rewrite existing data. TextField mask=none|password|digits; password masks only display, digits accepts ASCII digits without reformatting. TextArea minLines/maxLines default3/8. error is a displayed string, not automatic validation. Button loading disables actions while preserving its label.")
-        appendLine("Table columnWidths is one literal64..480dp width per column; maxHeight=80..480 bounds the scrolling body below a fixed header. RichText runs accept strike/highlight/tabular booleans. Tooltip opens on tap/long-press and closes like Popover. Stepper current is a bound zero-based integer; previous steps remain selectable, onChange stays local.")
+        appendLine("Table columnWidths is one literal64..480dp width per column; maxHeight=80..480 bounds the scrolling body below a fixed header. RichText runs accept strike/highlight/tabular booleans and tone=primary|muted|success|info|warning|error. Tooltip opens on tap/long-press and closes like Popover. Stepper current is a bound zero-based integer; previous steps remain selectable, onChange stays local.")
         appendLine("Formula text supports a bounded TeX subset: 1024 chars, 64 commands, 12 brace levels; frac/sqrt/sum/prod/int/lim/infty/left/right, common Greek, arithmetic relations, sin/cos/tan/log/ln/exp/text/mathrm/mathbf/overline/vec/hat. No macros, environments, files or size commands; invalid dynamic formulas show a local error.")
         appendLine("arraySort uses same-type scalar values, optional field and direction asc/desc, stable order for ties. arrayFind returns the first equal item or explicit fallback. arrayUpdateByKey requires unique scalar keys, cannot patch the key, returns a new array and leaves unmatched data unchanged. None writes state directly.")
         appendLine("Frame applies bounded size constraints to one child; available screen constraints always win. aspectRatio is width/height from 0.25 to 4. Avoid fixed height for text/forms with large fonts. Vector also supports quadratic(x1,y1,cx,cy,x2,y2) and cubic(x1,y1,cx1,cy1,cx2,cy2,x2,y2) shape objects; all coordinates stay in the viewport.")

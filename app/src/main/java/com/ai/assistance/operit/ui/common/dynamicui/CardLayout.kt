@@ -55,9 +55,10 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
     private val minHeight = A2uiProperty.dynamicNumber("minHeight")
     private val aspectRatio = A2uiProperty.dynamicNumber("aspectRatio")
     private val lineClamp = A2uiProperty.dynamicNumber("lineClamp")
+    private val tone = A2uiProperty.dynamicString("tone")
     override val description = "Bounded responsive $name layout."
     override val properties = listOf(children, child, text, variant, align, textAlign, gap, justify,
-        wrap, padding, radius, background, border, maxWidth, maxHeight, minWidth, minHeight, aspectRatio, lineClamp)
+        wrap, padding, radius, background, border, maxWidth, maxHeight, minWidth, minHeight, aspectRatio, lineClamp, tone)
 
     @OptIn(ExperimentalLayoutApi::class)
     @Composable
@@ -110,6 +111,9 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
                     "caption" -> MaterialTheme.typography.bodySmall
                     else -> MaterialTheme.typography.bodyMedium
                 },
+                // Unspecified keeps the surrounding ink (e.g. an accentMuted Panel) for untoned text.
+                color = cardToneInk(properties.bind(tone), MaterialTheme.colorScheme, LocalDynamicUiBackdrop.current)
+                    ?: Color.Unspecified,
                 textAlign = when (properties.bind(textAlign)) {
                     "center" -> TextAlign.Center; "end" -> TextAlign.End; else -> TextAlign.Start
                 },

@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
@@ -21,6 +22,8 @@ import androidx.compose.ui.text.style.LineBreak
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ai.assistance.operit.ui.theme.ensureReadableOn
+import com.ai.assistance.operit.ui.theme.resolvedContrastRatio
 
 /** The host embeds UI without a frame; Card is the explicit, optional grouping container. */
 internal object FramedCard : A2uiBasicCatalogV1.Card {
@@ -72,6 +75,20 @@ internal fun cardSemanticToneColors(tone: String?, dark: Boolean): Pair<Color, C
         else -> if (dark) Color(0xFF4A292B) else Color(0xFFFBE5E5)
     }
     return ink to background
+}
+
+/**
+ * Text ink for a tone (Text, RichText runs, InfoRow values); null keeps the caller's default ink.
+ * The fixed semantic hues are re-checked against the bubble behind a frameless card, so a custom
+ * backdrop cannot wash them out; if no shade of the hue reads there, the card's own text color wins.
+ */
+internal fun cardToneInk(tone: String?, scheme: ColorScheme, backdrop: Color = Color.Unspecified): Color? = when (tone) {
+    "primary" -> scheme.primary
+    "muted" -> scheme.onSurfaceVariant
+    else -> cardSemanticToneColors(tone, scheme.surface.luminance() < .5f)?.first?.let { hue ->
+        val ground = if (backdrop.isSpecified) backdrop else scheme.surface
+        ensureReadableOn(hue, ground, 4.5).takeIf { resolvedContrastRatio(it, ground) >= 4.5 } ?: scheme.onSurface
+    }
 }
 
 @Composable
@@ -160,7 +177,7 @@ internal fun CardDisplayValue(text: String, atStart: Boolean) {
 @Composable
 internal fun CardInfoRow(label: String, value: String, tone: String?, modifier: Modifier) {
     val scheme = MaterialTheme.colorScheme
-    val valueColor = if (tone == null || tone == "neutral") scheme.onSurface else cardToneColors(tone, scheme).first
+    val valueColor = cardToneInk(tone, scheme, LocalDynamicUiBackdrop.current) ?: scheme.onSurface
     val labelStyle = MaterialTheme.typography.bodyMedium
     val valueStyle = labelStyle.copy(fontWeight = FontWeight.Medium)
     val measurer = rememberTextMeasurer()

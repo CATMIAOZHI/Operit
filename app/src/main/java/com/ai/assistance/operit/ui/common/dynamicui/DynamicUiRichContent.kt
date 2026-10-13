@@ -15,20 +15,17 @@ import com.ai.assistance.operit.ui.theme.ensureReadableOn
 internal fun CardRichText(runs: List<*>, modifier: Modifier, onOpenUrl: (String) -> Unit) {
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
+    val backdrop = LocalDynamicUiBackdrop.current
     val openUrl by rememberUpdatedState(onOpenUrl)
-    val annotated = remember(runs, colors, typography) {
+    val annotated = remember(runs, colors, typography, backdrop) {
         buildAnnotatedString {
             runs.take(64).forEach { item ->
                 val run = item as? Map<*, *> ?: return@forEach
                 val text = (run["text"] as? String).orEmpty().take(8192)
                 val url = (run["url"] as? String)?.takeIf(DynamicUiProtocol::safeUrl)
                 val highlight = run["highlight"] == true
-                val base = if (url != null) colors.primary else when (run["tone"]) {
-                    "primary" -> colors.primary
-                    "muted" -> colors.onSurfaceVariant
-                    "error" -> colors.error
-                    else -> colors.onSurface
-                }
+                val base = if (url != null) colors.primary
+                    else cardToneInk(run["tone"] as? String, colors, backdrop) ?: colors.onSurface
                 // Colors are tuned for the card backdrop; a highlight wash moves it, so re-check there.
                 val tone = if (highlight) ensureReadableOn(base, colors.secondaryContainer, 3.0) else base
                 if (url != null) pushLink(LinkAnnotation.Url(url, linkInteractionListener = { openUrl(url) }))

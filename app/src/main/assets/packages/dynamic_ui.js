@@ -201,7 +201,7 @@ Header(text=title,label=optionalSubtitle,status=optionalBadge,tone=...) titles a
 Heading is a smaller section heading. InfoRow(label=...,text=...) aligns each attribute/value;
 long values automatically stack without truncation. Divider separates header and details.
 Display(text=...,label=...,align="start") gives statistics a large value on an inset grey panel.
-Default alignment is start; calculators use align="end". Badge tones:
+Default alignment is start; calculators use align="end". Badge and Text tone=
 neutral, success, info, warning, error. Use colors for meaning, never as decoration.
 Stack forms vertically. Table aligns tabular data; Grid suits short metrics or keypads, not prose.
 Row is for short content. Avoid decorative nesting and duplicating titles in the surrounding text.
@@ -211,7 +211,7 @@ Rows keep their content width by default; explicit justify uses the available fu
 Column align=start|center|end is horizontal. Both default to an 8 dp gap.
 Panel(child=...,padding="md",radius="md",background="inset",border=false,maxWidth=600)
 groups content with bounded styles. Background: transparent|surface|inset|accentMuted; radius:none|sm|md|lg.
-Text textAlign=start|center|end; optional lineClamp=1..8 truncates nonessential text only.
+Text textAlign=start|center|end, tone=success|...; optional lineClamp=1..8 truncates nonessential text only.
 Scroll(child=...,maxHeight=240) creates a bounded vertical region (80..480 dp). Avoid nested scrolling.
 Blocks are frameless; see FRAMING. Keep commentary in Markdown outside the block.
 Choose one primary action; quiet secondary actions. No arbitrary style/color overrides.
@@ -265,6 +265,7 @@ Dates are ISO yyyy-MM-dd, years1900..2100. dateAddDays(date,days), dateDiffDays(
 formatDate(date,format="iso"|"yearMonth"|"monthDay"). All arguments are NAMED.
 if supports bounded objects/arrays but is eager: both branches must be valid.
 RichText runs=[{text:"...",bold:true,italic:false,underline:false,tone:"primary",size:"caption"}].
+Run tone: primary|muted|success|info|warning|error; mix colors in one line with RichText runs.
 Optional run url is http(s); RichText is not HTML. Put math/Mermaid in normal Markdown.
 Image/Video/Audio use user/tool-provided http(s) URLs; load only on click, never autoplay.
 Link/File open web URLs, not device paths. Media can fail independently.
