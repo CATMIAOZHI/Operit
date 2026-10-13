@@ -309,6 +309,18 @@ open class OpenAIProvider(
     protected open val requiresStreamingResponse: Boolean = false
     protected open fun applyRequestIdentityHeaders(builder: Request.Builder, logicalRequestId: String) {}
 
+    protected open suspend fun recoverUnauthorizedAuthentication(
+        request: Request, status: Int, body: String, recoveryAllowed: Boolean,
+    ): Boolean = false
+
+    protected open fun checkAuthenticationContinuity(previous: Request?, current: Request) {}
+
+    private class AuthenticationRecoveredException : IOException()
+
+    protected open suspend fun authenticateRequest(builder: Request.Builder) {
+        applyAuthenticationHeaders(builder, apiKeyProvider.getApiKey().trim())
+    }
+
     protected open suspend fun applyAuthenticationHeaders(
         builder: Request.Builder,
         currentApiKey: String
@@ -1826,7 +1838,8 @@ open class OpenAIProvider(
         }
         checkCancellation(context, exception)
 
-        if (exception is CommandCodeProtocolException || exception is RepetitionTruncationException) throw exception
+        if (exception is CommandCodeProtocolException || exception is RepetitionTruncationException ||
+            exception is com.ai.assistance.operit.data.api.CodexAuthenticationException) throw exception
 
         val errorText = resolveRetryErrorText(context, exception)
 
@@ -1994,7 +2007,6 @@ open class OpenAIProvider(
         attemptNumber: Int,
         logicalRequestId: String,
     ): Request {
-        val currentApiKey = apiKeyProvider.getApiKey().trim()
         val endpointUrl = EndpointCompleter.completeEndpoint(apiEndpoint, providerType)
         val traceContext =
             LlmRequestTraceContext(
@@ -2010,7 +2022,7 @@ open class OpenAIProvider(
             .tag(LlmRequestTraceContext::class.java, traceContext)
             .addHeader("Content-Type", "application/json")
 
-        applyAuthenticationHeaders(builder, currentApiKey)
+        authenticateRequest(builder)
 
         // 添加自定义请求头
         customHeaders.forEach { (key, value) ->
@@ -3020,6 +3032,8 @@ open class OpenAIProvider(
             var retryCount = 0
             var repetitionRetryCount = 0
             var lastException: Exception? = null
+            var authenticationRecoveryAllowed = true
+            var firstAuthenticatedRequest: Request? = null
 
             // 用于保存当前 attempt 已接收到的内容；一旦需要重试，会整体回滚到请求起点
             val receivedContent = StringBuilder()
@@ -3073,6 +3087,8 @@ open class OpenAIProvider(
 
                 AppLogger.d("AIService", "[req=$requestTraceId] 【发送消息】准备连接到AI服务...")
 
+                checkAuthenticationContinuity(firstAuthenticatedRequest, request)
+                if (firstAuthenticatedRequest == null) firstAuthenticatedRequest = request
                 // 创建Call对象并保存到activeCall中，以便可以取消
                 val call = client.newCall(request)
                 activeCall = call
@@ -3098,6 +3114,13 @@ open class OpenAIProvider(
                             val errorBody =
                                 response.body?.string()
                                     ?: context.getString(R.string.openai_error_no_error_details)
+                            if (response.code == 401) {
+                                response.close()
+                                if (recoverUnauthorizedAuthentication(request, response.code, errorBody, authenticationRecoveryAllowed)) {
+                                    authenticationRecoveryAllowed = false
+                                    throw AuthenticationRecoveredException()
+                                }
+                            }
                             AppLogger.e(
                                 "AIService",
                                 "【发送消息】API请求失败，状态码: ${response.code}，错误信息: $errorBody"
@@ -3256,6 +3279,11 @@ open class OpenAIProvider(
                 lastException = e
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]?.throwIfInterrupted()
                 emitter.emitRollback(requestSavepointId)
+                if (e is AuthenticationRecoveredException) {
+                    // Authentication recovery does not consume the ordinary network retry budget.
+                    // The operation-wide flag prevents a later network retry refreshing again.
+                    continue
+                }
                 if (e is RepetitionTruncationException) {
                     if (!enableRetry || repetitionRetryCount >= 1 || retryCount >= maxRetries) throw e
                     repetitionRetryCount++

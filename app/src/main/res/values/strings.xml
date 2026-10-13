@@ -1,4 +1,9 @@
 <resources>
+    <string name="codex_auth_sign_in_required">Codex 未登录，请在模型设置中登录。</string>
+    <string name="codex_auth_login_changed">Codex 登录已改变，已停止旧请求，请重新发送。</string>
+    <string name="codex_auth_login_required">Codex 登录凭据已失效，请在模型设置中重新登录。</string>
+    <string name="codex_auth_refresh_temporary">Codex 认证刷新暂时失败，登录已保留，请检查网络后重试。</string>
+    <string name="codex_auth_recovery_rejected">Codex 刷新后仍返回 401，已停止重试，请重新登录。</string>
     <string name="dynamic_ui_clear">清空</string>
     <string name="dynamic_ui_date_outside_range">当前日期无效或不在可选范围内，请重新选择。</string>
     <string name="dynamic_ui_close_details">关闭详情</string>

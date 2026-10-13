@@ -1,4 +1,9 @@
 <resources>
+    <string name="codex_auth_sign_in_required">Sign in to Codex in model settings.</string>
+    <string name="codex_auth_login_changed">Codex login changed. The old request was stopped; please resend it.</string>
+    <string name="codex_auth_login_required">Codex credentials expired or were revoked. Sign in again in model settings.</string>
+    <string name="codex_auth_refresh_temporary">Codex authentication refresh failed temporarily. Your login was kept; check the network and retry.</string>
+    <string name="codex_auth_recovery_rejected">Codex still returned 401 after refresh. Retries stopped; sign in again.</string>
     <string name="dynamic_ui_clear">Clear</string>
     <string name="dynamic_ui_date_outside_range">The current date is invalid or outside the allowed range. Choose another date.</string>
     <string name="dynamic_ui_close_details">Close details</string>
