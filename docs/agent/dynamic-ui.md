@@ -20,10 +20,17 @@ DECIDE FIRST 说明读取指南不等于必须生成界面；VISUAL RULES 约束
 徽章不会折行，标签最多 16 个字符；引用块按纯文本绘制，其中的徽章只显示标签文字。
 `accent` 的墨色把主题主色向正文一侧（浅色向黑、深色向白）拉近 30%，保证小字对比度。
 渲染在 `MarkdownInlineElements.kt`：徽章是画在标签文字上的圆角 `ReplacementSpan`
-（复用 `Flow` 的语义色和 23 个图标），图标是与字号等高的 `ReplacementSpan`，
+（复用 `Flow` 的语义色和线框图标表），图标是与字号等高的 `ReplacementSpan`，
 二者都按文字视觉中心对齐，与行内公式一致；表格单元格同样生效。
 解析器可能把 `[已完成]{…}` 拆成多个纯文本节点，渲染和复制前会先合并相邻纯文本。
 复制全文和朗读保留徽章文字、去掉图标。
+
+卡片 `Icon`、`Flow` 和行内图标共用 `cardFlowIcons`，包括 `phone` / `smartphone`（手机）、
+`globe` / `language`（地球）、`browser`（网页）以及电脑、终端、服务器、模块、语音等图标。
+保留原 AndroidX 内置图标名称（包括 `calendarToday`），旧卡片可继续显示。
+例如 `Row(children=[Icon(name="phone"),Text(text="Operit Core")])`；
+普通正文写 `:icon[globe]{tone=info}`。只有行内 Badge 接受 `icon` 属性，
+卡片 Badge 仍只支持文字和语义色。
 
 工具包描述和 `read_guide` 会引导 AI 主动选择有助于理解的可视化，无需用户明确要求：
 线性步骤和流程用 `Flow`，趋势用折线图，数量对比用柱状图，占比用饼图，数值关系用散点图；

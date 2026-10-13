@@ -5,6 +5,12 @@ import androidx.a2ui.compose.ui.A2uiComponent
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowForward
+import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.automirrored.outlined.VolumeUp
+import androidx.compose.material.icons.automirrored.outlined.VolumeDown
+import androidx.compose.material.icons.automirrored.outlined.VolumeMute
+import androidx.compose.material.icons.automirrored.outlined.VolumeOff
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -29,11 +35,46 @@ internal val cardFlowIcons: Map<String, ImageVector> = mapOf(
     "person" to Icons.Outlined.Person, "home" to Icons.Outlined.Home, "star" to Icons.Outlined.StarOutline,
     "warning" to Icons.Outlined.WarningAmber, "search" to Icons.Outlined.Search,
     "calendar" to Icons.Outlined.CalendarToday, "folder" to Icons.Outlined.Folder, "edit" to Icons.Outlined.Edit,
+    "calendarToday" to Icons.Outlined.CalendarToday,
     "play" to Icons.Outlined.PlayCircle, "flag" to Icons.Outlined.Flag, "time" to Icons.Outlined.Schedule,
     "list" to Icons.Outlined.Checklist, "fire" to Icons.Outlined.LocalFireDepartment,
     "food" to Icons.Outlined.Restaurant, "code" to Icons.Outlined.Code, "upload" to Icons.Outlined.CloudUpload,
     "download" to Icons.Outlined.CloudDownload, "lock" to Icons.Outlined.Lock,
     "chat" to Icons.Outlined.ChatBubbleOutline, "build" to Icons.Outlined.Build,
+    "phone" to Icons.Outlined.Smartphone, "smartphone" to Icons.Outlined.Smartphone,
+    "globe" to Icons.Outlined.Language, "language" to Icons.Outlined.Language,
+    "browser" to Icons.Outlined.Web, "computer" to Icons.Outlined.Computer,
+    "terminal" to Icons.Outlined.Terminal, "server" to Icons.Outlined.Dns,
+    "storage" to Icons.Outlined.Storage, "cloud" to Icons.Outlined.Cloud,
+    "extension" to Icons.Outlined.Extension, "shield" to Icons.Outlined.Shield,
+    "mic" to Icons.Outlined.MicNone, "audio" to Icons.Outlined.VolumeUp,
+    "image" to Icons.Outlined.Image, "video" to Icons.Outlined.Videocam,
+    "document" to Icons.Outlined.Description, "link" to Icons.Outlined.Link,
+    "chart" to Icons.Outlined.BarChart, "science" to Icons.Outlined.Science,
+    "lightbulb" to Icons.Outlined.Lightbulb, "robot" to Icons.Outlined.SmartToy,
+    "wifi" to Icons.Outlined.Wifi, "delete" to Icons.Outlined.DeleteOutline,
+    // Preserve names supported by cards saved with the original AndroidX catalog.
+    "accountCircle" to Icons.Outlined.AccountCircle, "add" to Icons.Outlined.Add,
+    "arrowBack" to Icons.AutoMirrored.Outlined.ArrowBack, "arrowForward" to Icons.AutoMirrored.Outlined.ArrowForward,
+    "attachFile" to Icons.Outlined.AttachFile, "call" to Icons.Outlined.Call,
+    "camera" to Icons.Outlined.CameraAlt, "close" to Icons.Outlined.Close,
+    "error" to Icons.Outlined.ErrorOutline, "event" to Icons.Outlined.Event,
+    "fastForward" to Icons.Outlined.FastForward, "favorite" to Icons.Outlined.FavoriteBorder,
+    "favoriteOff" to Icons.Outlined.FavoriteBorder, "help" to Icons.Outlined.HelpOutline,
+    "locationOn" to Icons.Outlined.LocationOn, "lockOpen" to Icons.Outlined.LockOpen,
+    "mail" to Icons.Outlined.MailOutline, "menu" to Icons.Outlined.Menu,
+    "moreHoriz" to Icons.Outlined.MoreHoriz, "moreVert" to Icons.Outlined.MoreVert,
+    "notifications" to Icons.Outlined.NotificationsNone, "notificationsOff" to Icons.Outlined.NotificationsOff,
+    "pause" to Icons.Outlined.PauseCircleOutline, "payment" to Icons.Outlined.Payment,
+    "photo" to Icons.Outlined.Photo, "print" to Icons.Outlined.Print,
+    "refresh" to Icons.Outlined.Refresh, "rewind" to Icons.Outlined.FastRewind,
+    "send" to Icons.AutoMirrored.Outlined.Send, "share" to Icons.Outlined.Share,
+    "shoppingCart" to Icons.Outlined.ShoppingCart, "skipNext" to Icons.Outlined.SkipNext,
+    "skipPrevious" to Icons.Outlined.SkipPrevious, "starHalf" to Icons.Outlined.StarHalf,
+    "starOff" to Icons.Outlined.StarOutline, "stop" to Icons.Outlined.StopCircle,
+    "visibility" to Icons.Outlined.Visibility, "visibilityOff" to Icons.Outlined.VisibilityOff,
+    "volumeDown" to Icons.AutoMirrored.Outlined.VolumeDown, "volumeMute" to Icons.AutoMirrored.Outlined.VolumeMute,
+    "volumeOff" to Icons.AutoMirrored.Outlined.VolumeOff, "volumeUp" to Icons.AutoMirrored.Outlined.VolumeUp,
 )
 private val flowTones = setOf("neutral", "accent", "success", "info", "warning", "error")
 private val flowKeys = setOf("title", "caption", "icon", "tone")

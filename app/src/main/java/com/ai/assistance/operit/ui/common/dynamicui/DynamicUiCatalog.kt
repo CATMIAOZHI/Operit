@@ -448,20 +448,29 @@ private object BaseCardButton : A2uiBasicCatalogV1.Button {
 }
 
 /** Decorative mistakes must not remove unrelated form fields or disable their actions. */
-private object CardIcon : A2uiBasicCatalogV1.Icon {
+private object CardIcon : A2uiComponent {
+    override val name = "Icon"
+    override val description = "A native outlined icon from the shared Operit icon catalog."
+    private val iconName = A2uiProperty.dynamicString("name")
+    override val properties = listOf(iconName, A2uiBasicCatalogV1.Icon.AccessibilityProperty,
+        A2uiBasicCatalogV1.WeightProperty)
     @Composable
-    override fun A2uiComponentScope.TypedContent(
-        source: A2uiBasicCatalogV1.Icon.Source,
-        accessibility: A2uiBasicCatalogV1.AccessibilityAttributes?,
-        modifier: Modifier,
-    ) {
-        if (source !is A2uiBasicCatalogV1.Icon.BuiltIn) {
+    override fun A2uiComponentScope.Content(properties: A2uiComponentProperties, modifier: Modifier) {
+        val name = properties.bind(iconName)
+        val accessibility = properties.bind(A2uiBasicCatalogV1.Icon.AccessibilityProperty)
+        val vector = cardFlowIcons[name]
+        if (vector == null) {
             val warn = LocalCardIconWarning.current
-            LaunchedEffect(source) { warn() }
+            LaunchedEffect(name) { warn() }
             Icon(Icons.Outlined.HelpOutline, stringResource(R.string.dynamic_ui_icon_missing), modifier.size(24.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        } else with(MaterialA2uiBasicCatalogV1Defaults.icon) {
-            TypedContent(source, accessibility, modifier)
+        } else {
+            val description = accessibility?.let {
+                listOfNotNull(it.label?.takeIf(String::isNotBlank), it.description?.takeIf(String::isNotBlank))
+                    .joinToString(", ").takeIf(String::isNotBlank)
+            }
+            Icon(vector, description, modifier.size(24.dp),
+                tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
