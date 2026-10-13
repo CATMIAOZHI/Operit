@@ -45,7 +45,7 @@ class CardRendererContractTest {
     }
 
     @Test fun allShippedExamplesMatchRendererSchemas() {
-        for (name in listOf("calculator", "cost_calculator", "charts", "form", "info", "stats",
+        for (name in listOf("shopping_list", "trip_budget", "filtered_chart", "calculator", "cost_calculator", "charts", "form", "info", "stats",
             "progress", "responsive", "data", "vector", "repeat", "curves", "interactive_flow",
             "p2_controls", "p2_lists", "flow_steps", "flowchart", "data_story", "mixed_branch", "profile")) {
             try {
