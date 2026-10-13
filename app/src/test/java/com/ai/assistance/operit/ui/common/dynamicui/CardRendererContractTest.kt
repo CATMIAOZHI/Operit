@@ -6,6 +6,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class CardRendererContractTest {
+    @Test fun sharedOutlinedIconsAcceptNewNamesLegacyAliasAndBindings() {
+        androidx.a2ui.compose.ui.catalog.A2uiBasicCatalogV1.Icon.BuiltIn.entries.forEach {
+            assertTrue("Missing legacy icon ${it.value}", it.value in cardFlowIcons)
+        }
+        for (name in listOf("phone", "globe", "browser", "calendarToday", "info", "check")) {
+            assertTrue(name in cardFlowIcons)
+            validateRenderer("""root = Row(children=[Icon(name="$name"),Text(text="Label")])""")
+            validateRenderer("""root = Flow(label="Steps",steps=[{title:"Device",icon:"$name"}])""")
+        }
+        validateRenderer("${'$'}/icon = \"phone\"\nroot = Icon(name=${'$'}/icon)")
+    }
+
     @Test fun preflightRejectsPayloadAcceptedByProtocolButNotOfficialSchema() {
         val valid = CardExpress.compile("""
             root = Button(child=Text(text="Submit"),

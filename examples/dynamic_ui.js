@@ -190,7 +190,14 @@ FLOW (static steps and linear flowcharts)
 Flow(label="Accessible summary",steps=[{title:"...",caption:"...",icon:"check",tone:"success"}],
 direction="auto"|"horizontal"|"vertical"). 1..8 steps; title required (<=80 chars), caption <=160.
 Icons: check,info,settings,person,home,star,warning,search,calendar,folder,edit,play,flag,time,list,
-fire,food,code,upload,download,lock,chat,build. Tones: neutral,accent,success,info,warning,error.
+fire,food,code,upload,download,lock,chat,build,phone (alias smartphone),globe (alias language),
+browser,computer,terminal,server,storage,cloud,extension,shield,mic,audio,image,video,document,link,
+chart,science,lightbulb,robot,wifi,delete. All are native outlined vector icons; use phone for a
+mobile device, globe for the internet, browser for a web page, and extension for a module.
+Use these icons instead of emoji when a matching icon exists. The same names work in Icon,
+Flow steps and inline :icon[...] / :badge[...]{icon=...}. calendarToday is an alias for calendar.
+Example: Row(children=[Icon(name="phone"),Text(text="Operit Core")]); inline :icon[globe]{tone=info}.
+Tones: neutral,accent,success,info,warning,error.
 auto draws horizontal tiles with right arrows for <=4 steps when they fit, otherwise vertical tiles
 with down arrows. horizontal is a preference: it still stacks vertically when tiles would not fit.
 Combine several Flows in a Column/Grid for simple branches. No state or actions needed.
@@ -221,8 +228,8 @@ and font scale. Prefer auto columns for metrics; explicit columns for keypads.
 Items pack in order and incomplete rows keep empty cells. A zero key can span 2 columns.
 Slider steps counts INTERMEDIATE stops: min=0,max=100,steps=99 gives integers; default continuous.
 Retain decimal precision unless asked to round. Long Display values shrink to fit, then wrap; never truncated.
-Text variants: h1/h2/h3/body/caption. Icon names: info,check,settings,person,home,star,warning,
-search,calendarToday,folder. Bind Expandable.expanded and Tabs/Carousel.value to retain state.
+Text variants: h1/h2/h3/body/caption. Icon(name="...") uses the outlined names listed in FLOW.
+Bind Expandable.expanded and Tabs/Carousel.value to retain state.
 Navigation value is a named child's ID; use named declarations for navigation children.
 DatePicker uses yyyy-MM-dd and expands inline; minDate/maxDate bound 1900..2100.
 clearable=true adds Clear (writes an empty string). Changing bounds does not rewrite existing data.
