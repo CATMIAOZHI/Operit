@@ -124,7 +124,7 @@ DatePicker、Form、Expandable。Select 和 DatePicker 在卡片内展开，不�
 | 能力 | 实现和边界 |
 | --- | --- |
 | 排版与导航 | 响应式 Grid、分段选择、Tabs、可滑动 Carousel、Conditional 条件显示 |
-| 富文本 | RichText 的结构化字重、斜体、下划线、主题色、字号及安全链接；不是 HTML |
+| 富文本 | RichText 的结构化字重、斜体、下划线、逐段语义色（primary/muted/success/info/warning/error）、字号及安全链接；不是 HTML |
 | 图表 | 原生 Canvas 折线、柱状、饼图（环形）、散点；点击查看数值，读屏朗读数值（共最多 64 个，各系列均分，并说明省略数量）；最多 4 系列、每系列 128 点 |
 | 本地计算 | 官方动态函数绑定，支持四则运算、比较、布尔、条件值、格式化、字符串组合；不请求模型 |
 | 媒体 | 图片、音频、视频，用户点击后才加载；不自动播放；离开可见区域或应用后台暂停播放器 |
@@ -176,7 +176,7 @@ stringContains/stringReplace/stringTrim、dateAddDays/dateDiffDays/formatDate。
 - Row 支持 wrap、gap、align、justify；默认保持内容宽度，显式 justify 才铺满可用宽度；
   Column 支持 gap、align。Grid 未指定列数时按
   实际可用宽度、minItemWidth 和字体缩放选择 1–4 列；键盘仍使用明确列数及跨度。
-- Panel 集中提供有限间距、圆角、背景、边框和最大宽度；Text 支持对齐与 1–8 行截断。
+- Panel 集中提供有限间距、圆角、背景、边框和最大宽度；Text 支持对齐、1–8 行截断和语义色 `tone`（与 Badge 同一组，不开放任意色值；自定义气泡上自动校正到 4.5:1）。
   正文默认不截断。Scroll 必须给出 80–480 dp 的最大高度，避免聊天无限高度约束。
 - 数组运算限制 128 项、32K 结果；字段投影/筛选使用相对对象路径，不能执行回调。
   Table 可使用派生行，仍要求 8 列/32 行及标量单元格。空数组平均值、缺失字段、

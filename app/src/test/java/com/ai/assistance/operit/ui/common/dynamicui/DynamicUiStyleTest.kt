@@ -53,6 +53,24 @@ class DynamicUiStyleTest {
         assertTrue(cardGridRows(2, emptyList()).isEmpty())
     }
 
+    @Test fun semanticTextTonesReadOnCustomBubbles() {
+        fun ratio(a: Color, b: Color) = (maxOf(a.luminance(), b.luminance()) + .05f) / (minOf(a.luminance(), b.luminance()) + .05f)
+        val rainy = lightColorScheme(primary = Color(0xFFE91E63))
+        for (bubble in listOf(Color(0xFF808080), Color(0xFFD9E2FF), Color(0xFF6A8F7A), Color(0xFF3A3F58), Color(0xFFFFE4EC))) {
+            val ink = if (bubble.luminance() > .18f) Color.Black else Color.White
+            val scheme = cardColorScheme(rainy, ink, bubble)
+            for (tone in listOf("success", "info", "warning", "error")) {
+                val color = cardToneInk(tone, scheme, bubble)!!
+                assertTrue("$tone on $bubble", ratio(color, bubble) >= 4.5f)
+            }
+        }
+        // Untoned and unknown tones keep the caller's ink; the plain card surface keeps the fixed hues.
+        val plain = cardColorScheme(lightColorScheme())
+        assertNull(cardToneInk(null, plain))
+        assertNull(cardToneInk("pink", plain))
+        assertEquals(cardSemanticToneColors("success", false)!!.first, cardToneInk("success", plain))
+    }
+
     @Test fun secondaryTextAndAccentsReadOnMidToneBubbles() {
         fun ratio(a: Color, b: Color) = (maxOf(a.luminance(), b.luminance()) + .05f) / (minOf(a.luminance(), b.luminance()) + .05f)
         val rainy = lightColorScheme(primary = Color(0xFFE91E63), onSurfaceVariant = Color(0xFF806371))
