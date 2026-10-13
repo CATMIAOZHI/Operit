@@ -10,6 +10,9 @@ import com.ai.assistance.operit.data.model.CharacterCardChatModelBindingMode
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.ModelConfigDefaults
+import com.ai.assistance.operit.data.model.ChatContextPolicy
+import com.ai.assistance.operit.data.model.resolveChatContext
+import com.ai.assistance.operit.data.preferences.ChatContextPreferences
 import com.ai.assistance.operit.data.preferences.ActivePromptManager
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
@@ -82,6 +85,10 @@ class ApiConfigDelegate(
     private val activePromptManager = ActivePromptManager.getInstance(context)
     private val configScope =
             CoroutineScope(SupervisorJob(coroutineScope.coroutineContext[Job]) + Dispatchers.IO)
+    private val contextPreferences = ChatContextPreferences(context)
+    private val contextChatId = MutableStateFlow<String?>(null)
+
+    fun setContextChatId(chatId: String?) { contextChatId.value = chatId }
 
     // State flows
     private val _isConfigured = MutableStateFlow(true) // 默认已配置
@@ -233,82 +240,29 @@ class ApiConfigDelegate(
                     )
                 )
 
-    val effectiveBaseContextLength: StateFlow<Float> =
-            effectiveChatConfig
-                .map { config -> config.contextLength }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_CONTEXT_LENGTH
-                )
+    @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+    private val conversationPolicy = contextChatId.flatMapLatest { chatId ->
+        if (chatId == null) contextPreferences.defaults.map { it as ChatContextPolicy? }
+        else contextPreferences.observe(chatId).map { it?.let(ChatContextPolicy::decode) }
+    }
 
-    val effectiveMaxContextLengthSetting: StateFlow<Float> =
-            effectiveChatConfig
-                .map { config -> config.maxContextLength }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_MAX_CONTEXT_LENGTH
-                )
+    val effectiveResolvedContext = combine(effectiveChatConfig, conversationPolicy) { config, policy ->
+        resolveChatContext(policy ?: ChatContextPolicy.fromLegacy(config), config)
+    }.stateIn(configScope, kotlinx.coroutines.flow.SharingStarted.Eagerly,
+        resolveChatContext(ChatContextPolicy(), ModelConfigData(id = "", name = "")))
 
-    val effectiveEnableMaxContextMode: StateFlow<Boolean> =
-            effectiveChatConfig
-                .map { config -> config.enableMaxContextMode }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_ENABLE_MAX_CONTEXT_MODE
-                )
+    private fun <T> contextValue(initial: T, read: (com.ai.assistance.operit.data.model.ResolvedChatContext) -> T) =
+        effectiveResolvedContext.map(read).stateIn(configScope,
+            kotlinx.coroutines.flow.SharingStarted.Eagerly, initial)
 
-    val effectiveContextLength: StateFlow<Float> =
-            combine(
-                effectiveEnableMaxContextMode,
-                effectiveBaseContextLength,
-                effectiveMaxContextLengthSetting
-            ) { isMaxMode, normalLength, maxLength ->
-                if (isMaxMode) maxLength else normalLength
-            }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_CONTEXT_LENGTH
-                )
-
-    val effectiveSummaryTokenThreshold: StateFlow<Float> =
-            effectiveChatConfig
-                .map { config -> config.summaryTokenThreshold }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_SUMMARY_TOKEN_THRESHOLD
-                )
-
-    val effectiveEnableSummary: StateFlow<Boolean> =
-            effectiveChatConfig
-                .map { config -> config.enableSummary }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_ENABLE_SUMMARY
-                )
-
-    val effectiveEnableSummaryByMessageCount: StateFlow<Boolean> =
-            effectiveChatConfig
-                .map { config -> config.enableSummaryByMessageCount }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_ENABLE_SUMMARY_BY_MESSAGE_COUNT
-                )
-
-    val effectiveSummaryMessageCountThreshold: StateFlow<Int> =
-            effectiveChatConfig
-                .map { config -> config.summaryMessageCountThreshold }
-                .stateIn(
-                    configScope,
-                    kotlinx.coroutines.flow.SharingStarted.Eagerly,
-                    ModelConfigDefaults.DEFAULT_SUMMARY_MESSAGE_COUNT_THRESHOLD
-                )
+    val effectiveBaseContextLength = contextValue(ModelConfigDefaults.DEFAULT_CONTEXT_LENGTH) { it.policy.windowK }
+    val effectiveMaxContextLengthSetting = contextValue(ModelConfigDefaults.DEFAULT_MAX_CONTEXT_LENGTH) { it.capacityK }
+    val effectiveEnableMaxContextMode = contextValue(false) { it.policy.maxMode }
+    val effectiveContextLength = contextValue(ModelConfigDefaults.DEFAULT_CONTEXT_LENGTH) { it.windowK }
+    val effectiveSummaryTokenThreshold = contextValue(0.9f) { it.compactRatio }
+    val effectiveEnableSummary = contextValue(true) { it.policy.autoCompact }
+    val effectiveEnableSummaryByMessageCount = contextValue(false) { it.policy.compactEveryUserTurns != null }
+    val effectiveSummaryMessageCountThreshold = contextValue(16) { it.policy.compactEveryUserTurns ?: 16 }
 
     init {
         configScope.launch {
@@ -393,30 +347,35 @@ class ApiConfigDelegate(
         _summaryMessageCountThreshold.value = config.summaryMessageCountThreshold
     }
 
-    private fun buildChatContextSettings(configId: String, config: ModelConfigData): ChatContextSettings {
-        val effectiveContextLength =
-            if (config.enableMaxContextMode) config.maxContextLength else config.contextLength
-        return ChatContextSettings(
-            configId = configId,
-            baseContextLength = config.contextLength,
-            maxContextLength = config.maxContextLength,
-            enableMaxContextMode = config.enableMaxContextMode,
-            effectiveContextLength = effectiveContextLength,
-            summaryTokenThreshold = config.summaryTokenThreshold,
-            enableSummary = config.enableSummary,
-            enableSummaryByMessageCount = config.enableSummaryByMessageCount,
-            summaryMessageCountThreshold = config.summaryMessageCountThreshold
-        )
+    suspend fun resolveChatContextSettings(configIdOverride: String? = null, chatId: String? = contextChatId.value): ChatContextSettings {
+        modelConfigManager.initializeIfNeeded()
+        val configId = configIdOverride?.trim()?.takeIf { it.isNotEmpty() }
+            ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
+        val config = requireNotNull(modelConfigManager.getModelConfig(configId)) { "Model config not found: $configId" }
+        val resolved = resolveChatContext(contextPreferences.resolve(chatId, config), config)
+        return ChatContextSettings(configId, resolved.policy.windowK, resolved.capacityK,
+            resolved.policy.maxMode, resolved.windowK, resolved.compactRatio,
+            resolved.policy.autoCompact, resolved.policy.compactEveryUserTurns != null,
+            resolved.policy.compactEveryUserTurns ?: 16)
     }
 
-    suspend fun resolveChatContextSettings(configIdOverride: String? = null): ChatContextSettings {
-        modelConfigManager.initializeIfNeeded()
-        val configId =
-            configIdOverride?.trim()?.takeIf { it.isNotEmpty() } ?: effectiveChatConfigId.value
-        val config = requireNotNull(modelConfigManager.getModelConfig(configId)) {
-            "Model config not found: $configId"
+    suspend fun updateChatContextPolicy(chatId: String, configId: String = effectiveChatConfigId.value, transform: (ChatContextPolicy) -> ChatContextPolicy) {
+        val config = requireNotNull(modelConfigManager.getModelConfig(configId))
+        contextPreferences.update(chatId, config, transform)
+    }
+
+    suspend fun loadChatContext(chatId: String, configId: String): com.ai.assistance.operit.data.model.ResolvedChatContext {
+        val config = requireNotNull(modelConfigManager.getModelConfig(configId))
+        return resolveChatContext(contextPreferences.resolve(chatId, config), config)
+    }
+
+    private fun updateCurrentPolicy(transform: (ChatContextPolicy) -> ChatContextPolicy) {
+        val chatId = contextChatId.value ?: return
+        val configId = effectiveChatConfigId.value
+        configScope.launch {
+            val config = requireNotNull(modelConfigManager.getModelConfig(configId))
+            contextPreferences.update(chatId, config, transform)
         }
-        return buildChatContextSettings(configId, config)
     }
 
     private suspend fun resolveEditableChatConfigId(): String {
@@ -698,104 +657,26 @@ class ApiConfigDelegate(
         }
     }
 
-    /** 更新上下文长度 */
-    fun updateContextLength(length: Float) {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            modelConfigManager.updateContextSettings(
-                    configId = configId,
-                    contextLength = length,
-                    maxContextLength = current.maxContextLength,
-                    enableMaxContextMode = current.enableMaxContextMode
-            )
-        }
-    }
+    /** These controls now edit only the selected conversation. */
+    fun updateContextLength(length: Float) = updateCurrentPolicy { it.copy(windowK = length) }
     fun updateSummaryTokenThreshold(threshold: Float) {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            modelConfigManager.updateSummarySettings(
-                    configId = configId,
-                    enableSummary = current.enableSummary,
-                    summaryTokenThreshold = threshold,
-                    enableSummaryByMessageCount = current.enableSummaryByMessageCount,
-                    summaryMessageCountThreshold = current.summaryMessageCountThreshold
-            )
-        }
+        val window = effectiveContextLength.value
+        updateCurrentPolicy { it.copy(compactAtK = (window * threshold).coerceAtLeast(1f)) }
     }
-
     fun updateMaxContextLength(length: Float) {
+        val configId = effectiveChatConfigId.value
         configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            modelConfigManager.updateContextSettings(
-                    configId = configId,
-                    contextLength = current.contextLength,
-                    maxContextLength = length,
-                    enableMaxContextMode = current.enableMaxContextMode
-            )
+            val config = modelConfigManager.getModelConfig(configId) ?: return@launch
+            modelConfigManager.updateContextSettings(configId, config.contextLength, length, config.enableMaxContextMode)
         }
     }
-
-    fun toggleEnableMaxContextMode() {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            val newValue = !current.enableMaxContextMode
-            modelConfigManager.updateContextSettings(
-                    configId = configId,
-                    contextLength = current.contextLength,
-                    maxContextLength = current.maxContextLength,
-                    enableMaxContextMode = newValue
-            )
-        }
+    fun toggleEnableMaxContextMode() = updateCurrentPolicy { it.copy(maxMode = !it.maxMode) }
+    fun toggleEnableSummary() = updateCurrentPolicy { it.copy(autoCompact = !it.autoCompact) }
+    fun toggleEnableSummaryByMessageCount() = updateCurrentPolicy {
+        it.copy(compactEveryUserTurns = if (it.compactEveryUserTurns == null) 16 else null)
     }
-    /** 切换启用总结功能 */
-    fun toggleEnableSummary() {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            val newValue = !current.enableSummary
-            modelConfigManager.updateSummarySettings(
-                    configId = configId,
-                    enableSummary = newValue,
-                    summaryTokenThreshold = current.summaryTokenThreshold,
-                    enableSummaryByMessageCount = current.enableSummaryByMessageCount,
-                    summaryMessageCountThreshold = current.summaryMessageCountThreshold
-            )
-        }
-    }
-
-    /** 切换按消息数量启用总结 */
-    fun toggleEnableSummaryByMessageCount() {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            val newValue = !current.enableSummaryByMessageCount
-            modelConfigManager.updateSummarySettings(
-                    configId = configId,
-                    enableSummary = current.enableSummary,
-                    summaryTokenThreshold = current.summaryTokenThreshold,
-                    enableSummaryByMessageCount = newValue,
-                    summaryMessageCountThreshold = current.summaryMessageCountThreshold
-            )
-        }
-    }
-
-    /** 更新总结消息数量阈值 */
-    fun updateSummaryMessageCountThreshold(threshold: Int) {
-        configScope.launch {
-            val configId = resolveEditableChatConfigId()
-            val current = modelConfigManager.getModelConfig(configId) ?: return@launch
-            modelConfigManager.updateSummarySettings(
-                    configId = configId,
-                    enableSummary = current.enableSummary,
-                    summaryTokenThreshold = current.summaryTokenThreshold,
-                    enableSummaryByMessageCount = current.enableSummaryByMessageCount,
-                    summaryMessageCountThreshold = threshold
-            )
-        }
+    fun updateSummaryMessageCountThreshold(threshold: Int) = updateCurrentPolicy {
+        it.copy(compactEveryUserTurns = threshold)
     }
 
     /** 切换工具启用/禁用 */

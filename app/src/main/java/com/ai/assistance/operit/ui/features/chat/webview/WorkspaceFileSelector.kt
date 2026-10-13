@@ -112,6 +112,10 @@ fun MentionSuggestionPanel(
     val currentChatId by viewModel.currentChatId.collectAsState()
     val searchQuery by viewModel.mentionSearchQuery.collectAsState()
     val suggestionTriggerChar by viewModel.mentionSuggestionTriggerChar.collectAsState()
+    val draft by viewModel.userMessage.collectAsState()
+    val shortcuts = if (draft.composition == null && draft.selection.collapsed &&
+        draft.selection.end == draft.text.length)
+        com.ai.assistance.operit.ui.features.chat.util.chatShortcutSuggestions(draft.text) else emptyList()
     val showFileSuggestions = suggestionTriggerChar != '/'
     val currentChat = chatHistories.find { it.id == currentChatId }
     val workspacePath = currentChat?.workspace
@@ -242,6 +246,30 @@ fun MentionSuggestionPanel(
                     .padding(horizontal = 8.dp, vertical = 8.dp)
                     .heightIn(max = 280.dp)
         ) {
+            if (shortcuts.isNotEmpty()) {
+                item { MentionSuggestionSectionHeader(context.getString(R.string.chat_shortcuts)) }
+                items(shortcuts.size) { index ->
+                    val shortcut = shortcuts[index]
+                    val argument = com.ai.assistance.operit.ui.features.chat.util.chatShortcutArgument(draft.text, shortcut)
+                    val valid = com.ai.assistance.operit.ui.features.chat.util.isValidShortcutArgument(shortcut, argument)
+                    val description = when (shortcut) {
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.COMPACT -> R.string.chat_shortcut_compact
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.AUTO_COMPACT -> R.string.chat_shortcut_autocompact
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.CONTEXT -> R.string.chat_shortcut_context
+                        com.ai.assistance.operit.ui.features.chat.util.ChatShortcut.MAX -> R.string.chat_shortcut_max
+                    }
+                    Column(
+                        Modifier.fillMaxWidth().clickable(enabled = valid) {
+                            viewModel.executeChatShortcut(shortcut, draft.text)
+                        }.padding(horizontal = 12.dp, vertical = 8.dp),
+                    ) {
+                        Text("/${shortcut.command}", color = MaterialTheme.colorScheme.primary)
+                        Text(context.getString(description), style = MaterialTheme.typography.bodySmall)
+                        if (!valid) Text(context.getString(R.string.chat_shortcut_invalid),
+                            color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall)
+                    }
+                }
+            }
             item {
                 MentionSuggestionSectionHeader(
                     title = context.getString(R.string.mention_selector_packages_section),

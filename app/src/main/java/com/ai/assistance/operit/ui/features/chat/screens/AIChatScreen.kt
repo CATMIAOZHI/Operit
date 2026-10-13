@@ -1256,6 +1256,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                 ),
         )
 
+        val contextEditor by actualViewModel.contextEditor.collectAsState()
+        val contextEditorSaving by actualViewModel.contextEditorSaving.collectAsState()
+        contextEditor?.let { target ->
+            com.ai.assistance.operit.ui.features.chat.components.ChatContextEditorDialog(
+                target, actualViewModel::dismissContextEditor, actualViewModel::saveContextEditor, contextEditorSaving)
+        }
+
         val workspaceOverlayModifier =
             if (!embedded && showWebView) {
                 Modifier

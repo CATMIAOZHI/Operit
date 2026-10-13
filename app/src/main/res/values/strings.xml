@@ -804,7 +804,7 @@
     <string name="disable_tools_desc">禁用后，AI将无法调用包括记忆查询在内的内置工具，例如文件系统、HTTP和记忆工具。</string>
     <string name="tools_disabled">工具已禁用</string>
     <string name="max_mode_title">Max模式</string>
-    <string name="max_mode_info">Max Mode（超大上下文模式）开启后将使用 %2$sk 上下文窗口，关闭则回到 %1$sk。您可以在设置中自定义这些数值。</string>
+    <string name="max_mode_info">开启后按当前模型上限 %2$sK 使用；关闭后恢复当前对话预算 %1$sK。软件会预留必要空间。</string>
     <string name="processing_input">正在处理输入...</string>
     <string name="references">参考资料:</string>
     <string name="tool_weather">天气查询</string>
@@ -3383,9 +3383,9 @@
     <string name="screen_title_external_http_chat_settings">外部 HTTP 调用</string>
     <string name="settings_system_prompts_subtitle">系统和模型提示词</string>
     <string name="settings_functional_prompts_subtitle">功能专用提示词模板</string>
-    <string name="settings_context_length">上下文长度</string>
+    <string name="settings_context_length">对话上下文预算</string>
     <string name="settings_context_length_subtitle">模型记忆对话长度(k tokens)</string>
-    <string name="settings_max_context_length">最大上下文长度</string>
+    <string name="settings_max_context_length">模型上下文上限</string>
     <string name="settings_max_context_length_subtitle">模型API支持的最大上下文长度(k tokens)</string>
     <string name="settings_summary_threshold">上下文使用比例阈值</string>
     <string name="settings_summary_threshold_subtitle">当上下文使用超过此比例时触发总结(0.1-0.95)</string>
@@ -7468,9 +7468,9 @@
     <string name="skill_error_import_failed">导入失败: %1$s</string>
 
     <!-- Context Summary Settings -->
-    <string name="context_summary_note">文件读取限制与文本结果截断已改为固定系统常量。此页可直接调整当前绑定模型配置的上下文与总结参数，以及历史图片和音视频保留回合数。</string>
+    <string name="context_summary_note">这里设置新对话的默认预算，已有对话不受影响。点击聊天顶部的上下文用量可调整当前对话；模型容量在模型配置中设置。</string>
     <string name="context_summary_current_model_config">当前绑定模型配置：%1$s</string>
-    <string name="context_summary_bound_config_description">此页面的上下文与总结设置会直接写回当前对话绑定的模型配置。</string>
+    <string name="context_summary_bound_config_description">下方仅编辑总结格式与规则，所有对话共用；不会改变模型容量或对话预算。</string>
     <string name="context_validation_error_positive_number">%1$s 必须是大于 0 的有效数字</string>
     <string name="context_validation_error_positive_integer">%1$s 必须是大于 0 的有效整数</string>
     <string name="context_validation_error_non_negative_integer">%1$s 必须是大于等于 0 的有效整数</string>
@@ -8974,4 +8974,24 @@
     <string name="token_stats_category_composer_prediction">输入预测</string>
     <string name="voice_dictation_cannot_keep_up">识别速度跟不上录音，请分短一些录制后重试。</string>
     <string name="permission_review_failed_result">自动审核未完成，操作未执行</string>
+    <string name="chat_context_budget">对话上下文预算</string>
+    <string name="chat_context_budget_hint">例如 300K、400K、500K。实际使用不超过模型容量。</string>
+    <string name="chat_context_max_hint">Max 跟随当前模型的最大容量；关闭后恢复上面的自定义预算。</string>
+    <string name="chat_context_compact_at">自动压缩触发量（可选）</string>
+    <string name="chat_context_compact_hint">留空由软件决定；如填 300K，则在接近该值时整理。软件会预留回复空间，必要时提前整理。</string>
+    <string name="chat_context_current">当前对话上下文</string>
+    <string name="chat_context_capacity">当前模型上限：%1$sK</string>
+    <string name="chat_context_model_hint">填写接口支持的上下文上限。同一配置中的模型共用此值；对话预算在聊天中单独调整。</string>
+    <string name="chat_context_defaults">新对话默认设置</string>
+    <string name="chat_context_advanced">总结格式与历史媒体设置</string>
+    <string name="chat_context_saved">已保存，下次请求生效</string>
+    <string name="chat_context_save_failed">上下文设置保存失败，请重试</string>
+    <string name="chat_shortcuts">聊天指令 · 点击执行，发送仍是普通消息</string>
+    <string name="chat_shortcut_compact">压缩上下文</string>
+    <string name="chat_shortcut_autocompact">自动压缩阈值 · 例如 /autocompact 300K，auto 恢复自动</string>
+    <string name="chat_shortcut_context">调整当前对话预算 · 例如 /context 400K</string>
+    <string name="chat_shortcut_max">模型最大上下文 · /max on 开启，off 恢复自定义预算</string>
+    <string name="chat_shortcut_invalid">参数无效，请按示例填写；仍可作为普通消息发送</string>
+    <string name="chat_shortcut_busy">请等当前回复结束后再压缩</string>
+    <string name="chat_context_legacy_turns">保留旧规则：每 %1$d 轮自动压缩</string>
 </resources>

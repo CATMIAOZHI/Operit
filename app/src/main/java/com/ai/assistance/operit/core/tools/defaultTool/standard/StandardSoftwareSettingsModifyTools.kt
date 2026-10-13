@@ -1714,24 +1714,16 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             config.copy(repetitionPenaltyEnabled = value)
         }
         applyFloat("repetition_penalty") { config, value -> config.copy(repetitionPenalty = value) }
-        applyFloat("context_length") { config, value ->
-            config.copy(contextLength = value.coerceAtLeast(1f))
-        }
+        listOf("context_length", "enable_max_context_mode", "summary_token_threshold",
+            "enable_summary", "enable_summary_by_message_count", "summary_message_count_threshold")
+            .forEach { name ->
+                require(getParameterValue(tool, name) == null) {
+                    "$name is now a per-conversation setting. Use the current chat context settings; max_context_length configures model capacity."
+                }
+            }
         applyFloat("max_context_length") { config, value ->
-            config.copy(maxContextLength = value.coerceAtLeast(1f))
-        }
-        applyBoolean("enable_max_context_mode") { config, value ->
-            config.copy(enableMaxContextMode = value)
-        }
-        applyFloat("summary_token_threshold") { config, value ->
-            config.copy(summaryTokenThreshold = value.coerceIn(0f, 1f))
-        }
-        applyBoolean("enable_summary") { config, value -> config.copy(enableSummary = value) }
-        applyBoolean("enable_summary_by_message_count") { config, value ->
-            config.copy(enableSummaryByMessageCount = value)
-        }
-        applyInt("summary_message_count_threshold") { config, value ->
-            config.copy(summaryMessageCountThreshold = value.coerceAtLeast(1))
+            require(value.isFinite() && value > 0f && value <= 1_000_000f) { "Invalid max_context_length" }
+            config.copy(maxContextLength = value)
         }
         applyString("custom_parameters") { config, value ->
             val json = value.ifBlank { "[]" }
