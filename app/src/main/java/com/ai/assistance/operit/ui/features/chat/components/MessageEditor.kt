@@ -47,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.util.ChatMarkupRegex
 
 /**
  * 消息编辑器组件，用于编辑包含XML标签的消息
@@ -73,7 +74,8 @@ internal fun memoryEditorProcessIndices(
     return parts.indices.filterTo(mutableSetOf()) { index ->
         val part = parts[index]
         part.type == PartType.COLLABORATION || part.sourceTimestamp in processRows ||
-            (part.type == PartType.XML && part.tag in processTags)
+            (part.type == PartType.XML &&
+                ChatMarkupRegex.normalizeToolLikeTagName(part.tag)?.lowercase() in processTags)
     }
 }
 

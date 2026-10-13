@@ -4,6 +4,20 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MemoryEditorProcessTest {
+    @Test fun realGeneratedToolTagsStayInsideCollapsedProcessWithoutRewritingNames() {
+        val tags = listOf("think", "tool_iWGR", "tool_result_CpjL", "tool_bLxw",
+            "tool_result_14pi", "tool_Xonz", "tool_result_Srld", "TOOL_A1", "TOOL_RESULT_B2")
+        val processSource = tags.joinToString("\n") { "<$it name=\"package_proxy\">record</$it>" }
+        val original = "$processSource\n正文\n<details>正文补充</details>\n```a2ui\n{}\n```\n"
+        val parts = parseMessageContentForEditor(original)
+        val process = memoryEditorProcessIndices(parts, emptyList())
+        assertEquals(tags, process.map { parts[it].tag })
+        val visible = parts.filterIndexed { index, part -> index !in process && !part.isSeparator }
+        assertEquals(listOf(PartType.TEXT, PartType.XML, PartType.DYNAMIC_UI), visible.map { it.type })
+        assertEquals("\n正文\n", visible.first().content)
+        assertEquals(original, recomposeMessageFromParts(parts))
+    }
+
     @Test fun foldsThinkingAndToolsButLeavesBodyAndCardsAvailable() {
         val original = "<think>plan</think><tool name=\"x\">args</tool><tool_result>result</tool_result>\nAnswer\n```a2ui\n{}\n```\n<details>useful detail</details>"
         val parts = parseMessageContentForEditor(original)
