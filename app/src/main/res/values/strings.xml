@@ -5435,6 +5435,11 @@
     <string name="permission_stop_allow_description">警告：默认跳过工具审批，AI 可直接修改或删除文件、执行命令及访问网络，可能造成数据丢失或泄露。仍受系统权限和单独工具规则限制。</string>
     <string name="add_tool">添加工具</string>
     <string name="no_tools_in_group">此组中未添加任何工具。</string>
+    <string name="tool_permission_count">%1$d 个</string>
+    <string name="tool_permission_show_all">查看全部 %1$d 个</string>
+    <string name="tool_permission_default_count">%1$d 个工具默认允许</string>
+    <string name="tool_permission_builtin_group">内置工具</string>
+    <string name="tool_permission_no_match">没有匹配的工具</string>
     <string name="remove_tool">移除</string>
     <string name="select_tools">选择工具</string>
     <string name="search_tools">搜索</string>
