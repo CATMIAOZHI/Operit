@@ -123,6 +123,7 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                         try {
                             detector.use { vad ->
                                 val frame = ShortArray(512)
+                                val loudness = SpeechLoudness()
                                 var prerollAt = 0
                                 // A stop right after start must still see all of the earlier audio, so
                                 // that part is finished even once this job is cancelled.
@@ -141,11 +142,16 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
                                     if (count <= 0 && (session != epoch.current() ||
                                             currentState != SpeechService.RecognitionState.RECOGNIZING)) break
                                     check(count > 0) { "Microphone read failed: $count" }
+                                    // The meter shows what the microphone heard; detection and the
+                                    // model get the levelled audio.
                                     var energy = 0f
                                     for (i in 0 until count) {
                                         val value = frame[i] / 32768f
-                                        if (length < samples.size) samples[length++] = value
                                         energy += value * value
+                                    }
+                                    loudness.apply(frame, count)
+                                    for (i in 0 until count) {
+                                        if (length < samples.size) samples[length++] = frame[i] / 32768f
                                     }
                                     // Match the other speech providers' -60..0 dB display scale.
                                     // Raw RMS makes normal speech almost invisible in the recorder.
@@ -209,9 +215,11 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
             releaseCapture()
             val decoder = continuousDecoder
             // A manual stop may precede VAD's minimum speech duration. Keep a short audible tail
-            // (using the same -60 dB floor as the meter) rather than losing e.g. a quick "yes".
+            // rather than losing e.g. a quick "yes". The audio is levelled, so the meter's -60 dB
+            // floor is raised by the largest gain: silence lifted that far still counts as silence.
             val audibleTail = length > 0 &&
-                (0 until length).sumOf { samples[it].toDouble() * samples[it] } / length > 1e-6
+                (0 until length).sumOf { samples[it].toDouble() * samples[it] } / length >
+                1e-6 * SpeechLoudness.MAX_GAIN * SpeechLoudness.MAX_GAIN
             val pcm = if (decoder == null || segmentHasSpeech || audibleTail) samples.copyOf(length) else null
             samples = FloatArray(0)
             length = 0
@@ -225,6 +233,8 @@ internal class OnnxSpeechProvider(private val context: Context, private val mode
     private suspend fun decodeText(pcm: FloatArray, session: Long): String = nativeMutex.withLock {
         if (session != epoch.current() || pcm.isEmpty()) return@withLock ""
         val engine = checkNotNull(recognizer)
+        val peak = pcm.maxOf { kotlin.math.abs(it) }
+        AppLogger.d("OnnxSpeech", "Decoding ${pcm.size / 16} ms, peak ${"%.1f".format(20 * kotlin.math.log10(peak + 1e-6f))} dBFS")
         val stream = engine.createStream()
         try {
             stream.acceptWaveform(pcm, 16000)

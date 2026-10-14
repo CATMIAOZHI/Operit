@@ -324,10 +324,20 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
             AppLogger.d(TAG, "Started recording")
 
             val preroll = pendingPcm
+            // Shared with live capture below, so the earlier audio and the rest of the sentence
+            // reach the recognizer at the same level.
+            val loudness = SpeechLoudness()
             if (preroll != null && preroll.isNotEmpty()) {
                 try {
                     withContext(Dispatchers.IO) {
                         recognizer?.let { recognizerInstance ->
+                            var at = 0
+                            while (at < preroll.size) {
+                                val chunk = preroll.copyOfRange(at, minOf(at + 512, preroll.size))
+                                loudness.apply(chunk, chunk.size)
+                                chunk.copyInto(preroll, at)
+                                at += chunk.size
+                            }
                             val samples = FloatArray(preroll.size) { i -> preroll[i] / 32768.0f }
                             recognizerInstance.acceptSamples(samples)
                             while (recognizerInstance.isReady()) {
@@ -382,6 +392,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                             SpeechPrerollStore.appendPcm(audioBuffer, ret)
                             val volumeLevel = calculateVolumeLevel(audioBuffer, ret)
                             _volumeLevelFlow.value = volumeLevel
+                            loudness.apply(audioBuffer, ret)
 
                             recognizer?.let { recognizerInstance ->
                                 if (vadInstance == null) {
