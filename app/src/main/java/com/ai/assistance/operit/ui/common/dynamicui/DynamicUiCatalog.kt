@@ -21,7 +21,6 @@ import androidx.compose.material3.*
 import androidx.compose.material3.a2ui.catalog.MaterialA2uiBasicCatalogV1Defaults
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.ui.layout.layout
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.semantics.Role
@@ -122,28 +121,14 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 val slot = remember { Any() }
                 if (rowFill != null) DisposableEffect(rowFill) { onDispose { rowFill.remove(slot) } }
                 Surface(
-                    modifier.fillMaxWidth().then(
-                        if (rowFill == null) Modifier
-                        else Modifier.layout { measurable, constraints ->
-                            val tallest = rowFill.tallest.coerceIn(constraints.minHeight, constraints.maxHeight)
-                            val placeable = measurable.measure(constraints.copy(minHeight = tallest))
-                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                        }
-                    ),
+                    modifier.fillMaxWidth().cardRowStretch(rowFill),
                     shape = MaterialTheme.shapes.medium,
                     color = MaterialTheme.colorScheme.surfaceContainerHigh) {
                 val atStart = properties.bind(align) != "end"
                 // The tile may be stretched to its row; the content keeps its own height and
                 // reports it, so the row can also shrink again.
                 Column(
-                    Modifier.wrapContentHeight(Alignment.Top).then(
-                        if (rowFill == null) Modifier
-                        else Modifier.layout { measurable, constraints ->
-                            val placeable = measurable.measure(constraints)
-                            rowFill.report(slot, placeable.height)
-                            layout(placeable.width, placeable.height) { placeable.place(0, 0) }
-                        }
-                    ).padding(16.dp),
+                    Modifier.wrapContentHeight(Alignment.Top).cardRowReport(rowFill, slot).padding(16.dp),
                     horizontalAlignment = if (atStart) Alignment.Start else Alignment.End,
                     verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     if (title.isNotBlank()) Text(title, Modifier.fillMaxWidth(), textAlign = if (atStart) TextAlign.Start else TextAlign.End,
@@ -341,7 +326,7 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                 val readOnly = LocalCardReadOnly.current
                 var localExpanded by rememberSaveable(readOnly, boundExpanded) { mutableStateOf(boundExpanded ?: false) }
                 val expanded = if (readOnly) localExpanded else boundExpanded ?: localExpanded
-                val child: @Composable (Int, Boolean, CardRowFill?) -> Unit = { index, gridCell, rowFill ->
+                val child: @Composable (Int, Boolean, CardRowFill?, Boolean) -> Unit = { index, gridCell, rowFill, compact ->
                     val ref = refs[index]
                     key(ref.id, ref.baseDataPath) {
                         when (val state = observeA2uiComponentState(ref)) {
@@ -349,7 +334,8 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                                 CompositionLocalProvider(
                                     LocalCardRowItem provides false,
                                     LocalCardGridCell provides (gridCell && state.component.type == "Button"),
-                                    LocalCardRowFill provides rowFill?.takeIf { state.component.type == "Display" },
+                                    LocalCardRowFill provides rowFill?.takeIf { state.component.type in setOf("Display", "Panel") },
+                                    LocalCardCompactHeadings provides (compact || LocalCardCompactHeadings.current),
                                 ) {
                                     A2uiComponent(state.component)
                                 }
@@ -382,14 +368,16 @@ private class OperitCardComponent(override val name: String) : A2uiComponent {
                                         val cellWidth = (width - 8.dp * (count - 1)) / count
                                         cells.forEach { cell ->
                                             Box(Modifier.width(cellWidth * cell.span + 8.dp * (cell.span - 1))) {
-                                                child(cell.index, true, rowFill)
+                                                // Narrow cells only: a wide tablet column or a full-width span keeps its sizes.
+                                                child(cell.index, true, rowFill,
+                                                    cells.size > 1 && cellWidth * cell.span < 240.dp)
                                             }
                                         }
                                     }
                                 }
                             }
                             }
-                        } else refs.indices.forEach { child(it, false, null) }
+                        } else refs.indices.forEach { child(it, false, null, false) }
                     }
                 }
             }
