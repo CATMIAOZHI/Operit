@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
@@ -498,7 +499,7 @@ private fun SettingsCard(
         border = androidx.compose.foundation.BorderStroke(1.dp, borderColor)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp),
+            modifier = Modifier.settingsSearchTarget(title).padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(

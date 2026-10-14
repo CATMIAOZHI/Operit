@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -196,6 +197,7 @@ fun WaifuModeSettingsScreen(
                         ) {
                             Text(
                                 text = stringResource(R.string.enable_waifu_mode),
+                                modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.enable_waifu_mode)),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Medium
                             )
@@ -235,6 +237,7 @@ fun WaifuModeSettingsScreen(
                         ) {
                             Text(
                                 text = stringResource(R.string.waifu_merge_send),
+                                modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.waifu_merge_send)),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Medium
                             )
@@ -299,6 +302,7 @@ fun WaifuModeSettingsScreen(
                     ) {
                         Text(
                             text = stringResource(R.string.typing_speed_settings),
+                            modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.typing_speed_settings)),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Medium
                         )
@@ -375,6 +379,7 @@ fun WaifuModeSettingsScreen(
                             ) {
                                 Text(
                                     text = stringResource(R.string.remove_punctuation),
+                                    modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.remove_punctuation)),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -415,6 +420,7 @@ fun WaifuModeSettingsScreen(
                     ) {
                         Text(
                             text = stringResource(R.string.waifu_custom_prompt),
+                            modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.waifu_custom_prompt)),
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Medium
                         )
@@ -471,6 +477,7 @@ fun WaifuModeSettingsScreen(
                             ) {
                                 Text(
                                     text = stringResource(R.string.enable_emoticons),
+                                    modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.enable_emoticons)),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -520,6 +527,7 @@ fun WaifuModeSettingsScreen(
                         ) {
                             Text(
                                 text = stringResource(R.string.manage_custom_emoji),
+                                modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.manage_custom_emoji)),
                                 style = MaterialTheme.typography.titleMedium,
                                 fontWeight = FontWeight.Medium
                             )
@@ -556,6 +564,7 @@ fun WaifuModeSettingsScreen(
                             ) {
                                 Text(
                                     text = stringResource(R.string.enable_selfie_feature),
+                                    modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.enable_selfie_feature)),
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Medium
                                 )
@@ -582,6 +591,7 @@ fun WaifuModeSettingsScreen(
                             Spacer(modifier = Modifier.height(16.dp))
                             Text(
                                 text = stringResource(R.string.appearance_prompt),
+                                modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.appearance_prompt)),
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Medium
                             )

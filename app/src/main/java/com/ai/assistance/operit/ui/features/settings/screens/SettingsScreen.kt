@@ -76,7 +76,9 @@ private data class SettingsEntry(
         /** Extra words that should find this row, such as its group name. */
         val keywords: String = "",
         /** Deletes data: shown in red and without the "open page" arrow. */
-        val destructive: Boolean = false
+        val destructive: Boolean = false,
+        /** An option inside a sub page: found by its own name, not just by its page name. */
+        val isOption: Boolean = false
 )
 
 private data class SettingsToggle(
@@ -262,13 +264,7 @@ fun SettingsScreen(
         // Options inside sub pages, so a search for "帧率" finds the page that holds it.
         val pageEntries = groups.flatMap { it.entries }
         fun page(title: String) = pageEntries.first { it.title == title }
-        val optionEntries = settingsOptionEntries(
-                globalDisplay = page(stringResource(R.string.settings_global_display)),
-                layout = page(stringResource(R.string.layout_adjustment)),
-                contextSummary = page(stringResource(R.string.settings_section_context_summary)),
-                backup = page(stringResource(R.string.settings_data_backup)),
-                chatHistory = page(stringResource(R.string.settings_chat_history_management))
-        )
+        val optionEntries = settingsOptionEntries(pageOf = ::page)
 
         var query by rememberSaveable { mutableStateOf("") }
         val focusManager = LocalFocusManager.current
@@ -364,13 +360,7 @@ fun SettingsScreen(
 private val SearchBarClearance = 88.dp
 
 @Composable
-private fun settingsOptionEntries(
-        globalDisplay: SettingsEntry,
-        layout: SettingsEntry,
-        contextSummary: SettingsEntry,
-        backup: SettingsEntry,
-        chatHistory: SettingsEntry
-): List<SettingsEntry> {
+private fun settingsOptionEntries(pageOf: (String) -> SettingsEntry): List<SettingsEntry> {
         fun option(page: SettingsEntry, title: String) =
                 SettingsEntry(
                         title = title,
@@ -381,12 +371,18 @@ private fun settingsOptionEntries(
                                 SettingsSearchFocus.request(title)
                                 page.onClick()
                         },
-                        keywords = page.keywords
+                        keywords = page.keywords,
+                        isOption = true
                 )
 
+        @Composable
+        fun page(titleRes: Int) = pageOf(stringResource(titleRes))
+
         return listOf(
-                globalDisplay to listOf(
+                page(R.string.settings_global_display) to listOf(
                         R.string.collapse_completed_process_title,
+                        R.string.tool_collapse_mode_title,
+                        R.string.global_user_name,
                         R.string.show_fps_counter,
                         R.string.enable_reply_notification,
                         R.string.enable_reply_notification_sound,
@@ -399,16 +395,23 @@ private fun settingsOptionEntries(
                         R.string.ui_accessibility_mode,
                         R.string.enable_background_keep_alive,
                         R.string.experimental_virtual_display,
-                        R.string.hide_runtime_task_view
+                        R.string.hide_runtime_task_view,
+                        R.string.visit_web_wait_time_title,
+                        R.string.global_display_virtual_screen_bitrate,
+                        R.string.global_display_status_indicator_style,
+                        R.string.global_display_image_format,
+                        R.string.global_display_image_quality,
+                        R.string.global_display_resolution_scale,
+                        R.string.root_execution_mode_title
                 ),
-                layout to listOf(
+                page(R.string.layout_adjustment) to listOf(
                         R.string.chat_settings_button_end_padding,
                         R.string.chat_area_horizontal_padding,
                         R.string.global_text_line_height_multiplier,
                         R.string.global_text_letter_spacing,
                         R.string.global_text_paragraph_spacing
                 ),
-                contextSummary to listOf(
+                page(R.string.settings_section_context_summary) to listOf(
                         R.string.max_mode_title,
                         R.string.chat_context_budget,
                         R.string.chat_context_auto_compact,
@@ -417,19 +420,106 @@ private fun settingsOptionEntries(
                         R.string.settings_summary_structure,
                         R.string.settings_summary_dialogue_review
                 ),
-                backup to listOf(R.string.backup_room_db_title, R.string.backup_raw_snapshot_title),
-                chatHistory to listOf(R.string.chat_history_batch_operations_title)
+                page(R.string.settings_data_backup) to listOf(
+                        R.string.backup_room_db_title,
+                        R.string.backup_room_db_enable_daily,
+                        R.string.backup_raw_snapshot_title,
+                        R.string.backup_official_operit_migration_action,
+                        R.string.stats_quarantine_title
+                ),
+                page(R.string.settings_chat_history_management) to listOf(
+                        R.string.character_card_statistics,
+                        R.string.chat_history_batch_operations_title,
+                        R.string.chat_memory_rebuild_title,
+                        R.string.unbound_workspaces_title
+                ),
+                page(R.string.settings_theme_appearance) to listOf(
+                        R.string.theme_title_mode,
+                        R.string.theme_custom_color,
+                        R.string.theme_enforce_contrast,
+                        R.string.theme_font_settings,
+                        R.string.avatar_customization_title,
+                        R.string.avatar_shape_title,
+                        R.string.input_style_title,
+                        R.string.theme_chat_input_transparent_title,
+                        R.string.chat_style_title,
+                        R.string.chat_style_bubble_color_title,
+                        R.string.chat_style_bubble_user_image_title,
+                        R.string.chat_style_bubble_ai_image_title,
+                        R.string.display_options_title,
+                        R.string.show_thinking_process,
+                        R.string.show_model_name,
+                        R.string.show_user_name,
+                        R.string.theme_title_color,
+                        R.string.theme_statusbar_color,
+                        R.string.theme_navigation_drawer_title,
+                        R.string.theme_chat_header_transparent_title,
+                        R.string.theme_title_background,
+                        R.string.theme_background_blur,
+                        R.string.theme_reset
+                ),
+                page(R.string.settings_functional_model) to listOf(
+                        R.string.function_type_chat,
+                        R.string.function_type_summary,
+                        R.string.function_type_title_generation,
+                        R.string.function_type_memory,
+                        R.string.function_type_translation,
+                        R.string.function_type_permission_reviewer,
+                        R.string.function_type_image_recognition,
+                        R.string.function_type_audio_recognition,
+                        R.string.function_type_video_recognition,
+                        R.string.reset_all_functions_to_default
+                ),
+                page(R.string.settings_agent_profiles) to listOf(
+                        R.string.agent_profile_add,
+                        R.string.agent_profile_model_binding
+                ),
+                page(R.string.settings_speech_services) to listOf(
+                        R.string.speech_services_tts_engine,
+                        R.string.speech_services_stt_engine,
+                        R.string.speech_services_tts_profiles,
+                        R.string.speech_services_stt_profiles,
+                        R.string.speech_services_tts_cleaner_title,
+                        R.string.speech_services_test_tts
+                ),
+                page(R.string.waifu_mode_settings) to listOf(
+                        R.string.enable_waifu_mode,
+                        R.string.waifu_merge_send,
+                        R.string.typing_speed_settings,
+                        R.string.remove_punctuation,
+                        R.string.waifu_custom_prompt,
+                        R.string.enable_emoticons,
+                        R.string.manage_custom_emoji,
+                        R.string.enable_selfie_feature,
+                        R.string.appearance_prompt
+                ),
+                page(R.string.settings_tool_permissions) to listOf(
+                        R.string.global_permission_switch,
+                        R.string.permission_review_policy_title,
+                        R.string.permission_level_auto_review,
+                        R.string.add_tool
+                ),
+                page(R.string.settings_external_http_chat) to listOf(
+                        R.string.external_http_chat_enable,
+                        R.string.external_http_chat_port,
+                        R.string.external_http_chat_token,
+                        R.string.external_http_chat_web_title
+                )
         ).flatMap { (page, titles) -> titles.map { option(page, stringResource(it)) } }
 }
 
-/** Every word of the query must appear in the title or subtitle; title hits come first. */
+/**
+ * Every word of the query must appear in the title or subtitle; title hits come first.
+ * An option also needs a word in its own name, so "主题" does not list every option on the theme page.
+ */
 private fun searchSettings(query: String, entries: List<SettingsEntry>): List<SettingsEntry> {
         val words = query.trim().lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
         if (words.isEmpty()) return emptyList()
         return entries
                 .filter { entry ->
                         val text = (entry.title + " " + entry.subtitle + " " + entry.keywords).lowercase()
-                        words.all { text.contains(it) }
+                        val title = entry.title.lowercase()
+                        words.all { text.contains(it) } && (!entry.isOption || words.any { title.contains(it) })
                 }
                 .distinctBy { it.title to it.subtitle }
                 .sortedBy { entry ->
