@@ -4644,10 +4644,7 @@
     <string name="keep_screen_on_description">대화 중 자동 잠금을 방지하려면 화면을 켜두세요.</string>
     <string name="enable_navigation_animation">새로운 내비게이션 애니메이션</string>
     <string name="enable_navigation_animation_description">휴대폰 사이드바와 페이지 전환 모두에 향상된 애니메이션 세트를 켭니다. 더 단순한 내비게이션 모션을 사용하려면 이 기능을 끄세요.</string>
-    <string name="software_identity_title">소프트웨어 ID</string>
-    <string name="software_identity_description">사이드바 상단에 표시된 소프트웨어 ID를 변경하세요.</string>
     <string name="software_identity_option_operit">Operit AI</string>
-    <string name="software_identity_option_lingshu">링슈 AI</string>
     <string name="reset_all_display_settings">모든 디스플레이 설정 재설정</string>
     <string name="ui_accessibility_mode">접근성 모드</string>
     <string name="ui_accessibility_mode_description">TalkBack과 같은 접근성 사용자를 위한 UI 자동화 동작을 최적화하고, 읽을 수 있는 작업 단계를 제공하는 데 우선순위를 두고, 자동 탭을 신중하게 실행하세요.</string>

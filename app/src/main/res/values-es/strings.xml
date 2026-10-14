@@ -4698,10 +4698,7 @@
     <string name="enable_reply_notification_vibration_description">Vibrar cuando se active la notificación de respuesta</string>
     <string name="keep_screen_on">Pantalla siempre encendida</string>
     <string name="keep_screen_on_description">Mantener la pantalla encendida para evitar que se bloquee automáticamente durante la conversación</string>
-    <string name="software_identity_title">Identidad del software</string>
-    <string name="software_identity_description">Cambiar la identidad del software que se muestra en la parte superior de la barra lateral.</string>
     <string name="software_identity_option_operit">Operit AI</string>
-    <string name="software_identity_option_lingshu">Lingshu AI</string>
     <string name="reset_all_display_settings">Restablecer toda la configuración de pantalla</string>
     <string name="ui_accessibility_mode">Modo de accesibilidad</string>
     <string name="ui_accessibility_mode_description">Optimizar el comportamiento de automatización de la interfaz de usuario para usuarios de accesibilidad como TalkBack, priorizando pasos legibles y evitando clics automáticos.</string>

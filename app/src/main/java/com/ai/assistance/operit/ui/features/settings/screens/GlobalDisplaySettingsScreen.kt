@@ -30,6 +30,7 @@ import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
 import com.ai.assistance.operit.services.floating.StatusIndicatorStyle
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow
@@ -74,9 +75,6 @@ fun GlobalDisplaySettingsScreen(
 
     val hasBackgroundImage by userPreferences.useBackgroundImage.collectAsState(initial = false)
     val uiAccessibilityMode by userPreferences.uiAccessibilityMode.collectAsState(initial = false)
-    val softwareIdentity by userPreferences.softwareIdentity.collectAsState(
-        initial = UserPreferencesManager.SOFTWARE_IDENTITY_OPERIT
-    )
     val preferredPermissionLevel by androidPermissionPreferences.preferredPermissionLevelFlow.collectAsState(initial = null)
     val rootExecutionMode by androidPermissionPreferences.rootExecutionModeFlow.collectAsState(initial = RootCommandExecutionMode.AUTO)
     val customSuCommand by androidPermissionPreferences.customSuCommandFlow.collectAsState(initial = AndroidPermissionPreferences.DEFAULT_SU_COMMAND)
@@ -207,6 +205,7 @@ fun GlobalDisplaySettingsScreen(
                 ) {
                     Text(
                         text = stringResource(id = R.string.tool_collapse_mode_title),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.tool_collapse_mode_title)),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -255,6 +254,7 @@ fun GlobalDisplaySettingsScreen(
                     onValueChange = { userNameInput = it },
                     label = { Text(stringResource(R.string.global_user_name)) },
                     modifier = Modifier
+                        .settingsSearchTarget(stringResource(R.string.global_user_name))
                         .fillMaxWidth()
                         .padding(horizontal = 8.dp, vertical = 8.dp),
                     singleLine = true,
@@ -414,6 +414,7 @@ fun GlobalDisplaySettingsScreen(
                 ) {
                     Text(
                         text = stringResource(R.string.visit_web_wait_time_title),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.visit_web_wait_time_title)),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -443,52 +444,6 @@ fun GlobalDisplaySettingsScreen(
                     }
                 }
 
-                SettingsRowDivider(inset = false)
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 8.dp, vertical = 10.dp)
-                ) {
-                    Text(
-                        text = stringResource(id = R.string.software_identity_title),
-                        style = MaterialTheme.typography.bodyMedium,
-                        fontWeight = FontWeight.Medium
-                    )
-                    Spacer(modifier = Modifier.height(2.dp))
-                    Text(
-                        text = stringResource(id = R.string.software_identity_description),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Spacer(modifier = Modifier.height(8.dp))
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        FilterChip(
-                            selected = softwareIdentity == UserPreferencesManager.SOFTWARE_IDENTITY_OPERIT,
-                            onClick = {
-                                if (softwareIdentity != UserPreferencesManager.SOFTWARE_IDENTITY_OPERIT) {
-                                    scope.launch {
-                                        userPreferences.saveSoftwareIdentity(UserPreferencesManager.SOFTWARE_IDENTITY_OPERIT)
-                                    }
-                                }
-                            },
-                            label = { Text(stringResource(id = R.string.software_identity_option_operit)) }
-                        )
-                        FilterChip(
-                            selected = softwareIdentity == UserPreferencesManager.SOFTWARE_IDENTITY_LINGSHU,
-                            onClick = {
-                                if (softwareIdentity != UserPreferencesManager.SOFTWARE_IDENTITY_LINGSHU) {
-                                    scope.launch {
-                                        userPreferences.saveSoftwareIdentity(UserPreferencesManager.SOFTWARE_IDENTITY_LINGSHU)
-                                    }
-                                }
-                            },
-                            label = { Text(stringResource(id = R.string.software_identity_option_lingshu)) }
-                        )
-                    }
-                }
             }
 
             Spacer(modifier = Modifier.height(16.dp))
@@ -566,6 +521,7 @@ fun GlobalDisplaySettingsScreen(
                 ) {
                     Text(
                         text = stringResource(id = R.string.global_display_virtual_screen_bitrate),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_virtual_screen_bitrate)),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -630,6 +586,7 @@ fun GlobalDisplaySettingsScreen(
                 ) {
                     Text(
                         text = stringResource(id = R.string.global_display_status_indicator_style),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_status_indicator_style)),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium
                     )
@@ -683,6 +640,7 @@ fun GlobalDisplaySettingsScreen(
 
                     Text(
                         text = stringResource(id = R.string.global_display_image_format),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_image_format)),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Normal
                     )
@@ -716,6 +674,7 @@ fun GlobalDisplaySettingsScreen(
 
                     Text(
                         text = stringResource(id = R.string.global_display_image_quality),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_image_quality)),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Normal
                     )
@@ -741,6 +700,7 @@ fun GlobalDisplaySettingsScreen(
 
                     Text(
                         text = stringResource(id = R.string.global_display_resolution_scale),
+                        modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.global_display_resolution_scale)),
                         style = MaterialTheme.typography.bodySmall,
                         fontWeight = FontWeight.Normal
                     )
@@ -772,6 +732,7 @@ fun GlobalDisplaySettingsScreen(
                     ) {
                         Text(
                             text = stringResource(id = R.string.root_execution_mode_title),
+                            modifier = Modifier.fillMaxWidth().settingsSearchTarget(stringResource(R.string.root_execution_mode_title)),
                             style = MaterialTheme.typography.bodyMedium,
                             fontWeight = FontWeight.Medium
                         )
