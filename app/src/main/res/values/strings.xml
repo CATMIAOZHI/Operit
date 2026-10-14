@@ -5437,6 +5437,7 @@
     <string name="no_tools_in_group">此组中未添加任何工具。</string>
     <string name="tool_permission_count">%1$d 个</string>
     <string name="tool_permission_show_all">查看全部 %1$d 个</string>
+    <string name="tool_permission_total">共 %1$d 个工具</string>
     <string name="tool_permission_default_count">%1$d 个工具默认允许</string>
     <string name="tool_permission_builtin_group">内置工具</string>
     <string name="tool_permission_no_match">没有匹配的工具</string>
