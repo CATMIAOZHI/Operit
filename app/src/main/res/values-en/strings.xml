@@ -9029,6 +9029,9 @@
     <string name="chat_shortcut_busy">Wait for the current reply to finish before compacting.</string>
     <string name="chat_context_legacy_turns">Keep legacy rule: compact every %1$d turns</string>
     <string name="storage_title">Storage management</string>
+    <string name="settings_search_hint">Search settings</string>
+    <string name="settings_search_empty">No matching settings</string>
+    <string name="settings_search_results">%1$d results</string>
     <string name="storage_subtitle">View usage, clear previews, and manage downloaded components</string>
     <string name="storage_data_total">App data usage</string>
     <string name="storage_calculating">Calculating…</string>

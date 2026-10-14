@@ -9003,6 +9003,9 @@
     <string name="chat_shortcut_busy">请等当前回复结束后再压缩</string>
     <string name="chat_context_legacy_turns">保留旧规则：每 %1$d 轮自动压缩</string>
     <string name="storage_title">存储管理</string>
+    <string name="settings_search_hint">搜索设置</string>
+    <string name="settings_search_empty">没有找到相关设置</string>
+    <string name="settings_search_results">找到 %1$d 项</string>
     <string name="storage_subtitle">查看占用、清理预览缓存、管理下载组件</string>
     <string name="storage_data_total">应用数据占用</string>
     <string name="storage_calculating">正在统计…</string>
