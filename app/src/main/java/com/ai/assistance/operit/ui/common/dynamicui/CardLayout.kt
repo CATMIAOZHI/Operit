@@ -20,6 +20,7 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 internal fun cardSpacing(token: String?, default: Int = 8) =
     when (token) { "none" -> 0; "xs" -> 4; "sm" -> 8; "md" -> 16; "lg" -> 24; else -> default }.dp
@@ -111,7 +112,10 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
             "Text" -> Text(properties.bind(text).orEmpty(),
                 (if (properties.bind(textAlign) != null) modifier.fillMaxWidth() else modifier)
                     .then(if (properties.bind(variant) in setOf("h1","h2","h3","h4","h5")) Modifier.semantics { heading() } else Modifier),
-                style = when (properties.bind(variant)) {
+                // A multi-column cell is narrow: large headings share one smaller size there.
+                style = if (LocalCardCompactHeadings.current && properties.bind(variant) in setOf("h1","h2","h3","h4"))
+                    MaterialTheme.typography.titleLarge.copy(fontSize = 18.sp, lineHeight = 24.sp)
+                else when (properties.bind(variant)) {
                     "h1" -> MaterialTheme.typography.headlineLarge
                     "h2" -> MaterialTheme.typography.headlineMedium
                     "h3" -> MaterialTheme.typography.headlineSmall
@@ -161,14 +165,21 @@ internal class CardLayoutComponent(override val name: String) : A2uiComponent {
             }
             "Panel" -> {
                 val style = cardPanelStyle(properties.bind(background), MaterialTheme.colorScheme, LocalDynamicUiBackdrop.current)
+                // A panel sharing a grid row stretches to the tallest cell, like a Display tile.
+                val rowFill = LocalCardRowFill.current
+                val slot = remember { Any() }
+                if (rowFill != null) DisposableEffect(rowFill) { onDispose { rowFill.remove(slot) } }
                 Surface(modifier.widthIn(max = (properties.bind(maxWidth)?.toInt() ?: 960).dp)
-                    .then(if (LocalCardRowItem.current) Modifier else Modifier.fillMaxWidth()),
+                    .then(if (LocalCardRowItem.current) Modifier else Modifier.fillMaxWidth())
+                    .cardRowStretch(rowFill),
                     color = style.fill, contentColor = style.colors.onSurface,
                     shape = RoundedCornerShape(cardSpacing(properties.bind(radius), 16)),
                     border = if (properties.bind(border) == true) BorderStroke(1.dp, style.colors.outlineVariant) else null) {
                     MaterialTheme(colorScheme = style.colors) {
-                        CompositionLocalProvider(LocalDynamicUiBackdrop provides style.backdrop) {
-                            Box(Modifier.padding(cardSpacing(properties.bind(padding), 16))) { render(false) }
+                        // Tiles nested in this panel belong to it, not to the outer row.
+                        CompositionLocalProvider(LocalDynamicUiBackdrop provides style.backdrop, LocalCardRowFill provides null) {
+                            Box(Modifier.wrapContentHeight(Alignment.Top).cardRowReport(rowFill, slot)
+                                .padding(cardSpacing(properties.bind(padding), 16))) { render(false) }
                         }
                     }
                 }

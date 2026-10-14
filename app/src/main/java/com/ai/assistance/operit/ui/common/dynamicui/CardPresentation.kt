@@ -12,6 +12,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.isSpecified
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
@@ -146,8 +147,34 @@ internal class CardRowFill {
     }
 }
 
-/** Set only for a Display that shares a grid row with other cells. */
+/** Set only for a Display or Panel that shares a grid row with other cells. */
 internal val LocalCardRowFill = compositionLocalOf<CardRowFill?> { null }
+
+/** Stretches a tile to the tallest tile of its row. */
+internal fun Modifier.cardRowStretch(rowFill: CardRowFill?): Modifier =
+    if (rowFill == null) this else layout { measurable, constraints ->
+        val tallest = rowFill.tallest.coerceIn(constraints.minHeight, constraints.maxHeight)
+        val placeable = measurable.measure(constraints.copy(minHeight = tallest))
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    }
+
+/**
+ * Reports the height the tile's content needs. Put it inside the stretched surface, after
+ * `wrapContentHeight`, so the content is measured without the stretched minimum and the row can
+ * shrink again.
+ */
+internal fun Modifier.cardRowReport(rowFill: CardRowFill?, slot: Any): Modifier =
+    if (rowFill == null) this else layout { measurable, constraints ->
+        val placeable = measurable.measure(constraints)
+        rowFill.report(slot, placeable.height)
+        layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+    }
+
+/**
+ * True inside a cell of a grid with two or more columns. Large heading variants step down to one
+ * shared size there, so short titles stay on one line and every cell of the row matches.
+ */
+internal val LocalCardCompactHeadings = compositionLocalOf { false }
 
 /**
  * Large statistic value. Shrinks to fit one line so digits are never cut, then wraps at the
