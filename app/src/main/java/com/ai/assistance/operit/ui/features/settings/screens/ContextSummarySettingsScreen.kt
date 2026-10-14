@@ -27,8 +27,10 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Fullscreen
-import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Summarize
+import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.ViewAgenda
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -199,40 +201,51 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
             Column(
                 modifier =
                     Modifier.fillMaxSize()
-                        .padding(horizontal = 16.dp, vertical = 8.dp)
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
                         .verticalScroll(scrollState)
             ) {
                 SettingsInfoBanner(
                     text = stringResource(id = R.string.context_summary_note),
                     backgroundColor = componentBackgroundColor
                 )
-                Spacer(modifier = Modifier.size(12.dp))
+                Spacer(modifier = Modifier.size(20.dp))
 
-                Text(stringResource(R.string.chat_context_defaults), style = MaterialTheme.typography.titleMedium)
-                com.ai.assistance.operit.ui.features.chat.components.ChatContextPolicyEditor(defaultPolicy, saving = savingDefaults, onSave = { policy ->
-                    savingDefaults = true
-                    scope.launch {
-                        try { contextDefaults.saveDefaults(policy); showSaveSuccessMessage = true }
-                        catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                        catch (e: Exception) { summaryError = errorSaveFailed }
-                        finally { savingDefaults = false }
-                    }
-                })
-                summaryError?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                TextButton(onClick = { advancedExpanded = !advancedExpanded }) {
-                    Text(stringResource(R.string.chat_context_advanced))
+                SectionTitle(text = stringResource(R.string.chat_context_defaults), icon = Icons.Default.Tune)
+                SettingsCard(backgroundColor = componentBackgroundColor) {
+                    com.ai.assistance.operit.ui.features.chat.components.ChatContextPolicyEditor(defaultPolicy, saving = savingDefaults, onSave = { policy ->
+                        savingDefaults = true
+                        scope.launch {
+                            try { contextDefaults.saveDefaults(policy); showSaveSuccessMessage = true }
+                            catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                            catch (e: Exception) { summaryError = errorSaveFailed }
+                            finally { savingDefaults = false }
+                        }
+                    })
                 }
-                if (advancedExpanded) {
-                SectionTitle(
-                    text = stringResource(id = R.string.model_config),
-                    icon = Icons.Default.Link
-                )
-                BoundModelConfigCard(
+                summaryError?.let {
+                    Text(
+                        it,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(start = 4.dp, top = 8.dp)
+                    )
+                }
+                Spacer(modifier = Modifier.size(20.dp))
+
+                AdvancedSummaryHeader(
                     configDisplayName = currentConfigDisplayName,
+                    expanded = advancedExpanded,
+                    onExpandedChange = { advancedExpanded = it },
                     backgroundColor = componentBackgroundColor
                 )
-                Spacer(modifier = Modifier.size(12.dp))
-
+                AnimatedVisibility(visible = advancedExpanded) {
+                Column(modifier = Modifier.padding(top = 12.dp)) {
+                Text(
+                    text = stringResource(id = R.string.context_summary_bound_config_description),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, end = 4.dp, bottom = 12.dp)
+                )
                 RenderContextSummaryConfigSections(
                     componentBackgroundColor = componentBackgroundColor,
                     summaryCustomRulesInput = summaryCustomRulesInput,
@@ -253,11 +266,10 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
                         )
                     }
                 )
-
-
+                }
                 }
 
-                Spacer(modifier = Modifier.size(16.dp))
+                Spacer(modifier = Modifier.size(24.dp))
             }
 
             RenderContextSummaryDialogs(
@@ -396,7 +408,6 @@ private fun RenderContextSummaryConfigSections(
     onSummarySectionsInputChange: (List<SummarySectionConfig>) -> Unit,
     onOpenFullscreenEditor: (String, String, (String) -> Unit) -> Unit
 ) {
-    SectionTitle(text = stringResource(R.string.settings_summary_title), icon = Icons.Default.Summarize)
     val globalRulesTitle = stringResource(id = R.string.settings_summary_custom_rules)
     GlobalSummaryRulesEditor(
         title = globalRulesTitle,
@@ -407,10 +418,10 @@ private fun RenderContextSummaryConfigSections(
         onValueChange = onSummaryCustomRulesInputChange,
         onOpenFullscreenEditor = onOpenFullscreenEditor
     )
-    Spacer(modifier = Modifier.size(12.dp))
+    Spacer(modifier = Modifier.size(16.dp))
     SectionTitle(
         text = stringResource(id = R.string.settings_summary_structure),
-        icon = Icons.Default.Summarize
+        icon = Icons.Default.ViewAgenda
     )
     summarySectionsInput.forEachIndexed { index, section ->
         SummarySectionEditor(
@@ -571,12 +582,12 @@ private fun SummaryConfigEditorHeader(
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
                 .alpha(contentAlpha)
                 .clickable(enabled = enabled) { onExpandedChange(!expanded) }
-                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
@@ -612,12 +623,12 @@ private fun SummaryEditorHeader(
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
                 .alpha(contentAlpha)
                 .clickable(enabled = enabled) { onExpandedChange(!expanded) }
-                .padding(start = 12.dp, end = 4.dp, top = 8.dp, bottom = 8.dp),
+                .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Column(modifier = Modifier.weight(1f).padding(end = 8.dp)) {
@@ -671,51 +682,112 @@ private fun buildBoundConfigDisplayName(config: ModelConfigData?, fallbackConfig
     }
 }
 
+/** One rounded block of related settings; every group on this page sits in one. */
 @Composable
-private fun BoundModelConfigCard(configDisplayName: String, backgroundColor: Color) {
-    Column(
-        modifier =
-            Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(backgroundColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp),
+private fun SettingsCard(backgroundColor: Color, content: @Composable () -> Unit) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = backgroundColor,
+        tonalElevation = 1.dp
     ) {
-        Text(
-            text = stringResource(id = R.string.context_summary_current_model_config, configDisplayName),
-            style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
-            color = MaterialTheme.colorScheme.primary
-        )
-        Spacer(modifier = Modifier.size(2.dp))
-        Text(
-            text = stringResource(id = R.string.context_summary_bound_config_description),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
+        Box(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) { content() }
+    }
+}
+
+/** The folded summary format settings, named after the model configuration they belong to. */
+@Composable
+private fun AdvancedSummaryHeader(
+    configDisplayName: String,
+    expanded: Boolean,
+    onExpandedChange: (Boolean) -> Unit,
+    backgroundColor: Color
+) {
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        color = backgroundColor,
+        tonalElevation = 1.dp,
+        onClick = { onExpandedChange(!expanded) }
+    ) {
+        Row(
+            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier =
+                    Modifier.size(40.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(MaterialTheme.colorScheme.primaryContainer),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Summarize,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+            Spacer(modifier = Modifier.width(14.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.chat_context_advanced),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
+                Text(
+                    text = stringResource(id = R.string.context_summary_current_model_config, configDisplayName),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = stringResource(
+                    if (expanded) R.string.model_config_collapse else R.string.model_config_expand
+                ),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(8.dp)
+            )
+        }
     }
 }
 
 @Composable
 private fun SettingsInfoBanner(text: String, backgroundColor: Color) {
-    Text(
-        text = text,
-        style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    // The tint sits on the page's card color, which is opaque over a background image, so the
+    // note stays readable on any wallpaper.
+    Row(
         modifier =
             Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .clip(RoundedCornerShape(16.dp))
                 .background(backgroundColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
-    )
+                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f))
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Info,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.size(18.dp)
+        )
+        Spacer(modifier = Modifier.width(10.dp))
+        Text(
+            text = text,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+    }
 }
 
 @Composable
 private fun SectionTitle(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(bottom = 8.dp)
+        modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
     ) {
         Icon(
             imageVector = icon,
@@ -726,8 +798,8 @@ private fun SectionTitle(text: String, icon: androidx.compose.ui.graphics.vector
         Spacer(modifier = Modifier.width(8.dp))
         Text(
             text = text,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.SemiBold,
             color = MaterialTheme.colorScheme.primary
         )
     }
@@ -746,10 +818,10 @@ private fun SettingsSwitchRow(
     Row(
         modifier =
             Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .alpha(contentAlpha),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
@@ -785,10 +857,10 @@ private fun SettingsMultilineTextField(
     Column(
         modifier =
             Modifier.fillMaxWidth()
-                .padding(bottom = 4.dp)
-                .clip(RoundedCornerShape(6.dp))
+                .padding(bottom = 8.dp)
+                .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
-                .padding(horizontal = 12.dp, vertical = 8.dp)
+                .padding(horizontal = 16.dp, vertical = 12.dp)
                 .alpha(contentAlpha)
     ) {
         Text(
@@ -813,12 +885,12 @@ private fun SettingsMultilineTextField(
             modifier =
                 Modifier.fillMaxWidth()
                     .let { if (singleLine) it.heightIn(min = minHeight) else it.heightIn(min = 120.dp) }
-                    .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(6.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f), RoundedCornerShape(10.dp))
                     .padding(horizontal = 10.dp, vertical = 8.dp),
             textStyle =
                 TextStyle(
-                    color = MaterialTheme.colorScheme.primary,
-                    fontSize = 13.sp
+                    color = MaterialTheme.colorScheme.onSurface,
+                    fontSize = 14.sp
                 ),
             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Text),
             singleLine = singleLine,

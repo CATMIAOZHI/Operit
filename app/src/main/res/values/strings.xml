@@ -8982,7 +8982,7 @@
     <string name="permission_review_failed_result">自动审核未完成，操作未执行</string>
     <string name="chat_context_budget">对话上下文预算</string>
     <string name="chat_context_budget_hint">例如 300K、400K、500K。实际使用不超过模型容量。</string>
-    <string name="chat_context_max_hint">Max 跟随当前模型的最大容量；关闭后恢复上面的自定义预算。</string>
+    <string name="chat_context_max_hint">开启后跟随当前模型的最大容量；关闭后可以自己设定预算。</string>
     <string name="chat_context_compact_at">自动压缩触发量（可选）</string>
     <string name="chat_context_compact_hint">留空由软件决定；如填 300K，则在接近该值时整理。软件会预留回复空间，必要时提前整理。</string>
     <string name="chat_context_current">当前对话上下文</string>
