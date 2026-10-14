@@ -56,7 +56,7 @@ fun ChatContextPolicyEditor(
             value = trigger, onValueChange = { trigger = it }, singleLine = true,
             label = { Text(stringResource(R.string.chat_context_compact_at)) },
             supportingText = { Text(stringResource(R.string.chat_context_compact_hint)) },
-            enabled = enabled && !saving, isError = trigger.isNotBlank() && triggerValue == null,
+            enabled = enabled && !saving, isError = enabled && trigger.isNotBlank() && triggerValue == null,
             modifier = Modifier.fillMaxWidth(),
         )
         if (initial.compactEveryUserTurns != null) {
@@ -67,10 +67,10 @@ fun ChatContextPolicyEditor(
             }
         }
         Button(
-            enabled = !saving && windowValue != null && (trigger.isBlank() || triggerValue != null),
+            enabled = !saving && windowValue != null && (!enabled || trigger.isBlank() || triggerValue != null),
             onClick = {
                 onSave(initial.copy(windowK = requireNotNull(windowValue), maxMode = maxMode,
-                    autoCompact = enabled, compactAtK = triggerValue,
+                    autoCompact = enabled, compactAtK = if (enabled) triggerValue else initial.compactAtK,
                     compactEveryUserTurns = initial.compactEveryUserTurns.takeIf { retainTurnLimit }))
             },
         ) {

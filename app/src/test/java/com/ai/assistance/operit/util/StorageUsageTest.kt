@@ -16,9 +16,10 @@ class StorageUsageTest {
             ).forEach { path ->
                 File(root, path).apply { parentFile!!.mkdirs(); writeBytes(ByteArray(10)) }
             }
+            val progress = mutableListOf<StorageScanProgress>()
             val usage = measureStorage(listOf(root, File(root, "files")), classify = {
                 storageCategory(it.relativeTo(root).path)
-            })
+            }, onProgress = { progress.add(it) })
             assertEquals(60L, usage.totalBytes)
             assertEquals(20L, usage.bytes[StorageCategory.MEDIA])
             assertEquals(10L, usage.bytes[StorageCategory.PREVIEW_CACHE])
@@ -26,6 +27,8 @@ class StorageUsageTest {
             assertEquals(10L, usage.bytes[StorageCategory.DATABASES])
             assertEquals(10L, usage.bytes[StorageCategory.OTHER])
             assertEquals(0, usage.skippedEntries)
+            assertEquals(6L, progress.last().files)
+            assertEquals(60L, progress.last().bytes)
         } finally {
             root.deleteRecursively()
         }
@@ -54,5 +57,12 @@ class StorageUsageTest {
         } finally {
             root.deleteRecursively()
         }
+    }
+
+    @Test fun `recent complete snapshots can be reused but stale or future ones cannot`() {
+        assertTrue(isStorageSnapshotFresh(1_000, 1_001))
+        assertFalse(isStorageSnapshotFresh(1_000, 601_000))
+        assertFalse(isStorageSnapshotFresh(1_000, 999))
+        assertFalse(isStorageSnapshotFresh(0, 1_000))
     }
 }

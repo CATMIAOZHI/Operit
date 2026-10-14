@@ -9001,6 +9001,12 @@
     <string name="storage_data_total">应用数据占用</string>
     <string name="storage_calculating">正在统计…</string>
     <string name="storage_refresh">重新统计</string>
+    <string name="storage_last_measured">上次统计：%1$s · 10 分钟内复用，可手动刷新</string>
+    <string name="storage_scan_progress">已扫描 %1$d 个文件 · 已统计 %2$s</string>
+    <string name="storage_scanning_category">正在扫描：%1$s</string>
+    <string name="storage_stop_scan">停止统计</string>
+    <string name="storage_scan_stopped">统计已停止，未替换上次完整结果。可以手动重新统计。</string>
+    <string name="storage_scan_timeout">本次统计耗时过长，已停止；未替换上次完整结果。可稍后重试。</string>
     <string name="storage_scope">统计应用私有目录中的文件大小，不含安装包、公共下载目录和用户工作区。与系统设置显示的占用可能有差异。</string>
     <string name="storage_failed">操作未完成，请重试。已显示的统计可能不是最新结果。</string>
     <string name="storage_partial">部分目录无法读取，显示的是已统计到的大小。</string>

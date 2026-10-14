@@ -9027,6 +9027,12 @@
     <string name="storage_data_total">App data usage</string>
     <string name="storage_calculating">Calculating…</string>
     <string name="storage_refresh">Refresh usage</string>
+    <string name="storage_last_measured">Last measured: %1$s · Reused for 10 minutes; refresh anytime</string>
+    <string name="storage_scan_progress">%1$d files scanned · %2$s measured</string>
+    <string name="storage_scanning_category">Scanning: %1$s</string>
+    <string name="storage_stop_scan">Stop scan</string>
+    <string name="storage_scan_stopped">Scan stopped. The last complete result was kept. You can refresh manually.</string>
+    <string name="storage_scan_timeout">Scan took too long and was stopped. The last complete result was kept. Try again later.</string>
     <string name="storage_scope">File sizes in app-private directories. Excludes the installed app, public Downloads, and user workspaces. System settings may report a different size.</string>
     <string name="storage_failed">Operation incomplete. Try again. Displayed sizes may be out of date.</string>
     <string name="storage_partial">Some directories could not be read. Only measured sizes are shown.</string>
