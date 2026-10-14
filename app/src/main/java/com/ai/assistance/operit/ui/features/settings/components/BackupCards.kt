@@ -289,7 +289,7 @@ fun SectionHeader(
     icon: ImageVector
 ) {
     Row(
-        modifier = Modifier.fillMaxWidth(),
+        modifier = Modifier.fillMaxWidth().settingsSearchTarget(title),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Surface(

@@ -3450,6 +3450,7 @@
     <string name="create_subfolder">Create subfolder</string>
     <string name="move_to_folder">Move to folder…</string>
     <string name="move_to_folder_title">Move to folder</string>
+    <string name="moved_to_folder">Moved to \"%1$s\"</string>
     <string name="folder_root">Root</string>
     <string name="rename_group">Rename Group</string>
     <string name="delete_group">Delete Group</string>
@@ -5461,6 +5462,9 @@
     <string name="software_identity_option_operit">Operit Ry</string>
     <string name="software_identity_option_lingshu">Lingshu AI</string>
     <string name="reset_all_display_settings">Reset All Display Settings</string>
+    <string name="reset_display_settings_confirm">The display and execution settings on this page go back to their defaults, including the global user name, avatar, root execution mode and custom su command.</string>
+    <string name="reset_display_settings_action">Reset</string>
+    <string name="reset_display_settings_done">Settings restored to defaults</string>
     
     <!-- Chat History Management -->
     <string name="default_profile_name">Default Profile</string>

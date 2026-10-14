@@ -18,6 +18,7 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.ChatContextPolicy
 import com.ai.assistance.operit.ui.features.chat.util.parseContextK
 import com.ai.assistance.operit.ui.features.chat.util.formatContextK
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 
 data class ChatContextEditorTarget(
     val chatId: String,
@@ -58,13 +59,15 @@ fun ChatContextPolicyEditor(
             subtitle = stringResource(R.string.chat_context_max_hint),
             checked = maxMode, onCheckedChange = { maxMode = it }, enabled = !saving,
         )
+        val budgetLabel = stringResource(R.string.chat_context_budget)
         AnimatedVisibility(!maxMode) {
             Column(Modifier.padding(top = 4.dp, bottom = 8.dp)) {
                 OutlinedTextField(
                     value = window, onValueChange = { window = it }, singleLine = true, enabled = !saving,
-                    label = { Text(stringResource(R.string.chat_context_budget)) },
+                    label = { Text(budgetLabel) },
                     supportingText = { Text(stringResource(R.string.chat_context_budget_hint)) },
-                    isError = windowValue == null, modifier = Modifier.fillMaxWidth(),
+                    isError = windowValue == null,
+                    modifier = Modifier.fillMaxWidth().settingsSearchTarget(budgetLabel),
                     shape = RoundedCornerShape(12.dp),
                 )
                 FlowRow(
@@ -131,6 +134,7 @@ private fun ContextSwitchRow(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
+            .settingsSearchTarget(title)
             .clickable(enabled = enabled) { onCheckedChange(!checked) }
             .padding(vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
