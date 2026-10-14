@@ -267,10 +267,6 @@ class UserPreferencesManager private constructor(private val context: Context) {
         // 默认语言
         const val DEFAULT_LANGUAGE = LanguageCodes.AUTO
 
-        // Sidebar software identity (drawer header brand text)
-        const val SOFTWARE_IDENTITY_OPERIT = "operit_ai"
-        const val SOFTWARE_IDENTITY_LINGSHU = "lingshu_ai"
-
         const val CHAT_STYLE_CURSOR = "cursor"
         const val CHAT_STYLE_BUBBLE = "bubble"
 
@@ -438,8 +434,6 @@ class UserPreferencesManager private constructor(private val context: Context) {
         private val KEY_SHOW_CHAT_FLOATING_DOTS_ANIMATION = booleanPreferencesKey("show_chat_floating_dots_animation")
         private val KEY_UI_ACCESSIBILITY_MODE = booleanPreferencesKey("ui_accessibility_mode")
         private val KEY_BETA_PLAN_ENABLED = booleanPreferencesKey("beta_plan_enabled")
-        private val KEY_SOFTWARE_IDENTITY = stringPreferencesKey("software_identity")
-
 
         // 布局调整设置
         private val CHAT_SETTINGS_BUTTON_END_PADDING = floatPreferencesKey("chat_settings_button_end_padding")
@@ -507,12 +501,6 @@ class UserPreferencesManager private constructor(private val context: Context) {
     suspend fun saveBetaPlanEnabled(enabled: Boolean) {
         context.userPreferencesDataStore.edit { preferences ->
             preferences[KEY_BETA_PLAN_ENABLED] = enabled
-        }
-    }
-
-    suspend fun saveSoftwareIdentity(identity: String) {
-        context.userPreferencesDataStore.edit { preferences ->
-            preferences[KEY_SOFTWARE_IDENTITY] = identity
         }
     }
 
@@ -1264,11 +1252,6 @@ class UserPreferencesManager private constructor(private val context: Context) {
     val betaPlanEnabled: Flow<Boolean> =
         context.userPreferencesDataStore.data.map { preferences ->
             preferences[KEY_BETA_PLAN_ENABLED] ?: false
-        }
-
-    val softwareIdentity: Flow<String> =
-        context.userPreferencesDataStore.data.map { preferences ->
-            preferences[KEY_SOFTWARE_IDENTITY] ?: SOFTWARE_IDENTITY_OPERIT
         }
 
     // 字体设置相关Flow

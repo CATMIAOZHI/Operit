@@ -5318,10 +5318,7 @@
     <string name="enable_navigation_animation_description">După activare, se vor activa simultan bara laterală a telefonului și efectele de animație îmbunătățite pentru schimbarea paginilor. După dezactivare, se vor utiliza tranziții simple de navigare.</string>
     <string name="start_with_new_chat">La pornire, se creează o conversație nouă goală</string>
     <string name="start_with_new_chat_description">După activare, la fiecare pornire a aplicației se va deschide o nouă fereastră de chat goală, iar conversația anterioară nu se va mai deschide automat.</string>
-    <string name="software_identity_title">Logo-ul software-ului</string>
-    <string name="software_identity_description">Modificați sigla aplicației afișată în partea de sus a barei laterale.</string>
     <string name="software_identity_option_operit">Operit Ry</string>
-    <string name="software_identity_option_lingshu">Ling Shu AI</string>
     <string name="reset_all_display_settings">Resetează toate setările de afișare</string>
     <string name="ui_accessibility_mode">Modul de adaptare pentru accesibilitate</string>
     <string name="ui_accessibility_mode_description">Pentru TalkBack Optimizări pentru utilizatorii cu dizabilități etc. UI În cazul operațiunilor automate, se vor prezenta în primul rând pașii de operare care pot fi citiți cu voce tare, iar clicurile automate se vor efectua cu prudență.</string>

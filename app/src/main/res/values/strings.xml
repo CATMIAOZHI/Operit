@@ -5853,10 +5853,7 @@
     <string name="enable_navigation_animation_description">开启后，同时启用手机侧边栏与页面切换的增强动画效果。关闭后使用简洁的导航过渡。</string>
     <string name="start_with_new_chat">启动时新建空白聊天</string>
     <string name="start_with_new_chat_description">开启后，每次启动应用都会进入一个新的空白聊天界面，不再自动打开上一次聊天。</string>
-    <string name="software_identity_title">软件标识</string>
-    <string name="software_identity_description">更改侧边栏顶部显示的软件标识。</string>
     <string name="software_identity_option_operit">Operit Ry</string>
-    <string name="software_identity_option_lingshu">灵枢 AI</string>
     <string name="reset_all_display_settings">重置所有显示设置</string>
     <string name="reset_display_settings_confirm">会把本页的显示与执行设置恢复为默认值，包括全局用户名、头像、Root 执行模式和自定义 su 命令。</string>
     <string name="reset_display_settings_action">重置</string>

@@ -5457,10 +5457,7 @@
     <string name="enable_navigation_animation_description">Turns on the enhanced animation set for both the phone sidebar and page transitions. Turn it off to use simpler navigation motion.</string>
     <string name="start_with_new_chat">Start with New Blank Chat</string>
     <string name="start_with_new_chat_description">When enabled, each app launch opens a new blank chat instead of reopening the previous conversation.</string>
-    <string name="software_identity_title">Software Identity</string>
-    <string name="software_identity_description">Change the software identity shown at the top of the sidebar.</string>
     <string name="software_identity_option_operit">Operit Ry</string>
-    <string name="software_identity_option_lingshu">Lingshu AI</string>
     <string name="reset_all_display_settings">Reset All Display Settings</string>
     <string name="reset_display_settings_confirm">The display and execution settings on this page go back to their defaults, including the global user name, avatar, root execution mode and custom su command.</string>
     <string name="reset_display_settings_action">Reset</string>

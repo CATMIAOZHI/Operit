@@ -6543,10 +6543,7 @@
     <string name="show_message_timing_stats_description">Exibe o tempo do primeiro pacote e o tempo de geração na parte inferior das mensagens da IA.</string>
     <string name="chat_message_token_stats_compact">token: %1$d ↑ %3$d (cache: %2$d) ↓ %4$d</string>
     <string name="chat_message_timing_stats_compact">tempo: %1$s (primeiro %2$s geração %3$s)</string>
-    <string name="software_identity_title">Identidade do software</string>
-    <string name="software_identity_description">Altera a identidade do software exibida no topo da barra lateral.</string>
     <string name="software_identity_option_operit">Operit AI</string>
-    <string name="software_identity_option_lingshu">Lingshu AI</string>
     <string name="hide_runtime_task_view">Ocultar visualização de tarefa em execução</string>
     <string name="hide_runtime_task_view_description">Quando a IA está processando mensagens ou executando ferramentas, oculta o cartão de tarefa do aplicativo da lista de tarefas recentes do sistema, evitando que seja fechado acidentalmente ao deslizar.</string>
     <string name="confirm_delete_chat">Confirmar exclusão do chat</string>
