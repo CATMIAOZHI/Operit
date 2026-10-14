@@ -5,6 +5,7 @@ import com.ai.assistance.operit.data.dao.ChatContentDao
 import com.ai.assistance.operit.data.preferences.MemoryReviewChange
 import com.ai.assistance.operit.data.preferences.MemoryReviewRepository
 import com.ai.assistance.operit.data.repository.RecallEvidenceReader
+import com.ai.assistance.operit.ui.common.dynamicui.CardTranscript
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -219,11 +220,16 @@ internal class MemoryLearningSource(
             val prepared = files[row.messageId] ?: run {
                 val file = File.createTempFile("learning-source-", ".txt", context.cacheDir)
                 try {
-                    val page = file.bufferedWriter(Charsets.UTF_8).use { writer ->
-                        RecallEvidenceReader.read({ dao.readLearningMessageBytes(row.messageId,it) },
-                            row.sender=="ai",thinking,limit=1,onEvidence={ writer.write(it) })
-                    } ?: error("Source message disappeared during review")
-                    Prepared(file,page.revision).also { files[row.messageId]=it }
+                    // Cards become their readable text in full, so the learning model sees what the user
+                    // saw. The prefix marks offsets as positions in this converted text: cursors saved
+                    // against the raw text no longer match and restart the message instead of drifting.
+                    // Bump TEXT_VERSION whenever CardTranscript's output changes, for the same reason.
+                    val evidence = StringBuilder()
+                    val page = RecallEvidenceReader.read({ dao.readLearningMessageBytes(row.messageId,it) },
+                        row.sender=="ai",thinking,limit=1,onEvidence={ evidence.append(it) })
+                        ?: error("Source message disappeared during review")
+                    file.writeText(CardTranscript.forModel(evidence.toString(), Int.MAX_VALUE), Charsets.UTF_8)
+                    Prepared(file,"$TEXT_VERSION:${page.revision}").also { files[row.messageId]=it }
                 } catch (e: Exception) { file.delete(); throw e }
             }
             var offset = if (position.messageId==row.messageId && position.revision==prepared.revision &&
@@ -254,4 +260,5 @@ internal class MemoryLearningSource(
         return Batch(output.toString(),position,dao.nextLearningSource(chat,position.messageId,horizon)!=null)
     }
     override fun close() { files.values.forEach { it.file.delete() } }
+    private companion object { const val TEXT_VERSION = "cards1" }
 }
