@@ -3,8 +3,8 @@
   "name": "dynamic_ui",
   "display_name": {"zh": "动态界面", "en": "Dynamic UI"},
   "description": {
-    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。适合：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算的场景，此时无需用户要求即可主动使用。不适合：简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，这些直接用 Markdown。纯展示即可就不加按钮或表单。汇报有依据的状态或结果（如构建通过/失败、任务完成/进行中、风险等级）时，也可在句子里加行内徽章或小图标。决定使用后再读取 read_guide。",
-    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Use proactively, without being asked, for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate. Do not use for simple definitions, opinions, short answers, code, plain lists or decoration; use Markdown. Add no buttons or forms when display alone suffices. When reporting an evidence-backed status or result (build passed/failed, task done/running, risk level), you may also add inline badges or small icons inside sentences. Read read_guide only after deciding to use it."
+    "zh": "在回答正文中嵌入原生步骤图、流程图、图表、表格和指标，与文字自然穿插。只要是给用户讲解、介绍、分析或对比内容（概念、原理、流程、方案、数据、产品等），就先加载本包（use_package）并读 read_guide，不必等用户要求。加载后由你决定用不用：多步骤过程、数据趋势或对比、多项属性对照、需要用户选择/输入/试算时，用界面块配合文字；简单定义、观点、简短回答、代码、普通列表和只为装饰的内容，读完后直接写 Markdown。纯展示即可就不加按钮或表单。汇报有依据的状态或结果（如构建通过/失败、任务完成/进行中、风险等级）时，也可在句子里加行内徽章或小图标。",
+    "en": "Embed native step diagrams, flows, charts, tables and metrics inside the answer, interleaved with prose. Whenever you explain, introduce, analyze or compare something for the user (concepts, how things work, processes, plans, data, products), load this package (use_package) and read read_guide first, without being asked. After loading, you decide whether to use it: use UI blocks alongside prose for multi-step processes, data trends or comparisons, side-by-side attributes, or when the user must choose, enter or calculate; for simple definitions, opinions, short answers, code, plain lists or decoration, answer in plain Markdown after reading. Add no buttons or forms when display alone suffices. When reporting an evidence-backed status or result (build passed/failed, task done/running, risk level), you may also add inline badges or small icons inside sentences."
   },
   "category": "UI",
   "enabledByDefault": true,
@@ -30,7 +30,7 @@
     },
     {
       "name": "read_guide",
-      "description": {"zh": "生成前必读：何时用文字/纯展示/交互、Express 语法、组件参数和排版；也包含段落内徽章和小图标的写法。", "en": "Read before generation: when to use prose, display-only or interactive UI, Express syntax, components and layout; also covers inline badge and icon syntax."},
+      "description": {"zh": "加载后先读，读完再决定用不用：何时用文字/纯展示/交互、Express 语法、组件参数和排版；也包含段落内徽章和小图标的写法。", "en": "Read right after loading, then decide whether to use UI: when to use prose, display-only or interactive UI, Express syntax, components and layout; also covers inline badge and icon syntax."},
       "parameters": []
     },
     {
