@@ -526,6 +526,7 @@
     <string name="import_chat_history">Import Chat History</string>
     <string name="clear_chat_history">Clear All Chat History</string>
     <string name="confirm_delete">Confirm Delete</string>
+    <string name="chat_delete_selected_messages_confirm">Delete the selected messages (%1$d)? This cannot be undone.</string>
     <string name="delete_warning">Deleting all chat history is irreversible. Consider exporting a backup before proceeding.</string>
     <string name="export_success">Export Successful</string>
     <string name="import_success">Import Successful</string>
@@ -3448,6 +3449,7 @@
     <string name="manage_group">Manage Group</string>
     <string name="create_subfolder">Create subfolder</string>
     <string name="move_to_folder">Move to folder…</string>
+    <string name="move_to_folder_title">Move to folder</string>
     <string name="folder_root">Root</string>
     <string name="rename_group">Rename Group</string>
     <string name="delete_group">Delete Group</string>

@@ -515,6 +515,7 @@
     <string name="unbound_character_card">未绑定</string>
     <string name="chat_binding_scope_hint">仅影响此对话的绑定，不会修改已有消息</string>
     <string name="confirm_delete">确认删除</string>
+    <string name="chat_delete_selected_messages_confirm">确定删除选中的 %1$d 条消息吗？此操作无法撤销。</string>
     <string name="delete_warning">删除所有聊天记录将无法恢复。建议在执行此操作前先导出备份。</string>
     <string name="export_success">导出成功</string>
     <string name="import_success">导入成功</string>
@@ -3333,6 +3334,7 @@
     <string name="manage_group">管理分组</string>
     <string name="create_subfolder">新建子文件夹</string>
     <string name="move_to_folder">移动到文件夹…</string>
+    <string name="move_to_folder_title">移动到文件夹</string>
     <string name="folder_root">根目录</string>
     <string name="rename_group">重命名分组</string>
     <string name="delete_group">删除分组</string>
