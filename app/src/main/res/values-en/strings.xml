@@ -5052,6 +5052,11 @@
     <string name="permission_level_ask_description">These tools ask you before every call.</string>
     <string name="add_tool">Add Tool</string>
     <string name="no_tools_in_group">No tools added to this group.</string>
+    <string name="tool_permission_count">%1$d</string>
+    <string name="tool_permission_show_all">Show all %1$d</string>
+    <string name="tool_permission_default_count">Allowed by default: %1$d</string>
+    <string name="tool_permission_builtin_group">Built-in tools</string>
+    <string name="tool_permission_no_match">No matching tools</string>
     <string name="remove_tool">Remove</string>
     <string name="select_tools">Select Tools</string>
     <string name="search_tools">Search</string>
