@@ -742,20 +742,21 @@ class ConversationService(
             // Process each message in chat history
             effectiveChatHistory.forEachIndexed { index, message ->
                 val kind = message.kind
-                val content = message.content
 
                 // If it's an assistant message, check for tool results
                 if (kind == PromptTurnKind.ASSISTANT) {
+                    // Cards were already shown to the user; the model only needs their visible content.
+                    val content = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(message.content)
                     val xmlTags = splitXmlTag(content)
                     if (xmlTags.isNotEmpty()) {
                         // Process the message with tool results
                         processChatMessageWithTools(content, xmlTags, preparedHistory, index, effectiveChatHistory.size, message.metadata)
                     } else {
                         // Add the message as is
-                        preparedHistory.add(message)
+                        preparedHistory.add(if (content === message.content) message else message.copy(content = content))
                     }
                 } else if (kind == PromptTurnKind.TOOL_RESULT) {
-                    preparedHistory.add(message.copy(content = normalizeToolResultMarkupForModel(content)))
+                    preparedHistory.add(message.copy(content = normalizeToolResultMarkupForModel(message.content)))
                 } else {
                     // Add typed turns as is
                     preparedHistory.add(message)

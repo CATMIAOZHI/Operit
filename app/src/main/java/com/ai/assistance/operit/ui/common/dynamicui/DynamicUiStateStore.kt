@@ -106,8 +106,57 @@ internal object DynamicUiStateStore {
         }
     }
 
+    private fun directory(context: Context, chatId: String) =
+        File(context.filesDir, "dynamic_ui/${DynamicUiProtocol.fingerprint(chatId)}")
+
+    /**
+     * Branches copy messages with their original timestamps, so the same state file names resolve
+     * in the copy. Queued writes are included so a branch made right after a tap keeps it.
+     */
+    suspend fun copyChat(context: Context, sourceChatId: String, targetChatId: String) = withContext(Dispatchers.IO) {
+        val source = directory(context, sourceChatId)
+        val target = directory(context, targetChatId)
+        val queued = synchronized(pending) {
+            if (source in deleted) return@withContext
+            pending.filterKeys { it.parentFile == source }.map { (file, text) -> File(target, file.name) to text }
+        }
+        ioMutex.withLock {
+            // AtomicFile reads recover a write interrupted on the source side (name.json.bak).
+            val names = source.list().orEmpty().mapNotNullTo(linkedSetOf()) { name ->
+                when {
+                    name.endsWith(".json") -> name
+                    name.endsWith(".json.bak") -> name.removeSuffix(".bak")
+                    else -> null
+                }
+            }
+            names.forEach { name ->
+                // One unreadable card must not drop the rest of the branch's state.
+                runCatching { writeAtomic(File(target, name), AtomicFile(File(source, name)).readFully()) }
+                    .onFailure { com.ai.assistance.operit.util.AppLogger.w("DynamicUi", "Unable to copy card state $name", it) }
+            }
+            queued.forEach { (file, text) ->
+                runCatching { writeAtomic(file, text.toByteArray(Charsets.UTF_8)) }
+                    .onFailure { com.ai.assistance.operit.util.AppLogger.w("DynamicUi", "Unable to copy queued card state ${file.name}", it) }
+            }
+        }
+    }
+
+    private fun writeAtomic(file: File, bytes: ByteArray) {
+        file.parentFile?.mkdirs()
+        val atomic = AtomicFile(file)
+        var stream: java.io.FileOutputStream? = null
+        try {
+            stream = atomic.startWrite()
+            stream.write(bytes)
+            atomic.finishWrite(stream)
+        } catch (e: Exception) {
+            atomic.failWrite(stream)
+            throw e
+        }
+    }
+
     suspend fun deleteChat(context: Context, chatId: String) = withContext(Dispatchers.IO) {
-        val directory = File(context.filesDir, "dynamic_ui/${DynamicUiProtocol.fingerprint(chatId)}")
+        val directory = directory(context, chatId)
         synchronized(pending) {
             deleted.add(directory)
             pending.keys.removeAll { it.parentFile == directory }

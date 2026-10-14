@@ -1513,7 +1513,6 @@ class EnhancedAIService private constructor(
                     val revisionTracker = TextStreamRevisionTracker()
                     val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                         { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(execContext.dynamicUiRunId, it) },
-                        context.getString(R.string.dynamic_ui_reference_unavailable),
                     )
                     val replayRoundStart = execContext.emittedReplayCharCount.get()
                     var processedRevisionEventCount = 0
@@ -1870,7 +1869,8 @@ class EnhancedAIService private constructor(
                 }
                 if (retained.isNotBlank()) context.conversationHistory.add(
                     PromptTurn(
-                        kind = PromptTurnKind.ASSISTANT, content = retained,
+                        kind = PromptTurnKind.ASSISTANT,
+                        content = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(retained),
                         metadata = mapOf(
                             com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA to true,
                         ),
@@ -2003,7 +2003,9 @@ class EnhancedAIService private constructor(
                 context.conversationHistory.add(
                     PromptTurn(
                         kind = PromptTurnKind.ASSISTANT,
-                        content = context.roundManager.getCurrentRoundContent(),
+                        content = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(
+                            context.roundManager.getCurrentRoundContent()
+                        ),
                         metadata = mapOf(
                             com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA to
                                 (extractedToolInvocations.isNotEmpty() || truncatedToolRecovery != null),
@@ -2804,7 +2806,6 @@ class EnhancedAIService private constructor(
                 val revisionTracker = TextStreamRevisionTracker()
                 val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                     { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(context.dynamicUiRunId, it) },
-                    this@EnhancedAIService.context.getString(R.string.dynamic_ui_reference_unavailable),
                 )
                 val replayRoundStart = context.emittedReplayCharCount.get()
                 var processedRevisionEventCount = 0
