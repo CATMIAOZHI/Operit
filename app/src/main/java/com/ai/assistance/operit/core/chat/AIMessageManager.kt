@@ -963,7 +963,7 @@ object AIMessageManager {
                         )
                     } else {
                         // AI 消息需要先移除 thinking 内容，再移除媒体链接
-                        val withoutThinking = ChatUtils.removeThinkingContent(message.content)
+                        val withoutThinking = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(ChatUtils.removeThinkingContent(message.content))
                         stripMediaLinksForAssistant(withoutThinking)
                     }
 
@@ -997,7 +997,7 @@ object AIMessageManager {
                         message.content.replace(memoryTagRegex, "").trim()
                     )
                 } else {
-                    stripMediaLinksForAssistant(message.content)
+                    stripMediaLinksForAssistant(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(message.content))
                 }
                 if (cleanedContent.isNotBlank()) {
                     val displayContent =
@@ -1399,7 +1399,7 @@ object AIMessageManager {
         } else {
             // 其他角色的消息：转换为 user 消息，添加角色标签
             val roleLabel = if (messageRoleName.isNotBlank()) messageRoleName else "unknown"
-            val bridgedContent = removeStatusTags(cleanedContent)
+            val bridgedContent = removeStatusTags(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(cleanedContent))
             if (bridgedContent.isBlank()) {
                 null
             } else {

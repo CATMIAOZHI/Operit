@@ -1,5 +1,5 @@
 <resources>
-    <string name="dynamic_ui_reference_unavailable">卡片未能显示，请让 AI 重新生成。</string>
+    <string name="dynamic_ui_reference_unavailable">这张卡片未能显示。</string>
     <string name="dynamic_ui_bad_number">数值无效，请修改输入</string>
     <string name="dynamic_ui_chart_description">图表，%1$d 个数据点：%2$s</string>
     <string name="dynamic_ui_chart_more">另有 %d 个未读出</string>

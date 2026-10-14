@@ -1,5 +1,5 @@
 <resources>
-    <string name="dynamic_ui_reference_unavailable">This card could not be displayed. Ask the AI to generate it again.</string>
+    <string name="dynamic_ui_reference_unavailable">This card could not be displayed.</string>
     <string name="dynamic_ui_bad_number">Invalid number. Please change the input.</string>
     <string name="dynamic_ui_chart_description">Chart, %1$d data points: %2$s</string>
     <string name="dynamic_ui_chart_more">%d more not read</string>

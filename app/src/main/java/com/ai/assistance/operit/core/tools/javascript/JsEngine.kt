@@ -1668,7 +1668,9 @@ class JsEngine(private val context: Context) {
             return try {
                 require(dataJson.length <= 8192)
                 val data = kotlinx.serialization.json.Json.parseToJsonElement(dataJson) as kotlinx.serialization.json.JsonObject
-                val version = com.ai.assistance.operit.ui.common.dynamicui.CardLiveStore.patch(run, reference, expectedVersion, data)
+                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.canonical(run, reference)
+                    ?: error("No live card in this turn")
+                val version = com.ai.assistance.operit.ui.common.dynamicui.CardLiveStore.patch(run, id, expectedVersion, data)
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
                     put("version", kotlinx.serialization.json.JsonPrimitive(version))

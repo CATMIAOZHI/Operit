@@ -684,6 +684,14 @@ private fun renderNodeContent(
                     blockIndex = index,
                     ink = textColor,
                 )
+            } else if (language == "a2ui-ref") {
+                // The reference did not resolve in its turn; keep the raw text for the model, show a notice.
+                androidx.compose.material3.Text(
+                    text = androidx.compose.ui.res.stringResource(com.ai.assistance.operit.R.string.dynamic_ui_reference_unavailable),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(vertical = 2.dp),
+                )
             } else EnhancedCodeBlock(
                 code = codeContent,
                 language = language,

@@ -7,7 +7,7 @@ class CardDeliveryTest {
     private val id = "00000000-0000-0000-0000-000000000001"
     private val ref = "```a2ui-ref\n$id\n```"
     private val result = "```a2ui\nDOCUMENT\n```"
-    private fun decoder() = CardReferenceExpander({ if (it == id) "DOCUMENT" else null }, "MISSING")
+    private fun decoder() = CardReferenceExpander({ if (it == id) "DOCUMENT" else null })
     private fun decode(text: String, size: Int = 1): String {
         val decoder = decoder()
         return text.chunked(size).joinToString("") { decoder.push(it) } + decoder.finish()
@@ -49,8 +49,33 @@ class CardDeliveryTest {
             assertNull(CardDelivery.resolve("b", ref))
             CardDelivery.end("a")
             assertNull(CardDelivery.resolve("a", ref))
-            val decoder = CardReferenceExpander({ CardDelivery.resolve("b", it) }, "MISSING")
-            assertEquals("MISSING\n", decoder.push("```a2ui-ref\n$ref\n```\n"))
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("b", it) })
+            // Unresolved references stay verbatim; the renderer shows a notice.
+            assertEquals("```a2ui-ref\n$ref\n```\n", decoder.push("```a2ui-ref\n$ref\n```\n"))
         } finally { CardDelivery.end("a"); CardDelivery.end("b") }
+    }
+    @Test fun modelsSeeShortNamesThatMapToTheirOwnRun() {
+        CardDelivery.begin("short")
+        try {
+            assertEquals("card-1", CardDelivery.register("short", "one"))
+            assertEquals("card-2", CardDelivery.register("short", "two"))
+            assertEquals("two", CardDelivery.resolve("short", " Card-2 "))
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("short", it) })
+            assertEquals("```a2ui\none\n```\n", decoder.push("```a2ui-ref\ncard-1\n```\n"))
+            assertEquals("```a2ui-ref\ncard-3\n```\n", decoder.push("```a2ui-ref\ncard-3\n```\n"))
+            assertNull(CardDelivery.canonical("short", "card-0"))
+        } finally { CardDelivery.end("short") }
+    }
+    @Test fun modelHistoryKeepsVisibleCardTextOnly() {
+        val document = listOf(
+            """{"version":"v0.9","createSurface":{"surfaceId":"card","catalogId":"x"}}""",
+            """{"version":"v0.9","updateComponents":{"surfaceId":"card","components":[{"id":"m1","component":"Display","text":"20","label":"Issues"},{"id":"t","component":"Table","columns":["#","Title"],"rows":[["#1","Crash"],["#2","Hang"]],"columnWidths":[64,200]},{"id":"root","component":"Column","children":["m1","t"]}]}}""",
+        ).joinToString("\n")
+        val message = "Before\n```a2ui\n$document\n```\nAfter\n```a2ui-ref\ncard-9\n```"
+        assertEquals(
+            "Before\n[Dynamic UI card shown to the user here. Visible content: 20 Issues; #, Title #1, Crash | #2, Hang]\nAfter\n```a2ui-ref\ncard-9\n```",
+            CardTranscript.forModel(message),
+        )
+        assertSame("plain", CardTranscript.forModel("plain"))
     }
 }

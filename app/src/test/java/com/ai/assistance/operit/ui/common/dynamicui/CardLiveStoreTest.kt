@@ -19,7 +19,7 @@ class CardLiveStoreTest {
         val run = "live-test"
         CardDelivery.begin(run)
         try {
-            val ref = CardDelivery.register(run, CardExpress.compile(source), source, "chat", File("unused"))
+            val ref = CardDelivery.canonical(run, CardDelivery.register(run, CardExpress.compile(source), source, "chat", File("unused")))!!
             val data = buildJsonObject { put("progress", 20) }
             assertEquals(1, CardLiveStore.patch(run, ref, 0, data))
             assertTrue(runCatching { CardLiveStore.patch(run, ref, 0, data) }.isFailure)
@@ -52,10 +52,10 @@ class CardLiveStoreTest {
             assertNull(CardDelivery.resolve(run, ref))
             assertNull(CardDelivery.resolve(run, ref))
             assertTrue(runCatching {
-                CardLiveStore.patch(run, ref, 0, buildJsonObject { put("progress", 20) })
+                CardLiveStore.patch(run, CardDelivery.canonical(run, ref)!!, 0, buildJsonObject { put("progress", 20) })
             }.isFailure)
-            val expander = CardReferenceExpander({ CardDelivery.resolve(run, it) }, "Unavailable")
-            assertEquals("Unavailable\n", expander.push("```a2ui-ref\n$ref\n```\n"))
+            val expander = CardReferenceExpander({ CardDelivery.resolve(run, it) })
+            assertEquals("```a2ui-ref\n$ref\n```\n", expander.push("```a2ui-ref\n$ref\n```\n"))
         } finally { CardDelivery.end(run) }
     }
 }

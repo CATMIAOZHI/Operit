@@ -7,6 +7,8 @@ import kotlinx.serialization.json.*
 /** Temporary capabilities: never resolve another run's card or use history as a fallback.
  * Expanded messages contain their initial data; live final data uses a chat-scoped sidecar.
  * This temporary reference store is not needed to render history.
+ * Models see short per-run names (card-1, card-2, ...); a 36-character UUID was easy to miscopy.
+ * The UUID stays internal because live surfaces and state files are keyed by it across turns.
  */
 internal object CardDelivery {
     private data class Revision(val document: String, val source: String) {
@@ -36,22 +38,80 @@ internal object CardDelivery {
         }
         if (liveChat != null) CardLiveStore.register(run, id, liveChat, requireNotNull(liveDirectory), source, stored)
         cards[id] = revision
-        return id
+        return "card-${cards.size}"
     }
-    @Synchronized fun resolve(run: String, id: String): String? {
+    /** Maps a model-facing name (or an internal UUID from this run) to the internal UUID. */
+    @Synchronized fun canonical(run: String, reference: String): String? {
+        val cards = runs[run] ?: return null
+        val ref = reference.trim().lowercase()
+        if (ref in cards) return ref
+        val index = SHORT_NAME.matchEntire(ref)?.groupValues?.get(1)?.toIntOrNull() ?: return null
+        return cards.keys.elementAtOrNull(index - 1)
+    }
+    @Synchronized fun resolve(run: String, reference: String): String? {
+        val id = canonical(run, reference) ?: return null
         val document = runs[run]?.get(id)?.document ?: return null
         if (!CardLiveStore.publish(run, id)) return null
         return document
     }
-    @Synchronized fun source(run: String, id: String): String? = runs[run]?.get(id)?.source?.takeIf { it.isNotEmpty() }
+    @Synchronized fun source(run: String, reference: String): String? =
+        canonical(run, reference)?.let { runs[run]?.get(it)?.source?.takeIf(String::isNotEmpty) }
+    private val SHORT_NAME = Regex("card-(\\d{1,2})")
+    val REFERENCE = Regex("[0-9a-f-]{36}|card-\\d{1,2}", RegexOption.IGNORE_CASE)
+}
+
+/**
+ * Model-facing form of an expanded card. History keeps the full document for rendering, but
+ * sending it back each turn costs tokens and shows the model JSON it never wrote. The summary
+ * keeps visible text and data so later turns can still discuss the card. Deterministic, so the
+ * same message always produces the same prompt prefix.
+ */
+internal object CardTranscript {
+    private val block = Regex("(?m)^```a2ui\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$")
+    private const val MAX_SUMMARY = 1200
+    private val structural = setOf(
+        "version", "surfaceId", "catalogId", "id", "component", "child", "children", "path", "call",
+        "action", "event", "context", "columnWidths", "maxHeight", "minItemWidth", "steps", "min", "max",
+        "variant", "tone", "icon", "type", "weight", "align", "justify", "html", "css", "key", "template",
+        "style", "size", "color", "background", "span", "gap", "padding", "url", "src", "fit", "shape",
+    )
+
+    fun forModel(content: String): String {
+        if (!content.contains("```a2ui")) return content
+        return block.replace(content) { match -> "[Dynamic UI card shown to the user here" + summary(match.groupValues[1]) + "]" }
+    }
+
+    private fun summary(document: String): String {
+        val parts = mutableListOf<String>()
+        document.lineSequence().filter(String::isNotBlank).forEach { line ->
+            val event = runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull() ?: return@forEach
+            event["updateComponents"]?.jsonObject?.get("components")?.jsonArray?.forEach { component ->
+                (component as? JsonObject)?.let { flatten(it) }?.takeIf(String::isNotBlank)?.let(parts::add)
+            }
+            event["updateDataModel"]?.jsonObject?.let { flatten(it) }?.takeIf(String::isNotBlank)?.let(parts::add)
+        }
+        if (parts.isEmpty()) return ""
+        val text = parts.joinToString("; ")
+        return ". Visible content: " + if (text.length <= MAX_SUMMARY) text else text.take(MAX_SUMMARY) + "…"
+    }
+
+    private fun flatten(element: JsonElement): String = when (element) {
+        is JsonNull -> ""
+        is JsonPrimitive -> if (element.isString || element.booleanOrNull == null) element.content else ""
+        is JsonArray -> element.map(::flatten).filter(String::isNotBlank)
+            .joinToString(if (element.any { it is JsonArray || it is JsonObject }) " | " else ", ")
+        is JsonObject -> element.filterKeys { it !in structural }.values.map(::flatten)
+            .filter(String::isNotBlank).joinToString(" ")
+    }
 }
 
 /** Incremental Markdown reference decoder. Ordinary prose is emitted immediately; only a
  * possible fence header / short reference is buffered. It runs before ALL transcript sinks.
+ * An unresolved reference stays as its a2ui-ref fence; the renderer shows a short notice and the
+ * model later sees exactly what it wrote.
  */
 internal class CardReferenceExpander(
     private val resolve: (String) -> String?,
-    private val unavailable: String,
 ) {
     private data class Snapshot(
         val pending: String, val reference: String?, val start: Boolean,
@@ -141,8 +201,8 @@ internal class CardReferenceExpander(
         if (line == "```") {
             val id = reference!!.trim()
             reference = null; start = raw.endsWith('\n')
-            val source = if (id.matches(Regex("[0-9a-f-]{36}"))) resolve(id) else null
-            if (source == null || expanded + source.length > 524_288) return "$unavailable\n"
+            val source = if (id.matches(CardDelivery.REFERENCE)) resolve(id) else null
+            if (source == null || expanded + source.length > 524_288) return "```a2ui-ref\n$id\n$raw"
             expanded += source.length
             return "```a2ui\n$source\n```" + if (start) "\n" else ""
         }

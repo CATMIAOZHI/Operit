@@ -3819,6 +3819,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
                         upToTimestampInclusive = upToMessageTimestamp,
                     )
 
+                // Card selections and live data live beside the chat, keyed by message timestamp.
+                copyResult.copiedChatIds.forEach { (sourceId, targetId) ->
+                    runCatching {
+                        com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.copyChat(context, sourceId, targetId)
+                    }.onFailure { AppLogger.w(TAG, "Failed to copy card state into branch $targetId", it) }
+                }
+
                 val branchHistory =
                     copyResult.branch
                         .toChatHistory(emptyList())
