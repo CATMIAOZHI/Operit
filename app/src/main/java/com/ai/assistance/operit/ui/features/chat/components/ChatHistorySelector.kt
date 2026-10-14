@@ -94,6 +94,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -344,26 +348,26 @@ private fun currentLocalDateContext(): CurrentLocalDateContext {
     return CurrentLocalDateContext(LocalDate.now(zoneId), zoneId)
 }
 
+/** Reserves room at the row start for the line drawn by [historyGuideLine]. */
 @Composable
-private fun HistoryHierarchyGuide(modifier: Modifier = Modifier) {
-    Box(
-        modifier =
-            Modifier
-                .width(16.dp)
-                .padding(end = 8.dp),
-    ) {
-        Box(
-            modifier =
-                modifier
-                    .width(2.dp)
-                    .align(Alignment.Center)
-                    .background(
-                        color =
-                            MaterialTheme.colorScheme.primaryContainer.copy(
-                                alpha = 0.6f
-                            ),
-                        shape = RoundedCornerShape(1.dp),
-                    ),
+private fun HistoryHierarchyGuide() {
+    Spacer(modifier = Modifier.width(12.dp))
+}
+
+/** Draws the hierarchy line over the whole row height, so taller rows never leave a gap. */
+@Composable
+private fun Modifier.historyGuideLine(enabled: Boolean): Modifier {
+    if (!enabled) return this
+    val color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f)
+    return drawBehind {
+        val lineWidth = 2.dp.toPx()
+        val inset = 2.dp.toPx()
+        val x = if (layoutDirection == LayoutDirection.Rtl) size.width - inset - lineWidth else inset
+        drawRoundRect(
+            color = color,
+            topLeft = Offset(x, 0f),
+            size = Size(lineWidth, size.height),
+            cornerRadius = CornerRadius(1.dp.toPx()),
         )
     }
 }
@@ -3555,7 +3559,7 @@ fun ChatHistorySelector(
                 state = actualLazyListState,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(start = 10.dp, end = 22.dp)
+                    .padding(start = 6.dp, end = 22.dp)
             ) {
                 itemsIndexed(
                     items = reorderItems,
@@ -3677,7 +3681,12 @@ fun ChatHistorySelector(
                                     style = MaterialTheme.typography.titleSmall,
                                     color = MaterialTheme.colorScheme.primary,
                                     fontWeight = FontWeight.SemiBold,
-                                    modifier = Modifier.clearAndSetSemantics {}
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier
+                                        // Capped so a long name never pushes the fold arrow off the row.
+                                        .widthIn(max = 160.dp)
+                                        .clearAndSetSemantics {}
                                 )
                             }
                             
@@ -3740,18 +3749,20 @@ fun ChatHistorySelector(
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .padding(
-                                        start = ((item.depth - 1).coerceAtLeast(0) * 12).dp,
-                                        top = 4.dp,
-                                        bottom = 4.dp,
-                                    ),
+                                    .padding(start = ((item.depth - 1).coerceAtLeast(0) * 8).dp)
+                                    .historyGuideLine(
+                                        historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
+                                            historyDisplayMode == ChatHistoryDisplayMode.BY_FOLDER
+                                    )
+                                    // Vertical padding sits inside the line so rows join up without gaps.
+                                    .padding(vertical = 4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
                             if (
                                 historyDisplayMode == ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
                                     historyDisplayMode == ChatHistoryDisplayMode.BY_FOLDER
                             ) {
-                                HistoryHierarchyGuide(modifier = Modifier.height(40.dp))
+                                HistoryHierarchyGuide()
                             }
                             if (
                                 canManageFolders &&
@@ -3789,19 +3800,21 @@ fun ChatHistorySelector(
                                             onDragStopped = ::commitFolderDrag,
                                         )
                                     }
-                                IconButton(
+                                // A plain 32dp handle: the old IconButton kept a 48dp slot that squeezed the title.
+                                Box(
                                     modifier =
                                         folderDragHandleModifier
+                                            .size(32.dp)
                                             .semantics {
                                                 contentDescription = folderDragDescription
                                             },
-                                    enabled = !historyMoveInFlight,
-                                    onClick = {},
+                                    contentAlignment = Alignment.Center,
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.DragHandle,
                                         contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.onSurface,
+                                        tint = MaterialTheme.colorScheme.onSurface.copy(alpha = if (historyMoveInFlight) 0.38f else 1f),
+                                        modifier = Modifier.size(22.dp),
                                     )
                                 }
                                 Spacer(modifier = Modifier.width(4.dp))
@@ -3809,7 +3822,7 @@ fun ChatHistorySelector(
                             Surface(
                                 modifier = Modifier
                                     .weight(1f)
-                                    .clip(MaterialTheme.shapes.medium)
+                                    .clip(RoundedCornerShape(14.dp))
                                     .semantics {
                                         contentDescription = "${item.name}, $stateDescription"
                                     }
@@ -3848,11 +3861,11 @@ fun ChatHistorySelector(
                                         )
                                     },
                                 color = MaterialTheme.colorScheme.surfaceContainer,
-                                shadowElevation = if (isDragging) 8.dp else 2.dp,
-                                shape = MaterialTheme.shapes.medium
+                                shadowElevation = if (isDragging) 8.dp else 0.dp,
+                                shape = RoundedCornerShape(14.dp)
                             ) {
                                 Row(
-                                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
@@ -3870,28 +3883,29 @@ fun ChatHistorySelector(
                                     Column(
                                         modifier = Modifier.weight(1f)
                                     ) {
-                                        Row(
-                                            verticalAlignment = Alignment.CenterVertically
+                                        Text(
+                                            text = item.name,
+                                            style = MaterialTheme.typography.titleSmall,
+                                            fontWeight = FontWeight.Bold,
+                                            color = MaterialTheme.colorScheme.onSurface,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                            modifier = Modifier.clearAndSetSemantics {}
+                                        )
+                                        // The hint sits on its own line so it never squeezes the folder name.
+                                        if (
+                                            canManageFolders &&
+                                                !isUngroupedFolder &&
+                                                !hasLongPressedGroup
                                         ) {
                                             Text(
-                                                text = item.name,
-                                                style = MaterialTheme.typography.titleSmall,
-                                                fontWeight = FontWeight.Bold,
-                                                color = MaterialTheme.colorScheme.onSurface,
+                                                text = stringResource(R.string.long_press_manage),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                                overflow = TextOverflow.Ellipsis,
                                                 modifier = Modifier.clearAndSetSemantics {}
                                             )
-                                            if (
-                                                canManageFolders &&
-                                                    !isUngroupedFolder &&
-                                                    !hasLongPressedGroup
-                                            ) {
-                                                Text(
-                                                    text = " (" + stringResource(R.string.long_press_manage) + ")",
-                                                    style = MaterialTheme.typography.bodySmall,
-                                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
-                                                    modifier = Modifier.clearAndSetSemantics {}
-                                                )
-                                            }
                                         }
                                     }
                                     Icon(
@@ -3982,26 +3996,24 @@ fun ChatHistorySelector(
                                         shrinkTowards = Alignment.Top
                                     ) + fadeOut(animationSpec = tween(deleteAnimationDurationMs.toInt()))
                             ) {
+                                val showHierarchyGuide =
+                                    selectedCategory != ChatHistoryCategory.RECENT &&
+                                        (
+                                            historyDisplayMode ==
+                                                ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
+                                                historyDisplayMode ==
+                                                    ChatHistoryDisplayMode.BY_FOLDER
+                                        )
                                 Row(
                                     modifier = Modifier
                                         .fillMaxWidth()
-                                        .padding(
-                                            start = (item.depth.coerceAtLeast(0) * 12).dp,
-                                            top = 2.dp,
-                                            bottom = 2.dp,
-                                        ),
+                                        .padding(start = (item.depth.coerceAtLeast(0) * 8).dp)
+                                        .historyGuideLine(showHierarchyGuide)
+                                        .padding(vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically
                                 ) {
-                                    if (
-                                        selectedCategory != ChatHistoryCategory.RECENT &&
-                                            (
-                                                historyDisplayMode ==
-                                                    ChatHistoryDisplayMode.BY_CHARACTER_CARD ||
-                                                    historyDisplayMode ==
-                                                        ChatHistoryDisplayMode.BY_FOLDER
-                                            )
-                                    ) {
-                                        HistoryHierarchyGuide(modifier = Modifier.height(50.dp))
+                                    if (showHierarchyGuide) {
+                                        HistoryHierarchyGuide()
                                     }
                                     if (canReorder) {
                                         val dragDescription =
@@ -4027,19 +4039,21 @@ fun ChatHistorySelector(
                                                     onDragStopped = ::commitChatDrag,
                                                 )
                                             }
-                                        IconButton(
+                                        // A plain 32dp handle: the old IconButton kept a 48dp slot that squeezed the title.
+                                        Box(
                                             modifier =
                                                 dragHandleModifier
+                                                    .size(32.dp)
                                                     .semantics {
                                                         contentDescription = dragDescription
                                                     },
-                                            enabled = !historyMoveInFlight,
-                                            onClick = {},
+                                            contentAlignment = Alignment.Center,
                                         ) {
                                             Icon(
                                                 imageVector = Icons.Default.DragHandle,
                                                 contentDescription = null,
-                                                tint = contentColor,
+                                                tint = contentColor.copy(alpha = if (historyMoveInFlight) 0.38f else 1f),
+                                                modifier = Modifier.size(22.dp),
                                             )
                                         }
                                         Spacer(modifier = Modifier.width(4.dp))
@@ -4094,7 +4108,7 @@ fun ChatHistorySelector(
                                                                 text = item.history.title,
                                                                 style = MaterialTheme.typography.bodyMedium,
                                                                 color = contentColor,
-                                                                maxLines = 1,
+                                                                maxLines = 2,
                                                                 overflow = TextOverflow.Ellipsis
                                                             )
 
