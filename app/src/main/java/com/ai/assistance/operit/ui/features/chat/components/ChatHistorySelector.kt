@@ -2711,148 +2711,128 @@ fun ChatHistorySelector(
 
     if (chatToMove != null) {
         val targetChat = chatToMove!!
-        AlertDialog(
-            onDismissRequest = { chatToMove = null },
-            title = { Text(stringResource(R.string.move_to_folder)) },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(
-                        rememberScrollState()
+        val chatMoveOptions =
+            buildList {
+                add(
+                    FolderPickerOption(
+                        id = null,
+                        name = stringResource(R.string.ungrouped),
+                        isCurrent = targetChat.folderId == null,
+                        isTopLevel = true,
                     )
-                ) {
-                    fun moveTo(folderId: String?) {
-                        if (folderId == targetChat.folderId) {
-                            chatToMove = null
-                            return
-                        }
-                        coroutineScope.launch {
-                            runCatching {
-                                chatHistoryManager.moveChat(
-                                    chatId = targetChat.id,
-                                    targetFolderId = folderId,
-                                    expectedSourceSiblings =
-                                        historySiblingSnapshot(targetChat.folderId),
-                                    expectedTargetSiblings =
-                                        historySiblingSnapshot(folderId),
-                                )
-                            }.onFailure { error ->
-                                Toast.makeText(
-                                    context,
-                                    error.message ?: operationFailedText,
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                        chatToMove = null
-                    }
-                    TextButton(
-                        onClick = { moveTo(null) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.ungrouped), modifier = Modifier.fillMaxWidth())
-                    }
-                    chatFolders
-                        .asSequence()
-                        .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
-                        .sortedWith(
-                            compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }
-                                .thenBy { it.id }
+                )
+                chatFolders
+                    .asSequence()
+                    .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .sortedWith(
+                        compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }
+                            .thenBy { it.id }
+                    )
+                    .forEach { folder ->
+                        add(
+                            FolderPickerOption(
+                                id = folder.id,
+                                name = folder.name,
+                                parentPath = folder.parentFolderId?.let { folderChoiceLabels[it] },
+                                isCurrent = folder.id == targetChat.folderId,
+                            )
                         )
-                        .forEach { folder ->
-                            TextButton(
-                                onClick = { moveTo(folder.id) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    folderChoiceLabels.getValue(folder.id),
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
+                    }
+            }
+        FolderPickerDialog(
+            title = stringResource(R.string.move_to_folder_title),
+            subtitle = targetChat.title,
+            options = chatMoveOptions,
+            onDismiss = { chatToMove = null },
+            onSelect = { folderId ->
+                if (folderId != targetChat.folderId) {
+                    coroutineScope.launch {
+                        runCatching {
+                            chatHistoryManager.moveChat(
+                                chatId = targetChat.id,
+                                targetFolderId = folderId,
+                                expectedSourceSiblings =
+                                    historySiblingSnapshot(targetChat.folderId),
+                                expectedTargetSiblings =
+                                    historySiblingSnapshot(folderId),
+                            )
+                        }.onFailure { error ->
+                            Toast.makeText(
+                                context,
+                                error.message ?: operationFailedText,
+                                Toast.LENGTH_SHORT,
+                            ).show()
                         }
+                    }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { chatToMove = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
+                chatToMove = null
             },
         )
     }
 
     if (groupToMove != null) {
         val targetFolder = groupToMove!!
-        AlertDialog(
-            onDismissRequest = { groupToMove = null },
-            title = { Text(stringResource(R.string.move_to_folder)) },
-            text = {
-                Column(
-                    modifier = Modifier.fillMaxWidth().heightIn(max = 420.dp).verticalScroll(
-                        rememberScrollState()
+        val currentParentFolderId =
+            chatFolders.firstOrNull { it.id == targetFolder.folderId }?.parentFolderId
+        val groupMoveOptions =
+            buildList {
+                add(
+                    FolderPickerOption(
+                        id = null,
+                        name = stringResource(R.string.folder_root),
+                        isCurrent = currentParentFolderId == null,
+                        isTopLevel = true,
                     )
-                ) {
-                    val currentParentFolderId =
-                        chatFolders.firstOrNull { it.id == targetFolder.folderId }?.parentFolderId
-                    fun moveTo(parentFolderId: String?) {
-                        if (parentFolderId == currentParentFolderId) {
-                            groupToMove = null
-                            return
-                        }
-                        coroutineScope.launch {
-                            runCatching {
-                                chatHistoryManager.moveFolder(
-                                    folderId = targetFolder.folderId,
-                                    targetParentFolderId = parentFolderId,
-                                    expectedSourceSiblings =
-                                        historySiblingSnapshot(currentParentFolderId),
-                                    expectedTargetSiblings =
-                                        historySiblingSnapshot(parentFolderId),
-                                )
-                            }.onFailure { error ->
-                                Toast.makeText(
-                                    context,
-                                    error.message ?: operationFailedText,
-                                    Toast.LENGTH_SHORT,
-                                ).show()
-                            }
-                        }
-                        groupToMove = null
+                )
+                chatFolders
+                    .asSequence()
+                    .filter {
+                        it.id != targetFolder.folderId &&
+                            it.id != SYSTEM_UNGROUPED_FOLDER_ID &&
+                            canMoveFolderToParent(targetFolder.folderId, it.id)
                     }
-                    TextButton(
-                        onClick = { moveTo(null) },
-                        modifier = Modifier.fillMaxWidth(),
-                    ) {
-                        Text(stringResource(R.string.folder_root), modifier = Modifier.fillMaxWidth())
-                    }
-                    chatFolders
-                        .asSequence()
-                        .filter {
-                            it.id != targetFolder.folderId &&
-                                it.id != SYSTEM_UNGROUPED_FOLDER_ID &&
-                                canMoveFolderToParent(targetFolder.folderId, it.id)
-                        }
-                        .sortedWith(
-                            compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }
-                                .thenBy { it.id }
+                    .sortedWith(
+                        compareBy<ChatFolderEntity> { folderChoiceLabels[it.id] }
+                            .thenBy { it.id }
+                    )
+                    .forEach { folder ->
+                        add(
+                            FolderPickerOption(
+                                id = folder.id,
+                                name = folder.name,
+                                parentPath = folder.parentFolderId?.let { folderChoiceLabels[it] },
+                                isCurrent = folder.id == currentParentFolderId,
+                            )
                         )
-                        .forEach { folder ->
-                            TextButton(
-                                onClick = { moveTo(folder.id) },
-                                modifier = Modifier.fillMaxWidth(),
-                            ) {
-                                Text(
-                                    folderChoiceLabels.getValue(folder.id),
-                                    modifier = Modifier.fillMaxWidth(),
-                                )
-                            }
+                    }
+            }
+        FolderPickerDialog(
+            title = stringResource(R.string.move_to_folder_title),
+            subtitle = targetFolder.groupName,
+            options = groupMoveOptions,
+            onDismiss = { groupToMove = null },
+            onSelect = { parentFolderId ->
+                if (parentFolderId != currentParentFolderId) {
+                    coroutineScope.launch {
+                        runCatching {
+                            chatHistoryManager.moveFolder(
+                                folderId = targetFolder.folderId,
+                                targetParentFolderId = parentFolderId,
+                                expectedSourceSiblings =
+                                    historySiblingSnapshot(currentParentFolderId),
+                                expectedTargetSiblings =
+                                    historySiblingSnapshot(parentFolderId),
+                            )
+                        }.onFailure { error ->
+                            Toast.makeText(
+                                context,
+                                error.message ?: operationFailedText,
+                                Toast.LENGTH_SHORT,
+                            ).show()
                         }
+                    }
                 }
-            },
-            confirmButton = {},
-            dismissButton = {
-                TextButton(onClick = { groupToMove = null }) {
-                    Text(stringResource(R.string.cancel))
-                }
+                groupToMove = null
             },
         )
     }
