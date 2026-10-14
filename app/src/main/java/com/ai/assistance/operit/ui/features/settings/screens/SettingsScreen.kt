@@ -53,6 +53,7 @@ import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
 import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
 import com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow
 import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
@@ -73,7 +74,9 @@ private data class SettingsEntry(
         /** Set for an on/off switch shown in place of a link. */
         val toggle: SettingsToggle? = null,
         /** Extra words that should find this row, such as its group name. */
-        val keywords: String = ""
+        val keywords: String = "",
+        /** Deletes data: shown in red and without the "open page" arrow. */
+        val destructive: Boolean = false
 )
 
 private data class SettingsToggle(
@@ -175,6 +178,7 @@ fun SettingsScreen(
                                 SettingsEntry(stringResource(R.string.settings_model_parameters), stringResource(R.string.settings_model_params_subtitle), Icons.Default.Api, navigateToModelConfig),
                                 SettingsEntry(stringResource(R.string.settings_agent_profiles), stringResource(R.string.settings_agent_profiles_subtitle), Icons.Default.AccountTree, navigateToAgentProfiles),
                                 SettingsEntry(stringResource(R.string.settings_functional_model), stringResource(R.string.settings_functional_model_subtitle), Icons.Default.Tune, navigateToFunctionalConfig),
+                                SettingsEntry(stringResource(R.string.settings_section_context_summary), stringResource(R.string.settings_context_summary_subtitle), Icons.Default.Summarize, navigateToContextSummarySettings),
                                 SettingsEntry(stringResource(R.string.settings_speech_services), stringResource(R.string.settings_speech_services_subtitle), Icons.Default.RecordVoiceOver, navigateToSpeechServicesSettings)
                         )
                 ),
@@ -185,13 +189,6 @@ fun SettingsScreen(
                                 SettingsEntry(stringResource(R.string.settings_prompt_title), stringResource(R.string.settings_system_prompts_subtitle), Icons.Default.ChatBubble, navigateToModelPrompts),
                                 SettingsEntry(stringResource(R.string.persona_card_generation), stringResource(R.string.persona_card_generation_desc), Icons.Default.Face, navigateToPersonaCardGeneration),
                                 SettingsEntry(stringResource(R.string.waifu_mode_settings), stringResource(R.string.waifu_mode_settings_desc), Icons.Default.EmojiEmotions, navigateToWaifuModeSettings)
-                        )
-                ),
-                SettingsGroup(
-                        title = stringResource(R.string.settings_section_context_summary),
-                        icon = Icons.Default.Analytics,
-                        entries = listOf(
-                                SettingsEntry(stringResource(R.string.settings_section_context_summary), stringResource(R.string.settings_context_summary_subtitle), Icons.Default.Tune, navigateToContextSummarySettings)
                         )
                 ),
                 SettingsGroup(
@@ -250,7 +247,7 @@ fun SettingsScreen(
                         title = stringResource(R.string.settings_privacy_data_cleanup),
                         icon = Icons.Default.DeleteSweep,
                         entries = listOf(
-                                SettingsEntry(stringResource(R.string.settings_clear_cookies), stringResource(R.string.settings_clear_cookies_subtitle), Icons.Default.DeleteSweep, { showClearCookieConfirm = true })
+                                SettingsEntry(stringResource(R.string.settings_clear_cookies), stringResource(R.string.settings_clear_cookies_subtitle), Icons.Default.DeleteSweep, { showClearCookieConfirm = true }, destructive = true)
                         )
                 ),
                 SettingsGroup(
@@ -375,7 +372,17 @@ private fun settingsOptionEntries(
         chatHistory: SettingsEntry
 ): List<SettingsEntry> {
         fun option(page: SettingsEntry, title: String) =
-                SettingsEntry(title = title, subtitle = page.title, icon = page.icon, onClick = page.onClick, keywords = page.keywords)
+                SettingsEntry(
+                        title = title,
+                        subtitle = page.title,
+                        icon = page.icon,
+                        // Remember the option so the opened page scrolls to it and flashes it.
+                        onClick = {
+                                SettingsSearchFocus.request(title)
+                                page.onClick()
+                        },
+                        keywords = page.keywords
+                )
 
         return listOf(
                 globalDisplay to listOf(
@@ -449,14 +456,17 @@ private fun SettingsEntriesCard(entries: List<SettingsEntry>, cardColor: android
                                         subtitle = entry.subtitle,
                                         checked = toggle.checked,
                                         enabled = toggle.enabled,
-                                        onCheckedChange = toggle.onCheckedChange
+                                        onCheckedChange = toggle.onCheckedChange,
+                                        searchable = false
                                 )
                         } else {
                                 SettingsNavRow(
                                         title = entry.title,
                                         subtitle = entry.subtitle,
                                         icon = entry.icon,
-                                        onClick = entry.onClick
+                                        onClick = entry.onClick,
+                                        destructive = entry.destructive,
+                                        searchable = false
                                 )
                         }
                 }

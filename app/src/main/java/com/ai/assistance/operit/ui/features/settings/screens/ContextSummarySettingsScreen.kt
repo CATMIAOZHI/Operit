@@ -83,6 +83,8 @@ import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.ui.components.CustomScaffold
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSearchFocus
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.LocaleUtils
@@ -194,7 +196,13 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
     val contextDefaults = remember { com.ai.assistance.operit.data.preferences.ChatContextPreferences(context) }
     val defaultPolicy by contextDefaults.defaults.collectAsState(initial = com.ai.assistance.operit.data.model.ChatContextPolicy())
     var savingDefaults by remember { mutableStateOf(false) }
-    var advancedExpanded by rememberSaveable { mutableStateOf(false) }
+    // A settings search for an option inside the folded section opens it, so the row can be shown.
+    val advancedTitles = listOf(
+        stringResource(id = R.string.settings_summary_custom_rules),
+        stringResource(id = R.string.settings_summary_structure),
+        stringResource(id = R.string.settings_summary_dialogue_review)
+    )
+    var advancedExpanded by rememberSaveable { mutableStateOf(SettingsSearchFocus.peek() in advancedTitles) }
 
     CustomScaffold() { paddingValues ->
         Box(modifier = Modifier.fillMaxSize().padding(paddingValues)) {
@@ -585,6 +593,7 @@ private fun SummaryConfigEditorHeader(
                 .padding(bottom = 8.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
+                .settingsSearchTarget(title)
                 .alpha(contentAlpha)
                 .clickable(enabled = enabled) { onExpandedChange(!expanded) }
                 .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
@@ -626,6 +635,7 @@ private fun SummaryEditorHeader(
                 .padding(bottom = 8.dp)
                 .clip(RoundedCornerShape(14.dp))
                 .background(backgroundColor)
+                .settingsSearchTarget(title)
                 .alpha(contentAlpha)
                 .clickable(enabled = enabled) { onExpandedChange(!expanded) }
                 .padding(start = 16.dp, end = 4.dp, top = 10.dp, bottom = 10.dp),
@@ -703,6 +713,7 @@ private fun AdvancedSummaryHeader(
     onExpandedChange: (Boolean) -> Unit,
     backgroundColor: Color
 ) {
+    val advancedTitle = stringResource(R.string.chat_context_advanced)
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(20.dp),
@@ -711,7 +722,9 @@ private fun AdvancedSummaryHeader(
         onClick = { onExpandedChange(!expanded) }
     ) {
         Row(
-            modifier = Modifier.padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
+            modifier = Modifier
+                .settingsSearchTarget(advancedTitle)
+                .padding(start = 16.dp, end = 8.dp, top = 14.dp, bottom = 14.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
             Box(
@@ -731,7 +744,7 @@ private fun AdvancedSummaryHeader(
             Spacer(modifier = Modifier.width(14.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.chat_context_advanced),
+                    text = advancedTitle,
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold
                 )
@@ -787,7 +800,7 @@ private fun SettingsInfoBanner(text: String, backgroundColor: Color) {
 private fun SectionTitle(text: String, icon: androidx.compose.ui.graphics.vector.ImageVector) {
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(start = 4.dp, bottom = 10.dp)
+        modifier = Modifier.settingsSearchTarget(text).padding(start = 4.dp, bottom = 10.dp)
     ) {
         Icon(
             imageVector = icon,

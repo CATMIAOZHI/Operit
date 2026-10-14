@@ -2709,6 +2709,11 @@ fun ChatHistorySelector(
         }
     }
 
+    // The picker closes as soon as a folder is chosen, so confirm where the item went.
+    fun showMovedToast(options: List<FolderPickerOption>, targetId: String?) {
+        val name = options.firstOrNull { it.id == targetId }?.name ?: return
+        Toast.makeText(context, context.getString(R.string.moved_to_folder, name), Toast.LENGTH_SHORT).show()
+    }
     if (chatToMove != null) {
         val targetChat = chatToMove!!
         val chatMoveOptions =
@@ -2756,6 +2761,8 @@ fun ChatHistorySelector(
                                 expectedTargetSiblings =
                                     historySiblingSnapshot(folderId),
                             )
+                        }.onSuccess {
+                            showMovedToast(chatMoveOptions, folderId)
                         }.onFailure { error ->
                             Toast.makeText(
                                 context,
@@ -2823,6 +2830,8 @@ fun ChatHistorySelector(
                                 expectedTargetSiblings =
                                     historySiblingSnapshot(parentFolderId),
                             )
+                        }.onSuccess {
+                            showMovedToast(groupMoveOptions, parentFolderId)
                         }.onFailure { error ->
                             Toast.makeText(
                                 context,

@@ -5,15 +5,31 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Cached
+import androidx.compose.material.icons.filled.CloudUpload
+import androidx.compose.material.icons.filled.Extension
+import androidx.compose.material.icons.filled.FolderOpen
+import androidx.compose.material.icons.filled.Image
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Storage
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.application.OperitApplication
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.SettingsIconBadge
+import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
+import com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
 import com.ai.assistance.operit.util.*
 import java.io.File
 import kotlinx.coroutines.CancellationException
@@ -108,87 +124,138 @@ fun StorageManagementScreen(
         if (!isStorageSnapshotFresh(measuredAt, System.currentTimeMillis())) refresh(false)
     }
 
+    val hasBackgroundImage by
+        remember { UserPreferencesManager.getInstance(context) }.useBackgroundImage.collectAsState(initial = false)
+    val cardColor = settingsCardColor(hasBackgroundImage)
+
     Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.storage_data_total), style = MaterialTheme.typography.titleMedium)
+        SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        stringResource(R.string.storage_data_total),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        usage?.let { Formatter.formatFileSize(context, it.totalBytes) }
+                            ?: if (busy || readingCache) stringResource(R.string.storage_calculating) else "—",
+                        style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                FilledTonalIconButton(onClick = { refresh(false) }, enabled = !busy && !readingCache) {
+                    Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.storage_refresh))
+                }
+            }
+            if (measuredAt > 0) Text(
+                stringResource(R.string.storage_last_measured, java.text.DateFormat.getDateTimeInstance(
+                    java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
+                ).format(java.util.Date(measuredAt))),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 4.dp)
+            )
+            if (busy) {
+                LinearProgressIndicator(Modifier.fillMaxWidth().padding(top = 12.dp))
+                Text(stringResource(
+                    R.string.storage_scan_progress, progress.files,
+                    Formatter.formatFileSize(context, progress.bytes)
+                ), style = MaterialTheme.typography.bodySmall, modifier = Modifier.padding(top = 8.dp))
+                progress.category?.let {
+                    Text(stringResource(R.string.storage_scanning_category, stringResource(storageCategoryTitle(it))),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                TextButton(onClick = { stopped = true; scanJob?.cancel() }) {
+                    Text(stringResource(R.string.storage_stop_scan))
+                }
+            }
+            listOfNotNull(
+                stringResource(R.string.storage_scan_stopped).takeIf { stopped },
+                stringResource(R.string.storage_scan_timeout).takeIf { timedOut },
+                stringResource(R.string.storage_cache_cleared).takeIf { cleared },
+                stringResource(R.string.storage_partial).takeIf { (usage?.skippedEntries ?: 0) > 0 }
+            ).forEach { notice ->
                 Text(
-                    usage?.let { Formatter.formatFileSize(context, it.totalBytes) }
-                        ?: if (busy || readingCache) stringResource(R.string.storage_calculating) else "—",
-                    style = MaterialTheme.typography.headlineMedium
+                    notice,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 8.dp)
                 )
             }
-            IconButton(onClick = { refresh(false) }, enabled = !busy && !readingCache) {
-                Icon(Icons.Default.Refresh, contentDescription = stringResource(R.string.storage_refresh))
-            }
+            if (failed) Text(
+                stringResource(R.string.storage_failed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.error,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
-        Text(
-            stringResource(R.string.storage_scope),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        if (measuredAt > 0) Text(
-            stringResource(R.string.storage_last_measured, java.text.DateFormat.getDateTimeInstance(
-                java.text.DateFormat.SHORT, java.text.DateFormat.SHORT
-            ).format(java.util.Date(measuredAt))),
-            style = MaterialTheme.typography.bodySmall
-        )
-        if (busy) {
-            LinearProgressIndicator(Modifier.fillMaxWidth())
-            Text(stringResource(
-                R.string.storage_scan_progress, progress.files,
-                Formatter.formatFileSize(context, progress.bytes)
-            ), style = MaterialTheme.typography.bodySmall)
-            progress.category?.let {
-                Text(stringResource(R.string.storage_scanning_category, stringResource(storageCategoryTitle(it))),
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            TextButton(onClick = { stopped = true; scanJob?.cancel() }) {
-                Text(stringResource(R.string.storage_stop_scan))
-            }
-        }
-        if (stopped) Text(stringResource(R.string.storage_scan_stopped))
-        if (timedOut) Text(stringResource(R.string.storage_scan_timeout))
-        if (failed) Text(stringResource(R.string.storage_failed), color = MaterialTheme.colorScheme.error)
-        if (cleared) Text(stringResource(R.string.storage_cache_cleared))
-        if ((usage?.skippedEntries ?: 0) > 0) Text(stringResource(R.string.storage_partial))
-        StorageCategory.entries.forEach { category ->
-            val title = storageCategoryTitle(category)
-            val description = when (category) {
-                StorageCategory.MEDIA -> R.string.storage_media_hint
-                StorageCategory.COMPONENTS -> R.string.storage_components_hint
-                StorageCategory.DATABASES -> R.string.storage_databases_hint
-                StorageCategory.PREVIEW_CACHE -> R.string.storage_preview_hint
-                StorageCategory.OTHER -> R.string.storage_other_hint
-            }
-            Card(Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                        Text(stringResource(title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                        Text(usage?.let { Formatter.formatFileSize(context, it.bytes.getValue(category)) } ?: "—")
+        SettingsInfoBanner(text = stringResource(R.string.storage_scope), backgroundColor = cardColor)
+
+        SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
+            StorageCategory.entries.forEachIndexed { index, category ->
+                if (index > 0) SettingsRowDivider()
+                val description = when (category) {
+                    StorageCategory.MEDIA -> R.string.storage_media_hint
+                    StorageCategory.COMPONENTS -> R.string.storage_components_hint
+                    StorageCategory.DATABASES -> R.string.storage_databases_hint
+                    StorageCategory.PREVIEW_CACHE -> R.string.storage_preview_hint
+                    StorageCategory.OTHER -> R.string.storage_other_hint
+                }
+                Column(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 10.dp)) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        SettingsIconBadge(icon = storageCategoryIcon(category))
+                        Spacer(Modifier.width(12.dp))
+                        Text(
+                            stringResource(storageCategoryTitle(category)),
+                            Modifier.weight(1f),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.Medium
+                        )
+                        Text(
+                            usage?.let { Formatter.formatFileSize(context, it.bytes.getValue(category)) } ?: "—",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
                     }
-                    Text(stringResource(description), style = MaterialTheme.typography.bodySmall)
-                    when (category) {
-                        StorageCategory.COMPONENTS -> TextButton(onClick = onManageComponents) {
-                            Text(stringResource(R.string.components_title))
-                        }
-                        StorageCategory.DATABASES -> TextButton(onClick = onManageChats) {
-                            Text(stringResource(R.string.settings_chat_history_management))
-                        }
-                        StorageCategory.PREVIEW_CACHE -> TextButton(
-                            onClick = { confirmClear = true },
-                            enabled = !busy && (usage?.bytes?.get(category) ?: 0L) > 0L
-                        ) { Text(stringResource(R.string.storage_clear_preview)) }
-                        else -> Unit
+                    Text(
+                        stringResource(description),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 48.dp, top = 4.dp)
+                    )
+                    val action: Pair<String, () -> Unit>? = when (category) {
+                        StorageCategory.COMPONENTS -> stringResource(R.string.components_title) to onManageComponents
+                        StorageCategory.DATABASES -> stringResource(R.string.settings_chat_history_management) to onManageChats
+                        StorageCategory.PREVIEW_CACHE -> stringResource(R.string.storage_clear_preview) to { confirmClear = true }
+                        else -> null
+                    }
+                    if (action != null) {
+                        val enabled = category != StorageCategory.PREVIEW_CACHE ||
+                            (!busy && (usage?.bytes?.get(category) ?: 0L) > 0L)
+                        TextButton(
+                            onClick = action.second,
+                            enabled = enabled,
+                            // TextButton adds 12dp inside, so its label lines up with the 48dp description.
+                            modifier = Modifier.padding(start = 36.dp)
+                        ) { Text(action.first) }
                     }
                 }
             }
         }
-        OutlinedButton(onClick = onBackup, modifier = Modifier.fillMaxWidth()) {
-            Text(stringResource(R.string.settings_data_backup))
+
+        SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)) {
+            SettingsNavRow(
+                title = stringResource(R.string.settings_data_backup),
+                subtitle = stringResource(R.string.settings_data_backup_desc),
+                icon = Icons.Default.CloudUpload,
+                onClick = onBackup
+            )
         }
     }
     if (confirmClear) {
@@ -214,4 +281,12 @@ private fun storageCategoryTitle(category: StorageCategory): Int = when (categor
     StorageCategory.DATABASES -> R.string.storage_databases
     StorageCategory.PREVIEW_CACHE -> R.string.storage_preview_cache
     StorageCategory.OTHER -> R.string.storage_other
+}
+
+private fun storageCategoryIcon(category: StorageCategory): ImageVector = when (category) {
+    StorageCategory.MEDIA -> Icons.Default.Image
+    StorageCategory.COMPONENTS -> Icons.Default.Extension
+    StorageCategory.DATABASES -> Icons.Default.Storage
+    StorageCategory.PREVIEW_CACHE -> Icons.Default.Cached
+    StorageCategory.OTHER -> Icons.Default.FolderOpen
 }

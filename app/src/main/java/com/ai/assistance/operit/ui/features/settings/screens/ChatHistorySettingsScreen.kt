@@ -64,6 +64,7 @@ import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.repository.MemoryRepository
 import com.ai.assistance.operit.ui.features.settings.components.CharacterCardAssignDialog
 import com.ai.assistance.operit.ui.features.settings.components.CharacterGroupAssignDialog
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.ZoneOffset
@@ -2384,7 +2385,7 @@ private fun SectionHeader(
     icon: ImageVector
     ) {
         Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier.fillMaxWidth().settingsSearchTarget(title),
             verticalAlignment = Alignment.CenterVertically
         ) {
         Surface(
