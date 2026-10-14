@@ -72,16 +72,20 @@ internal object CardTranscript {
     private val structural = setOf(
         "version", "surfaceId", "catalogId", "id", "component", "child", "children", "path", "call",
         "action", "event", "context", "columnWidths", "maxHeight", "minItemWidth", "steps", "min", "max",
-        "variant", "tone", "icon", "type", "weight", "align", "justify", "html", "css", "key", "template",
+        "variant", "tone", "icon", "type", "weight", "align", "justify", "css", "key", "template",
         "style", "size", "color", "background", "span", "gap", "padding", "url", "src", "fit", "shape",
     )
+    private val markup = Regex("<(style|script)\\b[\\s\\S]*?</\\1\\s*>|<[^>]*>", RegexOption.IGNORE_CASE)
 
-    fun forModel(content: String): String {
+    /** [maxSummary] bounds chat prompts; memory learning passes a larger bound to keep the whole card. */
+    fun forModel(content: String, maxSummary: Int = MAX_SUMMARY): String {
         if (!content.contains("```a2ui")) return content
-        return block.replace(content) { match -> "[Dynamic UI card shown to the user here" + summary(match.groupValues[1]) + "]" }
+        return block.replace(content) { match ->
+            "[Dynamic UI card shown to the user here" + summary(match.groupValues[1], maxSummary) + "]"
+        }
     }
 
-    private fun summary(document: String): String {
+    private fun summary(document: String, maxSummary: Int): String {
         val parts = mutableListOf<String>()
         document.lineSequence().filter(String::isNotBlank).forEach { line ->
             val event = runCatching { Json.parseToJsonElement(line).jsonObject }.getOrNull() ?: return@forEach
@@ -92,7 +96,7 @@ internal object CardTranscript {
         }
         if (parts.isEmpty()) return ""
         val text = parts.joinToString("; ")
-        return ". Visible content: " + if (text.length <= MAX_SUMMARY) text else text.take(MAX_SUMMARY) + "…"
+        return ". Visible content: " + if (text.length <= maxSummary) text else text.take(maxSummary) + "…"
     }
 
     private fun flatten(element: JsonElement): String = when (element) {
@@ -100,8 +104,12 @@ internal object CardTranscript {
         is JsonPrimitive -> if (element.isString || element.booleanOrNull == null) element.content else ""
         is JsonArray -> element.map(::flatten).filter(String::isNotBlank)
             .joinToString(if (element.any { it is JsonArray || it is JsonObject }) " | " else ", ")
-        is JsonObject -> element.filterKeys { it !in structural }.values.map(::flatten)
-            .filter(String::isNotBlank).joinToString(" ")
+        is JsonObject -> element.filterKeys { it !in structural }.map { (key, value) ->
+            // Html cards keep their readable text; tags and styles are layout.
+            if (key == "html" && value is JsonPrimitive && value.isString)
+                value.content.replace(markup, " ").replace(Regex("\\s+"), " ").trim()
+            else flatten(value)
+        }.filter(String::isNotBlank).joinToString(" ")
     }
 }
 
