@@ -3283,6 +3283,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
             runCatching {
                 com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.deleteChat(context, id)
             }.onFailure { AppLogger.w(TAG, "Failed to drop card state of deleted chat $id", it) }
+            runCatching {
+                com.ai.assistance.operit.ui.permissions.PermissionReviewArchive.deleteChat(context, id)
+            }.onFailure { AppLogger.w(TAG, "Failed to drop review archive of deleted chat $id", it) }
             // Housekeeping must never turn a completed deletion into a reported failure.
             runCatching {
                 // Cancel only: marking a deleted conversation as a live turn would leave the
