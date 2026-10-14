@@ -9008,7 +9008,7 @@
     <string name="permission_review_failed_result">Automatic review did not complete; action not executed</string>
     <string name="chat_context_budget">Conversation context budget</string>
     <string name="chat_context_budget_hint">For example 300K, 400K or 500K. Actual usage is capped by model capacity.</string>
-    <string name="chat_context_max_hint">Max uses the current model capacity. Turning it off restores your custom budget.</string>
+    <string name="chat_context_max_hint">Follows the current model\'s full capacity. Turn it off to set your own budget.</string>
     <string name="chat_context_compact_at">Auto-compaction threshold (optional)</string>
     <string name="chat_context_compact_hint">Leave blank for automatic management, or enter 300K. Space is reserved for replies; compaction may occur earlier.</string>
     <string name="chat_context_current">Current conversation context</string>
