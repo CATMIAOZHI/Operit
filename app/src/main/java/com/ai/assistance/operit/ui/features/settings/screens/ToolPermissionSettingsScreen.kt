@@ -500,6 +500,7 @@ private fun ToolChip(toolName: String, onRemove: (() -> Unit)?) {
     Row(
         modifier = Modifier
             .widthIn(max = 260.dp)
+            .heightIn(min = 40.dp)
             .clip(RoundedCornerShape(8.dp))
             .background(MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.5f))
             .padding(start = 10.dp, end = if (onRemove != null) 2.dp else 10.dp),
@@ -513,12 +514,12 @@ private fun ToolChip(toolName: String, onRemove: (() -> Unit)?) {
             overflow = TextOverflow.Ellipsis,
             modifier = Modifier
                 .weight(1f, fill = false)
-                .padding(vertical = 7.dp)
+                .padding(vertical = 10.dp)
         )
         if (onRemove != null) {
             Box(
                 modifier = Modifier
-                    .size(28.dp)
+                    .size(40.dp)
                     .clip(CircleShape)
                     .clickable { onRemove() },
                 contentAlignment = Alignment.Center
@@ -526,7 +527,7 @@ private fun ToolChip(toolName: String, onRemove: (() -> Unit)?) {
                 Icon(
                     imageVector = Icons.Default.Close,
                     contentDescription = stringResource(R.string.remove_tool),
-                    modifier = Modifier.size(14.dp),
+                    modifier = Modifier.size(16.dp),
                     tint = MaterialTheme.colorScheme.onSecondaryContainer
                 )
             }
