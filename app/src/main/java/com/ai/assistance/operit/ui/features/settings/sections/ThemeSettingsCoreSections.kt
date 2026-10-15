@@ -39,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.compositeOver
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -50,6 +51,8 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import coil.compose.rememberAsyncImagePainter
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.settings.components.ChatStyleOption
@@ -76,10 +79,16 @@ internal fun ThemeSettingsCharacterBindingInfoCard(
     isGroupTarget: Boolean,
     cardColors: CardColors,
 ) {
+    // Theme changes are saved onto this card, so it gets the brand tint to stand out.
     Card(
         modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-        colors = cardColors,
-        shape = RoundedCornerShape(8.dp),
+        colors =
+            CardDefaults.cardColors(
+                containerColor =
+                    MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f)
+                        .compositeOver(cardColors.containerColor),
+            ),
+        shape = SettingsCardShape,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(12.dp),
@@ -161,11 +170,11 @@ internal fun ThemeSettingsThemeModeSection(
         icon = Icons.Default.Brightness4,
     )
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_system_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -198,7 +207,7 @@ internal fun ThemeSettingsThemeModeSection(
             }
 
             if (!useSystemThemeInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.theme_select),
@@ -363,11 +372,11 @@ internal fun ThemeSettingsChatStyleSection(
         icon = Icons.Default.ColorLens,
     )
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.chat_style_desc),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -403,7 +412,7 @@ internal fun ThemeSettingsChatStyleSection(
             }
 
             if (showInputStyleControls) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.input_style_title),
@@ -451,7 +460,7 @@ internal fun ThemeSettingsChatStyleSection(
             }
 
             if (chatStyleInput == UserPreferencesManager.CHAT_STYLE_CURSOR) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -483,7 +492,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -524,7 +533,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -696,7 +705,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
             if (chatStyleInput == UserPreferencesManager.CHAT_STYLE_BUBBLE) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -726,7 +735,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -757,7 +766,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -800,7 +809,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -843,7 +852,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -886,7 +895,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -929,7 +938,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.chat_style_bubble_image_render_mode_title),
@@ -985,7 +994,7 @@ internal fun ThemeSettingsChatStyleSection(
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.chat_style_bubble_rounded_corners),
@@ -1048,7 +1057,7 @@ internal fun ThemeSettingsChatStyleSection(
                     }
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.chat_style_bubble_color_title),
@@ -1074,7 +1083,7 @@ internal fun ThemeSettingsChatStyleSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.chat_style_bubble_text_style_title),
@@ -1170,7 +1179,7 @@ internal fun ThemeSettingsChatStyleSection(
                     },
                 )
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 BubbleImageStyleEditor(
                     title = stringResource(id = R.string.chat_style_bubble_user_image_title),
@@ -1466,7 +1475,7 @@ internal fun ThemeSettingsChatStyleSection(
                 }
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             val previewChatStyle =
                 if (chatStyleInput == UserPreferencesManager.CHAT_STYLE_BUBBLE) {
@@ -1531,6 +1540,7 @@ private fun BubbleFontStyleEditor(
             CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
             ),
+        shape = RoundedCornerShape(14.dp),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -1696,6 +1706,7 @@ private fun BubbleImageStyleEditor(
             CardDefaults.cardColors(
                 containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
             ),
+        shape = RoundedCornerShape(14.dp),
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
             Row(
@@ -1977,6 +1988,7 @@ private fun NineSliceSourcePreviewCard(
     Card(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.18f)),
+        shape = RoundedCornerShape(14.dp),
     ) {
         Column(modifier = Modifier.padding(10.dp)) {
             Text(
@@ -2172,6 +2184,7 @@ private fun ChatStylePreviewCard(
     Card(
         modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.25f)),
+        shape = RoundedCornerShape(14.dp),
     ) {
         val baseTypography = MaterialTheme.typography
         val userTypography =
@@ -2562,7 +2575,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
         icon = Icons.Default.ColorLens,
     )
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -2591,7 +2604,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2620,7 +2633,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2649,7 +2662,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2678,7 +2691,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2707,7 +2720,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2736,7 +2749,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2765,7 +2778,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2794,7 +2807,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2823,7 +2836,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2855,7 +2868,7 @@ internal fun ThemeSettingsDisplayOptionsSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -2894,22 +2907,5 @@ internal fun ThemeSettingsSectionTitle(
     title: String,
     icon: ImageVector,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.padding(vertical = 8.dp),
-    ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.primary,
-        )
-        Spacer(modifier = Modifier.width(8.dp))
-        Text(
-            text = title,
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold,
-            color = MaterialTheme.colorScheme.primary,
-        )
-    }
-    HorizontalDivider(modifier = Modifier.padding(bottom = 8.dp))
+    SettingsSectionTitle(text = title, icon = icon, modifier = Modifier.padding(top = 8.dp))
 }

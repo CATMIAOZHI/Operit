@@ -22,6 +22,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.settings.components.ChatStyleOption
@@ -60,11 +61,11 @@ internal fun ThemeSettingsInputTab(
         chatInputWaterGlassInput = chatInputWaterGlass
     }
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.input_style_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 4.dp),
             )
             Text(
@@ -109,11 +110,11 @@ internal fun ThemeSettingsInputTab(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_chat_input_transparent_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             ThemeSettingsInputSwitch(
@@ -128,7 +129,7 @@ internal fun ThemeSettingsInputTab(
                     onShowSaveSuccessMessage()
                 },
             )
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             ThemeSettingsInputSwitch(
                 title = stringResource(id = R.string.theme_chat_input_floating),
                 description = stringResource(id = R.string.theme_chat_input_floating_desc),
@@ -143,7 +144,7 @@ internal fun ThemeSettingsInputTab(
             )
 
             if (chatInputTransparentInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ThemeSettingsInputSwitch(
                     title = stringResource(id = R.string.theme_chat_input_liquid_glass),
                     description = stringResource(id = R.string.theme_chat_input_liquid_glass_desc),
@@ -162,7 +163,7 @@ internal fun ThemeSettingsInputTab(
                         onShowSaveSuccessMessage()
                     },
                 )
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ThemeSettingsInputSwitch(
                     title = stringResource(id = R.string.theme_chat_input_water_glass),
                     description = stringResource(id = R.string.theme_chat_input_water_glass_desc),

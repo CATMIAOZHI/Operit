@@ -20,6 +20,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.features.settings.components.ColorSelectionItem
@@ -101,11 +102,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     )
 
     if (showInterfaceControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_statusbar_color),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -175,7 +176,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -218,7 +219,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (useCustomStatusBarColorInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ColorSelectionItem(
                     title = stringResource(id = R.string.theme_statusbar_color),
                     color = Color(customStatusBarColorInput),
@@ -236,11 +237,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showInterfaceControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_toolbar_transparent),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -315,11 +316,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showInterfaceControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_navigation_drawer_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -355,7 +356,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -389,7 +390,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
@@ -427,7 +428,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (useCustomNavigationDrawerBackgroundColorInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ColorSelectionItem(
                     title = stringResource(id = R.string.theme_navigation_drawer_background_color),
                     color = Color(navigationDrawerBackgroundColorInput),
@@ -436,7 +437,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -473,7 +474,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (useCustomNavigationDrawerAccentColorInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 ColorSelectionItem(
                     title = stringResource(id = R.string.theme_navigation_drawer_accent_color),
                     color = Color(navigationDrawerAccentColorInput),
@@ -486,11 +487,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showInterfaceControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_chat_header_transparent_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             Row(
@@ -521,7 +522,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (chatHeaderTransparentInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -555,11 +556,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showInputControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_chat_input_transparent_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             Row(
@@ -589,7 +590,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                 )
             }
 
-            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+            HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
             Row(
                 modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -618,7 +619,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (chatInputTransparentInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -652,7 +653,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Row(
                     modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
@@ -691,11 +692,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showInterfaceControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_appbar_content_color_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -727,7 +728,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (forceAppBarContentColorInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                 Text(
                     text = stringResource(id = R.string.theme_appbar_content_color_mode),
                     style = MaterialTheme.typography.bodyMedium,
@@ -778,11 +779,11 @@ internal fun ThemeSettingsColorCustomizationSection(
         }
     }
 
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_chat_header_icons_color_title),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
             ColorSelectionItem(
@@ -803,11 +804,11 @@ internal fun ThemeSettingsColorCustomizationSection(
     }
 
     if (showPaletteControls) {
-    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors) {
+    Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
                 text = stringResource(id = R.string.theme_custom_color),
-                style = MaterialTheme.typography.titleMedium,
+                style = MaterialTheme.typography.titleSmall,
                 modifier = Modifier.padding(bottom = 8.dp),
             )
 
@@ -871,7 +872,7 @@ internal fun ThemeSettingsColorCustomizationSection(
             }
 
             if (useCustomColorsInput) {
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.theme_select_color),
@@ -899,7 +900,7 @@ internal fun ThemeSettingsColorCustomizationSection(
                     )
                 }
 
-                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp))
+                HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
                 Text(
                     text = stringResource(id = R.string.theme_on_color_mode),

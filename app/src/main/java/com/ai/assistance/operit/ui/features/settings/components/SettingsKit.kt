@@ -32,6 +32,8 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -42,9 +44,11 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import kotlinx.coroutines.delay
 
 /*
@@ -116,6 +120,20 @@ fun settingsCardColor(hasBackgroundImage: Boolean): Color =
         MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
     }
 
+/** Last value seen, so cards scrolled in later start with the right color instead of flashing. */
+private var lastKnownBackgroundImage = false
+
+/** Same as [settingsCardColor], reading the background image switch itself. */
+@Composable
+fun rememberSettingsCardColor(): Color {
+    val context = LocalContext.current
+    val hasBackgroundImage by
+        remember { UserPreferencesManager.getInstance(context) }.useBackgroundImage
+            .collectAsState(initial = lastKnownBackgroundImage)
+    lastKnownBackgroundImage = hasBackgroundImage
+    return settingsCardColor(hasBackgroundImage)
+}
+
 @Composable
 fun SettingsSectionTitle(text: String, icon: ImageVector, modifier: Modifier = Modifier) {
     Row(
@@ -138,6 +156,9 @@ fun SettingsSectionTitle(text: String, icon: ImageVector, modifier: Modifier = M
     }
 }
 
+/** Corner shape shared by every settings card. */
+val SettingsCardShape = RoundedCornerShape(20.dp)
+
 /** One rounded block of related settings. */
 @Composable
 fun SettingsCard(
@@ -148,7 +169,7 @@ fun SettingsCard(
 ) {
     Surface(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        shape = SettingsCardShape,
         color = backgroundColor
     ) {
         Column(modifier = Modifier.padding(contentPadding), content = content)
