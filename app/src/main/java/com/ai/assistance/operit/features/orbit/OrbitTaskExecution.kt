@@ -13,13 +13,18 @@ import com.ai.assistance.operit.ui.permissions.UnattendedChats
 internal object OrbitTaskExecution {
     data class Scope(val binding: OrbitTaskChatEntity, val run: OrbitRunEntity, val task: OrbitTaskEntity)
 
-    fun childPrompts() = OrbitTaskActionTools.prompts.filter { it.name != OrbitTaskActionTools.WAIT } +
-        com.ai.assistance.operit.core.tools.OrbitProductTools.prompts.filter {
-            it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
-        } +
-        com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(
-            false, com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.listAvailableSubagents()
-        ).tools
+    /** Add task controls to normal tool discovery; never replace the ordinary tool set. */
+    suspend fun additionalPrompts(context: Context, chatId: String?): List<com.ai.assistance.operit.data.model.ToolPrompt> {
+        val binding = chatId?.let { AppDatabase.getDatabase(context).orbitTaskDao().binding(it) }
+            ?: return emptyList()
+        return promptsForBinding(binding.chatId == binding.rootChatId)
+    }
+
+    internal fun promptsForBinding(root: Boolean) =
+        OrbitTaskActionTools.prompts.filter { it.name != OrbitTaskActionTools.WAIT || root } +
+            com.ai.assistance.operit.core.tools.OrbitProductTools.prompts.filter {
+                it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
+            } + if (root) listOf(OrbitTaskRunner.finishPrompt) else emptyList()
 
     suspend fun resolve(context: Context, chatId: String?): Scope? {
         if (chatId == null) return null
@@ -28,7 +33,6 @@ internal object OrbitTaskExecution {
         val run = checkNotNull(dao.run(binding.runId)) { "Task execution no longer exists" }
         check(run.generation == binding.generation) { "Task execution was replaced" }
         val task = checkNotNull(dao.task(run.taskId))
-        check(task.kind == "ASSIST" || binding.chatId == binding.rootChatId) { "This task cannot delegate" }
         val settings = OrbitPreferences.getInstance(context).current()
         check(settings.activeOrbitId == task.orbitId && settings.active?.deleting == false) { "Orbit is paused" }
         check(dao.currentLease(run, OrbitTaskRunner.bootId(context),
@@ -57,6 +61,6 @@ internal object OrbitTaskExecution {
     }
 
     /** A CLI visibility exception, not a permission-review exemption. Execution rechecks the lease. */
-    fun isTaskCapability(name: String) = name in OrbitTaskActionTools.names ||
+    fun isTaskCapability(name: String) = name == OrbitTaskRunner.FINISH || name in OrbitTaskActionTools.names ||
         name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
 }

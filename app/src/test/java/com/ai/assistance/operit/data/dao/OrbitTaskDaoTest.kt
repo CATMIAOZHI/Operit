@@ -47,6 +47,28 @@ class OrbitTaskDaoTest {
         now: Long = 1000, elapsed: Long = 10) =
         dao.claim(checkNotNull(dao.enqueueDue(id, now)), owner, boot, now, elapsed, 100)
 
+    @Test fun `lost general tool turn pauses with one report instead of replaying after reboot`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val first = checkNotNull(claim())
+        dao.insertBinding(com.ai.assistance.operit.data.model.OrbitTaskChatEntity("hidden", first.id, first.generation, "hidden"))
+        assertNull(claim(owner = "replacement", boot = "new-boot", now = 2000))
+        assertEquals("PAUSED", dao.task("task")!!.state)
+        assertEquals("INTERRUPTED", dao.run(first.id)!!.state)
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
+        assertFalse(dao.interrupt(first, 2001, "duplicate"))
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
+        assertEquals("hidden", dao.bindings(first.id, first.generation).single().chatId)
+    }
+
+    @Test fun `interrupted turn rejects stale owner and cannot complete as success`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val first = checkNotNull(claim())
+        assertFalse(dao.interrupt(first.copy(owner = "stale"), 1010, "wrong"))
+        assertTrue(dao.interrupt(first, 1010, "interrupted"))
+        assertFalse(dao.complete(first, "done", "done", "", 2000, "boot", 1011, 20))
+        assertNull(dao.enqueueDue("task", 1012))
+    }
+
     @Test fun `unreceipted write after reboot requires explicit verification before new generation`() = runBlocking {
         dao.insertTask(definition(kind = "ASSIST"))
         val token = checkNotNull(claim())

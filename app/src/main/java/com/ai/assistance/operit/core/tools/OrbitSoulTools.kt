@@ -10,16 +10,19 @@ import org.json.JSONObject
 internal object OrbitSoulTools {
     const val NAME = "orbit_soul"
     val prompt = ToolPrompt(name = NAME,
-        description = "读取自己的 Soul 人格与版本，或提出改进。提案不会直接生效，需要用户在 Orbit 的人格与历史页面确认；不改变工具权限。",
+        description = "读取或更新自己的 Soul 人格。更新直接生效，保留历史供用户恢复；不改变工具权限。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "read/history/propose", required = true),
-            ToolParameterSchema("body", description = "propose：完整 Soul 内容，最多24000字符", required = false),
-            ToolParameterSchema("reason", description = "propose：解释为什么修改，最多2000字符", required = false),
-            ToolParameterSchema("version", description = "propose：read返回的当前version", required = false)))
+            ToolParameterSchema("action", description = "read/history/update", required = true),
+            ToolParameterSchema("body", description = "update：完整 Soul 内容，最多24000字符", required = false),
+            ToolParameterSchema("reason", description = "update：解释为什么修改，最多2000字符", required = false),
+            ToolParameterSchema("version", description = "update：read返回的当前version", required = false)))
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller))
-        check(orbit.chatId == caller) { "Soul proposals belong in the main Orbit conversation" }
+        val task = OrbitTaskExecution.resolve(context, caller)
+        check(orbit.chatId == caller || task?.binding?.rootChatId == caller) {
+            "Only this Orbit's main conversation or root background turn can change Soul"
+        }
         val repository = OrbitSoulRepository(context, orbit.id)
         val args = tool.parameters.associate { it.name to it.value }
         val result: Any = when (args["action"]) {
@@ -29,10 +32,9 @@ internal object OrbitSoulTools {
             "history" -> JSONArray(repository.snapshot().history.map {
                 JSONObject().put("version", it.id).put("state", it.state).put("reason", it.reason).put("createdAt", it.createdAt)
             })
-            "propose" -> repository.propose(args["body"].orEmpty(), args["reason"].orEmpty(),
+            "update" -> repository.update(args["body"].orEmpty(), args["reason"].orEmpty(),
                 args["version"].orEmpty()).let {
-                JSONObject().put("proposal", it.id).put("state", "pending_user_review")
-                    .put("next", "Ask the user to review it in Orbit settings > Soul and history")
+                JSONObject().put("version", it.id).put("state", "applied")
             }
             else -> error("Unknown action")
         }

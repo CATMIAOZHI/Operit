@@ -68,15 +68,13 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
             } }
             if (detail == null) {
                 item { Text(stringResource(R.string.orbit_soul_help)) }
-                items(snapshot?.history.orEmpty().sortedWith(compareBy<OrbitSoulRepository.Version> {
-                    if (it.state == "pending") 0 else if (it.id == snapshot?.current?.id) 1 else 2
+                items(snapshot?.history.orEmpty().filter { it.state == "approved" }.sortedWith(compareBy<OrbitSoulRepository.Version> {
+                    if (it.id == snapshot?.current?.id) 0 else 1
                 }.thenByDescending { it.createdAt }), key = { it.id }) { version ->
                     Card(onClick = { selected = version.id }, modifier = Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                             Text(stringResource(when {
-                                version.state == "pending" -> R.string.orbit_soul_pending
                                 version.id == snapshot?.current?.id -> R.string.orbit_soul_current
-                                version.state == "rejected" -> R.string.orbit_soul_rejected
                                 else -> R.string.orbit_soul_history
                             }), style = MaterialTheme.typography.titleMedium)
                             Text(soulReason(version))
@@ -88,24 +86,10 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
             } else {
                 item {
                     Text(soulReason(detail), style = MaterialTheme.typography.titleMedium)
-                    if (detail.state == "pending") {
-                        Text(stringResource(R.string.orbit_soul_before))
-                        SelectionContainer { Text(snapshot?.current?.body.orEmpty()) }
-                        HorizontalDivider(Modifier.padding(vertical = 16.dp))
-                        Text(stringResource(R.string.orbit_soul_after))
-                    }
                     SelectionContainer { Text(detail.body) }
                 }
                 item {
-                    if (detail.state == "pending") {
-                        FilledTonalButton(enabled = !busy && detail.base == snapshot?.current?.id, onClick = { act {
-                            repository.decide(detail.id, true); selected = null
-                        } }) { Text(stringResource(R.string.orbit_soul_apply)) }
-                        if (detail.base != snapshot?.current?.id) Text(stringResource(R.string.orbit_soul_stale))
-                        TextButton(enabled = !busy, onClick = { act {
-                            repository.decide(detail.id, false); selected = null
-                        } }) { Text(stringResource(R.string.orbit_soul_reject)) }
-                    } else if (detail.state == "approved" && detail.id != snapshot?.current?.id) {
+                    if (detail.state == "approved" && detail.id != snapshot?.current?.id) {
                         FilledTonalButton(enabled = !busy, onClick = { restore = detail.id }) {
                             Text(stringResource(R.string.orbit_soul_restore))
                         }

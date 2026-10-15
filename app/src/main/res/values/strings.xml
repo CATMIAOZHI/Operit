@@ -9064,8 +9064,8 @@
     <string name="orbit_daily_task">每日主动关心</string>
     <string name="orbit_tasks_title">Orbit 任务</string>
     <string name="orbit_tasks_subtitle">查看检查计划、最近结果，暂停或取消任务</string>
-    <string name="orbit_tasks_help">在聊天里告诉 Orbit 要持续关注哪个网页。任务会保留进度；手机关机、断网或被系统限制时，检查可能延迟。</string>
-    <string name="orbit_tasks_empty">还没有任务。可以让 Orbit 帮你关注一个网页的变化。</string>
+    <string name="orbit_tasks_help">在聊天里把事情交给 Orbit，它会使用已有工具继续处理。这里可以查看进展、执行记录，或暂停和取消。手机关机或受系统限制时可能延迟。</string>
+    <string name="orbit_tasks_empty">还没有待办。可以在聊天里让 Orbit 以后继续处理一件事。</string>
     <string name="orbit_tasks_daily_default">结合最近的对话，主动提供有价值的关心或进展；没有新内容时保持安静。</string>
     <string name="orbit_task_submit">保存任务检查结果</string>
     <string name="orbit_task_action_failed">操作未完成，请重试。</string>
@@ -9174,8 +9174,8 @@
     <string name="orbit_report_digest">每日汇总</string>
     <string name="orbit_task_event_wait">等待「%1$s」完成后执行</string>
     <string name="orbit_soul_title">人格与历史</string>
-    <string name="orbit_soul_subtitle">查看 Soul、确认修改、恢复版本</string>
-    <string name="orbit_soul_help">角色卡只用于创建最初的人格。你可以在聊天中请 Orbit 提出修改，在这里确认后生效。保留当前版本和最近 19 次历史；恢复会创建新版本，不改变工具权限。</string>
+    <string name="orbit_soul_subtitle">当前人格、修改历史与恢复</string>
+    <string name="orbit_soul_help">Orbit 可以自行更新 Soul，修改直接生效。这里可以查看修改理由、历史版本，并恢复以前的人格。</string>
     <string name="orbit_soul_pending">待你确认</string>
     <string name="orbit_soul_current">当前人格</string>
     <string name="orbit_soul_rejected">未采用</string>
@@ -9190,7 +9190,7 @@
     <string name="orbit_soul_seed">创建时从角色卡保存的人格</string>
     <string name="orbit_soul_import">原有的 Soul 人格</string>
     <string name="orbit_soul_restored">从历史恢复的新版本</string>
-    <string name="orbit_soul_action_failed">操作未完成。人格可能已更新或文件暂时不可用，请重试；旧提案需要基于当前版本重新生成。</string>
+    <string name="orbit_soul_action_failed">操作未完成。人格可能已更新或文件暂时不可用，请重新读取当前版本后再试。</string>
     <string name="orbit_memory_correction_help">修改或删除已有记忆后，Orbit 会从此后的新消息继续学习，避免把旧内容重新记回来。历史对话仍可查看。</string>
     <string name="orbit_memory_inferred">这是 AI 根据来源整理的提案，不代表所有内容都已由你确认。</string>
     <string name="orbit_memory_source_missing">来源消息已不可用。</string>
@@ -9202,19 +9202,21 @@
     <string name="orbit_skill_restore_before">准备恢复修改前版本</string>
     <string name="orbit_skill_restore_after">准备恢复此版本</string>
     <string name="orbit_skill_restore_help">仅恢复这一个文件。将先生成提案，确认后生效；其他文件保持不变。整个技能已删除时无法恢复。</string>
-    <string name="orbit_connections_title">外部连接</string>
-    <string name="orbit_connections_subtitle">由你配置，供后台任务使用</string>
-    <string name="orbit_connections_help">连接器仅向你指定的 HTTPS 地址发送 JSON。启用后，此 Orbit 的后台任务可在自动审核通过后使用。凭据加密保存在本机，不交给模型，也不随备份导出。网络中断时会暂停核实，不自动重发。</string>
-    <string name="orbit_connections_error">操作未完成。请检查输入或重试；若受保护数据无法读取，原数据会保留。</string>
-    <string name="orbit_connection_name">名称</string>
-    <string name="orbit_connection_purpose">用途与允许的操作</string>
-    <string name="orbit_connection_url">固定 HTTPS 地址</string>
-    <string name="orbit_connection_token">Bearer 凭据（可选）</string>
-    <string name="orbit_connection_save_disabled">保存，暂不启用</string>
-    <string name="orbit_connection_add">添加连接</string>
-    <string name="orbit_connection_enable">启用这个连接？</string>
-    <string name="orbit_connection_enable_help">允许此 Orbit 的后台任务使用「%1$s」，向 %2$s 发送请求。每次操作仍需自动审核。关闭后停止发起新请求；已经发送的请求可能仍在远端执行。</string>
-    <string name="orbit_connection_delete_help">删除「%1$s」及其凭据，并停止新请求。已发送的请求不能撤回；已有执行记录会保留。</string>
-    <string name="orbit_connection_action">通过 %1$s 向 %2$s 发送 JSON；用户配置用途：%3$s</string>
-    <string name="orbit_connection_verify_help">请到目标服务核实这次操作。网络失败不代表没有执行。只有确认未执行或接受再次执行的风险后，才允许重新尝试；之后恢复任务可能发起新请求。</string>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_execution_record">查看执行记录</string>
 </resources>

@@ -17,8 +17,8 @@ internal object OrbitTaskActionTools {
     const val READ_WEB = "orbit_read_web"
     const val WRITE = "orbit_write_artifact"
     const val WAIT = "orbit_wait_for_user"
-    val names = setOf(READ_WEB, WRITE, WAIT, OrbitHttpConnector.LIST, OrbitHttpConnector.CALL)
-    val prompts = OrbitHttpConnector.prompts + listOf(
+    val names = setOf(READ_WEB, WRITE, WAIT)
+    val prompts = listOf(
         ToolPrompt(name = READ_WEB, description = "Read a webpage with GET, without account credentials. Returns a bounded visible-text excerpt.",
             parametersStructured = listOf(ToolParameterSchema("url", description = "http(s) URL", required = true))),
         ToolPrompt(name = WRITE, description = "Save a text artifact in this task's own folder. Cannot write elsewhere or execute its content.",
@@ -34,10 +34,8 @@ internal object OrbitTaskActionTools {
     suspend fun execute(context: Context, tool: AITool): ToolResult {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val scope = checkNotNull(OrbitTaskExecution.resolve(context, caller)) { "No live task owns this call" }
-        check(scope.task.kind == "ASSIST") { "This task is read-only" }
         val args = tool.parameters.associate { it.name to it.value }
         return when (tool.name) {
-            OrbitHttpConnector.LIST, OrbitHttpConnector.CALL -> OrbitHttpConnector.execute(context, tool, scope)
             READ_WEB -> {
                 val source = OrbitTaskRunner.readUrl(args["url"] ?: error("Missing url"))
                 OrbitTaskExecution.resolve(context, caller)

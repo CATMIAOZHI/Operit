@@ -307,11 +307,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
 
     private fun getOperationDescription(tool: AITool, reviewContext: ToolPermissionReviewContext): String =
-        if (tool.name == com.ai.assistance.operit.features.orbit.OrbitHttpConnector.CALL) {
-            com.ai.assistance.operit.core.tools.runBlockingIoPreservingToolRuntimeContext {
-                com.ai.assistance.operit.features.orbit.OrbitHttpConnector.reviewDescription(context, tool, reviewContext.callerChatId)
-            }
-        } else getOperationDescription(tool)
+        getOperationDescription(tool)
     
     /**
      * Check if a tool is allowed to execute

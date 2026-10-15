@@ -11,6 +11,22 @@ import java.util.UUID
 class OrbitTaskRepository(private val context: Context) {
     val dao = AppDatabase.getDatabase(context).orbitTaskDao()
 
+    suspend fun executionRecord(taskId: String, excludeRun: String = ""): String {
+        val run = dao.previousRun(taskId, excludeRun) ?: return ""
+        val bindings = dao.bindings(run.id, run.generation).sortedWith(
+            compareBy<com.ai.assistance.operit.data.model.OrbitTaskChatEntity> { it.chatId != it.rootChatId }.thenBy { it.chatId })
+        if (bindings.isEmpty()) return ""
+        // Every child gets space: a child's external operation may never have reached its parent.
+        val perChat = (20_000 / bindings.size - 150).coerceAtLeast(200)
+        return bindings.map { binding ->
+            val body = dao.executionSource(binding.chatId).reversed().joinToString("\n\n") {
+                "${it.sender}: ${com.ai.assistance.operit.util.ChatUtils.removeThinkingContent(it.content)}"
+            }
+            "[${if (binding.chatId == binding.rootChatId) "root" else "child"} ${binding.chatId}]\n" +
+                (if (body.length > perChat) "[Earlier content omitted]\n" else "") + body.takeLast(perChat)
+        }.joinToString("\n\n")
+    }
+
     suspend fun create(
         orbit: OrbitProfile, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, requestId: String, kind: String = "URL_CHANGE",
@@ -68,7 +84,7 @@ class OrbitTaskRepository(private val context: Context) {
             if (state == "ACTIVE") check(dao.unresolvedActions(taskId).isEmpty()) {
                 "Verify the unfinished operation in task details before resuming"
             }
-            dao.replaceDefinition(task.copy(state = targetState, nextRunAt = nextAt(task, now),
+            dao.replaceDefinition(task.copy(state = targetState, nextRunAt = if (state == "ACTIVE") now else nextAt(task, now),
                 updatedAt = now), task.version)
         }
         if (changed) {
@@ -122,7 +138,12 @@ class OrbitTaskRepository(private val context: Context) {
         val id = "daily-${orbit.id}"
         val now = System.currentTimeMillis()
         val old = dao.task(id)
-        val state = if (settings.proactiveEnabled) "ACTIVE" else "PAUSED"
+        val state = when {
+            !settings.proactiveEnabled -> "PAUSED"
+            old?.state in setOf("WAITING_USER", "VERIFY") -> old!!.state
+            old?.state == "PAUSED" && dao.latestRun(id)?.state == "INTERRUPTED" -> "PAUSED"
+            else -> "ACTIVE"
+        }
         val title = context.getString(com.ai.assistance.operit.R.string.orbit_daily_task)
         val proposed = OrbitTaskEntity(id, orbit.id, orbit.chatId, title, settings.focusNotes,
             "DAILY", "", 1440, settings.checkInMinuteOfDay, "CHANGES", state,

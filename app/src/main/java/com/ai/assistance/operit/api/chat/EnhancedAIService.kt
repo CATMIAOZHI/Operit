@@ -3492,7 +3492,8 @@ class EnhancedAIService private constructor(
                 TAG,
                 "Tool Call已启用，提供 ${hookedTools.size} 个工具 (base=${selectedTools.size}, enableTools=$enableTools, visibleToolOverrides=${toolPromptVisibility.size}, roleCardCustomTools=${roleCardToolAccess.customEnabled})"
             )
-            hookedTools
+            (hookedTools + com.ai.assistance.operit.features.orbit.OrbitTaskExecution
+                .additionalPrompts(context, chatId)).distinctBy { it.name }
         } catch (e: Exception) {
             AppLogger.e(TAG, "获取工具列表失败", e)
             null

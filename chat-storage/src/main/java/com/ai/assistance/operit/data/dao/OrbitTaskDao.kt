@@ -247,6 +247,10 @@ interface OrbitTaskDao {
 
     @Query("SELECT sender, CASE WHEN sender='ai' THEN SUBSTR(content,-3000) ELSE SUBSTR(content,1,3000) END AS content FROM messages WHERE chatId=:chatId AND sender IN ('user','ai') AND displayMode='NORMAL' ORDER BY orderIndex DESC LIMIT 12")
     suspend fun recentSource(chatId: String): List<OrbitSourceMessage>
+    @Query("SELECT * FROM orbit_runs WHERE taskId=:taskId AND id!=:exclude ORDER BY startedAt DESC LIMIT 1")
+    suspend fun previousRun(taskId: String, exclude: String): OrbitRunEntity?
+    @Query("SELECT sender, SUBSTR(content,-12000) AS content FROM messages WHERE chatId=:chatId ORDER BY orderIndex DESC LIMIT 20")
+    suspend fun executionSource(chatId: String): List<OrbitSourceMessage>
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     fun observeTasks(orbitId: String): Flow<List<OrbitTaskEntity>>
 
@@ -426,6 +430,7 @@ interface OrbitTaskDao {
     suspend fun claim(
         event: OrbitEventEntity, owner: String, bootId: String,
         now: Long, elapsed: Long, leaseMs: Long,
+        interruptedMessage: String = "Execution interrupted. Check previous results before continuing.",
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
@@ -445,6 +450,10 @@ interface OrbitTaskDao {
             old?.let { updateRun(it.copy(state = "UNKNOWN", finishedAt = now)) }
             return null
         }
+        if (old != null && bindings(old.id, old.generation).isNotEmpty()) {
+            interrupt(old, now, interruptedMessage)
+            return null
+        }
         val run = if (old == null) OrbitRunEntity(
             id = event.id, eventId = event.id, taskId = task.id, taskVersion = task.version,
             state = "RUNNING", owner = owner, generation = 1, bootId = bootId,
@@ -455,6 +464,21 @@ interface OrbitTaskDao {
             leaseUntilElapsed = elapsed + leaseMs, leaseUntilWall = now + leaseMs)
         if (old == null) insertRun(run) else updateRun(run)
         return run
+    }
+
+    /** A started model may have used any ordinary tool; never replay it after losing ownership. */
+    @Transaction
+    suspend fun interrupt(token: OrbitRunEntity, now: Long, message: String): Boolean {
+        val current = run(token.id) ?: return false
+        val task = task(token.taskId) ?: return false
+        if (current.state != "RUNNING" || current.owner != token.owner || current.generation != token.generation ||
+            task.version != token.taskVersion || task.state != "ACTIVE") return false
+        markUnreceiptedUnknown(task.id, now)
+        updateTask(task.copy(state = if (unresolvedActions(task.id).isEmpty()) "PAUSED" else "VERIFY", updatedAt = now))
+        updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now))
+        insertDelivery(OrbitDeliveryEntity(current.id, current.id, task.id, task.version, task.orbitId,
+            task.chatId, task.title, message, now, "PENDING", null, null, false))
+        return true
     }
 
     @Transaction
