@@ -58,13 +58,14 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
     suspend fun resolve(
         roleCardId: String?,
         packageManager: PackageManager,
-        globalToolVisibility: Map<String, Boolean>? = null
+        globalToolVisibility: Map<String, Boolean>? = null,
+        chatId: String? = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
     ): ResolvedCharacterCardToolAccess {
         val effectiveGlobalToolVisibility = globalToolVisibility
             ?: runCatching { apiPreferences.toolPromptVisibilityFlow.first() }.getOrElse { emptyMap() }
 
         val globalPackageNames = buildGlobalPackageNames(packageManager)
-        val globalSkillNames = LinkedHashSet(skillRepository.getAiVisibleSkillPackages().keys)
+        val globalSkillNames = LinkedHashSet(SkillRepository.forChat(context, chatId).getAiVisibleSkillPackages().keys)
         val globalMcpServerNames = LinkedHashSet(packageManager.getAvailableServerPackages().keys)
 
         val roleCardConfig = roleCardId

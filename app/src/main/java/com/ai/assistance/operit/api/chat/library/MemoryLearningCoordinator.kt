@@ -285,6 +285,14 @@ object MemoryLearningCoordinator {
 
     suspend fun review(context: Context, profileId: String, chatId: String, manual: Boolean = false,
                        reviewNotes: Boolean = true, reviewSkills: Boolean = true) {
+        val resolvedSpace = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, chatId, profileId)
+        if (resolvedSpace != profileId) {
+            val reason = context.getString(R.string.orbit_memory_learning_scope_changed)
+            recordUnreviewable(context, profileId, chatId, listOf("notes", "skills"), reason)
+            MemoryLearningJournal(context, profileId, chatId).discardForScopeChange()
+            if (manual) error(reason)
+            return
+        }
         if (!manual && !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
         val db = AppDatabase.getDatabase(context)
         val chat = db.chatDao().getChatById(chatId)

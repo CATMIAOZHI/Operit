@@ -1531,6 +1531,7 @@ fun AgentChatInputSection(
             )
 
             AttachmentSelectorPopupPanel(
+                chatId = currentChatId,
                 visible = showAttachmentPanel,
                 containerColor = popupContainerColor,
                 onAttachImage = { filePath -> onAttachmentRequest(filePath) },

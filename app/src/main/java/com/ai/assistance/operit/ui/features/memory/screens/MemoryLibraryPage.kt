@@ -21,8 +21,9 @@ fun MemoryLibraryPage(
     onBack: () -> Unit,
     content: @Composable () -> Unit
 ) {
-    val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
-    val profileName = profileNames[profileId] ?: profileId
+    val profile by remember(profileId) { preferencesManager.getMemorySpaceFlow(profileId) }
+        .collectAsState(initial = null)
+    val profileName = profile?.name.orEmpty()
     BackHandler(onBack = onBack)
     Scaffold(
         modifier = Modifier.fillMaxSize(),

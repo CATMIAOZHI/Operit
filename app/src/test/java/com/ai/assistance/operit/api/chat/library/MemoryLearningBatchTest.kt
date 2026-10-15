@@ -18,9 +18,28 @@ import org.junit.rules.TemporaryFolder
 import org.mockito.kotlin.*
 
 class MemoryLearningBatchTest {
+    private fun journal(context: Context, profile: String, chat: String) =
+        MemoryLearningJournal(context, profile, chat, resolveScope = { profile })
+
+    @Test fun completedGlobalBatchIsNotExportedAfterOrbitMigration() = runBlocking {
+        val context = context()
+        whenever(context.getString(com.ai.assistance.operit.R.string.orbit_memory_learning_scope_changed))
+            .thenReturn("scope changed")
+        val old = journal(context, "global", "orbit-chat")
+        old.enqueue(true, true, 10)
+        old.complete(listOf("notes", "skills"), LearningCursor(10), false,
+            listOf(MemoryReviewChange("old-result", "notes", "memory.md", "private fact",
+                sourceChatId = "orbit-chat")))
+        val migrated = MemoryLearningJournal(context, "global", "orbit-chat",
+            resolveScope = { "orbit-private" })
+        assertEquals(listOf("scope changed"), migrated.export())
+        assertTrue(MemoryReviewRepository(context, "global").list().isEmpty())
+        assertFalse(MemoryLearningJournal.pending(context).contains("global" to "orbit-chat"))
+        assertFalse(java.io.File(context.filesDir, "memory_reviews").exists())
+    }
     @Test fun failedImportRetainsBatchAndRecoversWithoutDuplicatingIds() = runBlocking {
         val context = context()
-        val journal = MemoryLearningJournal(context, "space", "chat")
+        val journal = journal(context, "space", "chat")
         journal.enqueue(true, false, 10)
         journal.complete(listOf("notes"), LearningCursor(7), false,
             listOf(MemoryReviewChange("retained-id", "notes", "memory.md", "proposal", sourceChatId="chat")))
@@ -33,7 +52,7 @@ class MemoryLearningBatchTest {
         } catch (_: java.io.IOException) { }
         assertTrue(MemoryLearningJournal.pending(context).contains("space" to "chat"))
         assertTrue(blocked.delete())
-        val restored = MemoryLearningJournal(context, "space", "chat")
+        val restored = journal(context, "space", "chat")
         restored.export()
         restored.export()
         assertEquals(listOf("retained-id"), MemoryReviewRepository(context,"space").list().map { it.id })
@@ -80,12 +99,12 @@ class MemoryLearningBatchTest {
     }
     @Test fun journalPersistsSeparateCoverageAndReplaysProposalIdsOnce() = runBlocking {
         val context=context()
-        val journal=MemoryLearningJournal(context,"space","chat")
+        val journal=journal(context,"space","chat")
         journal.enqueue(true,true,10)
         val change=MemoryReviewChange("stable-id","notes","memory.md","proposal",sourceChatId="chat")
         journal.complete(listOf("notes"),LearningCursor(7),true,listOf(change))
         // Simulate process death after durable completion, before review history export.
-        val restored=MemoryLearningJournal(context,"space","chat")
+        val restored=journal(context,"space","chat")
         assertEquals(7,restored.cursor("notes").messageId)
         assertEquals(0,restored.cursor("skills").messageId)
         restored.export()
@@ -167,9 +186,9 @@ class MemoryLearningBatchTest {
         val body="A repeatable procedure with prerequisites, steps and checks."
         val change=MemoryReviewChange("draft","skill","demo-skill",body,description="Demo",
             files=mapOf("references/guide.md" to "Full reference"))
-        val journal=MemoryLearningJournal(context,"space","chat")
+        val journal=journal(context,"space","chat")
         journal.complete(listOf("skills"),LearningCursor(9),false,listOf(change))
-        MemoryLearningJournal(context,"space","chat").export()
+        journal(context,"space","chat").export()
         val repo=MemoryReviewRepository(context,"space")
         assertEquals(change.files,repo.list().single().files)
         val revised=repo.revise("draft",body+" Updated.","Updated")
@@ -246,9 +265,9 @@ class MemoryLearningBatchTest {
     }
     @Test fun deletingAConversationDropsItsPendingProgressOnly() = runBlocking {
         val context=context()
-        MemoryLearningJournal(context,"space","chat-gone").enqueue(true,true,10)
-        MemoryLearningJournal(context,"space","chat-kept").enqueue(true,true,10)
-        MemoryLearningJournal(context,"other","chat-gone").enqueue(true,false,10)
+        journal(context,"space","chat-gone").enqueue(true,true,10)
+        journal(context,"space","chat-kept").enqueue(true,true,10)
+        journal(context,"other","chat-gone").enqueue(true,false,10)
         // A deleted conversation can never be reviewed again, so its progress must not survive to be
         // retried on the next launch, while other conversations and spaces stay untouched.
         MemoryLearningJournal.deleteChat(context,"chat-gone")
@@ -256,40 +275,40 @@ class MemoryLearningBatchTest {
     }
     @Test fun aRangeEnqueuedWhileABatchRunsKeepsItsPendingMarker() = runBlocking {
         val context=context()
-        val running=MemoryLearningJournal(context,"space","chat")
+        val running=journal(context,"space","chat")
         running.enqueue(true,false,10)
         // A turn arrives while the batch is talking to the model, so the same range is enqueued again
         // with a wider horizon. The batch that started earlier must not clear that newer marker.
-        MemoryLearningJournal(context,"space","chat").enqueue(true,false,20)
+        journal(context,"space","chat").enqueue(true,false,20)
         running.complete(listOf("notes"),LearningCursor(7),false,emptyList())
-        val restored=MemoryLearningJournal(context,"space","chat")
+        val restored=journal(context,"space","chat")
         assertTrue(restored.pending("notes"))
         assertEquals(20,restored.horizon())
     }
     @Test fun aQuietBatchStillClearsItsOwnPendingMarker() = runBlocking {
         val context=context()
-        val journal=MemoryLearningJournal(context,"space","chat")
+        val journal=journal(context,"space","chat")
         journal.enqueue(true,false,10)
         // Nothing was enqueued after this range, so draining it must stop the retries.
         journal.complete(listOf("notes"),LearningCursor(7),false,emptyList())
-        assertFalse(MemoryLearningJournal(context,"space","chat").pending("notes"))
+        assertFalse(journal(context,"space","chat").pending("notes"))
     }
     @Test fun abandoningDoesNotClearARangeEnqueuedDuringTheBatch() = runBlocking {
         val context=context()
-        val running=MemoryLearningJournal(context,"space","chat")
+        val running=journal(context,"space","chat")
         running.enqueue(true,false,10)
-        MemoryLearningJournal(context,"space","chat").enqueue(true,false,20)
+        journal(context,"space","chat").enqueue(true,false,20)
         running.abandon(listOf("notes"))
         // The abandoned batch is older than the marker, so the marker has to stay for the newer range.
-        assertTrue(MemoryLearningJournal(context,"space","chat").pending("notes"))
+        assertTrue(journal(context,"space","chat").pending("notes"))
     }
     @Test fun anOldJournalWithoutEnqueuedAtIsStampedInsteadOfWaitingForever() = runBlocking {
         val context=context()
-        MemoryLearningJournal(context,"space","chat").enqueue(true,false,10)
+        journal(context,"space","chat").enqueue(true,false,10)
         val file=java.io.File(context.filesDir,"memory_learning_progress").listFiles()!!.single()
         // A journal written before the field existed carries no age at all.
         file.writeText(org.json.JSONObject(file.readText()).apply { remove("enqueued_at") }.toString())
-        assertFalse(MemoryLearningJournal(context,"space","chat").pendingForAtLeast(600_000))
+        assertFalse(journal(context,"space","chat").pendingForAtLeast(600_000))
         // The stamp is written back, so the age counts from this read instead of never applying.
         assertTrue(file.readText().contains("enqueued_at"))
     }
@@ -359,15 +378,15 @@ class MemoryLearningBatchTest {
     }
     @Test fun aRangeEnqueuedWhileABatchRunsSurvivesItsExport() = runBlocking {
         val context=context()
-        val running=MemoryLearningJournal(context,"space","chat")
+        val running=journal(context,"space","chat")
         running.enqueue(true,true,10)
         // The later instance stands in for the per-turn enqueue of the foreground conversation: it
         // widens the horizon and asks for skills just as this batch finishes draining notes.
-        MemoryLearningJournal(context,"space","chat").enqueue(false,true,30)
+        journal(context,"space","chat").enqueue(false,true,30)
         running.complete(listOf("notes"),LearningCursor(7),false,
             listOf(MemoryReviewChange("proposal-id","notes","memory.md","proposal",sourceChatId="chat")))
         assertEquals(emptyList<String>(),running.export())
-        val restored=MemoryLearningJournal(context,"space","chat")
+        val restored=journal(context,"space","chat")
         // The newer range survives the older batch's write: the path it drained still reports the
         // enqueue that landed while it ran, skills keep their marker, and the horizon is merged
         // instead of the stale copy overwriting the newer one.
@@ -382,20 +401,20 @@ class MemoryLearningBatchTest {
     }
     @Test fun abandoningARangeStopsRetriesAndKeepsTheCursor() = runBlocking {
         val context=context()
-        val journal=MemoryLearningJournal(context,"space","chat")
+        val journal=journal(context,"space","chat")
         journal.enqueue(true,false,10)
         journal.complete(listOf("notes"),LearningCursor(7),true,emptyList())
         journal.export()
         journal.abandon(listOf("notes"))
         // Cleared so nothing reschedules it, and the cursor stays put so a later trigger re-reads it.
-        val restored=MemoryLearningJournal(context,"space","chat")
+        val restored=journal(context,"space","chat")
         assertFalse(restored.pending("notes"))
         assertEquals(7,restored.cursor("notes").messageId)
         assertTrue(MemoryLearningJournal.pending(context).isEmpty())
     }
     @Test fun abandoningAFinishedBatchDoesNotStrandItsExportBarrier() = runBlocking {
         val context=context()
-        val journal=MemoryLearningJournal(context,"space","chat")
+        val journal=journal(context,"space","chat")
         journal.enqueue(true,false,10)
         journal.complete(listOf("notes"),LearningCursor(7),true,emptyList())
         journal.abandon(listOf("notes"))
@@ -404,7 +423,7 @@ class MemoryLearningBatchTest {
         // The range is abandoned, but the next complete/export cycle must still work normally.
         journal.complete(listOf("notes"),LearningCursor(9),false,emptyList())
         journal.export()
-        val restored=MemoryLearningJournal(context,"space","chat")
+        val restored=journal(context,"space","chat")
         assertFalse(restored.pending("notes"))
         assertEquals(9,restored.cursor("notes").messageId)
     }

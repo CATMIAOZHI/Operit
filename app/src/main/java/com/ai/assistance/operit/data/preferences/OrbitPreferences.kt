@@ -51,6 +51,11 @@ data class OrbitProfile(
     /** Orbit's picture: copied from the role card at creation, or one the user picked. */
     val avatarUri: String? = null,
     val createdAt: Long = 0L,
+    val memorySpaceId: String? = null,
+    /** Includes task and descendant chats; ownership survives worker/process restarts. */
+    val ownedChatIds: Set<String> = emptySet(),
+    /** Persisted before cancellation so restart cannot resume a partially deleted companion. */
+    val deleting: Boolean = false,
 )
 
 data class OrbitSettings(
@@ -67,6 +72,8 @@ data class OrbitSettings(
     val lastRunAt: Long = 0L,
     val lastRunOutcome: OrbitRunOutcome? = null,
     val lastRunDetail: String = "",
+    /** Retained after Orbit deletion so its archived chats never become global recall sources. */
+    val chatOwners: Map<String, String> = emptyMap(),
 ) {
     val active: OrbitProfile?
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
@@ -76,6 +83,11 @@ data class OrbitSettings(
 
     fun orbitFromRoleCard(roleCardId: String): OrbitProfile? =
         orbits.firstOrNull { it.sourceRoleCardId == roleCardId }
+
+    fun ownerForChat(chatId: String?): OrbitProfile? =
+        chatId?.let { id -> orbits.firstOrNull {
+            it.chatId == id || id in it.ownedChatIds || chatOwners[id] == it.id
+        } }
 
     companion object {
         const val DEFAULT_CHECK_IN_MINUTE = 9 * 60
@@ -103,6 +115,10 @@ class OrbitPreferences private constructor(context: Context) {
                     OrbitRunOutcome.entries.firstOrNull { it.name == name }
                 },
             lastRunDetail = preferences[LAST_RUN_DETAIL].orEmpty(),
+            chatOwners = preferences[CHAT_OWNERS]?.let { raw ->
+                val json = JSONObject(raw)
+                json.keys().asSequence().associateWith { json.getString(it) }
+            }.orEmpty(),
         )
     }
 
@@ -153,11 +169,30 @@ class OrbitPreferences private constructor(context: Context) {
         updateOrbits { orbits -> orbits.filterNot { it.id == profile.id } + profile }
     }
 
+    suspend fun rememberChatOwner(chatId: String, orbitId: String) {
+        dataStore.edit { preferences ->
+            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
+            check(!owners.has(chatId) || owners.getString(chatId) == orbitId)
+            owners.put(chatId, orbitId)
+            preferences[CHAT_OWNERS] = owners.toString()
+        }
+    }
+
+    suspend fun markDeleting(orbitId: String) {
+        updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(deleting = true) else it } }
+        if (current().activeOrbitId == orbitId) setActive(null)
+    }
+
     /** Removes the Orbit and its Soul.md, and pauses it first when it was running. */
     suspend fun removeOrbit(orbitId: String) {
         var avatarUri: String? = null
         dataStore.edit { preferences ->
             val orbits = decodeOrbits(preferences[ORBITS])
+            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
+            orbits.forEach { orbit ->
+                (orbit.ownedChatIds + orbit.chatId).forEach { owners.put(it, orbit.id) }
+            }
+            preferences[CHAT_OWNERS] = owners.toString()
             avatarUri = orbits.firstOrNull { it.id == orbitId }?.avatarUri
             preferences[ORBITS] = encodeOrbits(orbits.filterNot { it.id == orbitId })
             if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
@@ -170,6 +205,27 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun setName(orbitId: String, name: String) {
         updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(name = name) else it } }
+    }
+
+    suspend fun bindMemory(orbitId: String, memorySpaceId: String) {
+        updateOrbits { orbits ->
+            check(orbits.any { it.id == orbitId }) { "Orbit no longer exists" }
+            orbits.map {
+                if (it.id == orbitId) {
+                    check(it.memorySpaceId == null || it.memorySpaceId == memorySpaceId)
+                    it.copy(memorySpaceId = memorySpaceId)
+                } else it
+            }
+        }
+    }
+
+    suspend fun inheritChat(parentChatId: String, childChatId: String) {
+        updateOrbits { orbits ->
+            val owner = orbits.firstOrNull { it.chatId == parentChatId || parentChatId in it.ownedChatIds }
+                ?: return@updateOrbits orbits
+            check(orbits.none { it.id != owner.id && (it.chatId == childChatId || childChatId in it.ownedChatIds) })
+            orbits.map { if (it.id == owner.id) it.copy(ownedChatIds = it.ownedChatIds + childChatId) else it }
+        }
     }
 
     suspend fun setAvatar(orbitId: String, avatarUri: String?) {
@@ -202,6 +258,7 @@ class OrbitPreferences private constructor(context: Context) {
             if (orbitId == null) {
                 preferences.remove(ACTIVE_ORBIT_ID)
             } else {
+                check(decodeOrbits(preferences[ORBITS]).any { it.id == orbitId && !it.deleting })
                 preferences[ACTIVE_ORBIT_ID] = orbitId
             }
         }
@@ -245,7 +302,17 @@ class OrbitPreferences private constructor(context: Context) {
 
     private suspend fun updateOrbits(transform: (List<OrbitProfile>) -> List<OrbitProfile>) {
         dataStore.edit { preferences ->
-            preferences[ORBITS] = encodeOrbits(transform(decodeOrbits(preferences[ORBITS])))
+            val previous = decodeOrbits(preferences[ORBITS])
+            val updated = transform(previous)
+            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
+            (previous + updated).forEach { orbit ->
+                (orbit.ownedChatIds + orbit.chatId).forEach { chatId ->
+                    check(!owners.has(chatId) || owners.getString(chatId) == orbit.id)
+                    owners.put(chatId, orbit.id)
+                }
+            }
+            preferences[CHAT_OWNERS] = owners.toString()
+            preferences[ORBITS] = encodeOrbits(updated)
         }
     }
 
@@ -255,6 +322,7 @@ class OrbitPreferences private constructor(context: Context) {
         const val AVATAR_FILE_PREFIX = "orbit_avatar_"
         private const val MAX_DETAIL_LENGTH = 300
         private val ORBITS = stringPreferencesKey("orbit_profiles")
+        private val CHAT_OWNERS = stringPreferencesKey("orbit_chat_owners")
         private val ACTIVE_ORBIT_ID = stringPreferencesKey("active_orbit_id")
         private val PROACTIVE_ENABLED = booleanPreferencesKey("proactive_enabled")
         private val CHECK_IN_MINUTE = intPreferencesKey("check_in_minute_of_day")
@@ -279,6 +347,11 @@ class OrbitPreferences private constructor(context: Context) {
                         name = item.optString("name"),
                         avatarUri = item.optString("avatarUri").takeIf { it.isNotBlank() },
                         createdAt = item.optLong("createdAt"),
+                        memorySpaceId = item.optString("memorySpaceId").takeIf { it.isNotBlank() },
+                        ownedChatIds = item.optJSONArray("ownedChatIds")?.let { ids ->
+                            (0 until ids.length()).map { ids.getString(it) }.toSet()
+                        }.orEmpty(),
+                        deleting = item.optBoolean("deleting", false),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -295,6 +368,9 @@ class OrbitPreferences private constructor(context: Context) {
                             put("name", orbit.name)
                             orbit.avatarUri?.let { put("avatarUri", it) }
                             put("createdAt", orbit.createdAt)
+                            orbit.memorySpaceId?.let { put("memorySpaceId", it) }
+                            put("ownedChatIds", JSONArray(orbit.ownedChatIds.toList()))
+                            put("deleting", orbit.deleting)
                         }
                     )
                 }

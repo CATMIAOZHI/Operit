@@ -96,7 +96,7 @@ fun SkillConfigScreen(
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
 
-    val skillVisibilityPreferences = remember { SkillVisibilityPreferences.getInstance(context) }
+    val skillVisibilityPreferences = skillRepository.skillVisibilityPreferences
 
     var skills by remember { mutableStateOf<Map<String, SkillPackage>>(emptyMap()) }
     var learnedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
@@ -127,7 +127,7 @@ fun SkillConfigScreen(
                     skillRepository.getAvailableSkillPackagesSnapshot()
                 }
             skills = loaded.first
-            learnedNames = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).owned(learnedOnlyProfileId)
+            learnedNames = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId).owned(learnedOnlyProfileId)
             skillLoadErrors = loaded.second
         } finally {
             isLoading = false

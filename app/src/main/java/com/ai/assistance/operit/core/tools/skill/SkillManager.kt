@@ -12,12 +12,20 @@ import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 import kotlinx.coroutines.runBlocking
 
-class SkillManager private constructor(private val context: Context) {
+class SkillManager private constructor(private val context: Context, private val orbitId: String? = null) {
 
     companion object {
         private const val TAG = "SkillManager"
 
         @Volatile private var INSTANCE: SkillManager? = null
+        private val orbitInstances = java.util.concurrent.ConcurrentHashMap<String, SkillManager>()
+
+        suspend fun forMemorySpace(context: Context, spaceId: String): SkillManager {
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, spaceId)
+                ?: return getInstance(context)
+            require(owner.matches(Regex("[a-zA-Z0-9-]+")))
+            return orbitInstances.computeIfAbsent(owner) { SkillManager(context.applicationContext, owner) }
+        }
 
         fun getInstance(context: Context): SkillManager {
             return INSTANCE
@@ -38,7 +46,8 @@ class SkillManager private constructor(private val context: Context) {
      * creating it on access is fine.
      */
     private fun getInternalSkillsRootDir(): File {
-        return paths.internalSkills
+        return orbitId?.let { File(context.filesDir, "orbit/$it/skills").apply { mkdirs() } }
+            ?: paths.internalSkills
     }
 
     /**
@@ -79,7 +88,7 @@ class SkillManager private constructor(private val context: Context) {
         // 2. Scan the legacy Download store only if the read switch is on; probing must never
         // create the legacy tree, so require it to already be a directory.
         val legacySkillsDir = getLegacySkillsRootDir()
-        if (runBlocking { legacyPrefs.isReadLegacySkills() } && legacySkillsDir.isDirectory) {
+        if (orbitId == null && runBlocking { legacyPrefs.isReadLegacySkills() } && legacySkillsDir.isDirectory) {
             val hiddenPaths = runBlocking { legacyPrefs.hiddenLegacySkillPaths() }
             scanSkillDirectory(
                 legacySkillsDir,
@@ -235,7 +244,7 @@ class SkillManager private constructor(private val context: Context) {
         refreshAvailableSkills()
         val skill = availableSkills[skillName] ?: return false
         return try {
-            if(clearLearningOwnership) runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(skillName) }
+            if(clearLearningOwnership) runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, orbitId?.let { "orbit_$it" }).forget(skillName) }
             val ok =
                 if (skill.storageSource.isLegacy()) {
                     // Never delete the Download original; hide it by relative path so it does
@@ -248,7 +257,7 @@ class SkillManager private constructor(private val context: Context) {
                     // matches before deleting the winner; otherwise a later refresh/re-enable
                     // would make the shadowed Download copy immediately reappear.
                     val shadowedLegacyPaths =
-                        legacySkillDirectoryNamesMatching(
+                        if (orbitId != null) emptyList() else legacySkillDirectoryNamesMatching(
                             root = getLegacySkillsRootDir(),
                             skillName = skillName,
                             metadataName = { file -> parseSkillMetadata(file).first },
@@ -261,7 +270,7 @@ class SkillManager private constructor(private val context: Context) {
             if (ok) {
                 availableSkills.remove(skillName)
                 if (clearLearningOwnership)
-                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+                    com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
             }
             ok
         } catch (e: Exception) {
@@ -465,7 +474,7 @@ class SkillManager private constructor(private val context: Context) {
 
             // Publish the fully extracted directory at once; interrupted copies must not leave
             // a partial installed skill that blocks a retry as a duplicate.
-            runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context).forget(metaName.ifBlank { finalDir.name }) }
+            runBlocking { com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, orbitId?.let { "orbit_$it" }).forget(metaName.ifBlank { finalDir.name }) }
             java.nio.file.Files.move(selectedSkillDir.toPath(), finalDir.toPath())
             cleanupTmp()
 
@@ -473,7 +482,7 @@ class SkillManager private constructor(private val context: Context) {
             refreshAvailableSkills()
 
             val desc = metaDesc.ifBlank { "" }
-            if (notifyPrefix) com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, "settings")
+            if (notifyPrefix) com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
             return SkillImportResult(if (desc.isNotBlank()) {
                 context.getString(R.string.skill_imported_with_desc, finalDir.name, desc)
             } else {

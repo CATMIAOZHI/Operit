@@ -9,32 +9,47 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-class ChatRecallRepository internal constructor(private val dao: com.ai.assistance.operit.data.dao.ChatContentDao) {
-    constructor(context: Context) : this(AppDatabase.getDatabase(context).chatContentDao())
+class ChatRecallRepository internal constructor(
+    private val dao: com.ai.assistance.operit.data.dao.ChatContentDao,
+    private val scope: suspend () -> Pair<Int, List<String>> = { 0 to emptyList() }
+) {
+    constructor(context: Context, callerChatId: String? = null) : this(
+        AppDatabase.getDatabase(context).chatContentDao(),
+        {
+            val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(context, callerChatId)
+            (if (own) 1 else 2) to ids
+        }
+    )
     suspend fun search(query: String, offset: Int = 0, role: String = "", profile: String = "",
         chatId: String = "", after: Long = 0, before: Long = Long.MAX_VALUE,
         literal: Boolean = false): List<ChatRecallHit> = withContext(Dispatchers.IO) {
         require(query.trim().length in 1..200)
         require(role in setOf("", "user", "ai") && after <= before && offset >= 0)
+        val (mode, ids) = scope()
         // unicode61 treats an uninterrupted CJK sentence as one token; substring search is
         // required for ordinary Chinese/Japanese keywords.
         if (literal || recallUsesLiteral(query))
-            dao.searchRecallLiteral(query.trim(),role,profile,chatId,after,before,20,offset)
+            dao.searchRecallLiteral(query.trim(),role,profile,chatId,after,before,20,offset,mode,ids)
         else dao.searchRecallIndex(query.trim().split(Regex("\\s+")).joinToString(" OR ") {
             "\"${it.replace("\"", "\"\"")}\""
-        },role,profile,chatId,after,before,20,offset)
+        },role,profile,chatId,after,before,20,offset,mode,ids)
     }
     suspend fun context(messageId: Long, window: Int = 5): List<ChatRecallHit> = withContext(Dispatchers.IO) {
         require(messageId > 0)
-        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
+        val (mode, ids) = scope()
+        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1,mode,ids).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
     }
     suspend fun browse(profile: String = "", after: Long = 0, before: Long = Long.MAX_VALUE, offset: Int = 0) =
-        dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0))
+        scope().let { (mode, ids) -> dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0),mode,ids) }
     suspend fun session(chatId: String, offset: Int = 0, role: String = "", after: Long = 0, before: Long = Long.MAX_VALUE) =
-        dao.readRecallSession(chatId, role, after, before, 20, offset.coerceAtLeast(0))
+        scope().let { (mode, ids) -> dao.readRecallSession(chatId, role, after, before, 20, offset.coerceAtLeast(0),mode,ids) }
+    private suspend fun readPart(id: Long, offset: Int, limit: Int) =
+        scope().let { (mode, ids) -> dao.readRecallMessagePart(id, offset, limit,mode,ids) }
+    private suspend fun readBytes(id: Long, offset: Long) =
+        scope().let { (mode, ids) -> dao.readRecallMessageBytes(id, offset,mode,ids) }
     suspend fun message(id: Long, charOffset: Int = 0): com.ai.assistance.operit.data.dao.ChatRecallPart? {
         val start = charOffset.coerceAtLeast(0)
-        val part = dao.readRecallMessagePart(id, start, 8000) ?: return null
+        val part = readPart(id, start, 8000) ?: return null
         if (!part.containsNull) return part
         // SQLite text LENGTH/SUBSTR stop at NUL. Scan bounded UTF-8 chunks only for these
         // messages, retaining at most one requested page and never a whole large body.
@@ -43,7 +58,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
         val page = StringBuilder()
         while (true) {
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
-            val bytes = dao.readRecallMessageBytes(id, byteOffset) ?: return null
+            val bytes = readBytes(id, byteOffset) ?: return null
             if (bytes.isEmpty()) break
             var length = bytes.size
             if (bytes.size == 32768) {
@@ -78,7 +93,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
         val result = JSONObject()
         when {
             id != null && args["mode"] == "message" -> {
-                val probe = if (filterAssistantThinking) dao.readRecallMessagePart(id, 0, 1) else null
+                val probe = if (filterAssistantThinking) readPart(id, 0, 1) else null
                 val part = if (probe?.sender in setOf("ai", "assistant")) probe
                     else message(id, args["char_offset"]?.toIntOrNull() ?: 0)
                 val start = args["char_offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
@@ -115,7 +130,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
             suspend fun clean(item: JSONObject, start: Int, limit: Int) {
                 val messageId = item.optLong("message_id", item.optLong("id"))
                 if (messageId <= 0) return
-                val raw = dao.readRecallMessagePart(messageId, 0, 1)
+                val raw = readPart(messageId, 0, 1)
                 if (raw == null) {
                     item.remove("content"); item.remove("excerpt")
                     item.put("unavailable", true)
@@ -125,7 +140,7 @@ class ChatRecallRepository internal constructor(private val dao: com.ai.assistan
                     if (args["literal"] == "true" || recallUsesLiteral(query)) listOf(query.trim())
                     else query.trim().split(Regex("\\s+"))
                 } else emptyList()
-                val page = RecallEvidenceReader.read({ dao.readRecallMessageBytes(messageId, it) },
+                val page = RecallEvidenceReader.read({ readBytes(messageId, it) },
                     raw.sender in setOf("ai", "assistant"), includeThinking, start, limit, terms,
                     fts=args["literal"]!="true" && !recallUsesLiteral(query))
                 if (page == null) {

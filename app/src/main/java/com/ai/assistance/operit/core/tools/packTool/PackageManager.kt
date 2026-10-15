@@ -3109,7 +3109,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
      * @param packageName The name of the enabled package to use
      * @return Package description and tools for AI prompt enhancement, or error message
      */
-    fun usePackage(packageName: String): String {
+    fun usePackage(packageName: String, callerChatId: String? =
+        com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId): String {
         ensureInitialized()
         val normalizedPackageName = normalizePackageName(packageName)
 
@@ -3214,13 +3215,16 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         // Then check if it's a Skill package
-        if (skillManager.getAvailableSkills().containsKey(normalizedPackageName) &&
-            !skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)
+        val scopedSkills = kotlinx.coroutines.runBlocking {
+            com.ai.assistance.operit.data.skill.SkillRepository.forChat(context, callerChatId)
+        }
+        if (scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName) &&
+            !scopedSkills.getAiVisibleSkillPackages().containsKey(normalizedPackageName)
         ) {
             return "Skill '$normalizedPackageName' is set to not show to AI"
         }
 
-        val skillPrompt = skillManager.getSkillSystemPrompt(normalizedPackageName)
+        val skillPrompt = scopedSkills.getSkillSystemPrompt(normalizedPackageName)
         if (skillPrompt != null) {
             return skillPrompt
         }
@@ -3263,8 +3267,12 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             )
         }
 
-        if (skillManager.getAvailableSkills().containsKey(normalizedPackageName) &&
-            !skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)
+        val scopedSkills = kotlinx.coroutines.runBlocking {
+            com.ai.assistance.operit.data.skill.SkillRepository.forChat(context,
+                com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
+        }
+        if (scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName) &&
+            !scopedSkills.getAiVisibleSkillPackages().containsKey(normalizedPackageName)
         ) {
             return ToolResult(
                 toolName = toolName,

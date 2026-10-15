@@ -43,6 +43,41 @@ object MemoryLibrary {
     private val coroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var apiPreferences: ApiPreferences? = null
     private val mutex = Mutex()
+    private val saveLifecycle = Mutex()
+    private val deletingSpaces = mutableSetOf<String>()
+    private val savesBySpace = mutableMapOf<String, MutableSet<kotlinx.coroutines.Job>>()
+
+    /** Includes direct scheduler saves as well as detached saveMemoryAsync jobs. */
+    suspend fun stopSpace(spaceId: String) {
+        val jobs = saveLifecycle.withLock {
+            deletingSpaces.add(spaceId)
+            savesBySpace[spaceId].orEmpty().toList().also { jobs ->
+                jobs.forEach { it.cancel(CancellationException("Memory space is being deleted")) }
+            }
+        }
+        kotlinx.coroutines.withTimeout(60_000L) { jobs.forEach { it.join() } }
+    }
+
+    internal suspend fun <T> withSpaceOperation(spaceId: String, action: suspend () -> T): T =
+        kotlinx.coroutines.coroutineScope {
+            val job = checkNotNull(kotlinx.coroutines.currentCoroutineContext()[kotlinx.coroutines.Job])
+            saveLifecycle.withLock {
+                check(spaceId !in deletingSpaces) { "Memory space is being deleted" }
+                savesBySpace.getOrPut(spaceId) { mutableSetOf() }.add(job)
+            }
+            try {
+                action()
+            } finally {
+                withContext(kotlinx.coroutines.NonCancellable) {
+                    saveLifecycle.withLock {
+                        savesBySpace[spaceId]?.let {
+                            it.remove(job)
+                            if (it.isEmpty()) savesBySpace.remove(spaceId)
+                        }
+                    }
+                }
+            }
+        }
 
     @Volatile private var isInitialized = false
 
@@ -95,6 +130,7 @@ object MemoryLibrary {
             content: String,
             aiService: AIService,
             profileIdOverride: String? = null,
+            sourceChatId: String = "",
             onSuccess: (suspend () -> Unit)? = null,
             onError: (suspend (Exception) -> Unit)? = null
     ) {
@@ -108,7 +144,8 @@ object MemoryLibrary {
                     conversationHistory,
                     content,
                     aiService,
-                    profileIdOverride = profileIdOverride
+                    profileIdOverride = profileIdOverride,
+                    sourceChatId = sourceChatId
                 )
                 onSuccess?.invoke()
             } catch (e: CancellationException) {
@@ -134,7 +171,9 @@ object MemoryLibrary {
         includeGraph: Boolean = true,
         analysisHistoryLimit: Int = 10
     ) {
-        val resolvedProfile = profileIdOverride ?: preferencesManager.activeMemorySpaceIdFlow.first()
+        val resolvedProfile = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+            .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
+        withSpaceOperation(resolvedProfile) {
         val logs = com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository(context, resolvedProfile)
         val log = com.ai.assistance.operit.data.preferences.MemoryExtractionLog(
             sourceChatId = sourceChatId, graph = includeGraph, notes = includeNotes, skills = includeSkills,
@@ -174,6 +213,7 @@ object MemoryLibrary {
             if (e is CancellationException || propagateFailure) throw e
             AppLogger.e(TAG, "Memory extraction failed", e)
         }
+        }
     }
 
     private fun ensureInitialized(context: Context) {
@@ -190,10 +230,12 @@ object MemoryLibrary {
         aiService: AIService,
         profileIdOverride: String,
         analysisHistoryLimit: Int,
+        sourceChatId: String = "",
     ) {
         saveMemoryNow(
             context, toolHandler, conversationHistory, content, aiService,
             profileIdOverride, analysisHistoryLimit = analysisHistoryLimit.coerceAtLeast(1), propagateFailure = true,
+            sourceChatId = sourceChatId,
         )
     }
 
@@ -334,7 +376,8 @@ object MemoryLibrary {
             onWarning: (String) -> Unit = {},
     ) {
         mutex.withLock {
-            val profileId = profileIdOverride ?: preferencesManager.activeMemorySpaceIdFlow.first()
+            val profileId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+                .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
             val memoryRepository = MemoryRepository(context, profileId)
 
             // Prune tool results to reduce token usage
@@ -410,7 +453,7 @@ object MemoryLibrary {
 
             if (includeSkills && analysis.skills.isNotEmpty()) {
                 try {
-                    val installed = com.ai.assistance.operit.core.tools.skill.SkillManager.getInstance(context)
+                    val installed = com.ai.assistance.operit.core.tools.skill.SkillManager.forMemorySpace(context, profileId)
                         .getAvailableSkills().keys
                     val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                     analysis.skills.filterNot { it.name in installed }.forEach {

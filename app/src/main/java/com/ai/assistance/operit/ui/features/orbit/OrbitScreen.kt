@@ -190,6 +190,18 @@ private fun OrbitChatPage(
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
+    var showMemory by remember(orbit.id) { mutableStateOf(false) }
+    var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
+    val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
+        value = null
+        value = try {
+            Result.success(com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            Result.failure(e)
+        }
+    }
 
     // The chat screen follows the app-wide current chat. It shows this Orbit while the page is
     // open; put the chat the user had back when the page closes. Sending in an Orbit chat always
@@ -206,6 +218,26 @@ private fun OrbitChatPage(
         }
     }
 
+    if (showMemory) {
+        val id = memoryResult?.getOrNull()
+        if (id != null) {
+            com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage(
+                stringResource(R.string.orbit_memory_row), id, { showMemory = false }
+            ) { com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen(fixedMemorySpaceId = id) }
+        } else {
+            Column(Modifier.fillMaxSize().padding(24.dp),
+                verticalArrangement = Arrangement.Center,
+                horizontalAlignment = Alignment.CenterHorizontally) {
+                if (memoryResult == null) CircularProgressIndicator()
+                else {
+                    Text(stringResource(R.string.orbit_memory_unavailable))
+                    TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                }
+                TextButton(onClick = { showMemory = false }) { Text(stringResource(R.string.back)) }
+            }
+        }
+        return
+    }
     chatContent(orbit.chatId) {
         OrbitHeader(orbit = orbit, onOpenSettings = { showSettings = true })
     }
@@ -218,7 +250,7 @@ private fun OrbitChatPage(
             onDismiss = { showSettings = false },
             onOpenMemory = {
                 showSettings = false
-                onOpenMemory()
+                showMemory = true
             },
             onPause = {
                 showSettings = false
@@ -568,6 +600,7 @@ private fun OrbitHome(
     var showPicker by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<OrbitProfile?>(null) }
     var starting by remember { mutableStateOf(false) }
+    var removingId by remember { mutableStateOf<String?>(null) }
 
     fun start(action: suspend () -> Unit) {
         if (starting) return
@@ -604,7 +637,8 @@ private fun OrbitHome(
                         OrbitRow(
                             orbit = orbit,
                             roleName = card?.name,
-                            enabled = !starting,
+                            enabled = !starting && removingId == null,
+                            removing = removingId == orbit.id,
                             onResume = { start { OrbitCompanion.resume(context, orbit.id) } },
                             onDelete = { pendingDelete = orbit },
                         )
@@ -629,7 +663,7 @@ private fun OrbitHome(
         }
 
         Button(
-            enabled = !starting,
+            enabled = !starting && removingId == null,
             onClick = { showPicker = true },
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
@@ -668,8 +702,21 @@ private fun OrbitHome(
             confirmButton = {
                 TextButton(
                     onClick = {
+                        if (removingId != null) return@TextButton
                         pendingDelete = null
-                        scope.launch { OrbitCompanion.remove(context, orbit.id) }
+                        removingId = orbit.id
+                        scope.launch {
+                            try {
+                                OrbitCompanion.remove(context, orbit.id)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                AppLogger.e(TAG, "Orbit deletion did not finish", e)
+                                toast(context, R.string.orbit_delete_incomplete)
+                            } finally {
+                                removingId = null
+                            }
+                        }
                     },
                 ) {
                     Text(stringResource(R.string.orbit_delete), color = MaterialTheme.colorScheme.error)
@@ -687,6 +734,7 @@ private fun OrbitRow(
     orbit: OrbitProfile,
     roleName: String?,
     enabled: Boolean,
+    removing: Boolean,
     onResume: () -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -705,7 +753,13 @@ private fun OrbitRow(
                 overflow = TextOverflow.Ellipsis,
             )
             // The role card only seeded this Orbit; once it is deleted there is nothing to show.
-            if (roleName != null) {
+            if (orbit.deleting) {
+                Text(
+                    stringResource(if (removing) R.string.orbit_deleting else R.string.orbit_delete_incomplete),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else if (roleName != null) {
                 Text(
                     text = stringResource(R.string.orbit_role_label, roleName),
                     style = MaterialTheme.typography.bodySmall,
@@ -715,15 +769,16 @@ private fun OrbitRow(
                 )
             }
         }
-        IconButton(onClick = onDelete) {
+        IconButton(enabled = enabled, onClick = onDelete) {
             Icon(
                 imageVector = lucide("trash-2"),
                 contentDescription = stringResource(R.string.orbit_delete),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
-        FilledTonalButton(enabled = enabled, onClick = onResume) {
-            Text(stringResource(R.string.orbit_resume))
+        FilledTonalButton(enabled = enabled, onClick = if (orbit.deleting) onDelete else onResume) {
+            if (removing) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+            else Text(stringResource(if (orbit.deleting) R.string.orbit_retry_delete else R.string.orbit_resume))
         }
     }
 }

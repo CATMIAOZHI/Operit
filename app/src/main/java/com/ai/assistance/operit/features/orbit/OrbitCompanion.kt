@@ -155,8 +155,23 @@ object OrbitCompanion {
         val appContext = context.applicationContext
         val preferences = OrbitPreferences.getInstance(appContext)
         val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
-        preferences.removeOrbit(orbitId)
+        val chatIds = mutableSetOf(orbit.chatId).apply { addAll(orbit.ownedChatIds) }
+        chatIds.addAll(preferences.current().chatOwners.filterValues { it == orbitId }.keys)
+        val chats = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext)
+            .chatDao().getAllChatsDirectly()
+        chatIds.addAll(orbitDescendants(chatIds, chats.map { it.id to it.parentChatId }))
+        chatIds.forEach { preferences.rememberChatOwner(it, orbitId) }
+        preferences.markDeleting(orbitId)
         stopInFlightUnlessActive(appContext)
+        com.ai.assistance.operit.core.agent.SubagentCoordinator.getInstance(appContext)
+            .withChatDeletionsPrepared(chatIds) {
+                val runtimes = ChatRuntimeHolder.getInstance(appContext)
+                ChatRuntimeSlot.entries.forEach { slot ->
+                    chatIds.forEach { runtimes.getCore(slot).prepareChatDeletion(it) }
+                }
+                orbit.memorySpaceId?.let { UserPreferencesManager.getInstance(appContext).deleteMemorySpace(it) }
+                preferences.removeOrbit(orbitId)
+            }
         core(appContext).deleteChatHistory(orbit.chatId)
         applySchedule(appContext)
     }
@@ -209,13 +224,16 @@ object OrbitCompanion {
                 createdAt = System.currentTimeMillis(),
             )
         preferences.putOrbit(profile)
-        return profile
+        val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
+        return profile.copy(memorySpaceId = memorySpaceId)
     }
 
     /** Makes the Orbit's chat again when the user deleted it; everything else stays. */
     private suspend fun ensureChatLocked(context: Context, orbit: OrbitProfile): OrbitProfile {
-        if (core(context).chatExists(orbit.chatId)) return orbit
-        val recreated = orbit.copy(chatId = createChat(context, null, orbit.name))
+        val spaceId = OrbitMemoryScope.ensureInitialized(context, orbit)
+        if (core(context).chatExists(orbit.chatId)) return orbit.copy(memorySpaceId = spaceId)
+        val recreated = orbit.copy(chatId = createChat(context, null, orbit.name), memorySpaceId = spaceId,
+            ownedChatIds = orbit.ownedChatIds + orbit.chatId)
         OrbitPreferences.getInstance(context).putOrbit(recreated)
         return recreated
     }

@@ -100,7 +100,8 @@ class ChatServiceCore(
         // 初始化附件委托
         attachmentDelegate = AttachmentDelegate(
             context = context,
-            toolHandler = AIToolHandler.getInstance(context)
+            toolHandler = AIToolHandler.getInstance(context),
+            chatIdProvider = { currentChatId.value }
         )
 
         // 初始化聊天历史委托
@@ -389,6 +390,11 @@ class ChatServiceCore(
     }
 
     /** 删除聊天历史 */
+    suspend fun prepareChatDeletion(chatId: String) {
+        messageCoordinationDelegate.cancelSummaryForDestructiveMutation(chatId)
+        messageProcessingDelegate.cancelMessageForDestructiveMutation(chatId)
+    }
+
     fun deleteChatHistory(chatId: String) {
         chatHistoryDelegate.deleteChatHistory(chatId)
     }

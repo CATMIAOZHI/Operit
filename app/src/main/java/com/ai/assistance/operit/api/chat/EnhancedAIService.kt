@@ -1178,7 +1178,7 @@ class EnhancedAIService private constructor(
         val chatModelIndexOverride = options.chatModelIndexOverride
         // Resolve once for both CHAT and VOICE so prompt, tools and post-turn learning use
         // the same space even if the user switches the global selection during generation.
-        val memorySpaceIdOverride = options.memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+        val requestedMemorySpaceId = options.memorySpaceIdOverride?.takeIf { it.isNotBlank() }
             ?: if (isSubTask) null else {
                 val card = roleCardId?.takeIf { it.isNotBlank() }?.let {
                     com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context)
@@ -1189,6 +1189,8 @@ class EnhancedAIService private constructor(
                         com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
                 }?.memoryProfileId?.takeIf { it.isNotBlank() } ?: preferencesManager.activeMemorySpaceIdFlow.first()
             }
+        val memorySpaceIdOverride = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
+            context, chatId, requestedMemorySpaceId)
         val toolTimingScopeId = options.toolTimingScopeId
         val stream = options.stream
         val disableWarning = options.disableWarning
@@ -3371,7 +3373,8 @@ class EnhancedAIService private constructor(
             val roleCardToolAccess = characterCardToolAccessResolver.resolve(
                 roleCardId = roleCardId,
                 packageManager = packageManager,
-                globalToolVisibility = toolPromptVisibility
+                globalToolVisibility = toolPromptVisibility,
+                chatId = chatId
             )
 
             if (!enableTools) {
@@ -3645,6 +3648,7 @@ class EnhancedAIService private constructor(
         conversationHistory: List<Pair<String, String>>,
         lastContent: String,
         memorySpaceIdOverride: String? = null,
+        sourceChatId: String = "",
         onSuccess: (suspend () -> Unit)? = null,
         onError: (suspend (Exception) -> Unit)? = null
     ) {
@@ -3659,6 +3663,7 @@ class EnhancedAIService private constructor(
                     content = lastContent,
                     aiService = memoryService,
                     profileIdOverride = memorySpaceIdOverride,
+                    sourceChatId = sourceChatId,
                     onSuccess = {
                         AppLogger.d(TAG, "手动记忆更新成功")
                         onSuccess?.invoke()

@@ -189,6 +189,7 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
                             content = content,
                             aiService = memoryService,
                             profileIdOverride = plannedChat.memoryProfileId,
+                            sourceChatId = plannedChat.history.id,
                             analysisHistoryLimit = window.messages.size
                         )
                     } catch (error: Exception) {
@@ -231,6 +232,7 @@ class ChatMemoryRebuildManager private constructor(private val context: Context)
         history: ChatHistory,
         activeProfileId: String
     ): String {
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, history.id, null)?.let { return it }
         if (!history.characterGroupId.isNullOrBlank()) {
             return activeProfileId
         }

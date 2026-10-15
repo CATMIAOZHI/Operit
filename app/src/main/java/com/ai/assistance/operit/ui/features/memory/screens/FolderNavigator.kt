@@ -207,6 +207,7 @@ fun FolderNavigator(
     onMemorySpaceRename: (String, String) -> Unit,
     onMemorySpaceDelete: (String) -> Unit,
     onDismissRequest: () -> Unit,
+    showMemorySpaceSelector: Boolean = true,
     modifier: Modifier = Modifier
 ) {
     // 构建文件夹树
@@ -273,7 +274,7 @@ fun FolderNavigator(
 
                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
 
-                ProfileSelector(
+                if (showMemorySpaceSelector) ProfileSelector(
                     profileList = profileList,
                     profileNameMap = profileNameMap,
                     selectedProfileId = selectedProfileId,

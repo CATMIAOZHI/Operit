@@ -284,7 +284,8 @@ object CliToolModeSupport {
         }
 
         val skillPackages =
-            SkillRepository.getInstance(context)
+            SkillRepository.forChat(context,
+                com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
                 .getAiVisibleSkillPackages()
                 .filterKeys { roleCardToolAccess.isExternalSourceAllowed(it) }
 

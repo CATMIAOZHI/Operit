@@ -32,7 +32,8 @@ import java.util.Locale
  * Manages attachment operations for the chat feature Handles adding, removing, and referencing
  * attachments
  */
-class AttachmentDelegate(private val context: Context, private val toolHandler: AIToolHandler) {
+class AttachmentDelegate(private val context: Context, private val toolHandler: AIToolHandler,
+    private val chatIdProvider: () -> String? = { null }) {
     companion object {
         private const val TAG = "AttachmentDelegate"
         private const val PACKAGE_ATTACHMENT_PREFIX = "package_attach:"
@@ -313,11 +314,12 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
 
         val packageManager = PackageManager.getInstance(context, toolHandler)
+        val chatId = chatIdProvider()
         val isStandardPackage =
             packageManager.getAvailablePackages().containsKey(packageName) &&
                 !packageManager.isToolPkgContainer(packageName)
         val isSkillPackage =
-            SkillRepository.getInstance(context.applicationContext).getAiVisibleSkillPackages().containsKey(packageName)
+            SkillRepository.forChat(context.applicationContext, chatId).getAiVisibleSkillPackages().containsKey(packageName)
         val isMcpPackage = packageManager.getAvailableServerPackages().containsKey(packageName)
 
         if (!isStandardPackage && !isSkillPackage && !isMcpPackage) {
@@ -329,7 +331,7 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             packageManager.enablePackage(packageName)
         }
 
-        val packageContent = packageManager.usePackage(packageName)
+        val packageContent = packageManager.usePackage(packageName, chatId)
         if (isPackageAttachmentError(packageName, packageContent)) {
             AppLogger.w(TAG, "添加包附件失败: $packageName, reason=$packageContent")
             _toastEvent.emit(context.getString(R.string.attachment_package_failed, packageName))

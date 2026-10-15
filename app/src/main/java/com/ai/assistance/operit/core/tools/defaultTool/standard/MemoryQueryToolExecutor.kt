@@ -89,9 +89,12 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun resolveActiveProfileId(tool: AITool): String {
-        return ToolExecutionManager.currentToolRuntimeContext()?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
+        val runtime = ToolExecutionManager.currentToolRuntimeContext()
+        val requested = runtime?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
             ?: resolveRoleCardProfileId(resolveCallerCardId(tool))
             ?: resolveGlobalActiveProfileId()
+        return com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
+            context, runtime?.callerChatId, requested) ?: requested
     }
 
     private fun getMemoryRepository(profileId: String): MemoryRepository =
@@ -716,7 +719,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
     private suspend fun executeChatRecall(tool: AITool): ToolResult {
         return try {
-            val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(context)
+            val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(
+                context, ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
             val json = repository.execute(tool.parameters.associate { it.name to it.value })
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -844,7 +848,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 "user.md exceeds the character limit"
             }
             val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
-            val before = UserProfileDocumentRepository.getInstance(context).load()
+            val before = UserProfileDocumentRepository.forMemorySpace(context, resolveActiveProfileId(tool)).load()
             val change = review.applyAutomaticDecision(context, review.proposeUser(before, markdown,
                 ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
             val message = "user.md change ${change.id}: ${change.status}"
@@ -895,7 +899,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         }
 
         return try {
-            val repository = UserProfileDocumentRepository.getInstance(context)
+            val repository = UserProfileDocumentRepository.forMemorySpace(context, resolveActiveProfileId(tool))
             val change = withContext(Dispatchers.IO) {
                 val current = repository.load()
                 val importedSection =

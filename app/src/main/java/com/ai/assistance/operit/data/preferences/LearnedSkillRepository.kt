@@ -13,7 +13,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Ownership lives outside importable skill archives, so an imported file cannot opt into auto-editing. */
-class LearnedSkillRepository(private val context: Context) {
+class LearnedSkillRepository(private val context: Context, private val memorySpaceId: String? = null) {
     companion object {
         private val mutex = Mutex()
         /** Creation bounds for a new skill: short enough to stay scannable and cheap to read. */
@@ -33,9 +33,16 @@ class LearnedSkillRepository(private val context: Context) {
             .joinToString("") { "%02x".format(it) }
     }
     data class Snapshot(val text: String, val version: String, val exists: Boolean)
-    private val registry = File(context.filesDir, "learned_skill_ownership.json")
-    private val manager get() = SkillManager.getInstance(context)
-    private fun registry() = if (registry.isFile) JSONObject(registry.readText()) else JSONObject()
+    private suspend fun manager() = memorySpaceId?.let { SkillManager.forMemorySpace(context, it) }
+        ?: SkillManager.getInstance(context)
+    private suspend fun registryFile(): File {
+        val manager = manager()
+        return if (memorySpaceId != null &&
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, memorySpaceId) != null)
+            File(File(manager.getSkillsDirectoryPath()).parentFile, "learned_skill_ownership.json")
+        else File(context.filesDir, "learned_skill_ownership.json")
+    }
+    private suspend fun registry() = registryFile().let { if (it.isFile) JSONObject(it.readText()) else JSONObject() }
     private fun atomic(file: File, text: String) {
         file.parentFile!!.mkdirs()
         val tmp = File.createTempFile(".learning-", ".tmp", file.parentFile)
@@ -47,6 +54,7 @@ class LearnedSkillRepository(private val context: Context) {
     }
     suspend fun owned(profileId: String? = null): Set<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
             val data = registry()
             data.keys().asSequence().filter { (profileId == null || data.getJSONObject(it).getString("profile")==profileId)
                 && manager.getAvailableSkills()[it]?.directory?.canonicalPath ==
@@ -55,6 +63,8 @@ class LearnedSkillRepository(private val context: Context) {
     }
     suspend fun register(name: String, profileId: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
+            val registry = registryFile()
             val data = registry()
             val skill = manager.getAvailableSkills()[name] ?: error("Skill not installed")
             require(skill.directory.canonicalFile.parentFile == File(manager.getSkillsDirectoryPath()).canonicalFile)
@@ -65,11 +75,13 @@ class LearnedSkillRepository(private val context: Context) {
     }
     suspend fun forget(name: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val registry = registryFile()
             val data = registry()
             if(data.has(name)) { data.remove(name); atomic(registry,data.toString()) }
         }
     }
-    private fun target(name: String, path: String): File {
+    private suspend fun target(name: String, path: String): File {
+        val manager = manager()
         validatePath(path)
         val skill = manager.getAvailableSkills()[name] ?: error("Skill not found")
         val root = skill.directory.canonicalFile
@@ -87,11 +99,13 @@ class LearnedSkillRepository(private val context: Context) {
         }
     }
     suspend fun files(name: String): List<String> = withContext(Dispatchers.IO) {
+        val manager = manager()
         val root = manager.getAvailableSkills()[name]?.directory?.canonicalFile ?: error("Skill not found")
         root.walkTopDown().maxDepth(5).filter { it.isFile && it.canonicalFile.toPath().startsWith(root.toPath()) }
             .take(100).map { it.relativeTo(root).invariantSeparatorsPath }.toList()
     }
-    private fun directoryManifest(name: String): String {
+    private suspend fun directoryManifest(name: String): String {
+        val manager = manager()
         val root = manager.getAvailableSkills()[name]?.directory?.canonicalFile ?: error("Skill not found")
         val files = root.walkTopDown().onEnter { it.canonicalFile.toPath().startsWith(root.toPath()) }
             .filter { it.isFile }.take(1001).toList()
@@ -111,6 +125,8 @@ class LearnedSkillRepository(private val context: Context) {
     }
     suspend fun delete(name: String, expectedVersion: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
+            val registry = registryFile()
             val skill=manager.getAvailableSkills()[name]
             if (skill==null) {
                 val data=registry(); data.remove(name); atomic(registry,data.toString())
@@ -125,6 +141,7 @@ class LearnedSkillRepository(private val context: Context) {
     suspend fun apply(profileId: String, name: String, path: String, body: String, expectedVersion: String,
         remove: Boolean = false, automatic: Boolean = false) = withContext(Dispatchers.IO) {
         mutex.withLock {
+            val manager = manager()
             val file = target(name,path)
             val skill = manager.getAvailableSkills()[name] ?: error("Skill not found")
             require(skill.directory.canonicalFile.parentFile == File(manager.getSkillsDirectoryPath()).canonicalFile) {

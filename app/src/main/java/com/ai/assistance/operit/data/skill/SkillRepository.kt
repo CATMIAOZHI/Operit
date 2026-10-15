@@ -24,7 +24,8 @@ import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
 
-class SkillRepository private constructor(private val context: Context) {
+class SkillRepository private constructor(private val context: Context, private val privateManager: SkillManager? = null,
+    val memorySpaceId: String? = null, private val orbitId: String? = null) {
 
     companion object {
         @Volatile private var INSTANCE: SkillRepository? = null
@@ -40,11 +41,24 @@ class SkillRepository private constructor(private val context: Context) {
                 INSTANCE ?: SkillRepository(context.applicationContext).also { INSTANCE = it }
             }
         }
+        suspend fun forChat(context: Context, chatId: String?): SkillRepository {
+            val space = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, chatId, null)
+                ?: return getInstance(context)
+            return forMemorySpace(context, space)
+        }
+
+        suspend fun forMemorySpace(context: Context, spaceId: String): SkillRepository {
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, spaceId)
+                ?: return getInstance(context)
+            return SkillRepository(context.applicationContext, SkillManager.forMemorySpace(context, spaceId), spaceId, owner)
+        }
     }
 
-    private val skillManager by lazy { SkillManager.getInstance(context) }
+    private val skillManager by lazy { privateManager ?: SkillManager.getInstance(context) }
 
-    private val skillVisibilityPreferences by lazy { SkillVisibilityPreferences.getInstance(context) }
+    val skillVisibilityPreferences by lazy {
+        orbitId?.let { SkillVisibilityPreferences.forOrbit(context, it) } ?: SkillVisibilityPreferences.getInstance(context)
+    }
 
     private val defaultBranchCache = ConcurrentHashMap<String, String>()
 
@@ -71,6 +85,7 @@ class SkillRepository private constructor(private val context: Context) {
     }
 
     fun readSkillContent(skillName: String): String? = skillManager.readSkillContent(skillName)
+    fun getSkillSystemPrompt(skillName: String): String? = skillManager.getSkillSystemPrompt(skillName)
 
     fun deleteSkill(skillName: String): Boolean = skillManager.deleteSkill(skillName)
 

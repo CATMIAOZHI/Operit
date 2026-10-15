@@ -666,11 +666,11 @@ class MessageCoordinationDelegate(
                         }
                     }
                 val resolvedMemorySpaceIdOverride =
-                    when {
+                    runBlocking(Dispatchers.IO) { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, chatId, when {
                         !memorySpaceIdOverride.isNullOrBlank() -> memorySpaceIdOverride
                         isAutoContinuation -> currentMemorySpaceIdOverride
                         else -> roleCardId?.let { resolveRoleCardMemoryProfileOverride(it) }
-                    }
+                    }) }
                 Triple(
                     resolvedChatModelConfigIdOverride,
                     resolvedChatModelIndexOverride,
@@ -1641,6 +1641,7 @@ class MessageCoordinationDelegate(
 
             enhancedAiService.saveConversationToMemoryAsync(
                 conversationHistory = history,
+                sourceChatId = currentChatId.orEmpty(),
                 lastContent = lastMessageContent,
                 memorySpaceIdOverride = memorySpaceIdOverride,
                 onSuccess = {
@@ -1873,6 +1874,7 @@ class MessageCoordinationDelegate(
                 val summaryMessage = AIMessageManager.summarizeMemory(
                     enhancedAiService = service,
                     messages = snapshotMessages,
+                    chatId = originalChatId,
                     autoContinue = false,
                     isGroupChat = isGroupChat,
                     summaryConfig = summaryConfig
@@ -2008,7 +2010,8 @@ class MessageCoordinationDelegate(
                     currentMessages,
                     autoContinue,
                     effectiveIsGroupChat,
-                    summaryConfig
+                    summaryConfig,
+                    chatId = currentChatId
                 )
 
             if (summaryMessage != null) {
