@@ -238,7 +238,7 @@ class OrbitPreferences private constructor(context: Context) {
             if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
         }
         withContext(Dispatchers.IO) {
-            orbitDir(orbitId).deleteRecursively()
+            com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
             deleteOwnedAvatar(avatarUri)
         }
     }
@@ -342,21 +342,10 @@ class OrbitPreferences private constructor(context: Context) {
 
     /** Orbit's persona, or an empty string when it has none. */
     suspend fun readSoul(orbitId: String): String =
-        withContext(Dispatchers.IO) {
-            soulFile(orbitId).takeIf { it.isFile }?.readText().orEmpty()
-        }
+        com.ai.assistance.operit.features.orbit.OrbitSoulRepository(appContext, orbitId).snapshot().current.body
 
     suspend fun writeSoul(orbitId: String, soul: String) {
-        withContext(Dispatchers.IO) {
-            val file = soulFile(orbitId)
-            file.parentFile?.mkdirs()
-            val temp = File(file.parentFile, "$SOUL_FILE_NAME.tmp")
-            temp.writeText(soul)
-            if (!temp.renameTo(file)) {
-                file.writeText(soul)
-                temp.delete()
-            }
-        }
+        com.ai.assistance.operit.features.orbit.OrbitSoulRepository(appContext, orbitId).seed(soul)
     }
 
     private suspend fun updateOrbits(transform: (List<OrbitProfile>) -> List<OrbitProfile>) {

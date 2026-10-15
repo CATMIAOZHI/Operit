@@ -9172,4 +9172,22 @@
     <string name="orbit_revision_request">这次想修改什么？</string>
     <string name="orbit_report_digest">每日汇总</string>
     <string name="orbit_task_event_wait">等待「%1$s」完成后执行</string>
+    <string name="orbit_soul_title">人格与历史</string>
+    <string name="orbit_soul_subtitle">查看 Soul、确认修改、恢复版本</string>
+    <string name="orbit_soul_help">角色卡只用于创建最初的人格。你可以在聊天中请 Orbit 提出修改，在这里确认后生效。保留当前版本和最近 19 次历史；恢复会创建新版本，不改变工具权限。</string>
+    <string name="orbit_soul_pending">待你确认</string>
+    <string name="orbit_soul_current">当前人格</string>
+    <string name="orbit_soul_rejected">未采用</string>
+    <string name="orbit_soul_history">历史版本</string>
+    <string name="orbit_soul_before">当前内容</string>
+    <string name="orbit_soul_after">建议修改为</string>
+    <string name="orbit_soul_apply">应用这个版本</string>
+    <string name="orbit_soul_stale">人格已更新，请让 Orbit 基于当前版本重新提出修改。</string>
+    <string name="orbit_soul_reject">不采用</string>
+    <string name="orbit_soul_restore">恢复此版本</string>
+    <string name="orbit_soul_restore_help">将此内容保存为新的当前人格，下次请求开始使用。已有聊天记录会保留。</string>
+    <string name="orbit_soul_seed">创建时从角色卡保存的人格</string>
+    <string name="orbit_soul_import">原有的 Soul 人格</string>
+    <string name="orbit_soul_restored">从历史恢复的新版本</string>
+    <string name="orbit_soul_action_failed">操作未完成。人格可能已更新或文件暂时不可用，请重试；旧提案需要基于当前版本重新生成。</string>
 </resources>

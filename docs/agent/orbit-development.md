@@ -103,6 +103,19 @@ Room tests or compilation.
   message with per-result receipts; notification completion updates the whole batch atomically.
   The scheduler waits for the next delivery time instead of polling through the quiet period.
 
+## P5 identity versions
+
+- Each Orbit keeps an atomic Soul version journal, seeded once from its role card.
+  Existing Soul.md files import without consulting the source card. Soul.md remains a
+  readable mirror; the journal is authoritative and repairs an interrupted mirror write.
+- `orbit_soul` reads the current version or proposes an edit. Only the companion's main
+  chat can propose; user approval in **Soul and history** is required to apply it.
+  Concurrent stale proposals cannot overwrite a newer persona.
+- The current version, up to 19 prior reviewed versions and up to five pending proposals
+  are retained. Restoring creates a new version. An accepted identity revision clears that
+  companion's frozen prompt on the next request; existing chat messages are not rewritten.
+  Soul text cannot change the host's FAST permission policy.
+
 ## Remaining full product roadmap
 
 These are acceptance targets, not claims of implemented or tested behavior.

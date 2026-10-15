@@ -328,7 +328,10 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     }).toString()
     val catalog = org.json.JSONObject(if(chatId.isNullOrBlank()) loadSkillCatalog()
         else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId).let { snapshot ->
-            snapshot.bindMemoryScope(com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context,chatId)?.id ?: "global")
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context,chatId)?.id
+            snapshot.bindMemoryScope(owner ?: "global", owner?.let {
+                com.ai.assistance.operit.features.orbit.OrbitSoulRepository(context, it).snapshot().current.id
+            }.orEmpty())
             snapshot.getOrPut("skill_catalog") { loadSkillCatalog() }
         })
     val skillPackages = catalog.keys().asSequence()

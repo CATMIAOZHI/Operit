@@ -109,6 +109,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     OrbitProductTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
     }
+    handler.registerTool(name = OrbitSoulTools.NAME, executor = { OrbitSoulTools.execute(context, it) })
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(
