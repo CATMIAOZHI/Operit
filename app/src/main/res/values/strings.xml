@@ -9196,4 +9196,9 @@
     <string name="orbit_memory_view_evidence">查看来源消息</string>
     <string name="orbit_memory_evidence_current">以下是本批次来源消息的当前摘录，最多显示 8 条；消息可能在提案生成后被编辑。</string>
     <string name="orbit_memory_proposal_obsolete">记忆已经修改，这条旧提案已作废。</string>
+    <string name="orbit_skill_history">文件版本记录</string>
+    <string name="orbit_skill_restore_removes_file">目标版本中没有这个文件。批准后将删除此文件。</string>
+    <string name="orbit_skill_restore_before">准备恢复修改前版本</string>
+    <string name="orbit_skill_restore_after">准备恢复此版本</string>
+    <string name="orbit_skill_restore_help">仅恢复这一个文件。将先生成提案，确认后生效；其他文件保持不变。整个技能已删除时无法恢复。</string>
 </resources>

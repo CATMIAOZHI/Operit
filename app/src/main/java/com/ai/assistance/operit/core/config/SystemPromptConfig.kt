@@ -334,8 +334,14 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
             }.orEmpty())
             snapshot.getOrPut("skill_catalog") { loadSkillCatalog() }
         })
-    val skillPackages = catalog.keys().asSequence()
+    val allSkillPackages = catalog.keys().asSequence()
         .filter { allowedSkillNames?.contains(it) ?: true }.sorted().associateWith { catalog.getString(it) }
+    val orbitSkills = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
+    val skillPackages = if (orbitSkills) {
+        com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.page(allSkillPackages,
+            limit = com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.PREVIEW_SIZE)
+            .entries.associate { it.name to it.description }
+    } else allSkillPackages
 
     // Build the available packages section
     val packagesSection = StringBuilder()
@@ -386,6 +392,9 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
     }
 
     if (packageSystemVisible) {
+      if (orbitSkills) {
+        packagesSection.appendLine("Skill preview is limited to 12 entries. Use orbit_skills to search the live skill catalog by task keywords; load only relevant skills with use_package. Skills do not grant additional permissions.")
+      }
       // Information about using packages
       packagesSection.appendLine()
       packagesSection.appendLine("To use a package:")

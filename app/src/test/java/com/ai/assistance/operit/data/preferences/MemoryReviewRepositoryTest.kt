@@ -14,6 +14,30 @@ import org.mockito.kotlin.whenever
 import org.mockito.kotlin.any
 
 class MemoryReviewRepositoryTest {
+    @Test fun `restoration retains user approval requirement across deduplication and disk reload`() = runBlocking {
+        val repo = MemoryReviewRepository(folder.root, "restore")
+        val original = MemoryReviewChange("", "skill_file", "test-skill", "new")
+        val ordinary = repo.propose(original)
+        val restoration = repo.propose(original.copy(restoredFrom = "past:after"))
+        assertNotEquals(ordinary.id, restoration.id)
+        val loaded = MemoryReviewRepository(folder.root, "restore")
+        assertEquals("past:after", loaded.list().single { it.id == restoration.id }.restoredFrom)
+        val failure = runCatching { loaded.decide(context(), restoration.id, true, "ai", "") }.exceptionOrNull()
+        assertTrue(failure is IllegalStateException)
+        assertEquals("pending", loaded.list().single { it.id == restoration.id }.status)
+    }
+
+    @Test fun `file restore distinguishes empty file from absence and never restores unapproved drafts`() {
+        val empty = MemoryReviewChange("old", "skill_file", "test-skill", "new",
+            baseVersion = LearnedSkillRepository.version("present:"), status = "approved")
+        assertEquals("" to false, skillFileRestoreTarget(empty, true))
+        assertEquals("" to true, skillFileRestoreTarget(empty.copy(baseVersion = LearnedSkillRepository.version("absent")), true))
+        assertEquals("new" to false, skillFileRestoreTarget(empty, false))
+        assertTrue(skillFileRestoreTarget(empty.copy(operation = "remove"), false).second)
+        assertThrows(IllegalArgumentException::class.java) { skillFileRestoreTarget(empty.copy(status = "pending"), false) }
+        assertThrows(IllegalArgumentException::class.java) { skillFileRestoreTarget(empty.copy(kind = "skill_delete"), false) }
+    }
+
     @get:Rule val folder = TemporaryFolder()
     private fun context(): Context = mock<Context>().also {
         whenever(it.filesDir).thenReturn(folder.root)

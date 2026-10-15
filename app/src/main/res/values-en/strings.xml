@@ -9219,4 +9219,9 @@
     <string name="orbit_memory_view_evidence">View source messages</string>
     <string name="orbit_memory_evidence_current">Current excerpts from up to 8 source messages in this batch. Messages may have been edited after the proposal was created.</string>
     <string name="orbit_memory_proposal_obsolete">Memory has changed. This older proposal is no longer applicable.</string>
+    <string name="orbit_skill_history">File version history</string>
+    <string name="orbit_skill_restore_removes_file">This file does not exist in the target version. Approving will remove it.</string>
+    <string name="orbit_skill_restore_before">Prepare previous version</string>
+    <string name="orbit_skill_restore_after">Prepare this version</string>
+    <string name="orbit_skill_restore_help">Restores only this file through a new proposal for you to review. Other files stay unchanged. A deleted skill cannot be restored here.</string>
 </resources>

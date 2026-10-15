@@ -22,7 +22,7 @@ import java.text.DateFormat
 import java.util.Date
 
 @Composable
-fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
+fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillName: String? = null) {
     val context = LocalContext.current
     val reviewErrorFormat = stringResource(R.string.memory_review_error)
     val repo = remember(profileId) { MemoryReviewRepository(context, profileId) }
@@ -35,7 +35,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     var loaded by remember { mutableStateOf(false) }
     var selectedId by rememberSaveable { mutableStateOf<String?>(null) }
     val selected = records.find { it.id == selectedId }
-    var history by rememberSaveable { mutableStateOf(false) }
+    var history by rememberSaveable { mutableStateOf(initialSkillName != null) }
     var body by rememberSaveable { mutableStateOf("") }
     var description by rememberSaveable { mutableStateOf("") }
     var reason by rememberSaveable { mutableStateOf("") }
@@ -85,7 +85,8 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         TextButton(onClick = { history = true }) { Text(stringResource(R.string.memory_review_history)) }
                         TextButton(onClick = { run {} }, enabled = !busy) { Text(stringResource(R.string.memory_review_refresh)) }
                     }
-                    val visible = records.filter { (it.status !in setOf("pending", "applying")) == history }
+                    val visible = records.filter { (it.status !in setOf("pending", "applying")) == history &&
+                        (initialSkillName == null || it.kind.startsWith("skill") && it.title == initialSkillName) }
                     LazyColumn(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         // The draft in the detail pane is restored before the list reloads, so an
                         // empty list here must not be reported as "no records" while still loading.
@@ -134,6 +135,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                         if (record.kind == "skill") OutlinedTextField(description, { description = it },
                             readOnly = !pending, enabled = !busy, label = { Text(stringResource(R.string.memory_review_description)) })
                         if (record.kind=="skill_delete") Text(stringResource(R.string.memory_review_delete_skill))
+                        else if (record.kind == "skill_file" && record.operation == "remove") Text(stringResource(R.string.orbit_skill_restore_removes_file))
                         else OutlinedTextField(body, { body = it }, readOnly = !pending, enabled = !busy,
                             label = { Text(stringResource(R.string.memory_review_after)) },
                             modifier = Modifier.fillMaxWidth(), minLines = 5, maxLines = 12)
@@ -143,6 +145,15 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                                 minLines = 2, maxLines = 8)
                         }
                         if (record.audits.isNotBlank()) Text(record.audits)
+                        if (memorySpace?.ownerOrbitId != null && record.kind == "skill_file" && record.status == "approved") {
+                            Text(stringResource(R.string.orbit_skill_restore_help), style = MaterialTheme.typography.bodySmall)
+                            for (beforeChange in listOf(true, false)) {
+                                TextButton(enabled = !busy, onClick = { run {
+                                    val proposal = repo.proposeSkillFileRestore(context, record.id, beforeChange)
+                                    selectedId = proposal.id; body = proposal.body; description = proposal.description; reason = ""
+                                } }) { Text(stringResource(if (beforeChange) R.string.orbit_skill_restore_before else R.string.orbit_skill_restore_after)) }
+                            }
+                        }
                         if (record.reviewedAt > 0) {
                             val detailReason = if (record.reason.startsWith("Memory was corrected") ||
                                 record.reason == "Memory changed while this proposal was being applied")

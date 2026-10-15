@@ -134,6 +134,20 @@ Reference implementations are architectural evidence, not verified deployments. 
 licenses before using source; do not import another agent framework to replace Operit's
 chat system. Each implementation stage requires relevant local validation and a fresh
 independent read-only audit before its local commit.
+### P5 skill discovery and file recovery
+
+Orbit prompts show at most twelve skill names and short descriptions. `orbit_skills` searches
+the live, AI-visible directory with the caller's existing tool access; results are capped at
+twenty entries per page. Skill bodies continue to load through `use_package`. Learning's
+management directory also supports query/offset/limit, including drafts, without injecting
+all skill bodies. Skill content never grants additional tool permissions.
+
+The private skill detail page opens its review history. Approved file changes can prepare
+a new restoration proposal using the current file version for concurrency checks; the user
+reviews current/target text before approval. Empty files and absent files are distinct.
+This restores one file of an existing skill, not an entire package. Deleted packages and
+versions already pruned from the bounded review history cannot be restored through this UI.
+
 ### P5 memory corrections and learning boundaries
 
 Orbit-owned memory corrections and deletions advance a durable learning generation before writing.

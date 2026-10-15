@@ -125,6 +125,8 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean): S
     """.trimIndent())
     if (skills) appendLine("""
         Skill arguments: name, path (default SKILL.md), content, old_text, description, reason.
+        skill_list: query matches name/description keywords; offset starts at 0, limit is 1-20 (default 20).
+        It returns next_offset when more entries exist; search relevant keywords before creating a duplicate skill.
         skill_create: name must match [a-z][a-z0-9-]{2,63} (no underscores);
         description is one line, at most 60 characters is expected (${LearnedSkillRepository.MAX_SKILL_DESCRIPTION_CHARS} is the hard limit);
         content is the body only, ${LearnedSkillRepository.MIN_SKILL_BODY_CHARS}-${LearnedSkillRepository.MAX_SKILL_BODY_CHARS} characters, without YAML frontmatter.

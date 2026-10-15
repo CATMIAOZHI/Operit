@@ -103,6 +103,7 @@ fun SkillConfigScreen(
     var isLoading by remember { mutableStateOf(true) }
 
     var selectedSkill by remember { mutableStateOf<SkillPackage?>(null) }
+    var historySkill by remember { mutableStateOf<String?>(null) }
     var selectedSkillDetail by remember { mutableStateOf<SkillDetailDialogData?>(null) }
     var isSkillDetailLoading by remember { mutableStateOf(false) }
     var skillLoadErrors by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
@@ -737,6 +738,10 @@ fun SkillConfigScreen(
             skill = skill,
             detail = selectedSkillDetail,
             isLoading = isSkillDetailLoading,
+            onHistory = if (skillRepository.memorySpaceId != null) ({
+                historySkill = skill.name
+                selectedSkill = null
+            }) else null,
             onDismiss = {
                 selectedSkill = null
                 selectedSkillDetail = null
@@ -758,6 +763,12 @@ fun SkillConfigScreen(
                 isSkillDetailLoading = false
             }
         )
+    }
+    historySkill?.let { name ->
+        skillRepository.memorySpaceId?.let { space ->
+            com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(
+                space, onDismiss = { historySkill = null; scope.launch { refreshSkills() } }, initialSkillName = name)
+        }
     }
 }
 
@@ -864,6 +875,7 @@ private fun SkillDetailDialog(
     skill: SkillPackage,
     detail: SkillDetailDialogData?,
     isLoading: Boolean,
+    onHistory: (() -> Unit)? = null,
     onDismiss: () -> Unit,
     onDelete: () -> Unit
 ) {
@@ -880,6 +892,9 @@ private fun SkillDetailDialog(
                     .verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(12.dp)
             ) {
+                onHistory?.let {
+                    TextButton(onClick = it) { Text(stringResource(R.string.orbit_skill_history)) }
+                }
                 if (isLoading || detail == null) {
                     Row(
                         modifier = Modifier.fillMaxWidth(),
