@@ -24,6 +24,37 @@ class MemoryReviewRepositoryTest {
         whenever(editor.putString(any(), any())).thenReturn(editor)
     }
 
+    @Test fun `new generation never reuses an old identical proposal and old export is settled`() = runBlocking {
+        val boundary = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary(
+            java.io.File(folder.root, "boundary.json")) { 7 }
+        fun review(generation: Long) = MemoryReviewRepository(folder.root, "private",
+            boundary = { boundary }, learningGeneration = generation, evidence = "[{\"message_id\":1}]")
+        val candidate = MemoryReviewChange("", "notes", "memory.md", "draft")
+        val old = review(0).propose(candidate)
+        boundary.edit("user-correction", 0) {}
+        val newer = review(1).propose(candidate)
+        assertNotEquals(old.id, newer.id)
+        assertEquals("superseded", review(1).decide(context(), old.id, true, "user", "").status)
+        val imported = old.copy(id = "exported")
+        review(1).importCompletedBatch(listOf(imported))
+        assertEquals("superseded", review(1).list().single { it.id == "exported" }.status)
+        assertEquals("[{\"message_id\":1}]", review(1).list().single { it.id == newer.id }.evidence)
+    }
+
+    @Test fun `obsolete full queue does not block new proposals after correction`() = runBlocking {
+        val boundary = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary(
+            java.io.File(folder.root, "boundary.json")) { 7 }
+        val old = MemoryReviewRepository(folder.root, "private", boundary = { boundary }, learningGeneration = 0)
+        repeat(MemoryReviewRepository.PENDING_LIMIT) {
+            old.propose(MemoryReviewChange("", "notes", "memory.md", "draft $it"))
+        }
+        boundary.edit("correction", 0) {}
+        val current = MemoryReviewRepository(folder.root, "private", boundary = { boundary }, learningGeneration = 1)
+        current.propose(MemoryReviewChange("", "notes", "memory.md", "new"))
+        assertEquals(1, current.list().count { it.status == "pending" })
+        assertEquals(MemoryReviewRepository.PENDING_LIMIT, current.list().count { it.status == "superseded" })
+    }
+
     @Test fun `history keeps unfinished items and only the newest finished ones`() {
         fun change(id: Int, status: String) = MemoryReviewChange(
             id = "c$id", kind = "notes", title = "memory.md", body = "b$id",

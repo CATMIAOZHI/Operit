@@ -147,6 +147,17 @@ class UserProfileDocumentRepository private constructor(
         }
     }
 
+    suspend fun saveUserEdit(markdown: String, expected: String) {
+        if (orbitId == null) return saveIfUnchanged(markdown, expected)
+        val orbit = OrbitPreferences.getInstance(context).current().orbits.single { it.id == orbitId }
+        val space = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
+        val reviews = MemoryReviewRepository(context, space)
+        val proposal = reviews.proposeUser(expected, markdown)
+        check(reviews.decide(context, proposal.id, true, "user", "").status == "approved") {
+            "Memory changed; reopen the editor before saving"
+        }
+    }
+
     fun hasLegacyArchive(): Boolean = orbitId == null && archiveFile.isFile && archiveFile.length() > 0L
 
     fun readLegacyArchive(): String? {

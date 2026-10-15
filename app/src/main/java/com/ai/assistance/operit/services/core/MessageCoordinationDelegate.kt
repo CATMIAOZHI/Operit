@@ -1626,11 +1626,6 @@ class MessageCoordinationDelegate(
         uiStateDelegate.showToast(context.getString(R.string.chat_summarizing_memory))
 
         try {
-            val history = sourceMessages.map { it.sender to it.content }
-            val lastMessageContent =
-                lastContentOverride?.takeIf { it.isNotBlank() }
-                    ?: sourceMessages.lastOrNull()?.content
-                    ?: ""
             val roleCardId =
                 resolveWindowEstimateRoleCardId(
                     chatId = currentChatId,
@@ -1638,12 +1633,26 @@ class MessageCoordinationDelegate(
                 )
             val memorySpaceIdOverride =
                 roleCardId?.let { resolveRoleCardMemoryProfileOverride(it) }
+            val orbitSpace = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+                .resolve(context, currentChatId, memorySpaceIdOverride)
+            val (learningGuard, legalMessages) = if (orbitSpace == null) null to sourceMessages
+                else com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.filter(
+                    context, orbitSpace, currentChatId.orEmpty(), sourceMessages)
+            if (legalMessages.isEmpty()) {
+                _isUpdatingMemory.value = false
+                uiStateDelegate.showToast(emptyToastMessage)
+                return
+            }
+            val history = legalMessages.map { it.sender to it.content }
+            val lastMessageContent = if ((learningGuard?.generation ?: 0) > 0) legalMessages.last().content
+                else lastContentOverride?.takeIf { it.isNotBlank() } ?: legalMessages.last().content
 
             enhancedAiService.saveConversationToMemoryAsync(
                 conversationHistory = history,
                 sourceChatId = currentChatId.orEmpty(),
                 lastContent = lastMessageContent,
                 memorySpaceIdOverride = memorySpaceIdOverride,
+                learningGuard = learningGuard,
                 onSuccess = {
                     uiStateDelegate.showToast(context.getString(R.string.chat_memory_manually_updated))
                     _isUpdatingMemory.value = false

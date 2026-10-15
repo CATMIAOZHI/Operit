@@ -9190,4 +9190,10 @@
     <string name="orbit_soul_import">原有的 Soul 人格</string>
     <string name="orbit_soul_restored">从历史恢复的新版本</string>
     <string name="orbit_soul_action_failed">操作未完成。人格可能已更新或文件暂时不可用，请重试；旧提案需要基于当前版本重新生成。</string>
+    <string name="orbit_memory_correction_help">修改或删除已有记忆后，Orbit 会从此后的新消息继续学习，避免把旧内容重新记回来。历史对话仍可查看。</string>
+    <string name="orbit_memory_inferred">这是 AI 根据来源整理的提案，不代表所有内容都已由你确认。</string>
+    <string name="orbit_memory_source_missing">来源消息已不可用。</string>
+    <string name="orbit_memory_view_evidence">查看来源消息</string>
+    <string name="orbit_memory_evidence_current">以下是本批次来源消息的当前摘录，最多显示 8 条；消息可能在提案生成后被编辑。</string>
+    <string name="orbit_memory_proposal_obsolete">记忆已经修改，这条旧提案已作废。</string>
 </resources>

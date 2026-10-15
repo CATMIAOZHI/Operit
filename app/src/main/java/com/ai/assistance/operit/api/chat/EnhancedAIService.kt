@@ -3649,6 +3649,7 @@ class EnhancedAIService private constructor(
         lastContent: String,
         memorySpaceIdOverride: String? = null,
         sourceChatId: String = "",
+        learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
         onSuccess: (suspend () -> Unit)? = null,
         onError: (suspend (Exception) -> Unit)? = null
     ) {
@@ -3664,6 +3665,7 @@ class EnhancedAIService private constructor(
                     aiService = memoryService,
                     profileIdOverride = memorySpaceIdOverride,
                     sourceChatId = sourceChatId,
+                    learningGuard = learningGuard,
                     onSuccess = {
                         AppLogger.d(TAG, "手动记忆更新成功")
                         onSuccess?.invoke()

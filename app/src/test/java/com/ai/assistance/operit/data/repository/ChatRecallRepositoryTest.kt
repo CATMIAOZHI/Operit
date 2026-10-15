@@ -19,7 +19,7 @@ class ChatRecallRepositoryTest {
             val from=it.getArgument<Long>(1).toInt()
             bytes.copyOfRange(from,minOf(from+32768,bytes.size))
         }
-        whenever(dao.searchRecallIndex(any(),any(),any(),any(),any(),any(),any(),any(),eq(0),eq(emptyList()))).thenReturn(
+        whenever(dao.searchRecallIndex(any(),any(),any(),any(),any(),any(),any(),any(),eq(0),eq(emptyList()),eq(0L))).thenReturn(
             listOf(ChatRecallHit(1,"chat","Title","ai",1,"[actualInputTokens]")))
         val repo=ChatRecallRepository(dao)
         val found=repo.execute(mapOf("query" to "actualInputTokens"),true)

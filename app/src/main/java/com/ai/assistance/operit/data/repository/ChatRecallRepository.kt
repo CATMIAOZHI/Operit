@@ -11,10 +11,15 @@ import org.json.JSONObject
 
 class ChatRecallRepository internal constructor(
     private val dao: com.ai.assistance.operit.data.dao.ChatContentDao,
+    private val minimumMessageId: Long = 0,
+    private val minimumTimestamp: Long = 0,
     private val scope: suspend () -> Pair<Int, List<String>> = { 0 to emptyList() }
 ) {
-    constructor(context: Context, callerChatId: String? = null) : this(
+    constructor(context: Context, callerChatId: String? = null, minimumMessageId: Long = 0,
+        minimumTimestamp: Long = 0) : this(
         AppDatabase.getDatabase(context).chatContentDao(),
+        minimumMessageId,
+        minimumTimestamp,
         {
             val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(context, callerChatId)
             (if (own) 1 else 2) to ids
@@ -29,24 +34,26 @@ class ChatRecallRepository internal constructor(
         // unicode61 treats an uninterrupted CJK sentence as one token; substring search is
         // required for ordinary Chinese/Japanese keywords.
         if (literal || recallUsesLiteral(query))
-            dao.searchRecallLiteral(query.trim(),role,profile,chatId,after,before,20,offset,mode,ids)
+            dao.searchRecallLiteral(query.trim(),role,profile,chatId,maxOf(after,minimumTimestamp),before,20,offset,mode,ids,minimumMessageId)
         else dao.searchRecallIndex(query.trim().split(Regex("\\s+")).joinToString(" OR ") {
             "\"${it.replace("\"", "\"\"")}\""
-        },role,profile,chatId,after,before,20,offset,mode,ids)
+        },role,profile,chatId,maxOf(after,minimumTimestamp),before,20,offset,mode,ids,minimumMessageId)
     }
     suspend fun context(messageId: Long, window: Int = 5): List<ChatRecallHit> = withContext(Dispatchers.IO) {
         require(messageId > 0)
         val (mode, ids) = scope()
-        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1,mode,ids).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
+        dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1,mode,ids,minimumMessageId,minimumTimestamp).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
     }
     suspend fun browse(profile: String = "", after: Long = 0, before: Long = Long.MAX_VALUE, offset: Int = 0) =
-        scope().let { (mode, ids) -> dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0),mode,ids) }
+        scope().let { (mode, ids) -> dao.browseRecallSessions(profile, after, before, 20, offset.coerceAtLeast(0),mode,ids,minimumMessageId,minimumTimestamp) }
     suspend fun session(chatId: String, offset: Int = 0, role: String = "", after: Long = 0, before: Long = Long.MAX_VALUE) =
-        scope().let { (mode, ids) -> dao.readRecallSession(chatId, role, after, before, 20, offset.coerceAtLeast(0),mode,ids) }
+        scope().let { (mode, ids) -> dao.readRecallSession(chatId, role, maxOf(after,minimumTimestamp), before, 20, offset.coerceAtLeast(0),mode,ids,minimumMessageId) }
     private suspend fun readPart(id: Long, offset: Int, limit: Int) =
-        scope().let { (mode, ids) -> dao.readRecallMessagePart(id, offset, limit,mode,ids) }
+        if (id < minimumMessageId) null else scope().let { (mode, ids) ->
+            dao.readRecallMessagePart(id, offset, limit,mode,ids)?.takeIf { it.timestamp >= minimumTimestamp } }
     private suspend fun readBytes(id: Long, offset: Long) =
-        scope().let { (mode, ids) -> dao.readRecallMessageBytes(id, offset,mode,ids) }
+        if (id < minimumMessageId || minimumTimestamp > 0 && readPart(id, 0, 1) == null) null
+        else scope().let { (mode, ids) -> dao.readRecallMessageBytes(id, offset,mode,ids) }
     suspend fun message(id: Long, charOffset: Int = 0): com.ai.assistance.operit.data.dao.ChatRecallPart? {
         val start = charOffset.coerceAtLeast(0)
         val part = readPart(id, start, 8000) ?: return null

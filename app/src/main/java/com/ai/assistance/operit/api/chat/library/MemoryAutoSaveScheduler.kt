@@ -248,6 +248,7 @@ class MemoryAutoSaveScheduler(
         repository.markProcessing(candidateIds)
 
         try {
+            val learningGuard = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context, profileId)
             val messages =
                 if (isSelectedUserBatch) {
                     val selectedMessages =
@@ -257,7 +258,8 @@ class MemoryAutoSaveScheduler(
                                     chatContentDao.getMessageByTimestamp(
                                         chatId = chatId,
                                         timestamp = candidate.triggerMessageTimestamp
-                                    )?.toChatMessage()
+                                    )?.takeIf { it.messageId > learningGuard.cutoff &&
+                                        it.timestamp > learningGuard.cutoffTimestamp }?.toChatMessage()
                                 }
                         }
                     selectedMessages
@@ -271,7 +273,8 @@ class MemoryAutoSaveScheduler(
                             maxTimestamp = latestTriggerTimestamp,
                             limit = MAX_MESSAGES_PER_BATCH
                         )
-                    }.asReversed().map { it.toChatMessage() }
+                    }.asReversed().filter { it.messageId > learningGuard.cutoff &&
+                        it.timestamp > learningGuard.cutoffTimestamp }.map { it.toChatMessage() }
                 }
 
             if (messages.isEmpty()) {
@@ -328,6 +331,7 @@ class MemoryAutoSaveScheduler(
                 includeNotes = false,
                 includeSkills = false,
                 sourceChatId = chatId,
+                learningGuard = learningGuard,
                 propagateFailure = true
             )
             repository.deleteCandidates(candidateIds)

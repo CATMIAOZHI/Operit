@@ -42,6 +42,9 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
     var discardTarget by remember { mutableStateOf<String?>(null) }
+    var evidenceText by remember(selectedId) { mutableStateOf<String?>(null) }
+    val memorySpace by remember(profileId) { UserPreferencesManager.getInstance(context).getMemorySpaceFlow(profileId) }
+        .collectAsState(initial = null)
     // A typed review reason is part of the draft too, so leaving must not drop it silently.
     val dirty = selected?.let { it.status == "pending" &&
         (body != it.body || description != it.description || reason.isNotBlank()) } == true
@@ -70,6 +73,8 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (selected == null) {
+                    if (memorySpace?.ownerOrbitId != null) Text(stringResource(R.string.orbit_memory_correction_help),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!autoSave) Text(stringResource(R.string.memory_auto_master_off), style = MaterialTheme.typography.bodySmall)
                     Row {
                         Text(stringResource(R.string.memory_review_ai_allowed), Modifier.weight(1f))
@@ -105,6 +110,23 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                     val changed = body != record.body || description != record.description
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text(record.title + (if(record.kind=="skill_file") "/${record.path}" else "") + " · " + reviewStatus(record.status))
+                        if (record.origin == "learning") Text(stringResource(R.string.orbit_memory_inferred),
+                            style = MaterialTheme.typography.bodySmall)
+                        if (record.evidence.isNotBlank() && record.evidence != "[]") {
+                            TextButton(enabled = !busy, onClick = { run {
+                                val sources = org.json.JSONArray(record.evidence)
+                                val ids = (0 until sources.length()).map {
+                                    sources.getJSONObject(it).getLong("message_id")
+                                }.distinct().take(8)
+                                val recall = com.ai.assistance.operit.data.repository.ChatRecallRepository(context, record.sourceChatId)
+                                evidenceText = ids.mapNotNull { recall.message(it)?.content?.take(2000) }.joinToString("\n\n")
+                                    .ifBlank { context.getString(R.string.orbit_memory_source_missing) }
+                            } }) { Text(stringResource(R.string.orbit_memory_view_evidence)) }
+                            evidenceText?.let {
+                                Text(stringResource(R.string.orbit_memory_evidence_current), style = MaterialTheme.typography.bodySmall)
+                                Text(it)
+                            }
+                        }
                         if (record.before.isNotEmpty()) {
                             Text(stringResource(R.string.memory_review_before))
                             OutlinedTextField(record.before, {}, readOnly = true, modifier = Modifier.fillMaxWidth(), maxLines = 5)
@@ -121,7 +143,12 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit) {
                                 minLines = 2, maxLines = 8)
                         }
                         if (record.audits.isNotBlank()) Text(record.audits)
-                        if (record.reviewedAt > 0) Text("${record.reviewer} · ${DateFormat.getDateTimeInstance().format(Date(record.reviewedAt))}\n${record.reason}")
+                        if (record.reviewedAt > 0) {
+                            val detailReason = if (record.reason.startsWith("Memory was corrected") ||
+                                record.reason == "Memory changed while this proposal was being applied")
+                                stringResource(R.string.orbit_memory_proposal_obsolete) else record.reason
+                            Text("${record.reviewer} · ${DateFormat.getDateTimeInstance().format(Date(record.reviewedAt))}\n$detailReason")
+                        }
                         if (pending || record.status == "applying") {
                             OutlinedTextField(reason, { reason = it }, enabled = !busy,
                                 label = { Text(stringResource(R.string.memory_review_reason)) }, modifier = Modifier.fillMaxWidth())

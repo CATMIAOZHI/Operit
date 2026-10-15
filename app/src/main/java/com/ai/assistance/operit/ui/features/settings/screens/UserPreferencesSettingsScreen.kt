@@ -210,7 +210,7 @@ fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit, documentRepository
                                 scope.launch {
                                     saving = true
                                     try {
-                                        repository.saveIfUnchanged(draftMarkdown, savedMarkdown)
+                                        repository.saveUserEdit(draftMarkdown, savedMarkdown)
                                         savedMarkdown = draftMarkdown
                                         val saved = UserProfileSections.parse(draftMarkdown)
                                         listOf(saved.profile, saved.preferences, saved.interactionRules)
