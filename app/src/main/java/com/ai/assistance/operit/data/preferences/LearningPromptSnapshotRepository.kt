@@ -40,11 +40,12 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
     }
 
     /** Only a persisted successful summary starts a new prefix epoch. */
-    suspend fun bindMemoryScope(scope: String) = withContext(Dispatchers.IO) {
+    suspend fun bindMemoryScope(scope: String, identityRevision: String = "") = withContext(Dispatchers.IO) {
         mutex.withLock {
             val data = read()
-            if (data.optString("_memory_scope", "global") != scope) {
-                write(JSONObject().put("_memory_scope", scope))
+            if (data.optString("_memory_scope", "global") != scope ||
+                data.optString("_identity_revision") != identityRevision) {
+                write(JSONObject().put("_memory_scope", scope).put("_identity_revision", identityRevision))
             }
         }
     }
@@ -54,7 +55,8 @@ class LearningPromptSnapshotRepository internal constructor(root: File, chatId: 
             val data = read()
             val epoch = LearnedSkillRepository.version(summary)
             if (data.optString("_epoch") != epoch)
-                write(JSONObject().put("_epoch", epoch).put("_memory_scope", data.optString("_memory_scope", "global")))
+                write(JSONObject().put("_epoch", epoch).put("_memory_scope", data.optString("_memory_scope", "global"))
+                    .put("_identity_revision", data.optString("_identity_revision")))
         }
     }
 

@@ -9195,4 +9195,22 @@
     <string name="orbit_revision_request">What would you like to change?</string>
     <string name="orbit_report_digest">Daily digest</string>
     <string name="orbit_task_event_wait">Runs after “%1$s” completes</string>
+    <string name="orbit_soul_title">Soul and history</string>
+    <string name="orbit_soul_subtitle">Review persona changes and restore versions</string>
+    <string name="orbit_soul_help">The role card only seeds the initial persona. Ask Orbit to propose changes, then confirm them here. The current version and 19 recent history entries are retained. Restoring creates a new version and never changes tool permissions.</string>
+    <string name="orbit_soul_pending">Awaiting your review</string>
+    <string name="orbit_soul_current">Current persona</string>
+    <string name="orbit_soul_rejected">Not adopted</string>
+    <string name="orbit_soul_history">Previous version</string>
+    <string name="orbit_soul_before">Current content</string>
+    <string name="orbit_soul_after">Proposed content</string>
+    <string name="orbit_soul_apply">Apply this version</string>
+    <string name="orbit_soul_stale">The persona changed. Ask Orbit for a new proposal based on the current version.</string>
+    <string name="orbit_soul_reject">Do not adopt</string>
+    <string name="orbit_soul_restore">Restore this version</string>
+    <string name="orbit_soul_restore_help">Save this content as a new current persona, used from the next request. Existing chat history is retained.</string>
+    <string name="orbit_soul_seed">Persona saved from the initial role card</string>
+    <string name="orbit_soul_import">Previously saved Soul persona</string>
+    <string name="orbit_soul_restored">New version restored from history</string>
+    <string name="orbit_soul_action_failed">Could not complete the action. The persona may have changed or its file may be unavailable. Retry; outdated proposals need to be regenerated from the current version.</string>
 </resources>
