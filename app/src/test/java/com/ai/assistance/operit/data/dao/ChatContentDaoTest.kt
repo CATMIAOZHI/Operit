@@ -18,6 +18,34 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class ChatContentDaoTest {
+    @Test fun `Orbit recall isolates every mode before pagination in both directions`() = runBlocking {
+        val dao = database.chatContentDao()
+        val ids = mutableMapOf<String, Long>()
+        for (chat in listOf("global", "orbit-a", "orbit-b")) {
+            database.chatDao().insertChat(ChatEntity(id=chat,title=chat,updatedAt=10))
+            ids[chat] = database.messageDao().insertMessage(MessageEntity(chatId=chat,sender="ai",
+                content="needle $chat",timestamp=10,orderIndex=0))
+        }
+        val a = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 1 to listOf("orbit-a") }
+        val global = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 2 to listOf("orbit-a","orbit-b") }
+        for ((repo, expected) in listOf(a to "orbit-a", global to "global")) {
+            assertEquals(listOf(expected), repo.browse().map { it.chatId })
+            assertEquals(listOf(expected), repo.search("needle").map { it.chatId })
+            assertEquals(listOf(expected), repo.search("needle", literal=true).map { it.chatId })
+            assertEquals(emptyList<ChatRecallHit>(), repo.search("needle", offset=1))
+            for ((chat,id) in ids) {
+                assertEquals(chat==expected, repo.session(chat).isNotEmpty())
+                assertEquals(chat==expected, repo.context(id).isNotEmpty())
+                assertEquals(chat==expected, repo.message(id)!=null)
+                assertEquals(chat==expected, dao.readRecallMessageBytes(id,0,
+                    if(expected=="global") 2 else 1,
+                    if(expected=="global") listOf("orbit-a","orbit-b") else listOf("orbit-a"))!=null)
+            }
+        }
+        assertEquals(emptyList<ChatRecallHit>(), com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) {
+            1 to emptyList()
+        }.search("needle"))
+    }
     private lateinit var tempDir: File
     private lateinit var database: AppDatabase
 

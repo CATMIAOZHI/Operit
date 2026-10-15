@@ -24,7 +24,10 @@ import kotlinx.coroutines.sync.withLock
  * editable. AtomicFile is required because a partially written profile would silently change the
  * model's behavior on every subsequent request.
  */
-class UserProfileDocumentRepository private constructor(private val context: Context) {
+class UserProfileDocumentRepository private constructor(
+    private val context: Context,
+    private val orbitId: String? = null,
+) {
     companion object {
         const val MAX_CONTENT_CHARS = 12_000
         const val USER_FILE_NAME = "user.md"
@@ -43,6 +46,16 @@ class UserProfileDocumentRepository private constructor(private val context: Con
 
         @Volatile
         private var INSTANCE: UserProfileDocumentRepository? = null
+        private val privateInstances = java.util.concurrent.ConcurrentHashMap<String, UserProfileDocumentRepository>()
+
+        suspend fun forMemorySpace(context: Context, spaceId: String): UserProfileDocumentRepository {
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, spaceId)
+                ?: return getInstance(context)
+            require(owner.matches(Regex("[a-zA-Z0-9-]+")))
+            return privateInstances.computeIfAbsent(owner) {
+                UserProfileDocumentRepository(context.applicationContext, owner)
+            }
+        }
 
         fun getInstance(context: Context): UserProfileDocumentRepository {
             return INSTANCE ?: synchronized(this) {
@@ -53,7 +66,10 @@ class UserProfileDocumentRepository private constructor(private val context: Con
         }
     }
 
-    private val userFile = File(context.filesDir, USER_FILE_NAME)
+    private val userFile = File(
+        if (orbitId == null) context.filesDir else File(context.filesDir, "orbit/$orbitId"),
+        USER_FILE_NAME,
+    )
     private val archiveFile = File(context.filesDir, LEGACY_ARCHIVE_FILE_NAME)
     private val migrationPreferences =
         context.getSharedPreferences(MIGRATION_PREFERENCES, Context.MODE_PRIVATE)
@@ -71,7 +87,7 @@ class UserProfileDocumentRepository private constructor(private val context: Con
             if (contentState.value != null) return
 
             val schemaVersion = migrationPreferences.getInt(SCHEMA_VERSION_KEY, 0)
-            if (schemaVersion < CURRENT_SCHEMA_VERSION) {
+            if (orbitId == null && schemaVersion < CURRENT_SCHEMA_VERSION) {
                 migrateReleasedStructuredProfiles()
             }
 
@@ -109,7 +125,7 @@ class UserProfileDocumentRepository private constructor(private val context: Con
             if (contentState.value == text) return@withLock
             writeAtomically(userFile, text)
             contentState.value = text
-            LearningPromptSnapshotRepository.markChanged(context, "user")
+            LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "orbit-user:$it" } ?: "user")
         }
     }
 
@@ -127,11 +143,11 @@ class UserProfileDocumentRepository private constructor(private val context: Con
             check(current == expected) { "user.md changed since review; reload first" }
             writeAtomically(userFile, text)
             contentState.value = text
-            LearningPromptSnapshotRepository.markChanged(context, "user")
+            LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "orbit-user:$it" } ?: "user")
         }
     }
 
-    fun hasLegacyArchive(): Boolean = archiveFile.isFile && archiveFile.length() > 0L
+    fun hasLegacyArchive(): Boolean = orbitId == null && archiveFile.isFile && archiveFile.length() > 0L
 
     fun readLegacyArchive(): String? {
         return archiveFile.takeIf { hasLegacyArchive() }?.readText(StandardCharsets.UTF_8)

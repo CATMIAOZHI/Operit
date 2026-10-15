@@ -1053,6 +1053,11 @@ class MemoryDocumentsProvider : DocumentsProvider() {
 
     private fun getRepository(profileId: String): MemoryRepository {
         val ctx = requireProviderContext()
+        val metadata = runBlocking {
+            com.ai.assistance.operit.data.preferences.UserPreferencesManager.getInstance(ctx)
+                .getMemorySpaceFlow(profileId).first()
+        }
+        if (metadata.ownerOrbitId != null) throw java.io.FileNotFoundException("Private memory is not exposed through DocumentsProvider")
         return synchronized(repositoryCache) {
             repositoryCache.getOrPut(profileId) { MemoryRepository(ctx, profileId) }
         }

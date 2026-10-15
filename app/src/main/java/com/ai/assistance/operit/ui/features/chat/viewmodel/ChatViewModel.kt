@@ -1240,6 +1240,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 val summaryMessage = AIMessageManager.summarizeMemory(
                     enhancedAiService!!,
                     messagesToSummarize,
+                    chatId = currentChatId,
                     autoContinue = false,
                     isGroupChat = isGroupChat,
                     summaryConfig = summaryConfig

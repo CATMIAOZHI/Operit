@@ -321,15 +321,16 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
         allowedMcpServerNames?.contains(serverName) ?: true
     }
     suspend fun loadSkillCatalog(): String = org.json.JSONObject(try {
-        SkillRepository.getInstance(
-            com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
-        ).getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
+        SkillRepository.forChat(context, chatId)
+            .getAiVisibleSkillPackages().mapValues { skillIndexDescription(it.value.description) }
     } catch (_: Exception) {
         emptyMap<String,String>()
     }).toString()
     val catalog = org.json.JSONObject(if(chatId.isNullOrBlank()) loadSkillCatalog()
-        else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId)
-            .getOrPut("skill_catalog") { loadSkillCatalog() })
+        else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId).let { snapshot ->
+            snapshot.bindMemoryScope(com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context,chatId)?.id ?: "global")
+            snapshot.getOrPut("skill_catalog") { loadSkillCatalog() }
+        })
     val skillPackages = catalog.keys().asSequence()
         .filter { allowedSkillNames?.contains(it) ?: true }.sorted().associateWith { catalog.getString(it) }
 

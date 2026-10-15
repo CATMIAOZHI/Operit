@@ -912,10 +912,7 @@ internal fun buildComposeDslContextBridgeDefinition(): String {
                         if (!target) {
                             return Promise.resolve('');
                         }
-                        var result = invokeNative('usePackage', [target]);
-                        if (result !== undefined && result !== null) {
-                            return Promise.resolve(result);
-                        }
+                        // Tool dispatch carries the caller's private memory scope across threads.
                         return toolCall('use_package', { package_name: target });
                     },
                     listImportedPackages: function() {

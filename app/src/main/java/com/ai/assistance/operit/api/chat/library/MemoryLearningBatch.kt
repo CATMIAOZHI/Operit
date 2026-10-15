@@ -33,7 +33,14 @@ internal data class LearningCursor(
  * The completed source range and the entire change set share one atomic journal write.
  * A crash during export replays the same proposal IDs, never generates new approvals.
  */
-internal class MemoryLearningJournal(private val context: Context, val profile: String, val chat: String) {
+internal class MemoryLearningJournal(
+    private val context: Context,
+    val profile: String,
+    val chat: String,
+    private val resolveScope: suspend () -> String? = {
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, chat, profile)
+    },
+) {
     private val root = File(context.filesDir, "memory_learning_progress")
     private val file = File(root, java.util.UUID.nameUUIDFromBytes("$profile\u0000$chat".toByteArray()).toString()+".json")
     private val reviews = MemoryReviewRepository(context,profile)
@@ -142,7 +149,20 @@ internal class MemoryLearningJournal(private val context: Context, val profile: 
             save()
         }
     }
+    /** An old global batch must not be applied after its chat acquires an Orbit-owned space. */
+    fun discardForScopeChange() {
+        synchronized(lock) {
+            reload()
+            state.put("pending_notes", false).put("pending_skills", false)
+            state.remove("export")
+            save()
+        }
+    }
     suspend fun export(): List<String> {
+        if (resolveScope() != profile) {
+            discardForScopeChange()
+            return listOf(context.getString(com.ai.assistance.operit.R.string.orbit_memory_learning_scope_changed))
+        }
         // The import below can suspend, so the journal is only locked for the read and the release.
         val array = synchronized(lock) {
             reload()

@@ -542,26 +542,34 @@ class ConversationService(
         conversationMutex.withLock {
             // Add system prompt if not already present
             if (!effectiveChatHistory.any { it.kind == PromptTurnKind.SYSTEM }) {
-                // user.md describes the one human user. Role cards and group proxy senders describe
-                // assistants, so they must never replace or select a different user document.
+                val orbitSpace = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+                    .resolve(context, chatId, memorySpaceIdOverride)
+                val privateOwner = orbitSpace?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, it)
+                }
+                val userProfileDocumentRepository = orbitSpace?.let {
+                    UserProfileDocumentRepository.forMemorySpace(context, it)
+                } ?: userProfileDocumentRepository
+                val userRevisionKey = privateOwner?.let { "orbit-user:$it" } ?: "user"
                 val learningSnapshot = chatId?.takeIf { it.isNotBlank() && !isSubTask }?.let {
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
                 }
+                learningSnapshot?.bindMemoryScope(privateOwner ?: "global")
                 learningSnapshot?.beginEpoch(
                     effectiveChatHistory.lastOrNull { it.kind == PromptTurnKind.SUMMARY }?.content.orEmpty()
                 )
                 val proxyCard = proxySenderName?.takeIf { it.isNotBlank() }
                     ?.let { characterCardManager.findCharacterCardByName(it) }
                 val promptRevisions = com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
-                    context, listOfNotNull("user", "template", "settings",
+                    context, listOfNotNull(userRevisionKey, "template", "settings",
                         roleCardId?.takeIf { it.isNotBlank() }?.let { "card:$it" },
                         proxyCard?.id?.let { "card:$it" })
                 ).toMutableMap()
                 val userProfileMarkdown = learningSnapshot?.getOrPut("user") {
                     userProfileDocumentRepository.load().trim()
                 } ?: userProfileDocumentRepository.load().trim()
-                if (learningSnapshot != null) promptRevisions["user"] =
-                    learningSnapshot.getOrPut("_user_revision") { promptRevisions["user"].orEmpty() }
+                if (learningSnapshot != null) promptRevisions[userRevisionKey] =
+                    learningSnapshot.getOrPut("_user_revision") { promptRevisions[userRevisionKey].orEmpty() }
                 val proxyRolePrompt =
                     proxyCard
                         ?.let { proxyCard ->
@@ -606,14 +614,14 @@ class ConversationService(
                 val allowPersonalContext =
                     ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)
                 // Use the same space as memory tools, including a fixed role-card binding.
-                val notesSpaceId = memorySpaceIdOverride?.takeIf { it.isNotBlank() }
+                val notesSpaceId = orbitSpace?.takeIf { it.isNotBlank() }
                     ?: activeCard?.takeIf {
                         com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.normalize(it.memoryProfileBindingMode) ==
                             com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
                     }?.memoryProfileId?.takeIf { it.isNotBlank() }
                     ?: preferencesManager.activeMemorySpaceIdFlow.first()
                 promptRevisions.putAll(com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.revisions(
-                    context, listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId")))
+                    context, listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId", "skills:$notesSpaceId")))
                 if (learningSnapshot != null) listOf("notes-policy:$notesSpaceId", "notes-content:$notesSpaceId").forEach { key ->
                     promptRevisions[key] = learningSnapshot.getOrPut("_revision:$key") { promptRevisions[key].orEmpty() }
                 }
@@ -640,7 +648,8 @@ class ConversationService(
                 val roleCardToolAccess = characterCardToolAccessResolver.resolve(
                     roleCardId = effectiveRoleCardId,
                     packageManager = packageManager,
-                    globalToolVisibility = toolPromptVisibility
+                    globalToolVisibility = toolPromptVisibility,
+                    chatId = chatId
                 )
 
                 // 获取系统提示词，现在传入workspacePath和识图配置状态

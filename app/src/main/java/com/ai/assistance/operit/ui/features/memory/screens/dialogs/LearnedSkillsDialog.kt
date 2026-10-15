@@ -20,6 +20,9 @@ import com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen
 @Composable
 fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val skillRepository by produceState<SkillRepository?>(null, profileId) {
+        value = SkillRepository.forMemorySpace(context, profileId)
+    }
     val prefs = remember(profileId) { MemorySearchSettingsPreferences(context,profileId) }
     var extract by remember { mutableStateOf(prefs.shouldExtractSkills()) }
     var revise by remember { mutableStateOf(prefs.mayReviseLearnedSkills()) }
@@ -58,7 +61,7 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
                 }
                 }
                 Box(Modifier.weight(1f)) {
-                    SkillConfigScreen(SkillRepository.getInstance(context),snackbar,learnedOnlyProfileId=profileId)
+                    skillRepository?.let { SkillConfigScreen(it,snackbar,learnedOnlyProfileId=profileId) }
                 }
                 SnackbarHost(snackbar)
             }

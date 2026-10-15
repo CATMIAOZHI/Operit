@@ -9057,7 +9057,13 @@
     <string name="orbit_manage_role_cards">管理角色卡</string>
     <string name="orbit_manage_role_cards_desc">角色卡只用来给新 Orbit 起个人设，之后改它不会影响已有的 Orbit</string>
     <string name="orbit_memory_row">记忆库</string>
-    <string name="orbit_memory_row_desc">查看和整理 AI 记下的内容</string>
+    <string name="orbit_memory_row_desc">查看和整理这个 Orbit 的资料、笔记与技能</string>
+    <string name="orbit_memory_unavailable">暂时无法打开这个 Orbit 的记忆，请重试。不会改用全局记忆。</string>
+    <string name="orbit_memory_retry">重试</string>
+    <string name="orbit_memory_learning_scope_changed">这段聊天已使用 Orbit 独立记忆，旧记忆库中的待学习内容已停止处理。已有记忆没有移动。</string>
+    <string name="orbit_delete_incomplete">删除尚未完成，可以重试删除</string>
+    <string name="orbit_deleting">正在停止任务并删除…</string>
+    <string name="orbit_retry_delete">继续删除</string>
     <string name="orbit_section_proactive">主动陪伴</string>
     <string name="orbit_proactive_switch">每天主动找你</string>
     <string name="orbit_proactive_switch_desc">到点后 Orbit 会想想有没有话要对你说，没有就保持安静</string>

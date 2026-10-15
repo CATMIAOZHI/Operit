@@ -18,6 +18,8 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.coroutineScope
@@ -96,16 +98,18 @@ class MemoryAutoSaveScheduler(
     }
 
     private suspend fun scanAndProcessCandidates() {
-        val profileIds = preferencesManager.memorySpaceListFlow.first()
+        val profileIds = preferencesManager.allMemorySpaceIdsFlow.first()
         if (profileIds.isEmpty()) return
 
         val nowMs = System.currentTimeMillis()
 
         for (profileId in profileIds) {
+            try {
+            MemoryLibrary.withSpaceOperation(profileId) {
             val intervalMs = intervalMsForProfile(profileId)
             val nextRunAtMs = getOrInitNextRunAtMs(profileId, nowMs)
             if (nowMs < nextRunAtMs) {
-                continue
+                return@withSpaceOperation
             }
 
             val repository = MemoryAutoSaveCandidateRepository(context, profileId)
@@ -117,7 +121,7 @@ class MemoryAutoSaveScheduler(
                     "候选总条数不足，继续累计并重置下次执行时间: profileId=$profileId, totalCandidates=${allCandidates.size}, nextRunAt=$nextRunAt"
                 )
                 scheduleNextRun(profileId, nextRunAt)
-                continue
+                return@withSpaceOperation
             }
             val groupedCandidates =
                 allCandidates
@@ -126,7 +130,7 @@ class MemoryAutoSaveScheduler(
 
             if (groupedCandidates.isEmpty()) {
                 scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
-                continue
+                return@withSpaceOperation
             }
 
             // The tool handle and the memory service are only resolved once there is real work, so an
@@ -188,6 +192,13 @@ class MemoryAutoSaveScheduler(
                 }
             }
             scheduleNextRun(profileId, System.currentTimeMillis() + intervalMs)
+            }
+            } catch (e: CancellationException) {
+                // Deleting one space cancels only its child operation, not this polling loop.
+                currentCoroutineContext().ensureActive()
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Memory space scan failed: $profileId", e)
+            }
         }
     }
 

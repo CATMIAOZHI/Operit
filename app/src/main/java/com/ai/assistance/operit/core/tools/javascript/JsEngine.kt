@@ -1794,14 +1794,6 @@ class JsEngine(private val context: Context) {
         }
 
         @JavascriptInterface
-        fun usePackage(packageName: String): String {
-            return JsNativeInterfaceDelegates.usePackage(
-                    packageManager = packageManager,
-                    packageName = packageName
-            )
-        }
-
-        @JavascriptInterface
         fun listImportedPackagesJson(): String {
             return JsNativeInterfaceDelegates.listImportedPackagesJson(
                     packageManager = packageManager

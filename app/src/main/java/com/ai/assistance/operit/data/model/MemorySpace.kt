@@ -11,5 +11,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 data class MemorySpace(
     val id: String,
-    val name: String
+    val name: String,
+    /** Host-owned private space; never offered by the global memory selector. */
+    val ownerOrbitId: String? = null,
 )

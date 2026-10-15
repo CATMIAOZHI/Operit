@@ -97,7 +97,14 @@ internal object PermissionReviewRetainedInstructionsReader {
         }
         val ruleFile = ruleFileResult.getOrNull()
         val userProfileResult =
-            runCatching { UserProfileDocumentRepository.getInstance(context).load().trim() }
+            runCatching {
+                val space = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
+                    context, chatId, null
+                )
+                val repository = if (space == null) UserProfileDocumentRepository.getInstance(context)
+                    else UserProfileDocumentRepository.forMemorySpace(context, space)
+                repository.load().trim()
+            }
         userProfileResult.exceptionOrNull()?.let { error ->
             AppLogger.w(TAG, "Failed to read the user profile document", error)
         }

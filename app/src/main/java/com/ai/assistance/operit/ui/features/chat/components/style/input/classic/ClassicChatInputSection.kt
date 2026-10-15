@@ -1081,6 +1081,7 @@ fun ClassicChatInputSection(
             }
 
             AttachmentSelectorPanel(
+                chatId = currentChatIdForPermission,
                 visible = showAttachmentPanel,
                 onAttachImage = { filePath ->
                     onAttachmentRequest(filePath)

@@ -73,9 +73,9 @@ import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit) {
+fun UserPreferencesSettingsScreen(onNavigateBack: () -> Unit, documentRepository: UserProfileDocumentRepository? = null) {
     val context = LocalContext.current
-    val repository = remember(context) { UserProfileDocumentRepository.getInstance(context) }
+    val repository = documentRepository ?: remember(context) { UserProfileDocumentRepository.getInstance(context) }
     val scope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
 

@@ -95,18 +95,26 @@ internal object OrbitTools {
      * any other chat. It changes only when Orbit renames itself, so the prompt cache stays warm.
      */
     suspend fun systemPromptBlock(context: Context, chatId: String?, useEnglish: Boolean): String {
-        val orbit = OrbitPreferences.getInstance(context).current().orbitForChat(chatId) ?: return ""
+        val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return ""
         val name = orbit.name.replace("<", "").replace(">", "").trim()
         val body =
             if (useEnglish) {
                 "This chat is your Orbit space: here you are the user's long-term companion, in " +
                     "one conversation that keeps going." +
                     (if (name.isNotEmpty()) " Your name is \"$name\"." else "") +
-                    " Only you can change your name, with $SET_NAME; the user cannot edit it."
+                    " Only you can change your name, with $SET_NAME; the user cannot edit it." +
+                    " Your profile, notes, history and learned skills belong to this Orbit. By default," +
+                    " read and update only your own memory; do not search other Orbits or global memory." +
+                    " If the user explicitly asks you to read another memory source, you may use available" +
+                    " command or file tools under the normal permission review. Read only the requested" +
+                    " content; do not automatically import it into your own memory."
             } else {
                 "这个聊天是你的 Orbit 空间：你在这里是用户的长期伙伴，这段对话会一直延续。" +
                     (if (name.isNotEmpty()) "你的名字是「$name」。" else "") +
-                    "名字只能由你调用 $SET_NAME 修改，用户不能直接改。"
+                    "名字只能由你调用 $SET_NAME 修改，用户不能直接改。" +
+                    "你的用户资料、笔记、历史和积累的技能属于当前 Orbit。默认只读取和更新自己的记忆，" +
+                    "不要主动检索其他 Orbit 或全局记忆。用户明确要求读取其他记忆来源时，可以在正常权限" +
+                    "审核下使用现有命令或文件工具，仅读取用户要求的内容，不要自动导入自己的记忆。"
             }
         return "<orbit>\n$body\n</orbit>"
     }

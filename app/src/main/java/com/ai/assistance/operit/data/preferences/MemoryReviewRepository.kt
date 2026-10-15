@@ -365,7 +365,7 @@ class MemoryReviewRepository internal constructor(
                 write(items)
                 var skillInstalled = false
                 val previousSkillDescription = if (change.kind == "skill_file")
-                    SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description else null
+                    SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title]?.description else null
                 try {
                     if (change.kind == "notes") {
                         val notes = MemoryNotesRepository(context, profileId)
@@ -376,28 +376,30 @@ class MemoryReviewRepository internal constructor(
                         // the older text. Skill catalog changes are marked the same way below.
                         LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
                     } else if(change.kind=="user") {
-                        UserProfileDocumentRepository.getInstance(context).saveIfUnchanged(change.body,change.before)
+                        UserProfileDocumentRepository.forMemorySpace(context, profileId).saveIfUnchanged(change.body,change.before)
                     } else if(change.kind=="skill_delete") {
-                        LearnedSkillRepository(context).delete(change.title,change.baseVersion)
+                        LearnedSkillRepository(context, profileId).delete(change.title,change.baseVersion)
                     } else if (change.kind=="skill_file") {
-                        LearnedSkillRepository(context).apply(profileId,change.title,change.path,change.body,
+                        LearnedSkillRepository(context, profileId).apply(profileId,change.title,change.path,change.body,
                             change.baseVersion,change.operation=="remove",change.automatic)
                     } else skillInstallMutex.withLock {
                         if (change.status == "pending") {
-                            check(SkillManager.getInstance(context).getAvailableSkills()[change.title] == null) {
+                            check(SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title] == null) {
                                 context.getString(com.ai.assistance.operit.R.string.skill_draft_duplicate)
                             }
                         }
                         installSkill(context, change)
                         skillInstalled = true
-                        LearnedSkillRepository(context).register(change.title,profileId)
+                        LearnedSkillRepository(context, profileId).register(change.title,profileId)
                     }
                     // Any catalog change invalidates a frozen prefix, including one the background
                     // learner made: without this the new skill is invisible to existing chats.
                     if (change.kind in setOf("skill", "skill_delete") ||
                         (change.kind == "skill_file" &&
-                            previousSkillDescription != SkillManager.getInstance(context).getAvailableSkills()[change.title]?.description))
-                        LearningPromptSnapshotRepository.markChanged(context, "settings")
+                            previousSkillDescription != SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[change.title]?.description))
+                        LearningPromptSnapshotRepository.markChanged(context,
+                            if (com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId) == null)
+                                "settings" else "skills:$profileId")
                 } catch (e: MemoryNotesRepository.NotesException) {
                     // A rejected CAS/capacity check made no write; it is safe to return to pending.
                     items[index] = change.copy(status = "pending", reason = e.reason.name)
@@ -423,7 +425,7 @@ class MemoryReviewRepository internal constructor(
     }
     suspend fun delete() = withContext(Dispatchers.IO) { mutex.withLock { Files.deleteIfExists(file.toPath()); Unit } }
 
-    private fun installSkill(context: Context, draft: MemoryReviewChange) {
+    private suspend fun installSkill(context: Context, draft: MemoryReviewChange) {
         val validated = parseSkillDrafts(JSONArray().put(JSONObject().put("name", draft.title)
             .put("description", draft.description).put("body", draft.body)), draft.sourceChatId)
         require(validated.size == 1) { context.getString(com.ai.assistance.operit.R.string.skill_draft_invalid) }
@@ -433,7 +435,7 @@ class MemoryReviewRepository internal constructor(
         try {
             // JSON quoted strings are valid YAML scalars; names are restricted path-safe slugs.
             val markdown = "---\nname: ${skill.name}\ndescription: ${JSONObject.quote(skill.description)}\n---\n\n${skill.body}\n"
-            val manager = SkillManager.getInstance(context)
+            val manager = SkillManager.forMemorySpace(context, profileId)
             // Retry after installation but before the decision journal was finalized.
             val files = draft.files.mapValues { (_, text) -> stripInvisibleCharacters(text) }
             validateDraftFiles(files)

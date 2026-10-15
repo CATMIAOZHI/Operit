@@ -9080,7 +9080,13 @@
     <string name="orbit_manage_role_cards">Manage role cards</string>
     <string name="orbit_manage_role_cards_desc">A role card only seeds a new Orbit; later edits do not change existing Orbits</string>
     <string name="orbit_memory_row">Memory library</string>
-    <string name="orbit_memory_row_desc">See and tidy what the AI has remembered</string>
+    <string name="orbit_memory_row_desc">Manage this Orbit’s profile, notes and skills</string>
+    <string name="orbit_memory_unavailable">This Orbit’s memory is unavailable. Please retry. Global memory will not be used instead.</string>
+    <string name="orbit_memory_retry">Retry</string>
+    <string name="orbit_memory_learning_scope_changed">This chat now uses Orbit memory. Pending learning in its previous memory space was stopped. Existing memories were not moved.</string>
+    <string name="orbit_delete_incomplete">Deletion did not finish. You can retry.</string>
+    <string name="orbit_deleting">Stopping tasks and deleting…</string>
+    <string name="orbit_retry_delete">Retry deletion</string>
     <string name="orbit_section_proactive">Reaching out</string>
     <string name="orbit_proactive_switch">Check in every day</string>
     <string name="orbit_proactive_switch_desc">At the set time Orbit decides whether it has something to tell you, and stays quiet if not</string>

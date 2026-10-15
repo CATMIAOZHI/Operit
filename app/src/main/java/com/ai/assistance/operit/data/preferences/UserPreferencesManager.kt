@@ -521,18 +521,28 @@ class UserPreferencesManager private constructor(private val context: Context) {
             preferences[ACTIVE_MEMORY_SPACE_ID] ?: DEFAULT_PROFILE_ID
         }
 
-    val memorySpaceListFlow: Flow<List<String>> =
+    val allMemorySpaceIdsFlow: Flow<List<String>> =
         context.userPreferencesDataStore.data.map { preferences ->
             preferences[MEMORY_SPACE_LIST]
                 ?.let { Json.decodeFromString<List<String>>(it) }
                 .orEmpty()
         }
 
+    val memorySpaceListFlow: Flow<List<String>> =
+        context.userPreferencesDataStore.data.map { preferences ->
+            decodeIdList(preferences[MEMORY_SPACE_LIST]).filter { id ->
+                preferences[stringPreferencesKey("memory_space_$id")]?.let {
+                    Json.decodeFromString<MemorySpace>(it).ownerOrbitId
+                } == null
+            }
+        }
+
     val memorySpaceNamesFlow: Flow<Map<String, String>> =
         context.userPreferencesDataStore.data.map { preferences ->
             decodeIdList(preferences[MEMORY_SPACE_LIST]).mapNotNull { id ->
                 preferences[stringPreferencesKey("memory_space_$id")]?.let { encoded ->
-                    id to Json.decodeFromString<MemorySpace>(encoded).name
+                    Json.decodeFromString<MemorySpace>(encoded).takeIf { it.ownerOrbitId == null }
+                        ?.let { id to it.name }
                 }
             }.toMap()
         }
@@ -580,6 +590,10 @@ class UserPreferencesManager private constructor(private val context: Context) {
         context.userPreferencesDataStore.edit { preferences ->
             val ids = decodeIdList(preferences[MEMORY_SPACE_LIST])
             require(ids.contains(memorySpaceId)) { "Unknown memory space: $memorySpaceId" }
+            val metadata = Json.decodeFromString<MemorySpace>(
+                requireNotNull(preferences[stringPreferencesKey("memory_space_$memorySpaceId")])
+            )
+            require(metadata.ownerOrbitId == null) { "Orbit memory cannot be selected globally" }
             preferences[ACTIVE_MEMORY_SPACE_ID] = memorySpaceId
         }
         if (changed) LearningPromptSnapshotRepository.markChanged(context, "settings")
@@ -587,12 +601,33 @@ class UserPreferencesManager private constructor(private val context: Context) {
 
     suspend fun updateMemorySpace(space: MemorySpace) {
         context.userPreferencesDataStore.edit { preferences ->
+            val previous = preferences[stringPreferencesKey("memory_space_${space.id}")]
+                ?.let { Json.decodeFromString<MemorySpace>(it) }
+            require(previous != null && previous.ownerOrbitId == space.ownerOrbitId) {
+                "Memory ownership cannot be changed"
+            }
             preferences[stringPreferencesKey("memory_space_${space.id}")] = Json.encodeToString(space)
         }
     }
 
+    /** Idempotent creation is used only while creating/migrating an Orbit, never as a read fallback. */
+    suspend fun createOrbitMemorySpace(orbitId: String, name: String): String {
+        require(orbitId.matches(Regex("[a-zA-Z0-9-]+")))
+        val id = "orbit_$orbitId"
+        context.userPreferencesDataStore.edit { preferences ->
+            val key = stringPreferencesKey("memory_space_$id")
+            val previous = preferences[key]?.let { Json.decodeFromString<MemorySpace>(it) }
+            require(previous == null || previous.ownerOrbitId == orbitId)
+            if (previous == null) preferences[key] = Json.encodeToString(MemorySpace(id, name, orbitId))
+            val ids = decodeIdList(preferences[MEMORY_SPACE_LIST])
+            preferences[MEMORY_SPACE_LIST] = Json.encodeToString((ids + id).distinct())
+        }
+        return id
+    }
+
     suspend fun deleteMemorySpace(memorySpaceId: String) {
         if (memorySpaceId == DEFAULT_PROFILE_ID) return
+        com.ai.assistance.operit.api.chat.library.MemoryLibrary.stopSpace(memorySpaceId)
         com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.deleteSpace(context,memorySpaceId)
         val wasActive = activeMemorySpaceIdFlow.first() == memorySpaceId
         val characterCardManager = CharacterCardManager.getInstance(context)

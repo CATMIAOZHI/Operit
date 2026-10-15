@@ -1094,7 +1094,7 @@ object ToolExecutionManager {
             runCatching {
                 CharacterCardToolAccessResolver
                     .getInstance(context)
-                    .resolve(callerCardId, packageManager)
+                    .resolve(callerCardId, packageManager, chatId = callerChatId)
             }.onFailure { error ->
                 AppLogger.e(TAG, "角色卡工具权限解析失败: callerCardId=$callerCardId", error)
             }.getOrNull()

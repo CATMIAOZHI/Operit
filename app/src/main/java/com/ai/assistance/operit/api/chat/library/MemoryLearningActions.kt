@@ -15,7 +15,7 @@ class MemoryLearningActions(
     private val stagedChanges: MutableList<MemoryReviewChange>? = null,
     private val onCreated: () -> Unit = {}
 ) {
-    private val skills = LearnedSkillRepository(context)
+    private val skills = LearnedSkillRepository(context, profileId)
     private val reviews = MemoryReviewRepository(context,profileId,stagedChanges)
     /**
      * Versions this space has already read, kept across instances because the foreground package tool
@@ -42,12 +42,12 @@ class MemoryLearningActions(
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context).execute(args, filterAssistantThinking = true,
+            "history" -> ChatRecallRepository(context, sourceChatId).execute(args, filterAssistantThinking = true,
                 includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
-                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val staged = stagedDocument(stagedChanges, user)
                 val content = staged?.body ?: disk
@@ -69,7 +69,7 @@ class MemoryLearningActions(
             "memory_change" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"
-                val disk = if(user) UserProfileDocumentRepository.getInstance(context).load()
+                val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val key = if(user) "user" else "memory"
                 // The version this run already read is the authority; an explicit argument is only a
@@ -115,7 +115,7 @@ class MemoryLearningActions(
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val owned = skills.owned(profileId)
                 JSONObject().put("skills",JSONArray().apply {
-                    SkillManager.getInstance(context).getAvailableSkills().values.forEach {
+                    SkillManager.forMemorySpace(context, profileId).getAvailableSkills().values.forEach {
                         put(JSONObject().put("name",it.name).put("description",it.description)
                             .put("learned_in_this_space",it.name in owned))
                     }
@@ -161,7 +161,7 @@ class MemoryLearningActions(
                 val parsed = parseSkillDrafts(JSONArray().put(JSONObject().put("name",name)
                     .put("description",arg("description")).put("body",body)),sourceChatId)
                 require(parsed.size==1) { "Invalid skill draft" }
-                check(SkillManager.getInstance(context).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
+                check(SkillManager.forMemorySpace(context, profileId).getAvailableSkills()[name]==null) { "Update the existing skill instead" }
                 reviews.toModelJson(reviews.applyAutomaticDecision(context, reviews.proposeSkill(parsed.single(),onCreated,
                     stagedSkillCreate(stagedChanges,name)?.files.orEmpty())))
             }

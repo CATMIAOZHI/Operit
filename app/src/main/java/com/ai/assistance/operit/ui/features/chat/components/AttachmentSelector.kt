@@ -99,6 +99,7 @@ fun AttachmentSelectorPanel(
         onAttachPackage: (String) -> Unit = {},
         onTakePhoto: (Uri) -> Unit,
         userQuery: String = "",
+        chatId: String? = null,
         onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
@@ -320,6 +321,7 @@ fun AttachmentSelectorPanel(
     // 包选择对话框
     PackageSelectorDialog(
         visible = showPackageDialog,
+        chatId = chatId,
         onDismiss = { showPackageDialog = false },
         onPackageSelected = { packageName ->
             onAttachPackage(packageName)
@@ -340,6 +342,7 @@ fun AttachmentSelectorPopupPanel(
         onAttachMemory: () -> Unit = {},
         onAttachPackage: (String) -> Unit = {},
         onTakePhoto: (Uri) -> Unit,
+        chatId: String? = null,
         onDismiss: () -> Unit
 ) {
     if (!visible) return
@@ -510,6 +513,7 @@ fun AttachmentSelectorPopupPanel(
     // 包选择对话框
     PackageSelectorDialog(
         visible = showPackageDialog,
+        chatId = chatId,
         onDismiss = { showPackageDialog = false },
         onPackageSelected = { packageName ->
             onAttachPackage(packageName)
@@ -660,6 +664,7 @@ private fun AttachmentOption(
 fun PackageSelectorDialog(
         visible: Boolean,
         onDismiss: () -> Unit,
+        chatId: String? = null,
         onPackageSelected: (String) -> Unit
 ) {
     if (!visible) return
@@ -667,7 +672,7 @@ fun PackageSelectorDialog(
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(stringResource(R.string.attachment_package_select_title)) },
-        text = { PackageSelectorContent(onPackageSelected = onPackageSelected) },
+        text = { PackageSelectorContent(onPackageSelected = onPackageSelected, chatId = chatId) },
         confirmButton = {
             TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
@@ -678,6 +683,7 @@ fun PackageSelectorDialog(
 @Composable
 fun PackageSelectorContent(
     onPackageSelected: (String) -> Unit,
+    chatId: String? = null,
     modifier: Modifier = Modifier,
     onSearchFocusChanged: (Boolean) -> Unit = {},
 ) {
@@ -686,7 +692,6 @@ fun PackageSelectorContent(
     val packageManager = remember {
         ToolPackageManager.getInstance(context.applicationContext, toolHandler)
     }
-    val skillRepository = remember { SkillRepository.getInstance(context.applicationContext) }
     var packageOptions by remember { mutableStateOf<List<AttachmentPackageOption>>(emptyList()) }
     var searchQuery by remember { mutableStateOf("") }
     val filteredPackageOptions =
@@ -703,11 +708,11 @@ fun PackageSelectorContent(
                 }
             }
 
-    LaunchedEffect(Unit) {
+    LaunchedEffect(chatId) {
         packageOptions = buildAttachmentPackageOptions(
             context = context.applicationContext,
             packageManager = packageManager,
-            skillRepository = skillRepository
+            skillRepository = SkillRepository.forChat(context.applicationContext, chatId)
         )
     }
 

@@ -37,7 +37,31 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     val filterTimeInvalid = stringResource(R.string.chat_recall_filter_time_invalid)
     val draftExtracted = stringResource(R.string.skill_draft_extracted)
     val extractionTimeout = stringResource(R.string.memory_extraction_timeout)
-    val repo = remember { ChatRecallRepository(context) }
+    var retry by remember(profileId) { mutableStateOf(0) }
+    val scopedRepo by produceState<Result<ChatRecallRepository>?>(null, profileId, retry) {
+        value = null
+        value = try {
+            val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
+            val chatId = if (owner == null) null else
+                com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+                    .orbits.first { it.id == owner && !it.deleting }.chatId
+            Result.success(ChatRecallRepository(context, chatId))
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { Result.failure(e) }
+    }
+    val repo = scopedRepo?.getOrNull()
+    if (repo == null) {
+        MemoryLibraryPage(stringResource(R.string.chat_recall_title), profileId, onDismiss) {
+            Column(Modifier.fillMaxWidth().padding(24.dp)) {
+                if (scopedRepo == null) CircularProgressIndicator()
+                else {
+                    Text(recallError)
+                    TextButton(onClick = { retry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                }
+            }
+        }
+        return
+    }
     val scope = rememberCoroutineScope()
     var query by rememberSaveable { mutableStateOf("") }
     var profile by rememberSaveable { mutableStateOf("") }

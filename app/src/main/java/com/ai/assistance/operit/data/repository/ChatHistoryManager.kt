@@ -3821,6 +3821,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
                 // Card selections and live data live beside the chat, keyed by message timestamp.
                 copyResult.copiedChatIds.forEach { (sourceId, targetId) ->
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, sourceId)?.let {
+                        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                            .rememberChatOwner(targetId, it.id)
+                    }
                     runCatching {
                         com.ai.assistance.operit.ui.common.dynamicui.DynamicUiStateStore.copyChat(context, sourceId, targetId)
                     }.onFailure { AppLogger.w(TAG, "Failed to copy card state into branch $targetId", it) }

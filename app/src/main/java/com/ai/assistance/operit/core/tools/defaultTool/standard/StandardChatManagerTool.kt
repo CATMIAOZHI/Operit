@@ -141,6 +141,17 @@ class StandardChatManagerTool(private val context: Context) {
         )
     }
 
+    private fun callerChatId(): String? =
+        com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+
+    private suspend fun checkChatScope(chatId: String) =
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.checkChatAccess(appContext, callerChatId(), chatId)
+
+    private suspend fun scopedChats(manager: ChatHistoryManager): List<ChatHistory> {
+        val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(appContext, callerChatId())
+        return manager.getVisibleChatHistoriesSnapshot().filter { (it.id in ids) == own }
+    }
+
     private fun parseChatCallBoolean(
         value: String?,
         parameterName: String,
@@ -614,6 +625,7 @@ class StandardChatManagerTool(private val context: Context) {
             val effectiveLimit = (parsedLimit ?: 20).coerceIn(1, 200)
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
+            checkChatScope(chatId)
             val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
             if (chat == null) {
                 return ToolResult(
@@ -713,6 +725,7 @@ class StandardChatManagerTool(private val context: Context) {
             val effectiveLimit = parsedEnd - parsedStart + 1
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
+            checkChatScope(chatId)
             val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
             if (chat == null) {
                 return ToolResult(
@@ -769,6 +782,7 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
+            checkChatScope(chatId)
             val chat =
                 chatHistoryManager
                     .getChatMetadata(chatId)
@@ -920,8 +934,8 @@ class StandardChatManagerTool(private val context: Context) {
 
             val targetIndex = index ?: 0
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
-            val currentChatId = chatHistoryManager.currentChatIdFlow.first()
+            val chatHistories = scopedChats(chatHistoryManager)
+            val currentChatId = chatHistoryManager.currentChatIdFlow.first()?.takeIf { id -> chatHistories.any { it.id == id } }
             val messageCounts = chatHistoryManager.getMessageCountsByChatId()
 
             val idMatches = chatHistories.filter { chat -> chat.id == query }
@@ -992,6 +1006,7 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
+            checkChatScope(chatId)
             val chat = chatHistoryManager.getChatMetadata(chatId)?.takeUnless { it.isHidden }
             if (chat == null) {
                 return ToolResult(
@@ -1035,6 +1050,7 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
+            checkChatScope(chatId)
             val chat =
                 chatHistoryManager.getChatMetadata(chatId)
                     ?.takeUnless { it.isHidden }
@@ -1490,6 +1506,10 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             if (newChatId != null) {
+                callerChatId()?.let { parent ->
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(appContext, parent)
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext).inheritChat(parent, newChatId)
+                }
                 if (setAsCurrentChat) {
                     val switched = try {
                         withTimeout(5000L) {
@@ -1541,10 +1561,11 @@ class StandardChatManagerTool(private val context: Context) {
     suspend fun listChats(tool: AITool): ToolResult {
         return try {
             val chatHistoryManager = ChatHistoryManager.getInstance(appContext)
-            val chatHistories = chatHistoryManager.getVisibleChatHistoriesSnapshot()
+            val chatHistories = scopedChats(chatHistoryManager)
             val folders =
                 chatHistoryManager.getChatFoldersSnapshot()
                     .filterNot { it.id == SYSTEM_UNGROUPED_FOLDER_ID }
+                    .filter { folder -> chatHistories.any { it.folderId == folder.id } }
                     .map {
                         ChatListResultData.FolderInfo(
                             id = it.id,
@@ -1552,7 +1573,7 @@ class StandardChatManagerTool(private val context: Context) {
                             parentFolderId = it.parentFolderId,
                         )
                     }
-            val currentChatId = chatHistoryManager.currentChatIdFlow.first()
+            val currentChatId = chatHistoryManager.currentChatIdFlow.first()?.takeIf { id -> chatHistories.any { it.id == id } }
             val messageCounts = chatHistoryManager.getMessageCountsByChatId()
 
             val query = tool.parameters.find { it.name == "query" }?.value?.trim().orEmpty()
@@ -1684,6 +1705,7 @@ class StandardChatManagerTool(private val context: Context) {
             }
 
             // 检查对话是否存在并获取标题
+            checkChatScope(chatId)
             val targetChat =
                 core.chatHistories.value.find { chat ->
                     chat.id == chatId && !chat.isHidden
@@ -1865,6 +1887,7 @@ class StandardChatManagerTool(private val context: Context) {
                 )
 
             val targetChatId = tool.parameters.find { it.name == "chat_id" }?.value?.trim()
+            (targetChatId?.takeIf { it.isNotBlank() } ?: core.currentChatId.value)?.let { checkChatScope(it) }
             when (
                 val dispatchResult =
                     chatTurnDispatcher.dispatch(

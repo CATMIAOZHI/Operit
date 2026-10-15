@@ -658,7 +658,8 @@ object AIMessageManager {
         messages: List<ChatMessage>,
         autoContinue: Boolean = false,
         isGroupChat: Boolean = false,
-        summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
+        summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig(),
+        chatId: String? = null
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
         val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
@@ -1032,7 +1033,7 @@ object AIMessageManager {
                 // 如果是自动续写，在总结消息尾部添加续写提示
                 val trimmedSummary = summary.trim()
                 val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
-                val packageWarmupBlock = buildPackageWarmupBlock(messagesToSummarize, useEnglish)
+                val packageWarmupBlock = buildPackageWarmupBlock(messagesToSummarize, useEnglish, chatId)
                 val summaryWithQuotes = buildString {
                     append(trimmedSummary)
                     if (summaryConfig.dialogueReviewEnabled && conversationReviewEntries.isNotEmpty()) {
@@ -1078,7 +1079,8 @@ object AIMessageManager {
 
     private suspend fun buildPackageWarmupBlock(
         messagesToSummarize: List<ChatMessage>,
-        useEnglish: Boolean
+        useEnglish: Boolean,
+        chatId: String?
     ): String {
         val title = context.getString(R.string.ai_message_package_warmup_title)
         val topPackages = extractTopPackageUsages(messagesToSummarize, limit = 2)
@@ -1107,7 +1109,7 @@ object AIMessageManager {
                 appendLine()
                 topPackages.forEachIndexed { index, stat ->
                     val resultText =
-                        runCatching { packageManager.usePackage(stat.packageName).trim() }
+                        runCatching { packageManager.usePackage(stat.packageName, chatId).trim() }
                             .getOrElse { throwable ->
                                 if (useEnglish) {
                                     "use_package failed: ${throwable.message ?: "unknown error"}"

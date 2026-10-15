@@ -243,7 +243,10 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     fun getSkillsDirectory(tool: AITool): ToolResult {
         return try {
-            val path = SkillRepository.getInstance(context).getSkillsDirectoryPath()
+            val caller = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+            val path = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                SkillRepository.forChat(context, caller).getSkillsDirectoryPath()
+            }
             ToolResult(
                 toolName = tool.name,
                 success = true,

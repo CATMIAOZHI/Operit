@@ -104,6 +104,8 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemorySearchSettingsDialog
 import com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemorySearchSimulationDialog
 import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.produceState
 
 @Composable
 fun MemorySearchBar(
@@ -152,8 +154,9 @@ fun MemorySearchBar(
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-fun MemoryScreen() {
-    val activeProfileId by preferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
+fun MemoryScreen(fixedMemorySpaceId: String? = null) {
+    val globalProfileId by preferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
+    val activeProfileId = fixedMemorySpaceId ?: globalProfileId
     val profileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
     val profileNames by preferencesManager.memorySpaceNamesFlow.collectAsState(initial = emptyMap())
     val scope = rememberCoroutineScope()
@@ -162,7 +165,7 @@ fun MemoryScreen() {
     val destination = page
     if (destination == "graph") {
         MemoryLibraryPage(stringResource(R.string.memory_graph_title), activeProfileId, { page = null }) {
-            MemoryGraphPage(activeProfileId)
+            MemoryGraphPage(activeProfileId, fixedMemorySpaceId != null)
         }
     } else if (destination != null) {
         androidx.compose.runtime.key(pageProfileId, destination) {
@@ -172,7 +175,7 @@ fun MemoryScreen() {
         Column(Modifier.fillMaxSize()) {
             // The same selector as the folder panel, so creating, renaming and deleting a memory
             // space are reachable from here too instead of only from inside the panel.
-            ProfileSelector(
+            if (fixedMemorySpaceId == null) ProfileSelector(
                 profileList = profileList,
                 profileNameMap = profileNames,
                 selectedProfileId = activeProfileId,
@@ -195,6 +198,10 @@ fun MemoryScreen() {
                     scope.launch { preferencesManager.deleteMemorySpace(id) }
                 }
             )
+            if (fixedMemorySpaceId != null) TextButton(onClick = {
+                pageProfileId = activeProfileId
+                page = "user"
+            }) { Text(stringResource(R.string.user_preferences_settings)) }
             MemoryLibraryNavigation {
                 pageProfileId = activeProfileId
                 page = it
@@ -205,9 +212,10 @@ fun MemoryScreen() {
 
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
-private fun MemoryGraphPage(activeProfileId: String) {
+private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = false) {
     val context = LocalContext.current
-    val profileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
+    val globalProfileList by preferencesManager.memorySpaceListFlow.collectAsState(initial = emptyList())
+    val profileList = if (lockedSpace) listOf(activeProfileId) else globalProfileList
 
     // 获取所有配置文件的名称映射(id -> name)
     val profileNameMap = remember { mutableStateMapOf<String, String>() }
@@ -497,6 +505,7 @@ private fun MemoryGraphPage(activeProfileId: String) {
                     profileList = profileList,
                     profileNameMap = profileNameMap,
                     selectedProfileId = selectedProfileId,
+                    showMemorySpaceSelector = !lockedSpace,
                     onProfileSelected = { id ->
                         scope.launch {
                             preferencesManager.setActiveMemorySpace(id)
@@ -796,7 +805,16 @@ private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (Stri
 @Composable
 private fun MemoryLibraryDestination(page: String, profileId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val skillRepository by produceState<com.ai.assistance.operit.data.skill.SkillRepository?>(null, profileId) {
+        value = com.ai.assistance.operit.data.skill.SkillRepository.forMemorySpace(context, profileId)
+    }
     when (page) {
+        "user" -> {
+            val repository by produceState<com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository?>(null, profileId) {
+                value = com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository.forMemorySpace(context, profileId)
+            }
+            repository?.let { com.ai.assistance.operit.ui.features.settings.screens.UserPreferencesSettingsScreen(onBack, it) }
+        }
         "automation" -> MemoryAutomationPage(profileId, onBack)
         "notes" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(profileId, onBack)
         "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(profileId, onBack)
@@ -806,8 +824,8 @@ private fun MemoryLibraryDestination(page: String, profileId: String, onBack: ()
         "skills" -> MemoryLibraryPage(stringResource(R.string.memory_extraction_skills), profileId, onBack) {
             val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
             Box(Modifier.fillMaxSize()) {
-                com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
-                    com.ai.assistance.operit.data.skill.SkillRepository.getInstance(context), snackbar)
+                skillRepository?.let { com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
+                    it, snackbar) }
                 androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
             }
         }
