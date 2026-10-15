@@ -18,6 +18,29 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class ChatContentDaoTest {
+    @Test fun `learning cutoff filters before pagination and direct reads but not ordinary history`() = runBlocking {
+        val dao = database.chatContentDao()
+        database.chatDao().insertChat(ChatEntity(id="learning",title="Learning"))
+        val old = (0..24).map { index ->
+            database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+                content="needle old",timestamp=index.toLong(),orderIndex=index))
+        }
+        val fresh = database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+            content="needle new",timestamp=30,orderIndex=30))
+        val copied = database.messageDao().insertMessage(MessageEntity(chatId="learning",sender="user",
+            content="needle copied old",timestamp=5,orderIndex=31))
+        val learner = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao, minimumMessageId=fresh,
+            minimumTimestamp=26)
+        assertEquals(listOf(fresh), learner.search("needle").map { it.messageId })
+        assertEquals(listOf(fresh), learner.search("needle",literal=true).map { it.messageId })
+        assertEquals(listOf(fresh), learner.session("learning").map { it.messageId })
+        assertEquals(listOf(fresh), learner.context(fresh).map { it.messageId })
+        assertEquals(emptyList<ChatRecallHit>(), learner.context(old.first()))
+        assertEquals(null, learner.message(old.first()))
+        assertEquals(null, learner.message(copied))
+        assertEquals(true, com.ai.assistance.operit.data.repository.ChatRecallRepository(dao).message(old.first()) != null)
+        assertEquals(copied, dao.memoryLearningHorizon())
+    }
     @Test fun `Orbit recall isolates every mode before pagination in both directions`() = runBlocking {
         val dao = database.chatContentDao()
         val ids = mutableMapOf<String, Long>()

@@ -555,7 +555,7 @@ class ConversationService(
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
                 }
                 learningSnapshot?.bindMemoryScope(privateOwner ?: "global", privateOwner?.let {
-                    com.ai.assistance.operit.features.orbit.OrbitSoulRepository(context, it).snapshot().current.id
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.promptRevision(context, it)
                 }.orEmpty())
                 learningSnapshot?.beginEpoch(
                     effectiveChatHistory.lastOrNull { it.kind == PromptTurnKind.SUMMARY }?.content.orEmpty()

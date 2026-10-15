@@ -131,6 +131,7 @@ object MemoryLibrary {
             aiService: AIService,
             profileIdOverride: String? = null,
             sourceChatId: String = "",
+            learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
             onSuccess: (suspend () -> Unit)? = null,
             onError: (suspend (Exception) -> Unit)? = null
     ) {
@@ -146,6 +147,7 @@ object MemoryLibrary {
                     aiService,
                     profileIdOverride = profileIdOverride,
                     sourceChatId = sourceChatId
+                    , learningGuard = learningGuard
                 )
                 onSuccess?.invoke()
             } catch (e: CancellationException) {
@@ -170,6 +172,7 @@ object MemoryLibrary {
         propagateFailure: Boolean = false,
         includeGraph: Boolean = true,
         analysisHistoryLimit: Int = 10
+        , learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null
     ) {
         val resolvedProfile = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
             .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
@@ -194,6 +197,7 @@ object MemoryLibrary {
             includeNotes = includeNotes,
             includeSkills = includeSkills,
             sourceChatId = sourceChatId,
+            learningGuard = learningGuard,
             includeGraph = includeGraph,
             analysisHistoryLimit = analysisHistoryLimit,
             onProposal = { createdCount++ },
@@ -231,11 +235,13 @@ object MemoryLibrary {
         profileIdOverride: String,
         analysisHistoryLimit: Int,
         sourceChatId: String = "",
+        learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
     ) {
         saveMemoryNow(
             context, toolHandler, conversationHistory, content, aiService,
             profileIdOverride, analysisHistoryLimit = analysisHistoryLimit.coerceAtLeast(1), propagateFailure = true,
             sourceChatId = sourceChatId,
+            learningGuard = learningGuard,
         )
     }
 
@@ -374,11 +380,16 @@ object MemoryLibrary {
             includeGraph: Boolean = true,
             onProposal: () -> Unit = {},
             onWarning: (String) -> Unit = {},
+            learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
     ) {
         mutex.withLock {
             val profileId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
                 .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
             val memoryRepository = MemoryRepository(context, profileId)
+            val boundary = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId)
+            val guard = learningGuard ?: boundary?.snapshot()?.also {
+                check(it.generation == 0L) { "This Orbit requires fresh source messages after a memory correction" }
+            }
 
             // Prune tool results to reduce token usage
             val prunedContent =
@@ -434,7 +445,8 @@ object MemoryLibrary {
                     val proposal = notesRepo
                         .preview("add", addition)
                     if (proposal.before.markdown != proposal.after) {
-                        val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
+                        val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId,
+                            learningGeneration = guard?.generation ?: 0)
                         review.applyAutomaticDecision(context,
                             review.proposeNotes(proposal.before, proposal.after, addition, sourceChatId, onProposal))
                     }
@@ -455,7 +467,8 @@ object MemoryLibrary {
                 try {
                     val installed = com.ai.assistance.operit.core.tools.skill.SkillManager.forMemorySpace(context, profileId)
                         .getAvailableSkills().keys
-                    val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
+                    val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId,
+                        learningGeneration = guard?.generation ?: 0)
                     analysis.skills.filterNot { it.name in installed }.forEach {
                         review.applyAutomaticDecision(context,
                             review.proposeSkill(it.copy(sourceChatId = sourceChatId), onProposal))
@@ -476,6 +489,7 @@ object MemoryLibrary {
             }
 
             // Create a map to track all memories (new and updated) for linking
+            suspend fun applyGraph() {
             val createdMemories = mutableMapOf<String, Memory>()
 
             // First, apply any merges to existing memories
@@ -526,7 +540,7 @@ object MemoryLibrary {
             // Save the graph structure to the MemoryRepository
             if (analysis.mainProblem == null) {
                 AppLogger.w(TAG, "分析结果中缺少main_problem，跳过保存记忆图谱")
-                return@withLock
+                return
             }
 
             AppLogger.d(TAG, "开始构建记忆图谱...")
@@ -629,6 +643,8 @@ object MemoryLibrary {
                 if (e is CancellationException || propagateFailure) throw e
                 AppLogger.e(TAG, "保存记忆图谱失败", e)
             }
+            }
+            if (boundary == null) applyGraph() else boundary.learn(checkNotNull(guard).generation) { applyGraph() }
         }
     }
 

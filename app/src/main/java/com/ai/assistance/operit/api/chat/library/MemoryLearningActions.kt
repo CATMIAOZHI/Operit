@@ -13,10 +13,13 @@ class MemoryLearningActions(
     private val notesEnabled: Boolean, private val skillsEnabled: Boolean,
     private val background: Boolean,
     private val stagedChanges: MutableList<MemoryReviewChange>? = null,
-    private val onCreated: () -> Unit = {}
+    private val onCreated: () -> Unit = {},
+    private val learningGuard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
+    private val evidence: String = ""
 ) {
     private val skills = LearnedSkillRepository(context, profileId)
-    private val reviews = MemoryReviewRepository(context,profileId,stagedChanges)
+    private val reviews = MemoryReviewRepository(context,profileId,stagedChanges,
+        if (background) learningGuard?.generation ?: 0 else null, evidence)
     /**
      * Versions this space has already read, kept across instances because the foreground package tool
      * builds a new [MemoryLearningActions] for every call and a per-instance map would leave it with
@@ -42,8 +45,17 @@ class MemoryLearningActions(
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
-            "history" -> ChatRecallRepository(context, sourceChatId).execute(args, filterAssistantThinking = true,
-                includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
+            "history" -> {
+                val boundary = if (background)
+                    com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) else null
+                val run = suspend {
+                    ChatRecallRepository(context, sourceChatId, if (background) (learningGuard?.cutoff ?: 0) + 1 else 0,
+                        if (background && (learningGuard?.generation ?: 0) > 0) learningGuard!!.cutoffTimestamp + 1 else 0)
+                        .execute(args, filterAssistantThinking = true,
+                            includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
+                }
+                if (boundary == null) run() else boundary.learn(learningGuard?.generation ?: 0, run)
+            }
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
                 val user = arg("target")=="user"

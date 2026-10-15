@@ -330,7 +330,7 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
         else com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,chatId).let { snapshot ->
             val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context,chatId)?.id
             snapshot.bindMemoryScope(owner ?: "global", owner?.let {
-                com.ai.assistance.operit.features.orbit.OrbitSoulRepository(context, it).snapshot().current.id
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.promptRevision(context, it)
             }.orEmpty())
             snapshot.getOrPut("skill_catalog") { loadSkillCatalog() }
         })

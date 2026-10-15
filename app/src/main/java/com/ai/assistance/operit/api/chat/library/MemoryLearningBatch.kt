@@ -223,20 +223,30 @@ internal class MemoryLearningJournal(
 
 internal class MemoryLearningSource(
     private val context: Context, private val dao: ChatContentDao, private val chat: String,
-    private val horizon: Long, private val thinking: Boolean
+    private val horizon: Long, private val thinking: Boolean, private val spaceId: String = ""
 ) : java.io.Closeable {
-    data class Batch(val text: String, val next: LearningCursor, val more: Boolean)
+    data class Batch(val text: String, val next: LearningCursor, val more: Boolean,
+        val guard: com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.Guard? = null,
+        val evidence: String = "")
     private data class Prepared(val file: File, val revision: String)
     private val files = mutableMapOf<Long,Prepared>()
 
     suspend fun next(cursor: LearningCursor, budget: Int): Batch {
         require(budget >= 256)
-        var position = cursor
+        val guard = if (spaceId.isNotBlank())
+            com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context, spaceId) else null
+        var position = if (cursor.messageId <= (guard?.cutoff ?: -1))
+            LearningCursor(guard!!.cutoff + 1, thinking = thinking) else cursor
+        val evidence = JSONArray()
         val output = StringBuilder()
         var remaining = budget
         while (remaining >= 200) {
             currentCoroutineContext().ensureActive()
             val row = dao.nextLearningSource(chat,position.messageId,horizon) ?: break
+            if (guard != null && guard.generation > 0 && row.timestamp <= guard.cutoffTimestamp) {
+                position = LearningCursor(row.messageId + 1, thinking = thinking)
+                continue
+            }
             val prepared = files[row.messageId] ?: run {
                 val file = File.createTempFile("learning-source-", ".txt", context.cacheDir)
                 try {
@@ -269,6 +279,9 @@ internal class MemoryLearningSource(
                 if (head+width>size) size=head
             }
             if (size>0) {
+                evidence.put(JSONObject().put("chat_id", chat).put("message_id", row.messageId)
+                    .put("revision", prepared.revision).put("byte_start", offset).put("byte_end", offset + size)
+                    .put("role", row.sender).put("kind", "source_excerpt"))
                 output.append(header).append(String(bytes,0,size,Charsets.UTF_8)).append('\n')
                 remaining-=headerBytes+size+1
             }
@@ -277,7 +290,8 @@ internal class MemoryLearningSource(
                 else LearningCursor(row.messageId,offset,prepared.revision,thinking)
             if (offset<prepared.file.length()) break
         }
-        return Batch(output.toString(),position,dao.nextLearningSource(chat,position.messageId,horizon)!=null)
+        return Batch(output.toString(),position,dao.nextLearningSource(chat,position.messageId,horizon)!=null,
+            guard, evidence.toString())
     }
     override fun close() { files.values.forEach { it.file.delete() } }
     private companion object { const val TEXT_VERSION = "cards1" }

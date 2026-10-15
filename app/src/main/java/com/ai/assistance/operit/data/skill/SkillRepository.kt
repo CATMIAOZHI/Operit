@@ -87,7 +87,13 @@ class SkillRepository private constructor(private val context: Context, private 
     fun readSkillContent(skillName: String): String? = skillManager.readSkillContent(skillName)
     fun getSkillSystemPrompt(skillName: String): String? = skillManager.getSkillSystemPrompt(skillName)
 
-    fun deleteSkill(skillName: String): Boolean = skillManager.deleteSkill(skillName)
+    suspend fun deleteSkill(skillName: String): Boolean {
+        val space = memorySpaceId ?: return skillManager.deleteSkill(skillName)
+        // Imported and learned skills both belong to this Orbit's directory.
+        return com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+            skillManager.deleteSkill(skillName)
+        }
+    }
 
     suspend fun importSkillFromZip(zipFile: File): String {
         return withContext(Dispatchers.IO) {

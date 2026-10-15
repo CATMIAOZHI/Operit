@@ -327,7 +327,7 @@ object MemoryLearningCoordinator {
         if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
         exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
         MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
-            settings.shouldIncludeThinking()).use { source ->
+            settings.shouldIncludeThinking(), profileId).use { source ->
             repeat(3) {
                 // The machine can become busy again between batches, so the pause this run promised is
                 // checked here too: without it three batches run back to back and a conversation
@@ -424,7 +424,8 @@ object MemoryLearningCoordinator {
         val log = MemoryExtractionLog(sourceChatId=chatId,graph=false,notes=notes,skills=skills,reviewable=false)
         var created = 0
         val staged=mutableListOf<MemoryReviewChange>()
-        val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged))
+        val session = Session(MemoryLearningActions(context,profileId,chatId,notes,skills,true,staged,
+            learningGuard = batch.guard, evidence = batch.evidence))
         var childId: String? = null
         var runId = ""
         // Until the subagent exists there is no transcript to audit, so the row must not offer one.

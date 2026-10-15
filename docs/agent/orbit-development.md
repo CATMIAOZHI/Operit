@@ -134,3 +134,26 @@ Reference implementations are architectural evidence, not verified deployments. 
 licenses before using source; do not import another agent framework to replace Operit's
 chat system. Each implementation stage requires relevant local validation and a fresh
 independent read-only audit before its local commit.
+### P5 memory corrections and learning boundaries
+
+Orbit-owned memory corrections and deletions advance a durable learning generation before writing.
+Background proposals and graph commits carry the generation captured with their sources; a late
+result cannot overwrite a correction. Pending proposals from older generations become superseded
+and no longer consume the review quota. A retry of the last interrupted correction preserves its
+original watermark.
+
+Notes/skills batches, automatic graph extraction, manual history rebuilding, and chat-triggered
+memory updates all filter prior evidence. The watermark uses both message IDs and correction time:
+fork/import paths preserve timestamps even when they allocate new message IDs. Learning-only
+history search, context, session and direct reads enforce the same restriction. Ordinary recall
+and explicit file/command reads remain available.
+
+This is deliberately conservative: after correcting existing memory, new learning starts with
+subsequent messages. It does not erase historical conversations or claim to discover every unknown
+semantic derivative. Corrections also expire the frozen Orbit prompt prefix on the next request.
+Global memory behavior is unchanged.
+
+Learning proposals retain host-collected batch message IDs, revisions and excerpt byte ranges.
+The review page identifies AI interpretations and can display current source excerpts; these are
+not asserted to be immutable historical copies or per-sentence proof. Graph-level provenance and
+semantic dependency cleanup remain separate work.

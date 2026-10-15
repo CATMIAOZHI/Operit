@@ -587,7 +587,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeUpdateMemory(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val oldTitle = tool.parameters.find { it.name == "old_title" }?.value
         
         if (oldTitle.isNullOrBlank()) {
@@ -623,7 +624,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             val tagsParam = tool.parameters.find { it.name == "tags" }?.value
             val newTags = tagsParam?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
             
-            val updatedMemory = memoryRepository.updateMemory(
+            val applyEdit = suspend { memoryRepository.updateMemory(
                 memory = memory,
                 newTitle = newTitle,
                 newContent = newContent,
@@ -633,7 +634,10 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 newImportance = newImportance,
                 newFolderPath = newFolderPath,
                 newTags = newTags
-            )
+            ) }
+            val updatedMemory = if (newTitle != memory.title || newContent != memory.content)
+                com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space, applyEdit)
+                else applyEdit()
             
             if (updatedMemory != null) {
                 val message = "Successfully updated memory from '$oldTitle' to '$newTitle'"
@@ -663,7 +667,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeDeleteMemory(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val title = tool.parameters.find { it.name == "title" }?.value
         
         if (title.isNullOrBlank()) {
@@ -688,7 +693,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            val deleted = memoryRepository.deleteMemory(memory.id)
+            val deleted = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.deleteMemory(memory.id)
+            }
             
             if (deleted) {
                 val message = "Successfully deleted memory: '$title'"
@@ -1208,7 +1215,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeUpdateMemoryLink(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val linkId = tool.parameters.find { it.name == "link_id" }?.value?.toLongOrNull()
         val sourceTitle = tool.parameters.find { it.name == "source_title" }?.value
         val targetTitle = tool.parameters.find { it.name == "target_title" }?.value
@@ -1283,12 +1291,13 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 )
             }
 
-            val updated = memoryRepository.updateLink(
+            val updated = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.updateLink(
                 linkId = link.id,
                 type = newLinkType ?: link.type,
                 weight = (newWeight ?: link.weight).coerceIn(0.0f, 1.0f),
                 description = newDescription ?: link.description
-            )
+            ) }
 
             if (updated == null) {
                 return ToolResult(
@@ -1325,7 +1334,8 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     }
 
     private suspend fun executeDeleteMemoryLink(tool: AITool): ToolResult {
-        val memoryRepository = getMemoryRepository(resolveActiveProfileId(tool))
+        val space = resolveActiveProfileId(tool)
+        val memoryRepository = getMemoryRepository(space)
         val linkId = tool.parameters.find { it.name == "link_id" }?.value?.toLongOrNull()
         val sourceTitle = tool.parameters.find { it.name == "source_title" }?.value
         val targetTitle = tool.parameters.find { it.name == "target_title" }?.value
@@ -1385,7 +1395,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 }
             }
 
-            val deleted = memoryRepository.deleteLink(resolvedLinkId)
+            val deleted = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.explicitEdit(context, space) {
+                memoryRepository.deleteLink(resolvedLinkId)
+            }
             if (!deleted) {
                 return ToolResult(
                     toolName = tool.name,

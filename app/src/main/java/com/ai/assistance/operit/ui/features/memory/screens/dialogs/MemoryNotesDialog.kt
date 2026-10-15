@@ -66,7 +66,8 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                 )
                 val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                 val change = reviews.proposeNotes(latest, draft.orEmpty())
-                reviews.decide(context, change.id, true, "user", manualEditReason)
+                if (reviews.decide(context, change.id, true, "user", manualEditReason).status != "approved")
+                    throw MemoryNotesRepository.NotesException(MemoryNotesRepository.Failure.CONFLICT)
                 onDismiss()
             } catch (e: CancellationException) {
                 throw e

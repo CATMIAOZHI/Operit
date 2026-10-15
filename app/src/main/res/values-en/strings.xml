@@ -9213,4 +9213,10 @@
     <string name="orbit_soul_import">Previously saved Soul persona</string>
     <string name="orbit_soul_restored">New version restored from history</string>
     <string name="orbit_soul_action_failed">Could not complete the action. The persona may have changed or its file may be unavailable. Retry; outdated proposals need to be regenerated from the current version.</string>
+    <string name="orbit_memory_correction_help">After an existing memory is edited or deleted, Orbit learns from new messages to avoid relearning the old content. Chat history remains available.</string>
+    <string name="orbit_memory_inferred">This is an AI interpretation of the sources, not a set of facts you have necessarily confirmed.</string>
+    <string name="orbit_memory_source_missing">The source messages are no longer available.</string>
+    <string name="orbit_memory_view_evidence">View source messages</string>
+    <string name="orbit_memory_evidence_current">Current excerpts from up to 8 source messages in this batch. Messages may have been edited after the proposal was created.</string>
+    <string name="orbit_memory_proposal_obsolete">Memory has changed. This older proposal is no longer applicable.</string>
 </resources>
