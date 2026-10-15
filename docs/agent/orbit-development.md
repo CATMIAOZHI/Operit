@@ -64,13 +64,34 @@ Local verification is recorded per implementation commit. Device behavior, OS sc
 and live model completion still require device validation; they are not inferred from
 Room tests or compilation.
 
+## P3 first controlled execution slice
+
+- Room v37 stores action receipts, host-owned task/chat bindings and user-input checkpoints.
+  `ASSIST` tasks can read webpages, delegate through v2, and atomically save UTF-8 artifacts
+  beneath their own task directory. These tools still pass the fixed FAST permission route.
+  Background tasks do not receive arbitrary shell, package, browser script or external-write tools.
+- A write starts with a durable receipt. An interrupted operation with an unknown outcome
+  stops automatic recovery and requires explicit verification in task details. Pausing
+  cannot retract a write that already succeeded; its late verified receipt is still recorded.
+- Child agents inherit the task/run/generation and the restricted tool set. Actual execution
+  rechecks the live lease; root cleanup stops and joins the tree before removing temporary chats.
+  Permission review resolves the original companion chat for actual user instructions.
+- `orbit_wait_for_user` persists the request and exits the model turn. The user can add a
+  note and continue immediately from task details. An optional browser URL opens only after
+  the user clicks. Existing browser UI is reused, with a fresh human-controlled document;
+  AI browser calls are blocked until the user finishes or cancels. Resume requires a fresh
+  snapshot of that same controlled document. A lost tab requires reopening.
+- Password and sensitive autocomplete input values are omitted from page snapshots.
+  This does not promise that arbitrary website content contains no secrets. Protected
+  credential injection, general external side effects and their adapters remain outstanding.
+
 ## Remaining full product roadmap
 
 These are acceptance targets, not claims of implemented or tested behavior.
 
 | Stage | Deliverable | Acceptance focus |
 | --- | --- | --- |
-| P3 | Controlled side effects, background delegation, browser handoff | Action receipts, unknown outcomes never blindly retried, revocation and user takeover |
+| P3 remaining | External-operation adapters and protected credentials | Extend the verified narrow receipt/handoff path without exposing untracked side effects |
 | P4 | Goals, trackers, feed and artifacts | Task/result links, event subscriptions, quiet hours, frequency limits, continued conversation |
 | P5 | Memory quality and skill growth | Evidence, correction/deletion, suppression of relearning forgotten facts, skill and Soul versions |
 | P6 | Optional self-hosted always-on execution | Exclusive execution authority, offline reconciliation, credentials, budgets and results |

@@ -2037,9 +2037,11 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
 ): String {
     val callId = UUID.randomUUID().toString()
     val pending = PendingAsyncJsCall()
+    val orbitToken = com.ai.assistance.operit.features.orbit.OrbitBrowserControl.token()
     StandardBrowserSessionTools.pendingAsyncJsCalls[callId] = pending
     StandardBrowserSessionTools.mainHandler.post {
         try {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
             if (!webView.isAttachedToWindow) {
                 StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId)
                 pending.error = "WebView is not attached"

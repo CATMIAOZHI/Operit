@@ -13,20 +13,21 @@ class OrbitTaskRepository(private val context: Context) {
 
     suspend fun create(
         orbit: OrbitProfile, title: String, instruction: String, source: String,
-        intervalMinutes: Int, notifyPolicy: String, requestId: String,
+        intervalMinutes: Int, notifyPolicy: String, requestId: String, kind: String = "URL_CHANGE",
     ): OrbitTaskEntity {
         require(title.isNotBlank() && title.length <= 80)
         require(instruction.isNotBlank() && instruction.length <= 4000)
         require(intervalMinutes in 15..10080)
         require(notifyPolicy in setOf("CHANGES", "ALWAYS"))
-        validateSource(source)
+        require(kind in setOf("URL_CHANGE", "ASSIST"))
+        if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
         dao.task(id)?.let { return it }
-        check(dao.tasks(orbit.id).count { it.state in setOf("ACTIVE", "PAUSED") } < 20) { "At most 20 active or paused tasks" }
+        check(dao.tasks(orbit.id).count { it.state !in setOf("CANCELLED", "DONE") } < 20) { "At most 20 unfinished tasks" }
         val now = System.currentTimeMillis()
         val task = OrbitTaskEntity(id, orbit.id, orbit.chatId, title.trim(), instruction.trim(),
-            "URL_CHANGE", source, intervalMinutes, 0, notifyPolicy, "ACTIVE", 1, now,
+            kind, source, intervalMinutes, 0, notifyPolicy, "ACTIVE", 1, now,
             "", "", now, now)
         dao.insertTask(task)
         OrbitTaskScheduler.reschedule(context)
@@ -38,14 +39,24 @@ class OrbitTaskRepository(private val context: Context) {
         val task = dao.task(taskId) ?: error("Task not found")
         check(task.orbitId == orbitId)
         check(task.state != "CANCELLED" || state == "CANCELLED") { "A cancelled task cannot be resumed" }
+        check(state != "ACTIVE" || task.state != "WAITING_USER") {
+            "Open task details and complete the user request before continuing"
+        }
+        check(state != "PAUSED" || task.state != "WAITING_USER") {
+            "This task is already waiting for the user; leave it waiting or cancel it"
+        }
         if (task.state == state) return true
         val now = System.currentTimeMillis()
         val targetState = if (task.kind == "DAILY" && state == "CANCELLED") "PAUSED" else state
         val changed = OrbitExecutionGate.serialized {
+            if (state == "ACTIVE") check(dao.unresolvedActions(taskId).isEmpty()) {
+                "Verify the unfinished operation in task details before resuming"
+            }
             dao.replaceDefinition(task.copy(state = targetState, nextRunAt = nextAt(task, now),
                 updatedAt = now), task.version)
         }
         if (changed) {
+            OrbitBrowserControl.release(task.id)
             if (task.kind == "DAILY") OrbitPreferences.getInstance(context).setProactiveEnabled(targetState == "ACTIVE", orbitId)
             OrbitTaskRunner.cancelTask(task.id)
             OrbitTaskScheduler.reschedule(context)
@@ -55,10 +66,13 @@ class OrbitTaskRepository(private val context: Context) {
 
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String): Boolean {
-        check(task.kind == "URL_CHANGE" && task.state != "CANCELLED")
+        check(task.kind in setOf("URL_CHANGE", "ASSIST") && task.state != "CANCELLED")
+        check(task.state !in setOf("WAITING_USER", "VERIFY")) {
+            "Complete or cancel the pending user request before editing this task"
+        }
         require(title.isNotBlank() && title.length <= 80 && instruction.length in 1..4000)
         require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS"))
-        validateSource(source)
+        if (task.kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         val now = System.currentTimeMillis()
         val changed = OrbitExecutionGate.serialized {
             dao.replaceDefinition(task.copy(title = title, instruction = instruction, source = source,
@@ -72,6 +86,13 @@ class OrbitTaskRepository(private val context: Context) {
             OrbitTaskScheduler.reschedule(context)
         }
         return changed
+    }
+
+    suspend fun resolveAction(orbitId: String, taskId: String, actionId: String, completed: Boolean) {
+        check(dao.task(taskId)?.orbitId == orbitId)
+        OrbitExecutionGate.serialized {
+            check(dao.resolveAction(taskId, actionId, completed, System.currentTimeMillis()))
+        }
     }
 
     /** Idempotent migration of the old daily settings; changing focus/time invalidates old work. */

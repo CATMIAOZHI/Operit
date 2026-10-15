@@ -598,13 +598,19 @@ object ToolExecutionManager {
         return LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
     }
 
-    private fun buildToolExposureDeniedResult(
+    private suspend fun buildToolExposureDeniedResult(
         context: Context,
         invocation: ToolInvocation,
-        toolExposureMode: ToolExposureMode
+        toolExposureMode: ToolExposureMode,
+        callerChatId: String?,
     ): ToolResult? {
         val toolName = invocation.tool.name.trim()
-        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName)) {
+        if (PermissionReviewInternalTools.bypassesPermissionCheck(toolName) ||
+            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) {
+            return null
+        }
+        if (toolName in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names &&
+            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId)?.task?.kind == "ASSIST") {
             return null
         }
         val useEnglish = isEnglishLanguage(context)
@@ -1136,7 +1142,7 @@ object ToolExecutionManager {
                         error = "Subagents cannot invoke tools that start nested AI turns.",
                     )
                 } else {
-                    buildToolExposureDeniedResult(context, invocation, toolExposureMode)
+                    buildToolExposureDeniedResult(context, invocation, toolExposureMode, callerChatId)
                 }
             if (deniedResult == null) {
                 toolExposurePermittedInvocations.add(invocation)
@@ -1462,6 +1468,7 @@ object ToolExecutionManager {
             deferredResultSink: java.util.concurrent.ConcurrentMap<ToolInvocation, ToolResult>? = null,
         ): ToolResult =
             executeAndEmitTool(
+                context = context,
                 invocation = invocation,
                 toolHandler = toolHandler,
                 packageManager = packageManager,
@@ -1718,6 +1725,7 @@ object ToolExecutionManager {
      * 封装单个工具的执行、实时输出和结果聚合的辅助函数
      */
     private suspend fun executeAndEmitTool(
+        context: Context,
         invocation: ToolInvocation,
         toolHandler: AIToolHandler,
         packageManager: PackageManager,
@@ -1747,6 +1755,8 @@ object ToolExecutionManager {
                 emitFinalResult(collector, result)
             }
             try {
+                com.ai.assistance.operit.features.orbit.OrbitTaskExecution.checkBeforeTool(
+                    context, runtimeContext.callerChatId)
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 if (executor == null) {
                     // 如果仍然为 null，则构建错误消息

@@ -17,6 +17,7 @@ data class ResolvedCharacterCardToolAccess(
     val hasAnyAllowedExternalSource: Boolean
 ) {
     fun isBuiltinToolAllowed(toolName: String): Boolean {
+        if (com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) return true
         if (!customEnabled) {
             return effectiveBuiltinToolVisibility[toolName] ?: true
         }

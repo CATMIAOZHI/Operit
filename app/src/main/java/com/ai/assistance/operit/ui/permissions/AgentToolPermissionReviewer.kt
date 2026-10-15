@@ -334,7 +334,9 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
                 workspaceKey = permissionReviewWorkspaceKey(reviewContext),
             )
         )
-        val history = loadPermissionReviewTranscriptMessages(chatCore, parentChatId)
+        val isOrbitTask = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext)
+            .orbitTaskDao().binding(parentChatId) != null
+        val history = loadPermissionReviewTranscriptMessages(chatCore, if (isOrbitTask) rootChatId else parentChatId)
         val rememberedContinuation =
             if (serialized) PermissionReviewContinuationStore.get(parentChatId) else null
         // The remembered message is what carries the policy, so a continuation is only used once the

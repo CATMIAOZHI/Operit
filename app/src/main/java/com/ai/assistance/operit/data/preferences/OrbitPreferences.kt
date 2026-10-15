@@ -298,6 +298,9 @@ class OrbitPreferences private constructor(context: Context) {
         if (previous != null && previous != orbitId) {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
             val now = System.currentTimeMillis()
+            dao.tasks(previous).forEach {
+                com.ai.assistance.operit.features.orbit.OrbitBrowserControl.release(it.id)
+            }
             dao.tasks(previous).filter { it.state == "ACTIVE" }.forEach { task ->
                 dao.replaceDefinition(task.copy(
                     nextRunAt = com.ai.assistance.operit.features.orbit.OrbitTaskRepository.nextAt(task, now),

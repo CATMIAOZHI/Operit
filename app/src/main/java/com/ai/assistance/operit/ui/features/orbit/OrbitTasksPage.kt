@@ -33,8 +33,11 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
     var selected by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
+    var errorDetail by remember { mutableStateOf<String?>(null) }
+    var userNote by rememberSaveable(selected) { mutableStateOf("") }
     var retry by remember { mutableIntStateOf(0) }
     var confirmCancel by remember { mutableStateOf<OrbitTaskEntity?>(null) }
+    var resolveReceipt by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     val tasks by produceState<List<OrbitTaskEntity>?>(null, orbitId, retry) {
         value = null
         try { repository.dao.observeTasks(orbitId).collect { value = it.filter { task -> task.kind != "ONCE" } } }
@@ -48,7 +51,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
         scope.launch {
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = true }
+            catch (e: Exception) { error = true; errorDetail = e.message }
             finally { busy = false }
         }
     }
@@ -63,6 +66,16 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
         try { detail?.let { repository.dao.observeLatestRun(it.id).collect { run -> value = run } } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = true }
+    }
+    val receipts by produceState(emptyList<com.ai.assistance.operit.data.model.OrbitActionEntity>(), detail?.id) {
+        value = emptyList()
+        try { detail?.let { repository.dao.observeActions(it.id).collect { rows -> value = rows } } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { error = true }
+    }
+    val input by produceState<com.ai.assistance.operit.data.model.OrbitTaskInputEntity?>(
+        null, detail?.id, detail?.version, detail?.state, busy) {
+        value = detail?.let { repository.dao.input(it.id) }
     }
     Scaffold(
         topBar = { TopAppBar(
@@ -80,6 +93,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
                 Card {
                     Column(Modifier.padding(16.dp)) {
                         Text(stringResource(R.string.orbit_task_action_failed))
+                        errorDetail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
                         TextButton(onClick = { error = false; retry++ }) {
                             Text(stringResource(R.string.orbit_memory_retry))
                         }
@@ -133,7 +147,26 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
                 }
                 if (detail.state !in setOf("CANCELLED", "DONE")) item {
                     Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilledTonalButton(modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = {
+                        if (detail.state == "WAITING_USER") {
+                            if (!input?.requestedUrl.isNullOrBlank()) {
+                                OutlinedButton(enabled = !busy, onClick = { action {
+                                    com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.open(context, detail)
+                                } }) { Text(stringResource(R.string.orbit_browser_open)) }
+                                Text(stringResource(R.string.orbit_browser_handoff_help),
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                            OutlinedTextField(value = userNote, onValueChange = { if (it.length <= 4000) userNote = it },
+                                modifier = Modifier.fillMaxWidth(), enabled = !busy,
+                                label = { Text(stringResource(R.string.orbit_task_user_note)) })
+                            FilledTonalButton(enabled = !busy, onClick = { action {
+                                com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.resume(context, detail, userNote)
+                                userNote = ""
+                            } }) { Text(stringResource(R.string.orbit_task_continue)) }
+                        }
+                        if (detail.state != "WAITING_USER")
+                        FilledTonalButton(modifier = Modifier.fillMaxWidth(),
+                            enabled = !busy && (detail.state == "ACTIVE" ||
+                                receipts.none { it.state in setOf("STARTED", "UNKNOWN") }), onClick = {
                             action { check(repository.changeState(orbitId, detail.id,
                                 if (detail.state == "ACTIVE") "PAUSED" else "ACTIVE")) }
                         }) { Text(stringResource(if (detail.state == "ACTIVE") R.string.orbit_pause else R.string.orbit_resume)) }
@@ -151,6 +184,24 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
                         }
                     }
                 }
+                items(receipts, key = { "receipt-${it.id}" }) { receipt ->
+                    Card(Modifier.fillMaxWidth()) {
+                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                            Text(stringResource(if (receipt.state == "UNKNOWN") R.string.orbit_action_verify
+                                else R.string.orbit_action_receipt), fontWeight = FontWeight.SemiBold)
+                            Text(receipt.summary, style = MaterialTheme.typography.bodyMedium)
+                            if (receipt.state == "UNKNOWN") {
+                                Text(stringResource(R.string.orbit_action_verify_help))
+                                TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to true }) {
+                                    Text(stringResource(R.string.orbit_action_verified))
+                                }
+                                TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to false }) {
+                                    Text(stringResource(R.string.orbit_action_retry_allowed))
+                                }
+                            }
+                        }
+                    }
+                }
                 if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
         }
@@ -165,11 +216,24 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
             }) { Text(stringResource(R.string.orbit_task_cancel)) } },
             dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(stringResource(R.string.cancel)) } })
     }
+    resolveReceipt?.let { (id, completed) ->
+        AlertDialog(onDismissRequest = { resolveReceipt = null },
+            title = { Text(stringResource(if (completed) R.string.orbit_action_verified else R.string.orbit_action_retry_allowed)) },
+            text = { Text(stringResource(R.string.orbit_action_verify_confirm)) },
+            confirmButton = { TextButton(onClick = {
+                resolveReceipt = null
+                detail?.let { task -> action { repository.resolveAction(orbitId, task.id, id, completed) } }
+            }) { Text(stringResource(android.R.string.ok)) } },
+            dismissButton = { TextButton(onClick = { resolveReceipt = null }) { Text(stringResource(R.string.cancel)) } })
+    }
 }
 
 @Composable
 private fun taskState(task: OrbitTaskEntity): String = stringResource(when (task.state) {
     "ACTIVE" -> R.string.orbit_task_active
     "PAUSED" -> R.string.orbit_task_paused
+    "WAITING_USER" -> R.string.orbit_task_waiting_user
+    "VERIFY" -> R.string.orbit_action_verify
+    "DONE" -> R.string.orbit_task_done
     else -> R.string.orbit_task_cancelled
 })

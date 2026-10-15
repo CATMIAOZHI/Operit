@@ -9129,4 +9129,19 @@
     <string name="orbit_tool_name_too_long">名字太长了，最多 %1$d 个字符</string>
     <string name="orbit_tool_name_set">名字已改为「%1$s」</string>
     <string name="orbit_tool_not_orbit_chat">只有 Orbit 在自己的聊天里才能改名字</string>
+    <string name="orbit_action_receipt">操作记录</string>
+    <string name="orbit_action_verify">需要核实操作结果</string>
+    <string name="orbit_action_verify_help">任务已暂停。请先查看成果是否保存成功，再选择处理方式，避免重复操作。</string>
+    <string name="orbit_action_verified">我已核实：操作已完成</string>
+    <string name="orbit_action_retry_allowed">我已核实：可以重新尝试</string>
+    <string name="orbit_action_verify_confirm">此选择会更新操作记录。核实后还需要点“继续”恢复任务，不会立即执行。</string>
+    <string name="orbit_task_waiting_user">等待你处理</string>
+    <string name="orbit_task_done">已完成</string>
+    <string name="orbit_browser_open">打开页面处理</string>
+    <string name="orbit_browser_handoff_help">处理期间 AI 暂停浏览器操作。完成后回到这里继续；不要在补充说明中填写密码。</string>
+    <string name="orbit_browser_overlay_required">请先在系统设置中允许 Operit 显示悬浮窗，再打开页面。</string>
+    <string name="orbit_browser_reopen">页面已关闭或应用曾重启，请重新打开页面处理后继续。</string>
+    <string name="orbit_browser_not_ready">页面还未加载完成，或有安全错误、未处理弹窗。请先在浏览器中处理。</string>
+    <string name="orbit_task_user_note">给 Orbit 的补充说明（选填）</string>
+    <string name="orbit_task_continue">完成并继续</string>
 </resources>

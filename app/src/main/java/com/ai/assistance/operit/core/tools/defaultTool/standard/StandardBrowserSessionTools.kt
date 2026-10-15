@@ -212,7 +212,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     override fun invoke(tool: AITool): ToolResult {
         return try {
-            when (tool.name) {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserControl.aiCall { when (tool.name) {
                 "browser_click" -> browserClick(tool)
                 "browser_close" -> browserClose(tool)
                 "browser_close_all" -> browserCloseAll(tool)
@@ -236,7 +236,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 "browser_take_screenshot" -> browserTakeScreenshot(tool)
                 "browser_type" -> browserType(tool)
                 else -> error(tool.name, "Unsupported browser session tool: ${tool.name}")
-            }
+            } }
         } catch (e: Exception) {
             AppLogger.e(TAG, "Tool execution failed: ${tool.name}", e)
             error(tool.name, e.message ?: "Unknown error")
@@ -1773,7 +1773,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     internal fun nextSnapshotGeneration(): Long = snapshotGenerationSeed.incrementAndGet()
     internal fun <T> runOnMainSync(timeoutMs: Long = 8_000L, block: () -> T): T {
+        val orbitToken = com.ai.assistance.operit.features.orbit.OrbitBrowserControl.token()
         if (Looper.myLooper() == Looper.getMainLooper()) {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
             return block()
         }
 
@@ -1783,6 +1785,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
         mainHandler.post {
             try {
+                com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
                 result = block()
             } catch (t: Throwable) {
                 error = t

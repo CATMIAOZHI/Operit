@@ -1069,7 +1069,9 @@ internal fun StandardBrowserSessionTools.captureSnapshotModel(
                     let inlineText = "";
                     let children = combinedChildren;
                     if (role === "textbox") {
-                        const value = normalize(element.value);
+                        const sensitive = element.type === "password" ||
+                            /(?:current-password|new-password|one-time-code|cc-number|cc-csc)/i.test(element.autocomplete || "");
+                        const value = sensitive ? "" : normalize(element.value);
                         if (value && value !== name) {
                             inlineText = value;
                             children = [];
