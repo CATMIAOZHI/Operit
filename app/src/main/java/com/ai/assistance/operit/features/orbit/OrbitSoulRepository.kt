@@ -83,22 +83,14 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
         store(initial.id, listOf(initial))
     } }
     suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) { mutex.withLock { read() } }
-    suspend fun propose(body: String, reason: String, expected: String): Version = withContext(Dispatchers.IO) { mutex.withLock {
+    suspend fun update(body: String, reason: String, expected: String): Version = withContext(Dispatchers.IO) { mutex.withLock {
         require(body.isNotBlank() && body.length <= MAX_CHARS && reason.length in 1..2000)
         val old = read()
-        check(old.current.id == expected) { "Soul changed; read it again before proposing an edit" }
-        check(old.history.count { it.state == "pending" } < 5) { "Review pending Soul changes first" }
-        val proposal = Version(UUID.randomUUID().toString(), body, reason, expected, "pending", System.currentTimeMillis())
-        store(old.current.id, old.history + proposal)
-        proposal
-    } }
-    suspend fun decide(id: String, approve: Boolean): Snapshot = withContext(Dispatchers.IO) { mutex.withLock {
-        val old = read()
-        val change = old.history.single { it.id == id }
-        check(change.state == "pending") { "This change was already reviewed" }
-        if (approve) check(change.base == old.current.id) { "Soul changed; request a new proposal" }
-        store(if (approve) change.id else old.current.id,
-            old.history.map { if (it.id == id) it.copy(state = if (approve) "approved" else "rejected") else it })
+        check(old.current.id == expected) { "Soul changed; read it again before updating" }
+        val version = Version(UUID.randomUUID().toString(), body, reason, expected, "approved", System.currentTimeMillis(),
+            source = "update")
+        store(version.id, old.history.filter { it.state == "approved" } + version)
+        version
     } }
     suspend fun restore(id: String, expected: String): Snapshot = withContext(Dispatchers.IO) { mutex.withLock {
         val old = read()

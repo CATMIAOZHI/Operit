@@ -2,6 +2,9 @@ package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -38,9 +41,10 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     var retry by remember { mutableIntStateOf(0) }
     var confirmCancel by remember { mutableStateOf<OrbitTaskEntity?>(null) }
     var resolveReceipt by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    var executionRecord by remember { mutableStateOf<String?>(null) }
     val tasks by produceState<List<OrbitTaskEntity>?>(null, orbitId, retry) {
         value = null
-        try { repository.dao.observeTasks(orbitId).collect { value = it.filter { task -> task.kind != "ONCE" } } }
+        try { repository.dao.observeTasks(orbitId).collect { value = it } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = true }
     }
@@ -57,6 +61,15 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     }
     fun back() { if (selected != null && initialTaskId == null) selected = null else onBack() }
     BackHandler { back() }
+    executionRecord?.let { record ->
+        AlertDialog(onDismissRequest = { executionRecord = null },
+            title = { Text(stringResource(R.string.orbit_execution_record)) },
+            text = { SelectionContainer {
+                Text(record.ifBlank { stringResource(R.string.orbit_task_no_result) },
+                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()))
+            } },
+            confirmButton = { TextButton(onClick = { executionRecord = null }) { Text(stringResource(android.R.string.ok)) } })
+    }
     val detail = tasks?.firstOrNull { it.id == selected }
     val listState = rememberLazyListState()
     val detailState = key(selected) { rememberLazyListState() }
@@ -143,6 +156,9 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                                 else lastRun?.error?.takeIf { it.isNotBlank() }
                                 ?: lastRun?.observation?.takeIf { it.isNotBlank() }
                                 ?: stringResource(R.string.orbit_task_no_result))
+                            if (lastRun != null) TextButton(enabled = !busy, onClick = { action {
+                                executionRecord = repository.executionRecord(detail.id)
+                            } }) { Text(stringResource(R.string.orbit_execution_record)) }
                         }
                     }
                 }
@@ -192,8 +208,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                                 else R.string.orbit_action_receipt), fontWeight = FontWeight.SemiBold)
                             Text(receipt.summary, style = MaterialTheme.typography.bodyMedium)
                             if (receipt.state == "UNKNOWN") {
-                                Text(stringResource(if (receipt.toolName == com.ai.assistance.operit.features.orbit.OrbitHttpConnector.CALL)
-                                    R.string.orbit_connection_verify_help else R.string.orbit_action_verify_help))
+                                Text(stringResource(R.string.orbit_action_verify_help))
                                 TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to true }) {
                                     Text(stringResource(R.string.orbit_action_verified))
                                 }

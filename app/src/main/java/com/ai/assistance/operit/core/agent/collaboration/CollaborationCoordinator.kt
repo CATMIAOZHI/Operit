@@ -214,9 +214,6 @@ class CollaborationCoordinator private constructor(context: Context) {
                         collaborationHistory = inheritedHistory.map { it.toPromptTurn() },
                         profileOverride = profile,
                         collaborationRoleCardId = roleCardId ?: parent.roleCardId,
-                        isolatedToolPrompts = orbitTask?.let {
-                            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.childPrompts()
-                        },
                         onRunCreated = { run ->
                             com.ai.assistance.operit.features.orbit.OrbitTaskExecution.bindChild(
                                 appContext, chatId, run.childChatId)
@@ -348,9 +345,6 @@ class CollaborationCoordinator private constructor(context: Context) {
                     collaborationHistory = agent.inheritedHistory.map { it.toPromptTurn() },
                     collaborationHistoryCutoff = agent.historyCutoff,
                     collaborationRoleCardId = agent.roleCardId,
-                    isolatedToolPrompts = orbitTask?.let {
-                        com.ai.assistance.operit.features.orbit.OrbitTaskExecution.childPrompts()
-                    },
                     onTurnStarted = {
                         synchronized(lock) {
                             write(state.acknowledge(agent.rootChatId, agent.path, inputs.mapTo(mutableSetOf()) { it.id }))

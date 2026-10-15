@@ -55,11 +55,6 @@ internal class OrbitSecretFile(
                     .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE).build())
             }.generateKey()
         }
-        fun forOrbit(context: Context, orbitId: String): OrbitSecretFile {
-            val id = java.security.MessageDigest.getInstance("SHA-256").digest(orbitId.toByteArray())
-                .joinToString("") { "%02x".format(it) }
-            return OrbitSecretFile(File(context.noBackupFilesDir, "orbit-connections/$id.bin"), key = ::androidKey)
-        }
         fun forBrowserDownloads(context: Context): OrbitSecretFile =
             // Existing download journals had no connector-sized limit; preserve their capacity.
             OrbitSecretFile(File(context.noBackupFilesDir, "browser-downloads-v1.bin"),

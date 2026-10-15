@@ -72,8 +72,12 @@ internal object OrbitTools {
         val hasOrbitSkills = runBlockingIoPreservingToolRuntimeContext {
             com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
         }
+        val isTaskRoot = runBlockingIoPreservingToolRuntimeContext {
+            chatId?.let { com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it) }
+                ?.let { it.chatId == it.rootChatId } == true
+        }
         return mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
-            OrbitTaskTools.NAME to isOrbitChat, OrbitSoulTools.NAME to isOrbitChat,
+            OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
             OrbitProductTools.GOAL to isOrbitChat, OrbitProductTools.ARTIFACT to isOrbitChat,
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false)
     }
@@ -121,7 +125,13 @@ internal object OrbitTools {
                     "不要主动检索其他 Orbit 或全局记忆。用户明确要求读取其他记忆来源时，可以在正常权限" +
                     "审核下使用现有命令或文件工具，仅读取用户要求的内容，不要自动导入自己的记忆。"
             }
-        return "<orbit>\n$body\n</orbit>"
+        val controls = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.additionalPrompts(context, chatId)
+        val proactive = if (useEnglish)
+            "Proactively advance the user's ongoing goals using the existing Operit tools and skills under FAST review. " +
+                "Use orbit_task to continue work later; report useful results, and ask when genuinely blocked."
+            else "使用 Operit 已有工具和技能，在自动审核快速下主动推进用户交代的事情。" +
+                "需要以后继续做时使用 orbit_task；有价值的结果再汇报，真正需要用户时再询问。"
+        return "<orbit>\n$body\n$proactive\n${controls.joinToString("\n")}\n</orbit>"
     }
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {

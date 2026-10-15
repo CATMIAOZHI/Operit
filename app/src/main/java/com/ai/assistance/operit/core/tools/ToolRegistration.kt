@@ -100,11 +100,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         } },
     )
     com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.names.forEach { name ->
-        handler.registerTool(name = name, descriptionGenerator = { tool ->
-            if (name == com.ai.assistance.operit.features.orbit.OrbitHttpConnector.CALL) {
-                context.getString(R.string.orbit_connections_title)
-            } else name
-        }, executor = { tool ->
+        handler.registerTool(name = name, descriptionGenerator = { name }, executor = { tool ->
             runBlockingIoPreservingToolRuntimeContext {
                 com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.execute(context, tool)
             }

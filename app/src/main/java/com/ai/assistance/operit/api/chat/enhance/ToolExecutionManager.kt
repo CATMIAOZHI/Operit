@@ -610,7 +610,7 @@ object ToolExecutionManager {
             return null
         }
         if (toolName in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names &&
-            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId)?.task?.kind == "ASSIST") {
+            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId) != null) {
             return null
         }
         val useEnglish = isEnglishLanguage(context)

@@ -9087,8 +9087,8 @@
     <string name="orbit_daily_task">Daily check-in</string>
     <string name="orbit_tasks_title">Orbit tasks</string>
     <string name="orbit_tasks_subtitle">Check schedules and results, pause or cancel tasks</string>
-    <string name="orbit_tasks_help">Tell Orbit which webpage to follow in chat. Progress is saved; checks may be delayed when the phone is off, offline or restricted by Android.</string>
-    <string name="orbit_tasks_empty">No tasks yet. Ask Orbit to watch a webpage for changes.</string>
+    <string name="orbit_tasks_help">Delegate in chat and Orbit will continue using existing tools. View progress and execution records, pause or cancel here. Phone shutdown or system restrictions can delay work.</string>
+    <string name="orbit_tasks_empty">No tasks yet. Ask Orbit in chat to continue something later.</string>
     <string name="orbit_tasks_daily_default">Offer a useful check-in or update based on recent conversations. Stay quiet when there is nothing new.</string>
     <string name="orbit_task_submit">Save task results</string>
     <string name="orbit_task_action_failed">The operation did not finish. Please retry.</string>
@@ -9197,8 +9197,8 @@
     <string name="orbit_report_digest">Daily digest</string>
     <string name="orbit_task_event_wait">Runs after “%1$s” completes</string>
     <string name="orbit_soul_title">Soul and history</string>
-    <string name="orbit_soul_subtitle">Review persona changes and restore versions</string>
-    <string name="orbit_soul_help">The role card only seeds the initial persona. Ask Orbit to propose changes, then confirm them here. The current version and 19 recent history entries are retained. Restoring creates a new version and never changes tool permissions.</string>
+    <string name="orbit_soul_subtitle">Current identity, history and restore</string>
+    <string name="orbit_soul_help">Orbit can update Soul directly. Review its reasons and history here, or restore an earlier version.</string>
     <string name="orbit_soul_pending">Awaiting your review</string>
     <string name="orbit_soul_current">Current persona</string>
     <string name="orbit_soul_rejected">Not adopted</string>
@@ -9213,7 +9213,7 @@
     <string name="orbit_soul_seed">Persona saved from the initial role card</string>
     <string name="orbit_soul_import">Previously saved Soul persona</string>
     <string name="orbit_soul_restored">New version restored from history</string>
-    <string name="orbit_soul_action_failed">Could not complete the action. The persona may have changed or its file may be unavailable. Retry; outdated proposals need to be regenerated from the current version.</string>
+    <string name="orbit_soul_action_failed">Could not complete the action. The identity may have changed or its file may be unavailable. Read the current version and try again.</string>
     <string name="orbit_memory_correction_help">After an existing memory is edited or deleted, Orbit learns from new messages to avoid relearning the old content. Chat history remains available.</string>
     <string name="orbit_memory_inferred">This is an AI interpretation of the sources, not a set of facts you have necessarily confirmed.</string>
     <string name="orbit_memory_source_missing">The source messages are no longer available.</string>
@@ -9225,19 +9225,21 @@
     <string name="orbit_skill_restore_before">Prepare previous version</string>
     <string name="orbit_skill_restore_after">Prepare this version</string>
     <string name="orbit_skill_restore_help">Restores only this file through a new proposal for you to review. Other files stay unchanged. A deleted skill cannot be restored here.</string>
-    <string name="orbit_connections_title">External connections</string>
-    <string name="orbit_connections_subtitle">Configured by you for background tasks</string>
-    <string name="orbit_connections_help">Connections send JSON only to your fixed HTTPS address. Once enabled, this Orbit’s background tasks can use them after automatic review. Credentials are encrypted on this device, never given to the model or exported in backups. Uncertain requests pause for verification instead of retrying automatically.</string>
-    <string name="orbit_connections_error">The operation could not finish. Check the input or retry. Unreadable protected data is preserved.</string>
-    <string name="orbit_connection_name">Name</string>
-    <string name="orbit_connection_purpose">Purpose and allowed operations</string>
-    <string name="orbit_connection_url">Fixed HTTPS address</string>
-    <string name="orbit_connection_token">Bearer credential (optional)</string>
-    <string name="orbit_connection_save_disabled">Save without enabling</string>
-    <string name="orbit_connection_add">Add connection</string>
-    <string name="orbit_connection_enable">Enable this connection?</string>
-    <string name="orbit_connection_enable_help">Allow this Orbit’s background tasks to use “%1$s” to send requests to %2$s. Each operation still requires automatic review. Disabling stops new requests; a request already sent may still execute remotely.</string>
-    <string name="orbit_connection_delete_help">Delete “%1$s” and its credential, and stop new requests. Requests already sent cannot be recalled. Execution records are kept.</string>
-    <string name="orbit_connection_action">Send JSON through %1$s to %2$s; user-configured purpose: %3$s</string>
-    <string name="orbit_connection_verify_help">Verify this operation at the destination service. A network failure does not mean nothing happened. Allow a new attempt only after confirming no effect or accepting the risk of repeating it; resuming may send a new request.</string>
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+    <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
+    <string name="orbit_execution_record">View execution record</string>
 </resources>
