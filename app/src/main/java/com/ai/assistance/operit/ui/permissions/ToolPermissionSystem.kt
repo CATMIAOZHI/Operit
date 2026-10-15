@@ -305,6 +305,13 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     fun getOperationDescription(tool: AITool): String {
         return operationDescriptionRegistry[tool.name]?.invoke(tool) ?: context.getString(R.string.tool_permission_operation, tool.name)
     }
+
+    private fun getOperationDescription(tool: AITool, reviewContext: ToolPermissionReviewContext): String =
+        if (tool.name == com.ai.assistance.operit.features.orbit.OrbitHttpConnector.CALL) {
+            com.ai.assistance.operit.core.tools.runBlockingIoPreservingToolRuntimeContext {
+                com.ai.assistance.operit.features.orbit.OrbitHttpConnector.reviewDescription(context, tool, reviewContext.callerChatId)
+            }
+        } else getOperationDescription(tool)
     
     /**
      * Check if a tool is allowed to execute
@@ -375,7 +382,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             val skippedAction =
                 PermissionReviewAction.fromTool(
                     tool = tool,
-                    operationDescription = getOperationDescription(tool),
+                    operationDescription = getOperationDescription(tool, reviewContext),
                     reviewContext = reviewContext,
                     targetId = targetId ?: skippedReviewId,
                 )
@@ -476,6 +483,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                                             requestPermissionInternal(
                                                 tool,
                                                 reviewContext.conversationLabel,
+                                                operationDescriptionOverride = getOperationDescription(tool, reviewContext),
                                             )
                                         ) {
                                             ToolPermissionDecision.Allowed
@@ -506,7 +514,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val decision = fastPathDecision ?: try {
                 AgentToolPermissionReviewer.getInstance(context).review(
                     tool = tool,
-                    operationDescription = getOperationDescription(tool),
+                    operationDescription = getOperationDescription(tool, reviewContext),
                     reviewContext = reviewContext,
                 )
             } catch (cancelled: CancellationException) {
@@ -700,7 +708,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val action =
             PermissionReviewAction.fromTool(
                 tool = tool,
-                operationDescription = getOperationDescription(tool),
+                operationDescription = getOperationDescription(tool, reviewContext),
                 reviewContext = reviewContext,
                 targetId = reviewContext.targetId ?: reviewId,
             )
@@ -743,6 +751,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                             requestPermissionInternal(
                                 tool = tool,
                                 conversationLabel = reviewContext.conversationLabel,
+                                operationDescriptionOverride = getOperationDescription(tool, reviewContext),
                             )
                         ) {
                             ToolPermissionDecision.Allowed
@@ -880,7 +889,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                     canonical =
                         PermissionReviewAction.fromTool(
                             tool = tool,
-                            operationDescription = getOperationDescription(tool),
+                            operationDescription = getOperationDescription(tool, reviewContext),
                             reviewContext = reviewContext,
                             targetId = "",
                         ),

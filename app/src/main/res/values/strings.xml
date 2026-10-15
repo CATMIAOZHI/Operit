@@ -9201,4 +9201,19 @@
     <string name="orbit_skill_restore_before">准备恢复修改前版本</string>
     <string name="orbit_skill_restore_after">准备恢复此版本</string>
     <string name="orbit_skill_restore_help">仅恢复这一个文件。将先生成提案，确认后生效；其他文件保持不变。整个技能已删除时无法恢复。</string>
+    <string name="orbit_connections_title">外部连接</string>
+    <string name="orbit_connections_subtitle">由你配置，供后台任务使用</string>
+    <string name="orbit_connections_help">连接器仅向你指定的 HTTPS 地址发送 JSON。启用后，此 Orbit 的后台任务可在自动审核通过后使用。凭据加密保存在本机，不交给模型，也不随备份导出。网络中断时会暂停核实，不自动重发。</string>
+    <string name="orbit_connections_error">操作未完成。请检查输入或重试；若受保护数据无法读取，原数据会保留。</string>
+    <string name="orbit_connection_name">名称</string>
+    <string name="orbit_connection_purpose">用途与允许的操作</string>
+    <string name="orbit_connection_url">固定 HTTPS 地址</string>
+    <string name="orbit_connection_token">Bearer 凭据（可选）</string>
+    <string name="orbit_connection_save_disabled">保存，暂不启用</string>
+    <string name="orbit_connection_add">添加连接</string>
+    <string name="orbit_connection_enable">启用这个连接？</string>
+    <string name="orbit_connection_enable_help">允许此 Orbit 的后台任务使用「%1$s」，向 %2$s 发送请求。每次操作仍需自动审核。关闭后停止发起新请求；已经发送的请求可能仍在远端执行。</string>
+    <string name="orbit_connection_delete_help">删除「%1$s」及其凭据，并停止新请求。已发送的请求不能撤回；已有执行记录会保留。</string>
+    <string name="orbit_connection_action">通过 %1$s 向 %2$s 发送 JSON；用户配置用途：%3$s</string>
+    <string name="orbit_connection_verify_help">请到目标服务核实这次操作。网络失败不代表没有执行。只有确认未执行或接受再次执行的风险后，才允许重新尝试；之后恢复任务可能发起新请求。</string>
 </resources>
