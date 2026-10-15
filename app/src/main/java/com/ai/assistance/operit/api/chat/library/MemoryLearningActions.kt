@@ -126,16 +126,16 @@ class MemoryLearningActions(
             "skill_list" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }
                 val owned = skills.owned(profileId)
-                JSONObject().put("skills",JSONArray().apply {
-                    SkillManager.forMemorySpace(context, profileId).getAvailableSkills().values.forEach {
-                        put(JSONObject().put("name",it.name).put("description",it.description)
-                            .put("learned_in_this_space",it.name in owned))
-                    }
-                    stagedChanges?.filter { it.kind=="skill" }?.forEach {
-                        put(JSONObject().put("name",it.title).put("description",it.description)
-                            .put("learned_in_this_space",true).put("staged",true))
-                    }
-                })
+                val drafts = stagedChanges.orEmpty().filter { it.kind == "skill" }.associateBy { it.title }
+                val catalog = SkillManager.forMemorySpace(context, profileId).getAvailableSkills()
+                    .mapValues { it.value.description } + drafts.mapValues { it.value.description }
+                val page = com.ai.assistance.operit.features.orbit.OrbitSkillCatalog.page(catalog,
+                    arg("query"), arg("offset").ifBlank { "0" }.toInt(), arg("limit").ifBlank { "20" }.toInt())
+                JSONObject().put("skills",JSONArray(page.entries.map {
+                    JSONObject().put("name", it.name).put("description", it.description)
+                        .put("learned_in_this_space", it.name in owned || it.name in drafts)
+                        .put("staged", it.name in drafts)
+                })).put("total", page.total).put("next_offset", page.nextOffset ?: JSONObject.NULL)
             }
             "skill_read" -> {
                 check(skillsEnabled) { "Skill extraction is not scheduled for this run. Do not retry skill operations; continue note work or finish." }

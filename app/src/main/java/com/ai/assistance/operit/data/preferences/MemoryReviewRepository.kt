@@ -78,8 +78,16 @@ data class MemoryReviewChange(
     val files: Map<String, String> = emptyMap(),
     val origin: String = "legacy",
     val learningGeneration: Long = 0,
-    val evidence: String = ""
+    val evidence: String = "",
+    val restoredFrom: String = ""
 )
+
+internal fun skillFileRestoreTarget(change: MemoryReviewChange, beforeChange: Boolean): Pair<String, Boolean> {
+    require(change.kind == "skill_file" && change.status == "approved") { "Only approved file versions can be restored" }
+    val remove = if (beforeChange) change.baseVersion == LearnedSkillRepository.version("absent")
+        else change.operation == "remove"
+    return (if (beforeChange) change.before else change.body) to remove
+}
 
 class MemoryReviewRepository internal constructor(
     private val root: File, val profileId: String,
@@ -134,7 +142,7 @@ class MemoryReviewRepository internal constructor(
                 obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"),
                 obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"),
                 readFiles(obj), obj.optString("origin", "legacy"), obj.optLong("learningGeneration"),
-                obj.optString("evidence"))
+                obj.optString("evidence"), obj.optString("restoredFrom"))
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
@@ -170,7 +178,7 @@ class MemoryReviewRepository internal constructor(
         .put("reviewer", d.reviewer).put("reason", d.reason).put("audits", d.audits)
         .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
         .put("files", JSONObject(d.files)).put("origin", d.origin)
-        .put("learningGeneration", d.learningGeneration).put("evidence", d.evidence)
+        .put("learningGeneration", d.learningGeneration).put("evidence", d.evidence).put("restoredFrom", d.restoredFrom)
 
     /**
      * What a learning run is told about its own proposal. The full before/after snapshots stay on
@@ -250,7 +258,8 @@ class MemoryReviewRepository internal constructor(
                 stripInvisibleCharacters(it.addition) == addition &&
                 it.path==change.path && it.operation==change.operation &&
                 it.automatic==change.automatic && it.files==change.files &&
-                it.origin==change.origin && it.learningGeneration==change.learningGeneration }?.let { return@withLock it }
+                it.origin==change.origin && it.learningGeneration==change.learningGeneration &&
+                it.restoredFrom==change.restoredFrom }?.let { return@withLock it }
             // Old pending items must not block newly enabled automatic saving.
             require(items.count { it.status in setOf("pending", "applying") } < PENDING_LIMIT || autoApprovalEnabled()) {
                 "Pending review limit reached"
@@ -290,7 +299,7 @@ class MemoryReviewRepository internal constructor(
         path=obj.optString("path","SKILL.md"), operation=obj.optString("operation","write"),
         automatic=obj.optBoolean("automatic"), files=readFiles(obj),
         origin=obj.optString("origin","legacy"), learningGeneration=obj.optLong("learningGeneration"),
-        evidence=obj.optString("evidence")
+        evidence=obj.optString("evidence"), restoredFrom=obj.optString("restoredFrom")
     )
 
     suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {},
@@ -306,6 +315,17 @@ class MemoryReviewRepository internal constructor(
             id = "",kind="skill_file",title=name,body=body,before=before.text,baseVersion=before.version,
             path=path,operation=if(remove) "remove" else "write",automatic=automatic,sourceChatId=sourceChatId
         ),onCreated)
+
+    /** Restore a reviewed file through a new proposal; never replay an old target version blindly. */
+    suspend fun proposeSkillFileRestore(context: Context, id: String, beforeChange: Boolean): MemoryReviewChange {
+        val change = list().single { it.id == id }
+        val target = skillFileRestoreTarget(change, beforeChange)
+        val current = LearnedSkillRepository(context, profileId).read(change.title, change.path)
+        return propose(MemoryReviewChange(id = "", kind = "skill_file", title = change.title,
+            path = change.path, body = target.first, before = current.text, baseVersion = current.version,
+            operation = if (target.second) "remove" else "write",
+            restoredFrom = "$id:${if (beforeChange) "before" else "after"}"))
+    }
 
     suspend fun proposeUser(before: String, after: String, sourceChatId: String = "",
         onCreated: () -> Unit = {}): MemoryReviewChange {
@@ -392,6 +412,9 @@ class MemoryReviewRepository internal constructor(
             val index = items.indexOfFirst { it.id == id }
             require(index >= 0) { "Change not found" }
             val change = items[index]
+            check(!approve || change.restoredFrom.isBlank() || reviewer == "user") {
+                "A restored file version requires the user's approval"
+            }
             if (change.status == "superseded") return@withLock change
             val governance = boundary()
             if (approve && change.status in setOf("pending", "applying") &&
@@ -450,7 +473,7 @@ class MemoryReviewRepository internal constructor(
                             if (com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId) == null)
                                 "settings" else "skills:$profileId")
                     }
-                    val correction = change.origin == "foreground" && (change.kind == "skill_delete" ||
+                    val correction = change.origin == "foreground" && (change.restoredFrom.isNotBlank() || change.kind == "skill_delete" ||
                         change.before.isNotBlank() && change.before != change.body && change.addition.isBlank())
                     when {
                         governance == null -> applyTarget()

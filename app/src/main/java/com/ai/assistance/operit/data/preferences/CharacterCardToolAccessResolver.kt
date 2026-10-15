@@ -26,6 +26,7 @@ data class ResolvedCharacterCardToolAccess(
             // Orbit's own tool is not a user-managed builtin; it is gated by the calling chat.
             com.ai.assistance.operit.core.tools.OrbitTools.SET_NAME,
             com.ai.assistance.operit.core.tools.OrbitSoulTools.NAME,
+            com.ai.assistance.operit.core.tools.OrbitSkillTools.NAME,
             com.ai.assistance.operit.core.tools.OrbitTaskTools.NAME,
             com.ai.assistance.operit.core.tools.OrbitProductTools.GOAL,
             com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT,
