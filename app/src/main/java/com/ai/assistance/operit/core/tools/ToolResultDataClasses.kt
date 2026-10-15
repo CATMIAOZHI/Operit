@@ -285,6 +285,23 @@ data class TerminalCommandResultData(
 
 /** 终端命令流式事件数据 */
 @Serializable
+data class ShellTaskResultData(
+    val runId: String,
+    val command: String,
+    val status: String,
+    val output: String,
+    val outputTruncated: Boolean,
+    val terminationReason: String?,
+    val exitCode: Int?,
+    val timedOut: Boolean,
+    val outputMode: String,
+) : ToolResultData() {
+    override fun toString(): String =
+        "Shell task $runId: $status; exitCode=$exitCode; reason=$terminationReason; truncated=$outputTruncated\n$output"
+}
+
+/** 终端命令流式事件数据 */
+@Serializable
 data class TerminalTaskResultData(
     val runId: String,
     val sessionId: String,
@@ -2525,10 +2542,10 @@ data class ModelConfigDeleteResultData(
     val deleted: Boolean,
     val configId: String,
     val affectedFunctions: List<String>,
-    val fallbackConfigId: String
+    val fallbackConfigId: String // Empty: affected functions need an explicit new selection.
 ) : ToolResultData() {
     override fun toString(): String {
-        return "Model config deleted: $configId, affectedFunctions=${affectedFunctions.size}"
+        return "Model config deleted: $configId, affectedFunctions=${affectedFunctions.size}; affected functions require model selection, no automatic fallback"
     }
 }
 

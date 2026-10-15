@@ -185,7 +185,7 @@ android {
         minSdk = 26
         targetSdk = 34
         versionCode = 100205
-        versionName = "1.12.2-ry.7"
+        versionName = "1.12.2-ry.8"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         vectorDrawables {
@@ -272,6 +272,7 @@ android {
         compose = true
         aidl = true
         buildConfig = true
+        resValues = true
     }
     lint {
         baseline = file("lint-baseline.xml")
@@ -330,6 +331,11 @@ kotlin {
 }
 
 dependencies {
+    // Keep this alpha set in sync with compose-bom-alpha 2026.09.00.
+    implementation("androidx.a2ui.compose:compose-runtime:1.0.0-alpha01")
+    implementation("androidx.a2ui.compose:compose-ui:1.0.0-alpha01")
+    implementation("androidx.a2ui:a2ui-engine:1.0.0-alpha01")
+    implementation("androidx.compose.material3:material3-a2ui:1.0.0-alpha01")
     implementation(project(":chat-parser"))
     implementation(project(":chat-storage"))
     implementation(project(":memory-storage"))
@@ -343,17 +349,10 @@ dependencies {
         testRuntimeOnly("io.objectbox:objectbox-$platform:${libs.versions.objectbox.get()}")
     }
     implementation("com.github.jelmerk:hnswlib-core:1.2.1")
-    implementation(project(":dragonbones"))
     implementation(project(":terminal"))
-    implementation(project(":mmd"))
-    implementation(project(":fbx"))
     implementation(project(":showerclient"))
     implementation(project(":quickjs"))
 
-    // glTF runtime rendering (Filament)
-    implementation("com.google.android.filament:filament-android:1.69.2")
-    implementation("com.google.android.filament:gltfio-android:1.69.2")
-    implementation("com.google.android.filament:filament-utils-android:1.69.2")
     implementation(libs.androidx.ui.graphics.android)
     // Vendored binary dependencies live in app/libs, including ffmpeg-kit and its Java-side deps.
     implementation(fileTree(mapOf("dir" to "libs", "include" to listOf("*.aar", "*.jar"))))

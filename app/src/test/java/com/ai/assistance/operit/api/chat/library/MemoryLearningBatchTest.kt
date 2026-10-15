@@ -536,4 +536,26 @@ class MemoryLearningBatchTest {
         }
         assertEquals(source,rebuilt.toString())
     }
+    @Test fun learningReadsCardsAsTextAndRestartsCursorsSavedAgainstRawText() = runBlocking {
+        val dao=mock<ChatContentDao>()
+        val card="""{"version":"v0.9","updateComponents":{"surfaceId":"c","components":[{"id":"root","component":"Text","text":"卡片正文"}]}}"""
+        val bytes="开头\n```a2ui\n$card\n```\n结尾".toByteArray()
+        whenever(dao.nextLearningSource(eq("chat"),any(),eq(1L))).thenAnswer {
+            if (it.getArgument<Long>(1)<=1) ChatRecallPart(1,"chat","ai",1,"",0) else null
+        }
+        whenever(dao.readLearningMessageBytes(eq(1L),any())).thenAnswer {
+            val offset=it.getArgument<Long>(1).toInt()
+            bytes.copyOfRange(offset,minOf(offset+32768,bytes.size))
+        }
+        val raw=com.ai.assistance.operit.data.repository.RecallEvidenceReader.read(
+            { dao.readLearningMessageBytes(1,it) },true,true,limit=1,onEvidence={})!!.revision
+        MemoryLearningSource(context(),dao,"chat",1,true).use { reader ->
+            // A cursor saved before cards were converted points past the end of the shorter text.
+            val batch=reader.next(LearningCursor(1,bytes.size.toLong()-2,raw,true),4000)
+            assertTrue(batch.text.contains("source_byte_offset=0]"))
+            assertTrue(batch.text.contains("Visible content: 卡片正文"))
+            assertTrue(!batch.text.contains("updateComponents"))
+            assertTrue(batch.text.contains("结尾"))
+        }
+    }
 }

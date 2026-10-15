@@ -2,7 +2,6 @@ package com.ai.assistance.operit.ui.features.settings.screens
 
 import android.annotation.SuppressLint
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -39,6 +38,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -67,6 +67,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
 import com.ai.assistance.operit.api.voice.HttpTtsResponsePipelineStep
@@ -470,12 +472,8 @@ fun SpeechServicesSettingsScreen(
                 // --- TTS Section ---
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    border = BorderStroke(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    shape = SettingsCardShape,
+                    colors = CardDefaults.cardColors(containerColor = rememberSettingsCardColor())
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
 
@@ -511,7 +509,7 @@ fun SpeechServicesSettingsScreen(
                                 trailingIcon = { 
                                     Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_dropdown_expand))
                                 },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                                modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
                             ExposedDropdownMenu(
                                 expanded = ttsDropdownExpanded,
@@ -627,7 +625,7 @@ fun SpeechServicesSettingsScreen(
                                                 contentDescription = stringResource(R.string.speech_services_dropdown_expand)
                                             )
                                         },
-                                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                                        modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
                                     ExposedDropdownMenu(
                                         expanded = simpleTtsLocaleExpanded,
@@ -1048,7 +1046,7 @@ fun SpeechServicesSettingsScreen(
                                         trailingIcon = {
                                             Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_siliconflow_voice_select_icon))
                                         },
-                                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                                        modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
                                     ExposedDropdownMenu(
                                         expanded = voiceDropdownExpanded,
@@ -1238,7 +1236,7 @@ fun SpeechServicesSettingsScreen(
                                         trailingIcon = {
                                             Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_mimo_voice_select_icon))
                                         },
-                                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                                        modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
                                     ExposedDropdownMenu(
                                         expanded = mimoVoiceDropdownExpanded,
@@ -1346,7 +1344,7 @@ fun SpeechServicesSettingsScreen(
                                         trailingIcon = {
                                             Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_doubao_voice_select_icon))
                                         },
-                                        modifier = Modifier.menuAnchor().fillMaxWidth()
+                                        modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                                     )
                                     ExposedDropdownMenu(
                                         expanded = doubaoVoiceDropdownExpanded,
@@ -1980,12 +1978,8 @@ fun SpeechServicesSettingsScreen(
                 // --- STT Section ---
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surface
-                    ),
-                    border = BorderStroke(0.7.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    shape = SettingsCardShape,
+                    colors = CardDefaults.cardColors(containerColor = rememberSettingsCardColor())
                 ) {
                     Column(modifier = Modifier.padding(12.dp)) {
 
@@ -2015,7 +2009,7 @@ fun SpeechServicesSettingsScreen(
                                 trailingIcon = { 
                                     Icon(Icons.Default.ArrowDropDown, stringResource(R.string.speech_services_dropdown_expand))
                                 },
-                                modifier = Modifier.menuAnchor().fillMaxWidth()
+                                modifier = Modifier.menuAnchor(androidx.compose.material3.ExposedDropdownMenuAnchorType.PrimaryNotEditable).fillMaxWidth()
                             )
                             ExposedDropdownMenu(
                                 expanded = sttDropdownExpanded,

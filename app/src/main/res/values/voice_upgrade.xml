@@ -9,6 +9,7 @@
     <string name="voice_draft_button">语音转文字</string>
     <string name="voice_draft_hint">识别后填入输入框，不会自动发送。</string>
     <string name="voice_draft_finish">完成录音</string>
+    <string name="voice_draft_fill_message_box">填入输入框</string>
     <string name="voice_draft_permission">请允许使用麦克风，才能语音转文字。</string>
     <string name="voice_model_delete_size">删除 · 可释放 %1$s</string>
     <string name="voice_model_delete_title">删除 %1$s？</string>
@@ -53,4 +54,10 @@
     <string name="voice_model_source">模型来源与许可</string>
     <string name="voice_pitch_unavailable">此模型不支持调节音调</string>
     <string name="voice_playback_failed">播报失败，请检查语音设置；文字回复继续</string>
+    <string name="voice_hold_release_to_stop">松开停止，上滑取消</string>
+    <string name="voice_hold_release_to_send">松开即可发送</string>
+    <string name="voice_hold_release_to_cancel">松开取消</string>
+    <string name="voice_transcribing">正在转录…</string>
+    <string name="input_question_hint_hold">随心输入或长按说话</string>
+    <string name="input_question_with_workspace_hold">随心输入或长按说话，使用@来引用文件</string>
 </resources>

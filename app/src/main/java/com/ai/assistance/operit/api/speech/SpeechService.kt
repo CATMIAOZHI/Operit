@@ -9,6 +9,8 @@ import kotlinx.coroutines.flow.map
 interface SpeechService {
     /** Only streaming engines can keep decoding across multiple endpoints. */
     val supportsContinuousRecognition: Boolean get() = false
+    /** Explicit opt-in to keeping manual dictation open across recognition endpoints. */
+    val supportsContinuousDictation: Boolean get() = false
     val speechActivityFlow: Flow<Boolean>
         get() = recognitionResultFlow.map { it.text.isNotBlank() }
     /** 当前识别引擎状态枚举 */
@@ -69,6 +71,12 @@ interface SpeechService {
      * @return 初始化是否成功
      */
     suspend fun initialize(): Boolean
+
+    /**
+     * Whether starting needs no download or confirmation first, so a capture opened at the tap is
+     * not left running while the user decides. A plain file check; never starts a download.
+     */
+    fun canStartWithoutPrompt(context: android.content.Context): Boolean = true
 
     /**
      * 开始语音识别
