@@ -1,5 +1,8 @@
 package com.ai.assistance.operit.ui.features.settings.screens
 
+import android.view.WindowManager
+import com.ai.assistance.operit.ui.main.components.LocalIsCurrentScreen
+import com.ai.assistance.operit.ui.main.components.LocalSetScreenSoftInputMode
 import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
@@ -125,6 +128,16 @@ fun SettingsScreen(
         val workflowRepository = remember { WorkflowRepository(context.applicationContext) }
         val scope = rememberCoroutineScope()
         var showClearCookieConfirm by remember { mutableStateOf(false) }
+
+        // The search bar lifts itself above the keyboard (imePadding). Stop the window from also
+        // panning the whole page up, which pushed the bar far above the keyboard.
+        val isCurrentScreen = LocalIsCurrentScreen.current
+        val setScreenSoftInputMode = LocalSetScreenSoftInputMode.current
+        SideEffect {
+                if (isCurrentScreen) {
+                        setScreenSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+                }
+        }
 
         val readLegacySkills = legacyStorage.readLegacySkillsFlow().collectAsState(initial = false).value
         val readLegacyMcp = legacyStorage.readLegacyMcpFlow().collectAsState(initial = false).value
@@ -571,6 +584,7 @@ private fun SettingsSearchResults(
 ) {
         Column(
                 modifier = Modifier.fillMaxSize()
+                        .imePadding()
                         .verticalScroll(rememberScrollState())
                         .padding(horizontal = 16.dp)
                         .padding(top = 8.dp, bottom = SearchBarClearance)

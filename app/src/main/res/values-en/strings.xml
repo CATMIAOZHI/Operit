@@ -2814,7 +2814,6 @@
     <string name="functional_model_config_title">Functional Model Configuration Settings</string>
     <string name="functional_model_config_desc">Set separate model configurations for different functions, allowing each function to use the most suitable API settings.</string>
     <string name="manage_all_model_configs">Manage All Model Configurations</string>
-    <string name="manage_model_configs_desc">Manage Model Configurations</string>
     <string name="reset_all_functions_to_default">Reset All Functions to Default Configuration</string>
     <string name="current_config_label">Current Configuration: %1$s</string>
     <string name="default_config">Default Configuration</string>
@@ -4423,6 +4422,7 @@
     <string name="waifu_custom_prompt_desc">Customize extra prompts for Waifu mode.</string>
     <string name="waifu_custom_prompt_placeholder">For example: Keep replies short and natural, no cutesy tone, no filler words, no action descriptions.</string>
     <string name="waifu_custom_prompt_tip">This content is appended to the system prompt as an extra Waifu-mode rule.</string>
+    <string name="waifu_section_expression">Emoticons &amp; selfie</string>
     <string name="enable_emoticons">Enable Emoticons</string>
     <string name="emoticons_desc">Insert emotional state tags in conversations to enhance expression</string>
     <string name="available_emoticons">Available emoticons: crying, like_you, happy, surprised, miss_you, speechless, angry, confused, sad</string>

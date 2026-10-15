@@ -7,7 +7,6 @@
     <string name="component_terminal_installed">Terminal environment installed. Its installer cache can be removed separately.</string>
     <string name="component_export_detail">Used to export a web page as a standalone app. Removing this template does not affect previously exported apps.</string>
     <string name="component_download_size">Full download size: %1$s</string>
-    <string name="component_storage">%1$s · Stored: %2$s</string>
     <string name="component_loading">Checking local resources…</string>
     <string name="component_ready">Downloaded</string>
     <string name="component_partial">Partially downloaded</string>

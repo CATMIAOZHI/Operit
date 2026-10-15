@@ -33,11 +33,20 @@ import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.RemoveCircleOutline
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.Build as OutlinedBuild
+import androidx.compose.material.icons.outlined.Policy
+import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.PermissionReviewInternalTools
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import com.ai.assistance.operit.ui.permissions.PermissionLevel
 import com.ai.assistance.operit.ui.permissions.PermissionStopSlider
 import com.ai.assistance.operit.ui.permissions.PermissionReviewPolicyStore
@@ -117,45 +126,35 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
         scope.launch { toolPermissionSystem.savePermissionStop(stop) }
     }
 
+    val hasBackgroundImage by
+        remember { UserPreferencesManager.getInstance(context) }.useBackgroundImage.collectAsState(initial = false)
+    val cardColor = settingsCardColor(hasBackgroundImage)
+
     LazyColumn(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-            .padding(16.dp),
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
         item {
-            Text(
-                stringResource(R.string.tool_permissions_title),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(modifier = Modifier.height(4.dp))
-            Text(
-                stringResource(R.string.tool_permissions_description),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
+            SettingsInfoBanner(
+                text = stringResource(R.string.tool_permissions_description),
+                backgroundColor = cardColor
             )
         }
 
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.global_permission_switch),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+            val globalTitle = stringResource(R.string.global_permission_switch)
+            SettingsSectionTitle(
+                text = globalTitle,
+                icon = Icons.Outlined.Shield,
+                modifier = Modifier.fillMaxWidth().settingsSearchTarget(globalTitle)
+            )
+            SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
+                Column {
                     Text(
                         stringResource(R.string.global_permission_switch_description),
                         style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.8f)
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     selectedStop?.let { stop ->
@@ -176,21 +175,21 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                         Text(
                             stringResource(shownStop.descriptionRes),
                             style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.9f),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
             }
         }
         item {
-            Card(modifier = Modifier.fillMaxWidth()) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        stringResource(R.string.permission_review_policy_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+            val policyTitle = stringResource(R.string.permission_review_policy_title)
+            SettingsSectionTitle(
+                text = policyTitle,
+                icon = Icons.Outlined.Policy,
+                modifier = Modifier.fillMaxWidth().settingsSearchTarget(policyTitle)
+            )
+            SettingsCard(backgroundColor = cardColor, contentPadding = PaddingValues(16.dp)) {
+                Column {
                     Text(
                         stringResource(
                             R.string.permission_review_policy_description,
@@ -232,7 +231,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                                 minLines = 5,
                             )
                             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Button(
+                                FilledTonalButton(
                                     onClick = {
                                         scope.launch { reviewPolicyStore.saveCustomPolicy(policyDraft) }
                                     }
@@ -250,25 +249,14 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
             }
         }
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f))
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.tool_permission_instruction_title),
-                        style = MaterialTheme.typography.titleSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        text = stringResource(R.string.tool_permission_instruction_content),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
+            SettingsSectionTitle(
+                text = stringResource(R.string.tool_permission_instruction_title),
+                icon = Icons.Outlined.OutlinedBuild
+            )
+            SettingsInfoBanner(
+                text = stringResource(R.string.tool_permission_instruction_content),
+                backgroundColor = cardColor
+            )
         }
 
         item {
@@ -287,6 +275,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.ALLOW }.keys,
                 defaultTools = allowedByDefault.toSet(),
+                cardColor = cardColor,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.ALLOW) }
             )
@@ -297,6 +286,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 allTools = allTools,
                 toolsInLevel =
                     toolPermissions.filterValues { it == PermissionLevel.AUTO_REVIEW }.keys,
+                cardColor = cardColor,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName ->
                     handlePermissionChange(toolName, PermissionLevel.AUTO_REVIEW)
@@ -308,6 +298,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 level = PermissionLevel.ASK,
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.ASK }.keys,
+                cardColor = cardColor,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.ASK) }
             )
@@ -317,6 +308,7 @@ fun ToolPermissionSettingsScreen(navigateBack: () -> Unit) {
                 level = PermissionLevel.FORBID,
                 allTools = allTools,
                 toolsInLevel = toolPermissions.filterValues { it == PermissionLevel.FORBID }.keys,
+                cardColor = cardColor,
                 toolHandler = toolHandler,
                 onToolToggled = { toolName -> handlePermissionChange(toolName, PermissionLevel.FORBID) }
             )
@@ -337,6 +329,7 @@ private fun PermissionGroup(
     allTools: List<String>,
     toolsInLevel: Set<String>,
     defaultTools: Set<String> = emptySet(),
+    cardColor: Color,
     toolHandler: AIToolHandler,
     onToolToggled: (String) -> Unit
 ) {
@@ -369,12 +362,12 @@ private fun PermissionGroup(
         )
     }
 
-    Card(
-        shape = RoundedCornerShape(16.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    SettingsCard(
+        backgroundColor = cardColor,
+        modifier = Modifier.settingsSearchTarget(title),
+        contentPadding = PaddingValues(16.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        Column {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
@@ -407,7 +400,10 @@ private fun PermissionGroup(
                     }
                     Text(description, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                IconButton(onClick = { showToolSelector = true }) {
+                IconButton(
+                    onClick = { showToolSelector = true },
+                    modifier = Modifier.settingsSearchTarget(stringResource(R.string.add_tool))
+                ) {
                     Icon(Icons.Default.Add, contentDescription = stringResource(R.string.add_tool), tint = color)
                 }
             }

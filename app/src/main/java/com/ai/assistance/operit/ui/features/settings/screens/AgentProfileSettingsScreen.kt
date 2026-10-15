@@ -62,6 +62,17 @@ import com.ai.assistance.operit.core.agent.normalizeCustomAgentId
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.SettingsIconBadge
+import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import kotlinx.coroutines.launch
 
 @Composable
@@ -96,6 +107,9 @@ fun AgentProfileSettingsScreen() {
     LaunchedEffect(Unit) { loadModelConfigs() }
 
     val editingProfile = editingProfileId?.let(repository::getById)
+    val hasBackgroundImage by
+        remember { UserPreferencesManager.getInstance(context) }.useBackgroundImage.collectAsState(initial = false)
+    val cardColor = settingsCardColor(hasBackgroundImage)
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding =
@@ -106,42 +120,35 @@ fun AgentProfileSettingsScreen() {
         verticalArrangement = Arrangement.spacedBy(12.dp),
     ) {
         item {
-            Card {
-                Column(Modifier.fillMaxWidth().padding(16.dp)) {
-                    CollaborationLimitsSettings(repository)
-                }
+            SettingsCard(
+                backgroundColor = cardColor,
+                contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+            ) {
+                CollaborationLimitsSettings(repository)
             }
         }
         item {
-            Card(
-                colors =
-                    CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-            ) {
-                Column(
-                    modifier = Modifier.fillMaxWidth().padding(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp),
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.agent_profile_info_title),
+                    icon = Icons.Default.SmartToy,
+                    modifier = Modifier.padding(top = 4.dp)
+                )
+                SettingsInfoBanner(
+                    text = stringResource(R.string.agent_profile_info_description),
+                    backgroundColor = cardColor
+                )
+                FilledTonalButton(
+                    onClick = { isCreatingProfile = true },
+                    modifier = Modifier.settingsSearchTarget(stringResource(R.string.agent_profile_add)),
                 ) {
-                    Text(
-                        text = stringResource(R.string.agent_profile_info_title),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp),
                     )
-                    Text(
-                        text = stringResource(R.string.agent_profile_info_description),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSecondaryContainer,
-                    )
-                    FilledTonalButton(onClick = { isCreatingProfile = true }) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp),
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(stringResource(R.string.agent_profile_add))
-                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.agent_profile_add))
                 }
             }
         }
@@ -151,6 +158,7 @@ fun AgentProfileSettingsScreen() {
                 profile = profile,
                 modelLabel = modelBindingLabel(profile, modelConfigs),
                 isBuiltIn = repository.isBuiltIn(profile.id),
+                cardColor = cardColor,
                 onEdit = { editingProfileId = profile.id },
             )
         }
@@ -280,25 +288,19 @@ private fun AgentProfileCard(
     profile: AgentProfile,
     modelLabel: String,
     isBuiltIn: Boolean,
+    cardColor: Color,
     onEdit: () -> Unit,
 ) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors =
-            CardDefaults.cardColors(
-                containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
-            ),
+    SettingsCard(
+        backgroundColor = cardColor,
+        modifier = Modifier.clip(RoundedCornerShape(20.dp)).clickable(onClick = onEdit),
+        contentPadding = PaddingValues(start = 16.dp, top = 14.dp, end = 4.dp, bottom = 14.dp)
     ) {
         Row(
-            modifier = Modifier.fillMaxWidth().padding(16.dp),
+            modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.Top,
         ) {
-            Icon(
-                imageVector = Icons.Default.SmartToy,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.size(24.dp),
-            )
+            SettingsIconBadge(icon = Icons.Default.SmartToy, size = 36)
             Spacer(modifier = Modifier.width(12.dp))
             Column(
                 modifier = Modifier.weight(1f),
@@ -310,8 +312,11 @@ private fun AgentProfileCard(
                 ) {
                     Text(
                         text = profile.name,
-                        style = MaterialTheme.typography.titleMedium,
+                        style = MaterialTheme.typography.bodyLarge,
                         fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     Text(
                         text =
@@ -324,6 +329,10 @@ private fun AgentProfileCard(
                             ),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.primary,
+                        modifier =
+                            Modifier.clip(RoundedCornerShape(50))
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.12f))
+                                .padding(horizontal = 8.dp, vertical = 2.dp),
                     )
                 }
                 Text(
@@ -341,6 +350,7 @@ private fun AgentProfileCard(
                     text = stringResource(R.string.agent_profile_model_value, modelLabel),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.settingsSearchTarget(stringResource(R.string.agent_profile_model_binding)),
                 )
                 Text(
                     text =
