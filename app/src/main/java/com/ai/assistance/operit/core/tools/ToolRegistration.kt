@@ -80,6 +80,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         descriptionGenerator = { context.getString(R.string.toolreg_todowrite_desc) },
         executor = { tool -> ChatTodoTool.execute(context, tool) },
     )
+    // Only shown to the model inside an Orbit chat (see OrbitTools.visibility); the executor
+    // checks the calling chat again.
+    handler.registerTool(
+        name = OrbitTools.SET_NAME,
+        descriptionGenerator = { context.getString(R.string.toolreg_orbit_set_name_desc) },
+        executor = { tool -> OrbitTools.executeSetName(context, tool) },
+    )
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(

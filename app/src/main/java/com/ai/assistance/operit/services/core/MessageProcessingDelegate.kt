@@ -1071,7 +1071,15 @@ class MessageProcessingDelegate(
                     } ?: Pair(null, null)
                 val currentRoleName =
                     resolveTranscriptRoleName(
-                        override = turnOptions.assistantRoleNameOverride,
+                        // An Orbit signs its replies with the name it chose for itself.
+                        override =
+                            turnOptions.assistantRoleNameOverride
+                                ?: com.ai.assistance.operit.data.preferences.OrbitPreferences
+                                    .getInstance(context)
+                                    .current()
+                                    .orbitForChat(activeChatId)
+                                    ?.name
+                                    ?.takeIf { it.isNotBlank() },
                         fallback = characterName ?: "Operit",
                     )
                 logMessageTiming(
@@ -1360,7 +1368,7 @@ class MessageProcessingDelegate(
                         if (effectivePersistTurn && chatId != null) {
                             addMessageToChat(chatId, segmentMessage)
                         }
-                        if (getIsAutoReadEnabled()) {
+                        if (effectivePersistTurn && getIsAutoReadEnabled()) {
                             didStreamAutoRead = true
                             AppLogger.d(
                                 TAG,
@@ -1449,7 +1457,8 @@ class MessageProcessingDelegate(
                             }
 
                             fun tryFlushAutoRead() {
-                                if (!getIsAutoReadEnabled()) return
+                                // A turn that never enters the chat is not read aloud either.
+                                if (!effectivePersistTurn || !getIsAutoReadEnabled()) return
                                 if (isWaifuModeEnabled) return
                                 while (true) {
                                     val bufferBefore = autoReadBuffer.length
@@ -1623,7 +1632,7 @@ class MessageProcessingDelegate(
                             autoReadJob?.join()
                             waifuSegmentsJob?.join()
 
-                            if (getIsAutoReadEnabled() && !isWaifuModeEnabled) {
+                            if (effectivePersistTurn && getIsAutoReadEnabled() && !isWaifuModeEnabled) {
                                 val remaining = autoReadBuffer.toString()
                                 autoReadBuffer.clear()
                                 AppLogger.d(
@@ -2245,7 +2254,7 @@ class MessageProcessingDelegate(
                             "autoRead[final] enabled=${getIsAutoReadEnabled()} skipFinalAutoRead=$skipFinalAutoRead len=${finalContent.length} preview=\"${speechPreview(finalContent)}\""
                         )
                         // 如果启用了自动朗读，则朗读完整消息
-                        if (getIsAutoReadEnabled() && !skipFinalAutoRead) {
+                        if (turnOptions.persistTurn && getIsAutoReadEnabled() && !skipFinalAutoRead) {
                             speakMessageHandler(finalContent, true)
                         }
                         forceEmitScrollToBottom(chatId)

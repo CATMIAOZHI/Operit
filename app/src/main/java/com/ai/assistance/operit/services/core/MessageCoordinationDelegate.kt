@@ -563,7 +563,9 @@ class MessageCoordinationDelegate(
         // conversation and rely on the earlier prompt still being there verbatim.
         val summaryDisabled = forceDisableSummary || turnOptions.disableSummary
         // 自动续聊由总结消息中的续接指令驱动，不能消费用户尚未提交的编辑器状态。
-        val shouldReadComposerState = !isBackgroundSend && !isAutoContinuation
+        // A tool-delivered turn is not the user's send, so it must not take or clear the composer.
+        val shouldReadComposerState =
+            !isBackgroundSend && !isAutoContinuation && !turnOptions.deliveredByTool
         val effectiveMessageTextOverride = if (isAutoContinuation) "" else messageTextOverride
         // 获取当前聊天ID和工作区路径
         val chatId = chatIdOverride ?: chatHistoryDelegate.currentChatId.value
@@ -634,10 +636,17 @@ class MessageCoordinationDelegate(
         val currentAttachments =
             attachmentsOverride ?: if (shouldReadComposerState) attachmentDelegate.attachments.value else emptyList()
         // Subagent owns an independent AgentProfile and must never inherit the active role card.
+        // An Orbit chat runs under the default card: its persona comes from the Orbit's Soul.md,
+        // so the role card it was made from no longer affects it.
+        val isOrbitChat =
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .loadedSettingsBlocking().orbitForChat(chatId) != null
         val roleCardId =
             roleCardIdOverride?.takeIf { it.isNotBlank() }
                 ?: if (turnOptions.isSubTask) {
                     null
+                } else if (isOrbitChat) {
+                    com.ai.assistance.operit.data.preferences.CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
                 } else {
                     runBlocking { activePromptManager.resolveActiveCardIdForSend() }
                 }
@@ -739,7 +748,7 @@ class MessageCoordinationDelegate(
             )
 
             // 只有在非续写（即用户主动发送）时才清空附件和UI状态
-            if (accepted && !isBackgroundSend && !isContinuation) {
+            if (accepted && !isBackgroundSend && !isContinuation && !turnOptions.deliveredByTool) {
                 if (attachmentsOverride == null && (!afterSummary || attachmentDelegate.attachments.value == currentAttachments)) {
                     if (currentAttachments.isNotEmpty()) {
                         attachmentDelegate.clearAttachments()

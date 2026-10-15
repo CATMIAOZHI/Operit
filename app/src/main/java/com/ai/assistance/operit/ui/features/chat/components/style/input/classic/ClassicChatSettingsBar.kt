@@ -301,7 +301,8 @@ fun ClassicChatSettingsBar(
     val maxThinkingQualityLevel = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
     val toolPermissionText =
         stringResource(
-            (if (enableTools) permissionStop else ToolPermissionStop.FORBID).labelRes
+            (com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop()
+                ?: if (enableTools) permissionStop else ToolPermissionStop.FORBID).labelRes
         )
     val behaviorSummary =
         if (disableStreamOutput) {
@@ -1254,6 +1255,7 @@ private fun ToolPermissionSettingItem(
             Spacer(modifier = Modifier.height(6.dp))
             PermissionStopSlider(
                 stop = selectedStop,
+                lockedStop = com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop(),
                 onStopSelected = { stop ->
                     // Turning tools off and turning them back on stay part of choosing the level.
                     if (!enableTools && stop != ToolPermissionStop.FORBID) {

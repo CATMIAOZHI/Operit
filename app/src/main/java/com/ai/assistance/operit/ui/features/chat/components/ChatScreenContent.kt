@@ -147,6 +147,7 @@ fun ChatScreenContent(
         bubbleAiContentPaddingLeft: Float = 12f,
         bubbleAiContentPaddingRight: Float = 12f,
         showChatFloatingDotsAnimation: Boolean = true,
+        headerContent: (@Composable () -> Unit)? = null,
         configurationNotice: @Composable () -> Unit = {},
 ) {
     val density = LocalDensity.current
@@ -363,7 +364,7 @@ fun ChatScreenContent(
                         headerHeight = with(density) { coordinates.size.height.toDp() }
                     }
                 ) {
-                    ChatScreenHeader(
+                    headerContent?.invoke() ?: ChatScreenHeader(
                         actualViewModel = actualViewModel,
                         showChatHistorySelector = showChatHistorySelector,
                         chatHeaderTransparent = chatHeaderTransparent,
@@ -377,7 +378,7 @@ fun ChatScreenContent(
             }
         } else {
             Column(modifier = Modifier.fillMaxSize()) {
-                ChatScreenHeader(
+                headerContent?.invoke() ?: ChatScreenHeader(
                         actualViewModel = actualViewModel,
                         showChatHistorySelector = showChatHistorySelector,
                         chatHeaderTransparent = chatHeaderTransparent,

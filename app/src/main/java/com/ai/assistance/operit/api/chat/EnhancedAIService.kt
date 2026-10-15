@@ -3363,7 +3363,8 @@ class EnhancedAIService private constructor(
                 "准备构建Tool Call工具列表: functionType=${functionType.name}, promptFunctionType=${promptFunctionType?.name}, chatId=${chatId ?: "null"}"
             )
             // 先读取全局工具开关
-            val enableTools = apiPreferences.enableToolsFlow.first()
+            val enableTools = apiPreferences.enableToolsFlow.first() ||
+                com.ai.assistance.operit.core.tools.OrbitTools.isOrbitChat(context, chatId)
             val toolPromptVisibility = runCatching {
                 apiPreferences.toolPromptVisibilityFlow.first()
             }.getOrElse { emptyMap() }

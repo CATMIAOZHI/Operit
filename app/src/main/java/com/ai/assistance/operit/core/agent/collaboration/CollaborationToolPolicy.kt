@@ -3,9 +3,14 @@ package com.ai.assistance.operit.core.agent.collaboration
 import android.content.Context
 
 object CollaborationToolPolicy {
+    /**
+     * Visibility of the tools that depend on which chat calls them: the collaboration tools, plus
+     * the Orbit tools that exist only in an Orbit's own chat.
+     */
     fun visibility(context: Context, chatId: String?, isSubTask: Boolean): Map<String, Boolean> {
         val v2Child = CollaborationCoordinator.getInstance(context).isAgent(chatId)
-        return visibilityForCaller(chatId, isSubTask, v2Child)
+        return visibilityForCaller(chatId, isSubTask, v2Child) +
+            com.ai.assistance.operit.core.tools.OrbitTools.visibility(context, chatId)
     }
 
     internal fun visibilityForCaller(chatId: String?, isSubTask: Boolean, v2Child: Boolean): Map<String, Boolean> {

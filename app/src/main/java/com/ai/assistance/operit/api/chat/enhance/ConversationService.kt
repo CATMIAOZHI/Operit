@@ -577,7 +577,14 @@ class ConversationService(
                 val activeCard = effectiveRoleCardId?.let {
                     characterCardManager.getCharacterCardFlow(it).first()
                 }
-                val introPrompt = activeCard?.let {
+                // An Orbit chat takes its persona from the Orbit's own Soul.md, not a role card.
+                val orbitSoul =
+                    if (ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)) {
+                        com.ai.assistance.operit.core.tools.OrbitTools.soulFor(context, chatId)
+                    } else {
+                        null
+                    }
+                val introPrompt = orbitSoul ?: activeCard?.let {
                     characterCardManager.combinePrompts(
                         it.id,
                         promptFunctionType = promptFunctionType
@@ -616,7 +623,8 @@ class ConversationService(
                 val memoryNotes = learningSnapshot?.getOrPut("notes:$notesSpaceId") { loadNotes() } ?: loadNotes()
 
                 // 获取工具启用状态
-                val enableTools = apiPreferences.enableToolsFlow.first()
+                val enableTools = apiPreferences.enableToolsFlow.first() ||
+                    com.ai.assistance.operit.core.tools.OrbitTools.isOrbitChat(context, chatId)
                 val disableUserPreferenceDescription =
                         apiPreferences.disableUserPreferenceDescriptionFlow.first()
                 val toolPromptVisibility = runCatching {
@@ -683,6 +691,12 @@ class ConversationService(
                         ""
                     }
                 // 构建最终的系统提示词
+                val orbitPrompt =
+                    if (allowPersonalContext) {
+                        com.ai.assistance.operit.core.tools.OrbitTools.systemPromptBlock(context, chatId, useEnglish)
+                    } else {
+                        ""
+                    }
                 val finalSystemPrompt = buildString {
                     append(systemPrompt)
                     if (!additionalSystemPrompt.isNullOrBlank()) {
@@ -696,6 +710,10 @@ class ConversationService(
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
+                    if (orbitPrompt.isNotEmpty()) {
+                        append("\n\n")
+                        append(orbitPrompt)
+                    }
                     if (memoryNotes.isNotBlank()) {
                         append("\n\n")
                         append(context.getString(R.string.memory_notes_prompt_intro))

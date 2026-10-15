@@ -140,7 +140,11 @@ fun AIChatScreen(
         onNavigateToModelPrompts: () -> Unit = {},
         onNavigateToPackageManager: () -> Unit = {},
         onNavigateBack: () -> Unit = {},
-        onGestureConsumed: (Boolean) -> Unit = {}
+        onGestureConsumed: (Boolean) -> Unit = {},
+        /** Keeps the screen on this chat, for pages that show one fixed chat such as Orbit. */
+        chatIdOverride: String? = null,
+        /** Replaces the chat header, for pages that show one fixed chat such as Orbit. */
+        headerContent: (@Composable () -> Unit)? = null
 ) {
     val context = LocalContext.current
     val density = LocalDensity.current
@@ -262,6 +266,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val chatHistories by actualViewModel.chatHistories.collectAsState()
     val chatHistoriesLoaded by actualViewModel.chatHistoriesLoaded.collectAsState()
     val currentChatId by actualViewModel.currentChatId.collectAsState()
+    if (chatIdOverride != null) {
+        LaunchedEffect(chatIdOverride, currentChatId) {
+            if (currentChatId != chatIdOverride) actualViewModel.switchChat(chatIdOverride)
+        }
+    }
     val hasNewerDisplayHistory by actualViewModel.hasNewerDisplayHistory.collectAsState()
     val isLoadingDisplayWindow by actualViewModel.isLoadingDisplayWindow.collectAsState()
     val popupMessage by actualViewModel.popupMessage.collectAsState()
@@ -925,6 +934,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
+                                headerContent = headerContent,
                                 configurationNotice = {
                                     if (!isFloatingMode && !isReadOnlyTranscript && !embedded) {
                                         ModelConfigurationNotice(onNavigateToFunctionalConfig)

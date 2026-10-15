@@ -9040,4 +9040,67 @@
     <string name="storage_clear_preview">清理预览缓存</string>
     <string name="storage_clear_preview_confirm">仅清理可重新加载的图片预览缓存，保留聊天媒体、聊天记录、模型和工作文件。</string>
     <string name="storage_cache_cleared">预览缓存已清理，正在显示的图片可能重新生成少量缓存。</string>
+    <!-- Orbit -->
+    <string name="nav_orbit" translatable="false">Orbit</string>
+    <string name="orbit_tagline" translatable="false">Your companion, your choice.</string>
+    <string name="orbit_chat_title" translatable="false">Orbit · %1$s</string>
+    <string name="orbit_intro">一个长期陪伴你、了解你、主动帮助你的 AI 助理。</string>
+    <string name="orbit_pillar_role_title">自由选择角色</string>
+    <string name="orbit_pillar_role_desc">任何角色卡都可以成为伴侣</string>
+    <string name="orbit_pillar_memory_title">长期记忆</string>
+    <string name="orbit_pillar_memory_desc">持续理解用户的经历与偏好</string>
+    <string name="orbit_pillar_proactive_title">主动陪伴</string>
+    <string name="orbit_pillar_proactive_desc">不必每次都由用户发起聊天</string>
+    <string name="orbit_pillar_task_title">自主任务</string>
+    <string name="orbit_pillar_task_desc">持续执行计划、提醒与检查</string>
+    <string name="orbit_choose_companion">选择陪伴角色</string>
+    <string name="orbit_manage_role_cards">管理角色卡</string>
+    <string name="orbit_manage_role_cards_desc">角色卡只用来给新 Orbit 起个人设，之后改它不会影响已有的 Orbit</string>
+    <string name="orbit_memory_row">记忆库</string>
+    <string name="orbit_memory_row_desc">查看和整理 AI 记下的内容</string>
+    <string name="orbit_section_proactive">主动陪伴</string>
+    <string name="orbit_proactive_switch">每天主动找你</string>
+    <string name="orbit_proactive_switch_desc">到点后 Orbit 会想想有没有话要对你说，没有就保持安静</string>
+    <string name="orbit_check_in_time">每天时间</string>
+    <string name="orbit_proactive_banner">Orbit 的消息会出现在它的专属聊天里，并发一条通知。手机省电时可能会晚一些到。</string>
+    <string name="orbit_notification_permission_denied">没有通知权限，Orbit 的消息只会出现在聊天里</string>
+    <string name="orbit_section_tasks">自主任务</string>
+    <string name="orbit_focus_label">想让 Orbit 留意的事</string>
+    <string name="orbit_focus_placeholder">比如：每周五提醒我备份；考试前提醒我早点睡</string>
+    <string name="orbit_run_now">现在试一次</string>
+    <string name="orbit_running">Orbit 正在想…</string>
+    <string name="orbit_last_run_never">还没运行过</string>
+    <string name="orbit_last_run_spoke">上次 %1$s：发来了一条消息</string>
+    <string name="orbit_last_run_silent">上次 %1$s：没什么要说，保持安静</string>
+    <string name="orbit_last_run_failed">上次 %1$s：没有完成（%2$s）</string>
+    <string name="orbit_run_timeout">等待回复超时</string>
+    <string name="orbit_run_failed_unknown">未知错误</string>
+    <string name="orbit_run_empty_reply">模型没有返回内容</string>
+    <string name="orbit_run_cancelled">这次被取消了</string>
+    <string name="orbit_open_chat_failed">没能打开 Orbit 聊天，请稍后再试</string>
+    <string name="orbit_notification_channel">Orbit 主动消息</string>
+    <string name="orbit_notification_channel_desc">Orbit 主动找你时的通知</string>
+    <string name="orbit_run_paused">Orbit 已暂停</string>
+    <string name="orbit_section_my_orbits">我的 Orbit</string>
+    <string name="orbit_paused_hint">同一时间只能运行一个 Orbit。换角色时，原来的 Orbit 会暂停，聊天记录、名字和形象都会保留。</string>
+    <string name="orbit_resume">继续</string>
+    <string name="orbit_create">选择角色，开始 Orbit</string>
+    <string name="orbit_card_has_orbit">已有 Orbit，选它会继续</string>
+    <string name="orbit_role_label">由「%1$s」创建</string>
+    <string name="orbit_delete">删除</string>
+    <string name="orbit_delete_title">删除 %1$s？</string>
+    <string name="orbit_delete_message">它的聊天记录、人设、名字和形象会一起删除，无法恢复。</string>
+    <string name="orbit_settings">Orbit 设置</string>
+    <string name="orbit_pause">暂停 Orbit</string>
+    <string name="orbit_pause_desc">暂停后可以换成别的角色，聊天记录会保留</string>
+    <string name="orbit_change_avatar">更换形象</string>
+    <string name="orbit_reset_avatar">移除形象</string>
+    <string name="orbit_avatar_save_failed">没能保存这张图片</string>
+    <string name="orbit_name_hint">名字由 Orbit 自己决定，可以在聊天里和它商量</string>
+    <string name="orbit_permission_locked">Orbit 固定使用「%1$s」权限，不能更改</string>
+    <string name="toolreg_orbit_set_name_desc">修改 Orbit 自己的名字</string>
+    <string name="orbit_tool_name_missing">名字不能为空</string>
+    <string name="orbit_tool_name_too_long">名字太长了，最多 %1$d 个字符</string>
+    <string name="orbit_tool_name_set">名字已改为「%1$s」</string>
+    <string name="orbit_tool_not_orbit_chat">只有 Orbit 在自己的聊天里才能改名字</string>
 </resources>

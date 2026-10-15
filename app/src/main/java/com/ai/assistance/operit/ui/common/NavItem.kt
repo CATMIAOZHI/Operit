@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.Token
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
 
 // 应用导航项
 sealed class NavItem(val route: String, val titleResId: Int, val icon: ImageVector) {
@@ -54,4 +55,10 @@ sealed class NavItem(val route: String, val titleResId: Int, val icon: ImageVect
         object Help : NavItem("help", R.string.nav_help, Icons.AutoMirrored.Filled.Help)
         object TokenConfig : NavItem("token_config", R.string.token_config, Icons.Default.Token)
         object Workflow : NavItem("workflow", R.string.nav_workflow, Icons.Default.AccountTree)
+        object Orbit :
+                NavItem(
+                        "orbit",
+                        R.string.nav_orbit,
+                        CardIcons.get("lucide:orbit") ?: Icons.Default.Face
+                )
 }

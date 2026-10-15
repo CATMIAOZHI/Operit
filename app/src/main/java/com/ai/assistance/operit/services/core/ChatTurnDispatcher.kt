@@ -99,6 +99,9 @@ data class ChatTurnSession(
 ) {
     fun currentState(): InputProcessingState = currentStateProvider()
 
+    /** Waits for the turn's own end signal; unlike [awaitOutcome] it does not need a persisted reply. */
+    suspend fun awaitTerminalSignal(): ChatTurnTerminalSignal = terminalSignal.await()
+
     suspend fun awaitOutcome(): ChatTurnOutcome {
         val signal =
             try {
