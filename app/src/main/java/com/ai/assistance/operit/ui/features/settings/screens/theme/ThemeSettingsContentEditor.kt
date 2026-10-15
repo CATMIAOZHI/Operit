@@ -23,6 +23,7 @@ import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.CharacterGroupCardManager
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
 import com.ai.assistance.operit.ui.features.settings.sections.SaveThemeSettingsAction
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.flow.flowOf
@@ -98,8 +99,9 @@ internal fun ThemeSettingsContentEditor(
         activeCharacterGroup?.id?.let { preferencesManager.getAiAvatarForCharacterGroupFlow(it) }
             ?: flowOf(null)
     }.collectAsState(initial = null)
+    val hasBackgroundImage by preferencesManager.useBackgroundImage.collectAsState(initial = false)
     val cardColors = CardDefaults.cardColors(
-        containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
+        containerColor = settingsCardColor(hasBackgroundImage),
     )
     var selectedThemeTab by remember { mutableStateOf(ThemeSettingsTab.BASIC) }
     var showSaveSuccessMessage by remember { mutableStateOf(false) }

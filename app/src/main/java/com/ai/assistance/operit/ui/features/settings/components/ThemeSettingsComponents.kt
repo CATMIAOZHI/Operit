@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -40,8 +41,9 @@ fun ThemeModeOption(
         colors = CardDefaults.cardColors(
             containerColor = if (selected)
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            else MaterialTheme.colorScheme.surface
+            else MaterialTheme.colorScheme.surfaceContainerHigh
         ),
+        shape = RoundedCornerShape(14.dp),
         border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Box(
@@ -75,8 +77,9 @@ fun MediaTypeOption(
         colors = CardDefaults.cardColors(
             containerColor = if (selected)
                 MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)
-            else MaterialTheme.colorScheme.surface
+            else MaterialTheme.colorScheme.surfaceContainerHigh
         ),
+        shape = RoundedCornerShape(14.dp),
         border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null
     ) {
         Column(
