@@ -21,6 +21,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
@@ -402,14 +404,8 @@ fun ModelConfigScreen(
             item {
                 Card(
                     modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border =
-                        BorderStroke(
-                            0.7.dp,
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                        ),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+                    shape = SettingsCardShape,
+                    colors = CardDefaults.cardColors(containerColor = rememberSettingsCardColor())
                 ) {
                     Column(modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp)) {
                         Row(
@@ -1087,9 +1083,8 @@ private fun CustomHeadersSettingsSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-        shape = RoundedCornerShape(12.dp),
-        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+        shape = SettingsCardShape,
+        colors = CardDefaults.cardColors(containerColor = rememberSettingsCardColor())
     ) {
         Column(
             modifier = Modifier.padding(16.dp),
