@@ -598,6 +598,7 @@ object SystemToolPrompts {
             add(adjustedFileSystemTools)
             add(httpTools)
             add(memoryTools)
+            add(com.ai.assistance.operit.core.tools.OrbitTools.categoryEn)
         }
     }
 
@@ -686,6 +687,7 @@ object SystemToolPrompts {
             add(adjustedFileSystemTools)
             add(httpToolsCn)
             add(memoryToolsCn)
+            add(com.ai.assistance.operit.core.tools.OrbitTools.categoryCn)
         }
     }
 

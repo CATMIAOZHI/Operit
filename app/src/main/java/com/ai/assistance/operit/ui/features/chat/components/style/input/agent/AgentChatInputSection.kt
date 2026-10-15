@@ -2885,7 +2885,9 @@ private fun AgentToolsPermissionGroupItem(
     onManageTools: () -> Unit,
     onInfoClick: () -> Unit,
 ) {
-    val effectiveStop = if (enableTools) permissionStop else ToolPermissionStop.FORBID
+    val effectiveStop =
+        com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop()
+            ?: if (enableTools) permissionStop else ToolPermissionStop.FORBID
     val valueText = stringResource(effectiveStop.labelRes)
 
     AgentSettingsGroupHeader(
@@ -2956,6 +2958,7 @@ private fun AgentPermissionStopSlider(
         Spacer(modifier = Modifier.height(6.dp))
         PermissionStopSlider(
             stop = if (enableTools) permissionStop else ToolPermissionStop.FORBID,
+            lockedStop = com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop(),
             onStopSelected = onSelectPermissionStop,
         )
     }

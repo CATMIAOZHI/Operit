@@ -173,6 +173,12 @@ object ScreenRouteRegistry {
                 icon = NavItem.Workflow.icon,
                 order = 30
             ),
+            // The drawer shows Orbit as its own large button instead of a list row.
+            hostEntryDefinition(
+                entryId = "main.orbit",
+                screen = Screen.Orbit,
+                launchNavItem = NavItem.Orbit
+            ),
             hostEntryDefinition(
                 entryId = "main.settings",
                 screen = Screen.Settings,

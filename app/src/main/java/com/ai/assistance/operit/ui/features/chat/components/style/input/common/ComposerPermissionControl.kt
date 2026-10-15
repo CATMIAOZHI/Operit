@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components.style.input.common
 
+import android.widget.Toast
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -42,6 +43,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
@@ -62,16 +64,27 @@ fun ComposerPermissionControl(
     onSetPermissionStop: (ToolPermissionStop) -> Unit,
     onToggleTools: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Set in an Orbit chat: the permission is fixed and a tap only says so. */
+    lockedStop: ToolPermissionStop? = null,
 ) {
     var expanded by remember { mutableStateOf(false) }
-    val effectiveStop = if (enableTools) permissionStop else ToolPermissionStop.FORBID
+    val context = LocalContext.current
+    val effectiveStop = lockedStop ?: if (enableTools) permissionStop else ToolPermissionStop.FORBID
     val popupOffset = with(LocalDensity.current) { IntOffset(0, -84.dp.roundToPx()) }
     val tint = MaterialTheme.colorScheme.onSurfaceVariant
+    val lockedMessage =
+        lockedStop?.let { stringResource(R.string.orbit_permission_locked, stringResource(it.labelRes)) }
 
     Box(modifier) {
         Box(
             modifier = Modifier.size(36.dp).clip(CircleShape)
-                .clickable(role = Role.Button) { expanded = true },
+                .clickable(role = Role.Button) {
+                    if (lockedMessage != null) {
+                        Toast.makeText(context, lockedMessage, Toast.LENGTH_SHORT).show()
+                    } else {
+                        expanded = true
+                    }
+                },
             contentAlignment = Alignment.Center,
         ) {
             Icon(
@@ -87,7 +100,7 @@ fun ComposerPermissionControl(
                 modifier = Modifier.size(20.dp),
             )
         }
-        if (expanded) {
+        if (expanded && lockedStop == null) {
             Popup(
                 alignment = Alignment.BottomStart,
                 offset = popupOffset,

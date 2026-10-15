@@ -707,6 +707,14 @@ class ChatHistoryDelegate(
 
     private suspend fun syncOpeningStatementIfNoUserMessage(chatId: String) {
         AppLogger.d(TAG, "开始同步开场白，聊天ID: $chatId")
+        // An Orbit chat keeps the opening it was made with; later role card edits do not reach it.
+        if (
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .current()
+                .orbitForChat(chatId) != null
+        ) {
+            return
+        }
 
         historyUpdateMutex.withLock {
             val chatMeta = _chatHistories.value.firstOrNull { it.id == chatId }

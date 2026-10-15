@@ -99,6 +99,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.r
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.delay
 import com.ai.assistance.operit.data.preferences.ApiPreferences
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel
 import com.ai.assistance.operit.ui.floating.FloatingMode
 import com.ai.assistance.operit.ui.theme.isLiquidGlassSupported
@@ -163,6 +164,11 @@ fun ClassicChatInputSection(
     val showTokenLimitDialog = remember { mutableStateOf(false) }
     val showFullscreenInput = remember { mutableStateOf(false) }
     val context = LocalContext.current
+    // Orbit's permission is fixed to fast auto-review (ToolPermissionSystem enforces it).
+    val orbitPreferences = remember { OrbitPreferences.getInstance(context) }
+    val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
+    val currentChatIdForPermission by actualViewModel.currentChatId.collectAsState()
+    val isOrbitChat = orbitSettings.orbitForChat(currentChatIdForPermission) != null
     val isProcessing =
         isLoading ||
             inputState is InputProcessingState.Connecting ||
@@ -926,6 +932,8 @@ fun ClassicChatInputSection(
                             permissionStop = permissionStop,
                             onSetPermissionStop = onSetPermissionStop,
                             onToggleTools = onToggleTools,
+                            lockedStop =
+                                if (isOrbitChat) ToolPermissionStop.AUTO_REVIEW_FAST else null,
                         )
 
                         Spacer(modifier = Modifier.weight(1f))

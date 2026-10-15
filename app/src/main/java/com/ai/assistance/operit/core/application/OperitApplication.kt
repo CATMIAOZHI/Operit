@@ -512,6 +512,12 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         }
 
         applicationScope.launch {
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitCompanion.restoreSchedule(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit check-in schedule", it) }
+        }
+
+        applicationScope.launch {
             try {
                 val prefs = RoomDatabaseBackupPreferences.getInstance(applicationContext)
                 if (prefs.isDailyBackupEnabled()) {

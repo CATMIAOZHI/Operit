@@ -321,7 +321,8 @@ fun CollapsedDrawerContent(
                 )
                 Spacer(modifier = Modifier.height(16.dp))
 
-                for (item in navItems) {
+                // Orbit has a large button in the expanded drawer; the narrow rail lists it first.
+                for (item in listOf(NavItem.Orbit) + navItems) {
                         val selectedGlassOverlayColor =
                                 if (selectedItem == item) {
                                         appearance.selectedContainerColor.copy(alpha = 0.18f)
@@ -461,6 +462,14 @@ private fun NewSidebarTopContent(
 
         Spacer(modifier = Modifier.height(14.dp))
 
+        SidebarOrbitCard(
+                selected = selectedItem == NavItem.Orbit,
+                appearance = appearance,
+                onClick = { onNavItemClick(NavItem.Orbit) }
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+
         Row(
                 modifier =
                         Modifier.fillMaxWidth()
@@ -589,6 +598,91 @@ private fun SidebarInfoCard(
                                         style = MaterialTheme.typography.labelMedium,
                                         color = appearance.statusAvailableColor,
                                         fontWeight = FontWeight.Medium
+                                )
+                        }
+                }
+        }
+}
+
+/** The drawer's large Orbit entry, styled like the quick action cards below it. */
+@Composable
+private fun SidebarOrbitCard(
+        selected: Boolean,
+        appearance: NavigationDrawerAppearance,
+        onClick: () -> Unit
+) {
+        val itemShape = RoundedCornerShape(16.dp)
+        val selectedGlassOverlayColor =
+                if (selected) {
+                        appearance.selectedContainerColor.copy(alpha = 0.18f)
+                } else {
+                        Color.Transparent
+                }
+        val accentColor = appearance.selectedContentColor
+        Surface(
+                modifier =
+                        Modifier.fillMaxWidth()
+                                .padding(horizontal = 12.dp)
+                                .height(72.dp)
+                                .liquidGlass(
+                                        enabled = appearance.buttonLiquidGlassEnabled,
+                                        shape = itemShape,
+                                        containerColor = appearance.buttonContainerColor,
+                                        shadowElevation = if (selected) 4.dp else 2.dp,
+                                        borderWidth = 0.5.dp,
+                                        blurRadius = 16.dp,
+                                        overlayAlphaBoost = 0.04f,
+                                        enableLens = false
+                                )
+                                .clip(itemShape)
+                                .background(selectedGlassOverlayColor),
+                onClick = onClick,
+                color =
+                        if (appearance.buttonLiquidGlassEnabled) {
+                                Color.Transparent
+                        } else if (selected) {
+                                appearance.selectedContainerColor
+                        } else {
+                                Color.Transparent
+                        },
+                shape = itemShape
+        ) {
+                Row(
+                        modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                ) {
+                        Box(
+                                modifier =
+                                        Modifier.size(44.dp)
+                                                .clip(RoundedCornerShape(14.dp))
+                                                .background(accentColor.copy(alpha = 0.12f)),
+                                contentAlignment = Alignment.Center
+                        ) {
+                                Icon(
+                                        imageVector = NavItem.Orbit.icon,
+                                        contentDescription = null,
+                                        tint = accentColor,
+                                        modifier = Modifier.size(24.dp)
+                                )
+                        }
+                        Spacer(modifier = Modifier.width(12.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                                Text(
+                                        text = stringResource(id = R.string.nav_orbit),
+                                        style = MaterialTheme.typography.titleMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color =
+                                                if (selected) appearance.selectedContentColor
+                                                else appearance.titleColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                )
+                                Text(
+                                        text = stringResource(id = R.string.orbit_tagline),
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = appearance.itemColor,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
                                 )
                         }
                 }

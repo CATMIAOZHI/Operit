@@ -353,7 +353,13 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 liveAssistantContent = liveAssistantContent,
             )
 
-        val effectiveLevel = getEffectivePermissionLevel(tool.name)
+        // Nobody watches an unattended turn, and a turn that another chat runs for it would ask
+        // there with nobody around to answer, so handing work to other chats is refused here.
+        if (UnattendedChats.contains(callerChatId) && UnattendedChats.isHandOffTool(tool.name)) {
+            return permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+        }
+
+        val effectiveLevel = getEffectivePermissionLevel(tool.name, callerChatId)
         val currentRoute = resolveCurrentPermissionRoute(tool, reviewContext)
         if (
             !callerChatId.isNullOrBlank() &&
@@ -393,19 +399,46 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             level = effectiveLevel,
             tool = tool,
             reviewContext = reviewContext,
-            onAsk = { requestPermission(tool, reviewContext) },
+            onAsk = {
+                if (UnattendedChats.contains(callerChatId)) {
+                    permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+                } else {
+                    requestPermission(tool, reviewContext)
+                }
+            },
         )
     }
 
-    suspend fun getEffectivePermissionLevel(toolName: String): PermissionLevel {
+    /**
+     * The level [toolName] runs at. In an Orbit's own chat the level is fixed to the fast automatic
+     * review and the user cannot change it there; a tool the user always allows or forbids keeps
+     * that choice.
+     */
+    suspend fun getEffectivePermissionLevel(
+        toolName: String,
+        callerChatId: String? = null,
+    ): PermissionLevel {
         val preferences = context.toolPermissionsDataStore.data.first()
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
+        if (isOrbitChat(callerChatId)) {
+            val stored = preferences[key]?.let { PermissionLevel.fromString(it) }
+            return orbitPermissionLevel(
+                storedToolLevel = stored,
+                defaultToolLevel = defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW),
+            )
+        }
         val overrideLevel =
             preferences[key]?.let { PermissionLevel.fromString(it) }
                 ?: defaultPermissionLevelFor(toolName, masterSwitch)
         return resolveEffectivePermissionLevel(masterSwitch, overrideLevel)
     }
+
+    private suspend fun isOrbitChat(chatId: String?): Boolean =
+        !chatId.isNullOrBlank() &&
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .current()
+                .orbitForChat(chatId) != null
     
     /**
      * Request permission from the user to execute a tool.
@@ -581,11 +614,16 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             invalidateStoredRiskScores(reviewContext)
         }
         return refreshedDecision
-            ?: requestManualPermission(
-                tool = tool,
-                reviewContext = reviewContext,
-                pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
-            )
+            ?: if (UnattendedChats.contains(reviewContext.callerChatId)) {
+                // Nobody is around to answer a prompt in an unattended turn.
+                permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+            } else {
+                requestManualPermission(
+                    tool = tool,
+                    reviewContext = reviewContext,
+                    pendingRequestAlreadyCounted = pendingRequestAlreadyCounted,
+                )
+            }
     }
 
     /**
@@ -593,8 +631,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
      * stops and never answered a call from a stored score, so it stays strict until the user picks one
      * of the stops: that slider writes the level and the reuse level together.
      */
-    private suspend fun effectiveReviewMode(): PermissionReviewMode =
-        if (isLegacyAutoReviewLevel(context.toolPermissionsDataStore.data.first()[MASTER_SWITCH])) {
+    private suspend fun effectiveReviewMode(callerChatId: String?): PermissionReviewMode =
+        if (isOrbitChat(callerChatId)) {
+            // Orbit chats are fixed to the fast stop.
+            PermissionReviewMode.FAST
+        } else if (isLegacyAutoReviewLevel(context.toolPermissionsDataStore.data.first()[MASTER_SWITCH])) {
             PermissionReviewMode.STRICT
         } else {
             reviewPolicyStore.getReviewMode()
@@ -615,7 +656,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionReviewDecision? {
-        if (effectiveReviewMode() != PermissionReviewMode.FAST) return null
+        if (effectiveReviewMode(reviewContext.callerChatId) != PermissionReviewMode.FAST) return null
         val deferral =
             PermissionRiskScorer.getInstance(context)
                 .resolveFastPath(
@@ -741,7 +782,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionRoute {
-        val level = getEffectivePermissionLevel(tool.name)
+        val level = getEffectivePermissionLevel(tool.name, reviewContext.callerChatId)
         val workspaceApproved =
             level == PermissionLevel.AUTO_REVIEW &&
                 WorkspaceToolPermissionPolicy.isAutoApproved(
@@ -847,7 +888,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             .beginBatch(
                 callerChatId = callerChatId,
                 turnScopeId = timingScopeId,
-                reviewMode = effectiveReviewMode(),
+                reviewMode = effectiveReviewMode(callerChatId),
                 actions = actions,
                 workspacePath = workspacePath,
                 workspaceEnv = workspaceEnv,
@@ -1040,13 +1081,28 @@ internal fun resolveEffectivePermissionLevel(
 ): PermissionLevel = toolOverride ?: masterLevel
 
 /**
+ * The level a tool runs at in an Orbit's own chat, which is fixed to the automatic review. A tool
+ * the user always allows or forbids keeps that choice, and one set to ask is reviewed instead, so
+ * Orbit never waits on a prompt.
+ */
+internal fun orbitPermissionLevel(
+    storedToolLevel: PermissionLevel?,
+    defaultToolLevel: PermissionLevel?,
+): PermissionLevel =
+    when (storedToolLevel ?: defaultToolLevel) {
+        PermissionLevel.ALLOW -> PermissionLevel.ALLOW
+        PermissionLevel.FORBID -> PermissionLevel.FORBID
+        else -> PermissionLevel.AUTO_REVIEW
+    }
+
+/**
  * The level a tool takes when the user has not chosen one for it, or null when it simply follows the
  * [masterLevel].
  *
  * The agent's own collaboration tools are how one agent hands work to another. They touch no user
  * data themselves, and the work they start is reviewed as each of its own tool calls runs, so asking
- * about the hand-off as well only adds friction. Updating the current chat's todo list also needs no
- * separate review. A level the user stored for one of these tools still
+ * about the hand-off as well only adds friction. Updating the current chat's todo list, or Orbit
+ * renaming itself, also needs no separate review. A level the user stored for one of these tools still
  * wins, which is why this is a default rather than an exemption from the permission system. A global
  * "forbid" also wins: that setting is a deliberate whitelist, not a gap for a default to fill.
  */
@@ -1055,7 +1111,8 @@ internal fun defaultPermissionLevelFor(
     masterLevel: PermissionLevel,
 ): PermissionLevel? =
     if (masterLevel != PermissionLevel.FORBID &&
-        (CollaborationTools.isCollaborationTool(toolName) || toolName == "todowrite")) {
+        (CollaborationTools.isCollaborationTool(toolName) || toolName == "todowrite" ||
+            toolName == com.ai.assistance.operit.core.tools.OrbitTools.SET_NAME)) {
         PermissionLevel.ALLOW
     } else {
         null
@@ -1120,6 +1177,10 @@ internal fun resolvePermissionStop(
  * the UI can report the outcome instead; keep the prefixes in sync with the texts below.
  */
 internal const val SETTINGS_DENIAL_PREFIX = "Tool execution denied by permission settings."
+
+internal const val UNATTENDED_DENIAL_REASON =
+    "This turn runs in the background with nobody around to approve tools. Do without this tool, " +
+        "or mention it so the user can do it when they are back."
 internal const val USER_DENIAL_PREFIX = "Tool execution denied by user."
 internal const val AUTOMATIC_REVIEW_DENIAL_PREFIX = "Automatic permission review denied"
 internal const val AUTOMATIC_REVIEW_CANCEL_PREFIX =

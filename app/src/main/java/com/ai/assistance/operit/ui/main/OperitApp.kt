@@ -196,7 +196,12 @@ fun OperitApp(
     // 当currentScreen改变时，检查是否需要清空TopBarActions
     // 这是为了解决从有action的屏幕导航到无action的屏幕时，action残留的问题
     LaunchedEffect(currentScreen) {
-        if (currentScreen !is Screen.AiChat && currentScreen !is Screen.TokenConfig) {
+        // The Orbit page hosts the chat screen too, which sets its own actions.
+        if (
+            currentScreen !is Screen.AiChat &&
+                currentScreen !is Screen.Orbit &&
+                currentScreen !is Screen.TokenConfig
+        ) {
             topBarActions = {}
         }
         topBarTitleContent = null

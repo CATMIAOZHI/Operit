@@ -1047,7 +1047,7 @@ object ToolExecutionManager {
                                 invocation.tool.name == CliToolModeSupport.PROXY_TOOL_NAME
                             )
                 val effectivePermission =
-                    permissionSystem.getEffectivePermissionLevel(resolvedTool.name)
+                    permissionSystem.getEffectivePermissionLevel(resolvedTool.name, callerChatId)
                 if (!isCliPublicTool && effectivePermission == PermissionLevel.FORBID) {
                     // The normal permission path will reject this call without offering an override.
                     continue
@@ -1074,7 +1074,7 @@ object ToolExecutionManager {
                     resolveApprovalDecisionWithPermanentOverride(
                         approvalGranted = approvedByPrompt,
                         latestEffectiveLevel =
-                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name),
+                            permissionSystem.getEffectivePermissionLevel(resolvedTool.name, callerChatId),
                     )
                 if (!approved) {
                     throw SubagentLoopRejectedException(
@@ -1271,7 +1271,7 @@ object ToolExecutionManager {
         val permissionSystem = toolHandler.getToolPermissionSystem()
         val candidateLevels =
             permissionCandidates.map { (_, _, interceptionTool) ->
-                permissionSystem.getEffectivePermissionLevel(interceptionTool.name)
+                permissionSystem.getEffectivePermissionLevel(interceptionTool.name, callerChatId)
             }
         val reviewsInOrder = batchNeedsReviewOrder(candidateLevels)
 
@@ -1386,7 +1386,10 @@ object ToolExecutionManager {
         // completed before execution, so previously approved siblings have not started yet and can
         // still be cancelled atomically instead of partially executing a suspicious model turn.
         if (shouldInterruptPendingToolBatch(permissionDeniedResults)) {
-            toolHandler.getToolPermissionSystem().showAutomaticReviewCircuitBreakerWarning()
+            // An unattended turn has nobody to show the warning to; the model still gets the reason.
+            if (!com.ai.assistance.operit.ui.permissions.UnattendedChats.contains(callerChatId)) {
+                toolHandler.getToolPermissionSystem().showAutomaticReviewCircuitBreakerWarning()
+            }
             val interruptedApprovedResults =
                 permittedInvocations.map { invocation ->
                     val interrupted =

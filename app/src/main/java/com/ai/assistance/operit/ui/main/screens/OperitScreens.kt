@@ -753,6 +753,53 @@ sealed class Screen(
         }
     }
 
+    data object Orbit :
+            Screen(
+                    navItem = NavItem.Orbit,
+                    titleRes = R.string.nav_orbit,
+                    // The page is a live chat, like AiChat, so it skips the crossfade too.
+                    participatesInCrossfadeTransition = false
+            ) {
+        @Composable
+        override fun Content(
+                navController: NavController,
+                navigateTo: ScreenNavigationHandler,
+                onGoBack: () -> Unit,
+                hasBackgroundImage: Boolean,
+                onLoading: (Boolean) -> Unit,
+                onError: (String) -> Unit,
+                onGestureConsumed: (Boolean) -> Unit
+        ) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitScreen(
+                hasBackgroundImage = hasBackgroundImage,
+                onOpenMemory = { navigateTo(MemoryBase) },
+                onManageRoleCards = { navigateTo(ModelPromptsSettings) },
+                chatContent = { chatId, header ->
+                    AIChatScreen(
+                            padding = PaddingValues(0.dp),
+                            viewModel = null,
+                            isFloatingMode = false,
+                            hasBackgroundImage = hasBackgroundImage,
+                            onNavigateToTokenConfig = { navigateTo(TokenConfig) },
+                            onNavigateToSettings = { navigateTo(Settings) },
+                            onNavigateToUserPreferences = { navigateTo(UserPreferencesSettings) },
+                            onNavigateToModelConfig = { navigateTo(ModelConfig) },
+                            onNavigateToFunctionalConfig = { navigateTo(FunctionalConfig) },
+                            onNavigateToOnboardingModelConfig = { navigateTo(ModelConfigOnboarding) },
+                            onNavigateToModelPrompts = { navigateTo(ModelPromptsSettings) },
+                            onNavigateToPackageManager = { navigateTo(Packages) },
+                            onNavigateBack = onGoBack,
+                            onLoading = onLoading,
+                            onError = onError,
+                            onGestureConsumed = onGestureConsumed,
+                            chatIdOverride = chatId,
+                            headerContent = header
+                    )
+                }
+            )
+        }
+    }
+
     data class WorkflowDetail(val workflowId: String) : Screen(navItem = NavItem.Workflow, titleRes = R.string.nav_workflow) {
         @Composable
         override fun Content(

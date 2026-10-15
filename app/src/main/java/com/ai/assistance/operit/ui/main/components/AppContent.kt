@@ -463,7 +463,12 @@ fun AppContent(
                                                 hasBackgroundImage = hasBackgroundImage,
                                                 onLoading = onLoading,
                                                 onError = onError,
-                                                onGestureConsumed = if (screenSnapshot is Screen.AiChat) onGestureConsumed else { _ -> }
+                                                onGestureConsumed =
+                                                    if (screenSnapshot is Screen.AiChat || screenSnapshot is Screen.Orbit) {
+                                                        onGestureConsumed
+                                                    } else {
+                                                        { _ -> }
+                                                    }
                                             )
                                         }
                                         if (screenSnapshot.usesRouteViewModelStore) {

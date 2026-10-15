@@ -8,15 +8,43 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+
+/**
+ * The fixed permission of an Orbit chat, or null in any other chat. Orbit always runs under fast
+ * auto-review; ToolPermissionSystem enforces it, and the chat controls show it locked.
+ */
+@Composable
+fun rememberOrbitLockedStop(chatId: String?): ToolPermissionStop? {
+    val context = LocalContext.current
+    val preferences = remember { OrbitPreferences.getInstance(context) }
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.snapshot)
+    return if (settings.orbitForChat(chatId) != null) ToolPermissionStop.AUTO_REVIEW_FAST else null
+}
+
+/** [rememberOrbitLockedStop] for the main chat, which is where an Orbit chat is shown. */
+@Composable
+fun rememberMainChatOrbitLockedStop(): ToolPermissionStop? {
+    val context = LocalContext.current
+    val chatIdFlow = remember {
+        com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)
+            .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+            .currentChatId
+    }
+    val chatId by chatIdFlow.collectAsState()
+    return rememberOrbitLockedStop(chatId)
+}
 
 /**
  * The whole tool permission choice as one control: five stops, the most restrictive on the left.
@@ -32,7 +60,33 @@ fun PermissionStopSlider(
     onStopSelected: (ToolPermissionStop) -> Unit,
     modifier: Modifier = Modifier,
     onStopPreview: ((ToolPermissionStop) -> Unit)? = null,
+    /** Shows this stop greyed out and ignores input, as in an Orbit chat. */
+    lockedStop: ToolPermissionStop? = null,
 ) {
+    if (lockedStop != null) {
+        Column(modifier = modifier.fillMaxWidth()) {
+            Text(
+                text = stringResource(lockedStop.labelRes),
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.primary,
+            )
+            Slider(
+                value = lockedStop.ordinal.toFloat(),
+                onValueChange = {},
+                enabled = false,
+                valueRange = 0f..(ToolPermissionStop.values().size - 1).toFloat(),
+                steps = (ToolPermissionStop.values().size - 2).coerceAtLeast(0),
+                modifier = Modifier.fillMaxWidth().height(32.dp),
+            )
+            Text(
+                text = stringResource(R.string.orbit_permission_locked, stringResource(lockedStop.labelRes)),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        return
+    }
     var sliderValue by remember { mutableStateOf(stop.ordinal.toFloat()) }
     LaunchedEffect(stop) { sliderValue = stop.ordinal.toFloat() }
     val stopCount = ToolPermissionStop.values().size
