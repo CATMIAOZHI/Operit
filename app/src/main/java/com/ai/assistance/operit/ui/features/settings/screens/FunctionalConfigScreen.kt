@@ -52,6 +52,13 @@ import com.ai.assistance.operit.util.ImagePoolManager
 import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
+import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
+import com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
+import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.first
 import kotlin.math.roundToInt
@@ -81,6 +88,9 @@ fun FunctionalConfigScreen(
     // UI状态
     var isLoading by remember { mutableStateOf(true) }
     var showSaveSuccess by remember { mutableStateOf(false) }
+    val hasBackgroundImage by
+        remember { UserPreferencesManager.getInstance(context) }.useBackgroundImage.collectAsState(initial = false)
+    val cardColor = settingsCardColor(hasBackgroundImage)
 
     // 加载配置摘要
     LaunchedEffect(Unit) {
@@ -99,74 +109,31 @@ fun FunctionalConfigScreen(
             LazyColumn(
                     modifier =
                             Modifier.fillMaxSize()
-                                    .padding(paddingValues)
-                                    .padding(horizontal = 16.dp)
+                                    .padding(paddingValues),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)
             ) {
                 item {
-                    Card(
-                            modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                            shape = RoundedCornerShape(12.dp),
-                            colors =
-                                    CardDefaults.cardColors(
-                                            containerColor =
-                                                    MaterialTheme.colorScheme.surfaceVariant.copy(
-                                                            alpha = 0.7f
-                                                    )
-                                    )
+                    SettingsInfoBanner(
+                            text = stringResource(id = R.string.functional_model_config_desc),
+                            backgroundColor = cardColor
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    SettingsCard(
+                            backgroundColor = cardColor,
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
                     ) {
-                        Column(modifier = Modifier.padding(16.dp)) {
-                            Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.Settings,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                        text = stringResource(id = R.string.functional_model_config_title),
-                                        style = MaterialTheme.typography.titleMedium,
-                                        fontWeight = FontWeight.Bold
-                                )
-                            }
-
-                            Text(
-                                    text = stringResource(id = R.string.functional_model_config_desc),
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    modifier = Modifier.padding(bottom = 8.dp)
-                            )
-
-                            HorizontalDivider(
-                                    modifier = Modifier.padding(vertical = 8.dp),
-                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.2f)
-                            )
-
-                            Row(
-                                    modifier =
-                                            Modifier.fillMaxWidth()
-                                                    .clickable { onNavigateToModelConfig() }
-                                                    .padding(vertical = 4.dp),
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                            ) {
-                                    Text(
-                                            text = stringResource(id = R.string.manage_all_model_configs),
-                                            style = MaterialTheme.typography.bodyMedium,
-                                            fontWeight = FontWeight.Medium
-                                    )
-                                    Icon(
-                                            imageVector = Icons.AutoMirrored.Filled.ArrowForward,
-                                            contentDescription = stringResource(id = R.string.manage_model_configs_desc),
-                                            tint = MaterialTheme.colorScheme.primary
-                                    )
-                            }
-                        }
+                        SettingsNavRow(
+                                title = stringResource(id = R.string.manage_all_model_configs),
+                                icon = Icons.Default.Settings,
+                                searchable = false,
+                                onClick = onNavigateToModelConfig
+                        )
                     }
-
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(16.dp))
+                    SettingsSectionTitle(
+                            text = stringResource(id = R.string.functional_model_config_title),
+                            icon = Icons.Default.Tune
+                    )
                 }
 
                 // 功能类型列表
@@ -178,6 +145,7 @@ fun FunctionalConfigScreen(
 
                     FunctionConfigCard(
                             functionType = functionType,
+                            cardColor = cardColor,
                             currentConfig = currentConfig,
                             currentModelIndex = currentConfigMapping.modelIndex,
                             selectedModelName = currentConfigMapping.modelName,
@@ -214,10 +182,11 @@ fun FunctionalConfigScreen(
                             }
                     )
 
-                    Spacer(modifier = Modifier.height(8.dp))
+                    Spacer(modifier = Modifier.height(12.dp))
                 }
 
                 item {
+                    Spacer(modifier = Modifier.height(8.dp))
                     // 重置按钮
                     OutlinedButton(
                             onClick = {
@@ -228,9 +197,10 @@ fun FunctionalConfigScreen(
                                     showSaveSuccess = true
                                 }
                             },
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(8.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
+                            modifier = Modifier.fillMaxWidth()
+                                    .settingsSearchTarget(stringResource(id = R.string.reset_all_functions_to_default)),
+                            shape = RoundedCornerShape(16.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
                     ) {
                         Icon(
                                 imageVector = Icons.Default.Refresh,
@@ -247,31 +217,22 @@ fun FunctionalConfigScreen(
                             enter = fadeIn() + expandVertically(),
                             exit = fadeOut() + shrinkVertically()
                     ) {
-                        Card(
-                                modifier = Modifier.fillMaxWidth().padding(vertical = 16.dp),
-                                shape = RoundedCornerShape(8.dp),
-                                colors =
-                                        CardDefaults.cardColors(
-                                                containerColor =
-                                                        MaterialTheme.colorScheme.primaryContainer
-                                        )
+                        Row(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp, vertical = 12.dp),
+                                verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Row(
-                                    modifier = Modifier.padding(16.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Icon(
-                                        imageVector = Icons.Default.Check,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary
-                                )
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(
-                                        text = stringResource(id = R.string.config_saved),
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold
-                                )
-                            }
+                            Icon(
+                                    imageVector = Icons.Default.Check,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(6.dp))
+                            Text(
+                                    text = stringResource(id = R.string.config_saved),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
                         }
 
                         LaunchedEffect(showSaveSuccess) {
@@ -289,6 +250,7 @@ fun FunctionalConfigScreen(
 @Composable
 fun FunctionConfigCard(
         functionType: FunctionType,
+        cardColor: androidx.compose.ui.graphics.Color,
         currentConfig: ModelConfigSummary?,
         currentModelIndex: Int,
         selectedModelName: String?,
@@ -388,23 +350,18 @@ fun FunctionConfigCard(
         }
     }
 
-    Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border =
-                    BorderStroke(
-                            0.5.dp,
-                            MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
-                    )
+    SettingsCard(
+            backgroundColor = cardColor,
+            modifier = Modifier.settingsSearchTarget(getFunctionDisplayName(functionType)),
+            contentPadding = PaddingValues(0.dp)
     ) {
         Column(modifier = Modifier.fillMaxWidth()) {
             // 功能标题和描述
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
                         text = getFunctionDisplayName(functionType),
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        style = MaterialTheme.typography.bodyLarge,
+                        fontWeight = FontWeight.SemiBold
                 )
 
                 Text(
@@ -417,9 +374,10 @@ fun FunctionConfigCard(
 
                 // 当前配置
                 Surface(
-                        modifier = Modifier.fillMaxWidth().clickable { expanded = !expanded },
-                        shape = RoundedCornerShape(8.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        modifier = Modifier.fillMaxWidth(),
+                        onClick = { expanded = !expanded },
+                        shape = RoundedCornerShape(14.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.7f)
                 ) {
                     Row(
                             modifier = Modifier.fillMaxWidth().padding(12.dp),

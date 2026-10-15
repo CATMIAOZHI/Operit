@@ -7,7 +7,6 @@
     <string name="component_terminal_installed">终端环境已安装，可单独清理安装包缓存。</string>
     <string name="component_export_detail">将网页导出为独立应用时使用。删除模板不会影响已导出的应用。</string>
     <string name="component_download_size">完整下载大小：%1$s</string>
-    <string name="component_storage">%1$s · 占用 %2$s</string>
     <string name="component_loading">正在检查本地资源…</string>
     <string name="component_ready">已下载</string>
     <string name="component_partial">部分下载</string>

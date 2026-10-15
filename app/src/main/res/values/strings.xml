@@ -2868,7 +2868,6 @@
     <string name="functional_model_config_title">功能模型配置设置</string>
     <string name="functional_model_config_desc">为不同功能设置单独的模型配置，使每个功能都能使用最适合的API设置。</string>
     <string name="manage_all_model_configs">管理所有模型配置</string>
-    <string name="manage_model_configs_desc">管理模型配置</string>
     <string name="reset_all_functions_to_default">重置所有功能至默认配置</string>
     <string name="current_config_label">当前配置: %1$s</string>
     <string name="default_config">默认配置</string>
@@ -4334,6 +4333,7 @@
     <string name="waifu_custom_prompt_desc">自定义 Waifu 模式附加提示词。</string>
     <string name="waifu_custom_prompt_placeholder">例如：回复简短自然，不要卖萌，不要加语气词，不要写动作描写。</string>
     <string name="waifu_custom_prompt_tip">这段内容会作为 Waifu 模式的额外规则拼接到系统提示词中。</string>
+    <string name="waifu_section_expression">表情与自拍</string>
     <string name="enable_emoticons">启用表情包</string>
     <string name="emoticons_desc">在对话中插入情绪状态标签，增强表达效果</string>
     <string name="available_emoticons">可用表情：crying, like_you, happy, surprised, miss_you, speechless, angry, confused, sad</string>

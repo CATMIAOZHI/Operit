@@ -2485,7 +2485,6 @@
     <string name="functional_model_config_title">Pengaturan Konfigurasi Model Fungsional</string>
     <string name="functional_model_config_desc">Atur konfigurasi model terpisah untuk fungsi yang berbeda, sehingga setiap fungsi dapat menggunakan pengaturan API yang paling sesuai.</string>
     <string name="manage_all_model_configs">Kelola semua konfigurasi model</string>
-    <string name="manage_model_configs_desc">Kelola konfigurasi model</string>
     <string name="reset_all_functions_to_default">Setel ulang semua fungsi ke konfigurasi default</string>
 
     <string name="speech_services_openai_models_fetch_failed">Gagal mengambil daftar model: %1$s</string>
