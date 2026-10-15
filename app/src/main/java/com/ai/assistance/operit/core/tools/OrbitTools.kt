@@ -19,7 +19,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                listOf(
+                listOf(OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "Change your own name as the user's Orbit. The new name shows at the top of this chat.",
@@ -44,7 +44,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                listOf(
+                listOf(OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "修改你作为用户 Orbit 的名字，新名字会显示在这个聊天顶部。",
@@ -69,7 +69,8 @@ internal object OrbitTools {
     fun visibility(context: Context, chatId: String?): Map<String, Boolean> {
         val isOrbitChat =
             OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) != null
-        return mapOf(SET_NAME to isOrbitChat)
+        return mapOf(SET_NAME to isOrbitChat, OrbitTaskTools.NAME to isOrbitChat,
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false)
     }
 
     /**
@@ -78,7 +79,7 @@ internal object OrbitTools {
      */
     suspend fun soulFor(context: Context, chatId: String?): String? {
         val preferences = OrbitPreferences.getInstance(context)
-        val orbit = preferences.current().orbitForChat(chatId) ?: return null
+        val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return null
         // An empty or missing Soul.md falls back to the default card's persona.
         return preferences.readSoul(orbit.id).takeIf { it.isNotBlank() }
     }
@@ -88,7 +89,7 @@ internal object OrbitTools {
      * auto-review permission, so the global tools switch does not turn them off there.
      */
     suspend fun isOrbitChat(context: Context, chatId: String?): Boolean =
-        OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
 
     /**
      * The system prompt part that tells an Orbit who it is in its own chat, or an empty string in

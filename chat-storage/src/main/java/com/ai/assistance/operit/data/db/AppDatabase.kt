@@ -55,11 +55,16 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         TokenStatRangeCutoffEntity::class,
         TokenStatCleanupOperationEntity::class,
         TokenStatCleanupItemEntity::class,
+        com.ai.assistance.operit.data.model.OrbitTaskEntity::class,
+        com.ai.assistance.operit.data.model.OrbitEventEntity::class,
+        com.ai.assistance.operit.data.model.OrbitRunEntity::class,
+        com.ai.assistance.operit.data.model.OrbitDeliveryEntity::class,
     ],
-    version = 35,
+    version = 36,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
+    abstract fun orbitTaskDao(): com.ai.assistance.operit.data.dao.OrbitTaskDao
 
     /** 获取聊天DAO */
     abstract fun chatDao(): ChatDao
@@ -81,6 +86,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        val MIGRATION_35_36 = object : Migration(35, 36) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                OrbitTaskSchema.statements.forEach(db::execSQL)
+            }
+            override fun migrate(connection: SQLiteConnection) {
+                OrbitTaskSchema.statements.forEach { connection.execSQL(it) }
+            }
+        }
         val MIGRATION_34_35 = object : Migration(34, 35) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE chats ADD COLUMN contextPolicyJson TEXT")
@@ -1149,6 +1162,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_32_33,
                                 MIGRATION_33_34,
                                 MIGRATION_34_35,
+                                MIGRATION_35_36,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

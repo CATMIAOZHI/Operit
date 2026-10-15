@@ -87,6 +87,18 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
         descriptionGenerator = { context.getString(R.string.toolreg_orbit_set_name_desc) },
         executor = { tool -> OrbitTools.executeSetName(context, tool) },
     )
+    handler.registerTool(
+        name = OrbitTaskTools.NAME,
+        descriptionGenerator = { context.getString(R.string.orbit_tasks_title) },
+        executor = { tool -> OrbitTaskTools.execute(context, tool) },
+    )
+    handler.registerTool(
+        name = com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH,
+        descriptionGenerator = { context.getString(R.string.orbit_task_submit) },
+        executor = { tool -> runBlockingIoPreservingToolRuntimeContext {
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.submit(context, tool)
+        } },
+    )
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(
