@@ -224,6 +224,7 @@ class OrbitPreferences private constructor(context: Context) {
 
     /** Removes the Orbit and its Soul.md, and pauses it first when it was running. */
     suspend fun removeOrbit(orbitId: String) {
+        com.ai.assistance.operit.features.orbit.OrbitConnectorRepository(appContext, orbitId).clear()
         var avatarUri: String? = null
         dataStore.edit { preferences ->
             val orbits = decodeOrbits(preferences[ORBITS])

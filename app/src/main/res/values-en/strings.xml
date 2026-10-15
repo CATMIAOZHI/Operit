@@ -9224,4 +9224,19 @@
     <string name="orbit_skill_restore_before">Prepare previous version</string>
     <string name="orbit_skill_restore_after">Prepare this version</string>
     <string name="orbit_skill_restore_help">Restores only this file through a new proposal for you to review. Other files stay unchanged. A deleted skill cannot be restored here.</string>
+    <string name="orbit_connections_title">External connections</string>
+    <string name="orbit_connections_subtitle">Configured by you for background tasks</string>
+    <string name="orbit_connections_help">Connections send JSON only to your fixed HTTPS address. Once enabled, this Orbit’s background tasks can use them after automatic review. Credentials are encrypted on this device, never given to the model or exported in backups. Uncertain requests pause for verification instead of retrying automatically.</string>
+    <string name="orbit_connections_error">The operation could not finish. Check the input or retry. Unreadable protected data is preserved.</string>
+    <string name="orbit_connection_name">Name</string>
+    <string name="orbit_connection_purpose">Purpose and allowed operations</string>
+    <string name="orbit_connection_url">Fixed HTTPS address</string>
+    <string name="orbit_connection_token">Bearer credential (optional)</string>
+    <string name="orbit_connection_save_disabled">Save without enabling</string>
+    <string name="orbit_connection_add">Add connection</string>
+    <string name="orbit_connection_enable">Enable this connection?</string>
+    <string name="orbit_connection_enable_help">Allow this Orbit’s background tasks to use “%1$s” to send requests to %2$s. Each operation still requires automatic review. Disabling stops new requests; a request already sent may still execute remotely.</string>
+    <string name="orbit_connection_delete_help">Delete “%1$s” and its credential, and stop new requests. Requests already sent cannot be recalled. Execution records are kept.</string>
+    <string name="orbit_connection_action">Send JSON through %1$s to %2$s; user-configured purpose: %3$s</string>
+    <string name="orbit_connection_verify_help">Verify this operation at the destination service. A network failure does not mean nothing happened. Allow a new attempt only after confirming no effect or accepting the risk of repeating it; resuming may send a new request.</string>
 </resources>

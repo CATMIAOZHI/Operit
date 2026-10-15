@@ -193,6 +193,7 @@ private fun OrbitChatPage(
     var showMemory by remember(orbit.id) { mutableStateOf(false) }
     var showTasks by remember(orbit.id) { mutableStateOf(false) }
     var showSoul by remember(orbit.id) { mutableStateOf(false) }
+    var showConnections by remember(orbit.id) { mutableStateOf(false) }
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null
@@ -220,6 +221,10 @@ private fun OrbitChatPage(
         }
     }
 
+    if (showConnections) {
+        OrbitConnectorsPage(orbit.id, onBack = { showConnections = false })
+        return
+    }
     if (showSoul) {
         OrbitSoulPage(orbit.id, onBack = { showSoul = false })
         return
@@ -267,6 +272,7 @@ private fun OrbitChatPage(
                 showTasks = true
             },
             onOpenSoul = { showSettings = false; showSoul = true },
+            onOpenConnections = { showSettings = false; showConnections = true },
             onPause = {
                 showSettings = false
             },
@@ -411,6 +417,7 @@ private fun OrbitSettingsSheet(
     onOpenMemory: () -> Unit,
     onOpenTasks: () -> Unit,
     onOpenSoul: () -> Unit,
+    onOpenConnections: () -> Unit,
     onPause: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -579,6 +586,14 @@ private fun OrbitSettingsSheet(
                     icon = lucide("notebook-pen"),
                     searchable = false,
                     onClick = onOpenSoul,
+                )
+                SettingsRowDivider()
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_connections_title),
+                    subtitle = stringResource(R.string.orbit_connections_subtitle),
+                    icon = lucide("plug"),
+                    searchable = false,
+                    onClick = onOpenConnections,
                 )
                 SettingsRowDivider()
                 SettingsNavRow(

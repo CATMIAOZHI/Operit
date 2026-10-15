@@ -116,6 +116,31 @@ Room tests or compilation.
   companion's frozen prompt on the next request; existing chat messages are not rewritten.
   Soul text cannot change the host's FAST permission policy.
 
+## P3 fixed external connections
+
+Orbit settings can create up to twenty fixed HTTPS POST connections per companion. They start
+disabled; enabling grants that Orbit's ASSIST tasks access under normal FAST review. The host
+stores the endpoint and optional Bearer credential in an AES-GCM Android Keystore protected
+file under `noBackupFilesDir`, outside normal Android and Operit snapshot exports. The model
+only receives connection ID, revision, display name, purpose and hostname. No response body,
+authorization header or endpoint path is returned to the model. User-entered purpose informs
+review; it is not a machine-verifiable restriction on arbitrary JSON business semantics.
+
+The connection revision from discovery is required at execution. Revoking, re-enabling or
+replacing a connection invalidates stale calls; revocation cancels registered HTTP calls.
+Enqueue shares the connection mutation lock and the existing short task execution gate.
+The network wait holds neither lock. STARTED is durable before sending; redirects and connection
+retries are disabled. A non-202 2xx acknowledges reception only. Every other response, lost
+response or interrupted send stays UNKNOWN for user verification rather than automatic replay.
+The task's existing receipt UI lets the user verify completion or explicitly authorize a new
+attempt after checking the destination. This does not claim remote idempotency, rollback,
+automatic status lookup or exact replay of an old payload.
+
+Deleted Orbits remove their protected connection file. Backups do not transfer these credentials;
+restored tasks must be reconfigured. A lost key or damaged ciphertext fails visibly and is not
+silently reset. This protects host-managed connector credentials, not arbitrary files read through
+the user's explicitly allowed shell/root capabilities.
+
 ## Remaining full product roadmap
 
 These are acceptance targets, not claims of implemented or tested behavior.

@@ -192,7 +192,8 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                                 else R.string.orbit_action_receipt), fontWeight = FontWeight.SemiBold)
                             Text(receipt.summary, style = MaterialTheme.typography.bodyMedium)
                             if (receipt.state == "UNKNOWN") {
-                                Text(stringResource(R.string.orbit_action_verify_help))
+                                Text(stringResource(if (receipt.toolName == com.ai.assistance.operit.features.orbit.OrbitHttpConnector.CALL)
+                                    R.string.orbit_connection_verify_help else R.string.orbit_action_verify_help))
                                 TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to true }) {
                                     Text(stringResource(R.string.orbit_action_verified))
                                 }
