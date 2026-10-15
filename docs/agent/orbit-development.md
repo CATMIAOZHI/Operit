@@ -85,6 +85,24 @@ Room tests or compilation.
   This does not promise that arbitrary website content contains no secrets. Protected
   credential injection, general external side effects and their adapters remain outstanding.
 
+## P4 goals, results and delivery
+
+- Room v38 links goals to tasks and text artifact versions. Goals show actual completed
+  task counts; pausing fences execution and resuming leaves individual tasks for the user
+  to continue. Event subscriptions run after a predecessor succeeds, including a one-shot
+  that completed just before subscription. Human handoff preserves this source result.
+- ASSIST defaults to one-shot execution. Failure is resumable; success is terminal.
+  Interval and completion-event schedules are explicit options rather than inferred from kind.
+- Saved artifacts use immutable version directories and verified hashes. Revision tasks
+  read a selected version and preserve its artifact identity when keeping its filename.
+  Unknown writes require host verification of the saved bytes before their version is indexed.
+- The workspace exposes tasks, goals, a result Feed, artifact history/reading/revision and
+  notification preferences. Feed results remain individually inspectable when delivery is grouped.
+- Quiet hours (22:00–08:00), minimum delivery spacing (0/15/60 minutes) and per-task daily
+  digests delay reports without delaying execution. Due reports are batched into one chat
+  message with per-result receipts; notification completion updates the whole batch atomically.
+  The scheduler waits for the next delivery time instead of polling through the quiet period.
+
 ## Remaining full product roadmap
 
 These are acceptance targets, not claims of implemented or tested behavior.
@@ -92,7 +110,6 @@ These are acceptance targets, not claims of implemented or tested behavior.
 | Stage | Deliverable | Acceptance focus |
 | --- | --- | --- |
 | P3 remaining | External-operation adapters and protected credentials | Extend the verified narrow receipt/handoff path without exposing untracked side effects |
-| P4 | Goals, trackers, feed and artifacts | Task/result links, event subscriptions, quiet hours, frequency limits, continued conversation |
 | P5 | Memory quality and skill growth | Evidence, correction/deletion, suppression of relearning forgotten facts, skill and Soul versions |
 | P6 | Optional self-hosted always-on execution | Exclusive execution authority, offline reconciliation, credentials, budgets and results |
 

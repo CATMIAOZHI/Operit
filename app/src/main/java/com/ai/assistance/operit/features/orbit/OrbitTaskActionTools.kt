@@ -66,11 +66,13 @@ internal object OrbitTaskActionTools {
         val digest = sha(bytes)
         val operationHash = sha("$name\u0000$digest".toByteArray())
         val id = "${scope.run.id}:$operationHash"
+        val versionId = java.util.UUID.nameUUIDFromBytes(id.toByteArray()).toString()
+        val relativePath = "artifacts/${scope.task.id}/$versionId/$name"
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
         val now = System.currentTimeMillis()
         val receipt = checkNotNull(dao.beginAction(scope.run, OrbitActionEntity(
             id, scope.task.id, scope.run.id, scope.run.generation, tool, operationHash,
-            "PREPARED", "Save $name", now, now,
+            "PREPARED", "Save $name\n$relativePath", now, now,
         ), OrbitTaskRunner.bootId(context), now, SystemClock.elapsedRealtime())) {
             "An action is unfinished, or this execution is no longer active"
         }
@@ -78,7 +80,7 @@ internal object OrbitTaskActionTools {
         try {
             val path = withContext(Dispatchers.IO) {
                 val orbitDir = OrbitPreferences.getInstance(context).orbitDir(scope.task.orbitId).canonicalFile
-                val root = File(orbitDir, "artifacts/${scope.task.id}").canonicalFile
+                val root = File(orbitDir, "artifacts/${scope.task.id}/$versionId").canonicalFile
                 require(root.toPath().startsWith(orbitDir.toPath())) { "Artifact folder is outside this Orbit" }
                 check(root.mkdirs() || root.isDirectory)
                 val target = File(root, name).canonicalFile
@@ -99,10 +101,14 @@ internal object OrbitTaskActionTools {
                 target.absolutePath
             }
             withContext(NonCancellable) {
-                check(dao.confirmAction(id, scope.run.generation, "Saved $name\n$path\nSHA-256: $digest",
-                    System.currentTimeMillis()))
+                val original = scope.task.sourceArtifactVersionId.takeIf { it.isNotEmpty() }?.let { dao.artifact(it) }
+                val artifactId = original?.takeIf { it.name == name }?.artifactId
+                    ?: java.util.UUID.nameUUIDFromBytes("${scope.task.id}:$name".toByteArray()).toString()
+                check(dao.confirmArtifact(OrbitArtifactVersionEntity(versionId, artifactId, scope.task.orbitId,
+                    scope.task.id, scope.run.id, id, name, relativePath, digest, bytes.size.toLong(),
+                    System.currentTimeMillis()), scope.run.generation, "Saved $name\n$path\nSHA-256: $digest"))
             }
-            return success(tool, "Saved $name\n$path")
+            return success(tool, "Saved $name\nVersion: $versionId\n$path")
         } catch (error: Throwable) {
             withContext(NonCancellable) { dao.uncertainAction(id, scope.run.generation, System.currentTimeMillis()) }
             if (error is CancellationException) throw error

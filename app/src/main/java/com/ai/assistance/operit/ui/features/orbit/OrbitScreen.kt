@@ -220,7 +220,7 @@ private fun OrbitChatPage(
     }
 
     if (showTasks) {
-        OrbitTasksPage(orbit.id, onBack = { showTasks = false })
+        OrbitWorkspacePage(orbit.id, onBack = { showTasks = false })
         return
     }
     if (showMemory) {
@@ -509,7 +509,7 @@ private fun OrbitSettingsSheet(
                 )
                 SettingsCard(backgroundColor = cardColor) {
                     SettingsNavRow(
-                        title = stringResource(R.string.orbit_tasks_title),
+                        title = stringResource(R.string.orbit_workspace),
                         subtitle = stringResource(R.string.orbit_tasks_subtitle),
                         icon = lucide("list-checks"),
                         searchable = false,

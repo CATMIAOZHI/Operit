@@ -19,7 +19,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                listOf(OrbitTaskTools.prompt,
+                OrbitProductTools.prompts + listOf(OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "Change your own name as the user's Orbit. The new name shows at the top of this chat.",
@@ -44,7 +44,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                listOf(OrbitTaskTools.prompt,
+                OrbitProductTools.prompts + listOf(OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "修改你作为用户 Orbit 的名字，新名字会显示在这个聊天顶部。",
@@ -70,6 +70,7 @@ internal object OrbitTools {
         val isOrbitChat =
             OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) != null
         return mapOf(SET_NAME to isOrbitChat, OrbitTaskTools.NAME to isOrbitChat,
+            OrbitProductTools.GOAL to isOrbitChat, OrbitProductTools.ARTIFACT to isOrbitChat,
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false)
     }
 

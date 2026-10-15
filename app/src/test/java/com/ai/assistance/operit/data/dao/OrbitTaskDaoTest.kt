@@ -7,6 +7,9 @@ import com.ai.assistance.operit.data.db.appendOrbitDelivery
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.MessageEntity
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
+import com.ai.assistance.operit.data.model.OrbitGoalEntity
+import com.ai.assistance.operit.data.model.OrbitActionEntity
+import com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity
 import com.ai.assistance.operit.data.stats.JdbcSQLiteDriver
 import java.io.File
 import java.sql.DriverManager
@@ -28,7 +31,8 @@ class OrbitTaskDaoTest {
         whenever(context.filesDir).thenReturn(dir)
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
-            .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37)
+            .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37,
+                AppDatabase.MIGRATION_37_38)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {
@@ -221,6 +225,99 @@ class OrbitTaskDaoTest {
         assertNotNull(dao.task("other"))
     }
 
+    @Test fun `one shot tasks finish once and completion events are durable without polling`() = runBlocking {
+        dao.insertTask(definition("source").copy(scheduleMode = "ONCE"))
+        dao.insertTask(definition("follower").copy(scheduleMode = "EVENT", triggerTaskId = "source"))
+        assertNull(dao.enqueueDue("follower", 9000))
+        val source = checkNotNull(claim("source"))
+        assertTrue(dao.complete(source, "new information", "report", "", 2000, "boot", 1001, 11))
+        assertFalse(dao.complete(source, "duplicate", "report", "", 2000, "boot", 1002, 12))
+        assertEquals("DONE", dao.task("source")?.state)
+        assertNull(dao.enqueueDue("source", 9000))
+        val late = definition("late").copy(scheduleMode = "EVENT", triggerTaskId = "source")
+        dao.insertSubscribedTask(late, 1002)
+        dao.insertSubscribedTask(late, 1003)
+        assertEquals(source.id, dao.enqueueDue("late", 1003)?.sourceRunId)
+        database.close()
+        database = open()
+        val event = checkNotNull(dao.enqueueDue("follower", 1002))
+        assertEquals(source.id, event.sourceRunId)
+        val follower = checkNotNull(dao.claim(event, "worker", "boot", 1002, 12, 100))
+        assertTrue(dao.waitForUser(follower, "Choose", "boot", 1003, 13))
+        assertTrue(dao.resumeWithInput("follower", 1, "Continue", "", 1004))
+        assertEquals(source.id, dao.enqueueDue("follower", 1004)?.sourceRunId)
+    }
+
+    @Test fun `goal pause fences execution and waiting input until goal resumes`() = runBlocking {
+        val goal = OrbitGoalEntity("goal", "orbit", "Plan", "Steps", "ACTIVE", 1, 1, 1)
+        dao.insertGoal(goal)
+        dao.insertTask(definition().copy(goalId = goal.id))
+        val token = checkNotNull(claim())
+        assertTrue(dao.waitForUser(token, "Choose", "boot", 1001, 11))
+        assertTrue(dao.saveGoal(goal.copy(state = "PAUSED"), 1))
+        assertFalse(dao.resumeWithInput("task", 1, "Continue", "", 1002))
+        assertTrue(dao.saveGoal(checkNotNull(dao.goal(goal.id)).copy(state = "ACTIVE"), 2))
+        assertTrue(dao.resumeWithInput("task", 1, "Continue", "", 1003))
+        val resumed = checkNotNull(claim(now = 1003, elapsed = 13))
+        assertTrue(dao.saveGoal(checkNotNull(dao.goal(goal.id)).copy(state = "PAUSED"), 3))
+        assertNull(dao.currentLease(resumed, "boot", 1004, 14))
+        assertEquals("PAUSED", dao.task("task")?.state)
+    }
+
+    @Test fun `batched delivery has one message and retry retains every receipt`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id = "chat", title = "Orbit"))
+        listOf("a", "b").forEach { id ->
+            dao.insertTask(definition(id))
+            val token = checkNotNull(claim(id))
+            assertTrue(dao.complete(token, "", "report $id", "", 2000, "boot", 1001, 11))
+        }
+        val ids = dao.pendingDeliveries("orbit").map { it.id }
+        val saved = dao.appendDeliveryBatch(ids, 1002, database.chatDao(), database.messageDao())
+        assertEquals(2, saved.size)
+        assertEquals(1, saved.map { it.messageId }.distinct().size)
+        database.close()
+        database = open()
+        assertEquals(saved, dao.appendDeliveryBatch(ids, 1003, database.chatDao(), database.messageDao()))
+        assertEquals(1, database.chatContentDao().getMessagesForChat("chat").size)
+        assertEquals(1002L, dao.notificationPolicy("orbit")?.lastDeliveredAt)
+        dao.markBatchDelivered("orbit", checkNotNull(saved.first().messageId))
+        assertTrue(dao.pendingDeliveries("orbit").isEmpty())
+    }
+
+    @Test fun `hidden manual checkin failure is terminal while user one shot remains resumable`() = runBlocking {
+        dao.insertTask(definition("manual", "ONCE"))
+        dao.insertTask(definition("user", "ASSIST").copy(scheduleMode = "ONCE"))
+        listOf("manual", "user").forEach { id ->
+            val token = checkNotNull(claim(id))
+            assertTrue(dao.complete(token, "", "Failed", "offline", 2000, "boot", 1001, 11))
+        }
+        assertEquals("DONE", dao.task("manual")?.state)
+        assertEquals("PAUSED", dao.task("user")?.state)
+    }
+
+    @Test fun `artifact confirmation indexes immutable version idempotently with its action receipt`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val action = OrbitActionEntity("write", "task", token.id, token.generation,
+            "orbit_write_artifact", "digest", "PREPARED", "Save report", 1001, 1001)
+        assertNotNull(dao.beginAction(token, action, "boot", 1001, 11))
+        val version = OrbitArtifactVersionEntity("version", "artifact", "orbit", "task", token.id, action.id,
+            "report.md", "artifacts/task/version/report.md", "digest", 12, 1002)
+        assertTrue(dao.confirmArtifact(version, token.generation, "Saved"))
+        assertTrue(dao.confirmArtifact(version, token.generation, "Saved"))
+        assertEquals(listOf(version), dao.artifacts("orbit"))
+        assertEquals("CONFIRMED", dao.action("write")?.state)
+        val interrupted = action.copy(id = "interrupted", operationHash = "another")
+        assertNotNull(dao.beginAction(token, interrupted, "boot", 1003, 13))
+        dao.uncertainAction(interrupted.id, token.generation, 1004)
+        val recovered = version.copy(id = "recovered", actionId = interrupted.id, createdAt = 1005)
+        assertTrue(dao.verifyArtifact(recovered, 1005))
+        assertEquals("VERIFIED", dao.action(interrupted.id)?.state)
+        assertEquals(recovered, dao.artifact(recovered.id))
+        dao.removeOrbit("orbit")
+        assertNull(dao.artifact("version"))
+    }
+
     @Test fun `version 35 migration preserves existing messages and creates validated task schema`() = runBlocking {
         database.chatDao().insertChat(ChatEntity(id = "chat", title = "existing"))
         database.messageDao().insertMessage(MessageEntity(chatId = "chat", sender = "user", content = "keep me", orderIndex = 0))
@@ -228,7 +325,8 @@ class OrbitTaskDaoTest {
         DriverManager.getConnection("jdbc:sqlite:${File(dir, "orbit-test").absolutePath}").use { connection ->
             connection.createStatement().use { statement ->
                 listOf("orbit_deliveries", "orbit_runs", "orbit_events", "orbit_tasks",
-                    "orbit_actions", "orbit_task_chats", "orbit_task_inputs").forEach {
+                    "orbit_actions", "orbit_task_chats", "orbit_task_inputs",
+                    "orbit_goals", "orbit_artifact_versions", "orbit_notifications").forEach {
                     statement.execute("DROP TABLE $it")
                 }
                 statement.execute("PRAGMA user_version=35")

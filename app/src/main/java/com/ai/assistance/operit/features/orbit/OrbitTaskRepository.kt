@@ -14,22 +14,35 @@ class OrbitTaskRepository(private val context: Context) {
     suspend fun create(
         orbit: OrbitProfile, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, requestId: String, kind: String = "URL_CHANGE",
+        scheduleMode: String = if (kind == "ASSIST") "ONCE" else "INTERVAL",
+        goalId: String = "", triggerTaskId: String = "", sourceArtifactVersionId: String = "",
     ): OrbitTaskEntity {
         require(title.isNotBlank() && title.length <= 80)
         require(instruction.isNotBlank() && instruction.length <= 4000)
         require(intervalMinutes in 15..10080)
-        require(notifyPolicy in setOf("CHANGES", "ALWAYS"))
+        require(notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
         require(kind in setOf("URL_CHANGE", "ASSIST"))
+        require(scheduleMode in setOf("ONCE", "INTERVAL", "EVENT"))
         if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
         dao.task(id)?.let { return it }
-        check(dao.tasks(orbit.id).count { it.state !in setOf("CANCELLED", "DONE") } < 20) { "At most 20 unfinished tasks" }
         val now = System.currentTimeMillis()
         val task = OrbitTaskEntity(id, orbit.id, orbit.chatId, title.trim(), instruction.trim(),
             kind, source, intervalMinutes, 0, notifyPolicy, "ACTIVE", 1, now,
-            "", "", now, now)
-        dao.insertTask(task)
+            "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId)
+        OrbitExecutionGate.serialized {
+            check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
+            if (dao.task(id) != null) return@serialized
+            check(dao.tasks(orbit.id).count { it.state !in setOf("CANCELLED", "DONE") } < 20) { "At most 20 unfinished tasks" }
+            if (goalId.isNotBlank()) check(dao.goal(goalId)?.let { it.orbitId == orbit.id && it.state == "ACTIVE" } == true)
+            if (scheduleMode == "EVENT") {
+                check(triggerTaskId != id && dao.task(triggerTaskId)?.orbitId == orbit.id) { "Choose another task in this Orbit" }
+                // New task IDs cannot already be part of a cycle; trigger changes are not exposed.
+            } else require(triggerTaskId.isBlank())
+            if (sourceArtifactVersionId.isNotBlank()) check(dao.artifact(sourceArtifactVersionId)?.orbitId == orbit.id)
+            dao.insertSubscribedTask(task, now)
+        }
         OrbitTaskScheduler.reschedule(context)
         return checkNotNull(dao.task(id))
     }
@@ -49,6 +62,9 @@ class OrbitTaskRepository(private val context: Context) {
         val now = System.currentTimeMillis()
         val targetState = if (task.kind == "DAILY" && state == "CANCELLED") "PAUSED" else state
         val changed = OrbitExecutionGate.serialized {
+            if (state == "ACTIVE" && task.goalId.isNotEmpty()) check(dao.goal(task.goalId)?.state == "ACTIVE") {
+                "Resume the goal before continuing this task"
+            }
             if (state == "ACTIVE") check(dao.unresolvedActions(taskId).isEmpty()) {
                 "Verify the unfinished operation in task details before resuming"
             }
@@ -71,7 +87,7 @@ class OrbitTaskRepository(private val context: Context) {
             "Complete or cancel the pending user request before editing this task"
         }
         require(title.isNotBlank() && title.length <= 80 && instruction.length in 1..4000)
-        require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS"))
+        require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
         if (task.kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         val now = System.currentTimeMillis()
         val changed = OrbitExecutionGate.serialized {
@@ -91,7 +107,11 @@ class OrbitTaskRepository(private val context: Context) {
     suspend fun resolveAction(orbitId: String, taskId: String, actionId: String, completed: Boolean) {
         check(dao.task(taskId)?.orbitId == orbitId)
         OrbitExecutionGate.serialized {
-            check(dao.resolveAction(taskId, actionId, completed, System.currentTimeMillis()))
+            val receipt = checkNotNull(dao.action(actionId))
+            check(receipt.taskId == taskId)
+            if (completed && receipt.toolName == OrbitTaskActionTools.WRITE) {
+                OrbitArtifactRepository(context).verifySavedFile(orbitId, receipt)
+            } else check(dao.resolveAction(taskId, actionId, completed, System.currentTimeMillis()))
         }
     }
 
@@ -126,6 +146,7 @@ class OrbitTaskRepository(private val context: Context) {
 
         fun nextAt(task: OrbitTaskEntity, now: Long): Long =
             if (task.kind == "DAILY") now + OrbitCompanion.delayUntilNextCheckIn(now, task.dailyMinute)
+            else if (task.scheduleMode == "ONCE") now
             else now + task.intervalMinutes.coerceAtLeast(15) * 60_000L
     }
 }

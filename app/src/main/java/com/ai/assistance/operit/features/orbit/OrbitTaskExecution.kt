@@ -14,6 +14,9 @@ internal object OrbitTaskExecution {
     data class Scope(val binding: OrbitTaskChatEntity, val run: OrbitRunEntity, val task: OrbitTaskEntity)
 
     fun childPrompts() = OrbitTaskActionTools.prompts.filter { it.name != OrbitTaskActionTools.WAIT } +
+        com.ai.assistance.operit.core.tools.OrbitProductTools.prompts.filter {
+            it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
+        } +
         com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(
             false, com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.listAvailableSubagents()
         ).tools
@@ -54,5 +57,6 @@ internal object OrbitTaskExecution {
     }
 
     /** A CLI visibility exception, not a permission-review exemption. Execution rechecks the lease. */
-    fun isTaskCapability(name: String) = name in OrbitTaskActionTools.names
+    fun isTaskCapability(name: String) = name in OrbitTaskActionTools.names ||
+        name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
 }

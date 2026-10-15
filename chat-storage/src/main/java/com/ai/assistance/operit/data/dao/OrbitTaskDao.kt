@@ -13,6 +13,107 @@ data class OrbitSourceMessage(val sender: String, val content: String)
 
 @Dao
 interface OrbitTaskDao {
+    @Query("SELECT * FROM orbit_notifications WHERE orbitId=:orbitId")
+    suspend fun notificationPolicy(orbitId: String): OrbitNotificationEntity?
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun saveNotificationPolicy(policy: OrbitNotificationEntity)
+    @Query("DELETE FROM orbit_notifications WHERE orbitId=:orbitId")
+    suspend fun deleteNotificationPolicy(orbitId: String)
+
+    /** One message for the selected due results; every member keeps its own Feed content. */
+    @Transaction
+    suspend fun appendDeliveryBatch(ids: List<String>, now: Long, chats: ChatDao, messages: MessageDao): List<OrbitDeliveryEntity> {
+        val members = ids.distinct().mapNotNull { delivery(it) }.filter {
+            val task = task(it.taskId)
+            val valid = task != null && task.version == it.taskVersion &&
+                task.state in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY", "PAUSED")
+            if (!valid && it.state == "PENDING") updateDelivery(it.copy(state = "CANCELLED"))
+            valid && it.state == "PENDING"
+        }
+        if (members.isEmpty()) return emptyList()
+        val first = members.first()
+        require(members.all { it.chatId == first.chatId && it.orbitId == first.orbitId })
+        val saved = members.filter { it.messageId != null }
+        if (saved.isNotEmpty()) return saved // Retry the committed batch before inserting another one.
+        val chat = chats.getChatById(first.chatId) ?: return emptyList()
+        val timestamp = maxOf(now, (chat.lastMessageAt ?: 0) + 1)
+        val body = if (members.size == 1) first.body else members.joinToString("\n\n---\n\n") { "${it.title}\n\n${it.body}" }
+        val id = messages.insertMessage(MessageEntity(chatId = first.chatId, sender = "ai", content = body,
+            timestamp = timestamp, orderIndex = messages.getMaxOrderIndex(first.chatId)?.plus(1) ?: 0))
+        chats.advanceLastMessageAt(first.chatId, timestamp)
+        chats.updateChatMetadata(chat.id, chat.title, timestamp, chat.inputTokens, chat.outputTokens, chat.currentWindowSize)
+        val policy = notificationPolicy(first.orbitId) ?: OrbitNotificationEntity(first.orbitId)
+        saveNotificationPolicy(policy.copy(lastDeliveredAt = now))
+        return members.map { it.copy(messageId = id, messageTimestamp = timestamp).also { row -> updateDelivery(row) } }
+    }
+    @Query("SELECT * FROM orbit_goals WHERE orbitId=:orbitId ORDER BY updatedAt DESC")
+    fun observeGoals(orbitId: String): Flow<List<OrbitGoalEntity>>
+    @Query("SELECT * FROM orbit_goals WHERE orbitId=:orbitId ORDER BY updatedAt DESC")
+    suspend fun goals(orbitId: String): List<OrbitGoalEntity>
+    @Query("SELECT * FROM orbit_goals WHERE id=:id")
+    suspend fun goal(id: String): OrbitGoalEntity?
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertGoal(goal: OrbitGoalEntity)
+    @Update
+    suspend fun updateGoal(goal: OrbitGoalEntity)
+    @Transaction
+    suspend fun saveGoal(updated: OrbitGoalEntity, expectedVersion: Long): Boolean {
+        val current = goal(updated.id) ?: return false
+        if (current.version != expectedVersion || current.orbitId != updated.orbitId) return false
+        updateGoal(updated.copy(version = expectedVersion + 1))
+        if (updated.state != "ACTIVE") tasks(updated.orbitId).filter {
+            it.goalId == updated.id && it.state !in setOf("CANCELLED", "DONE")
+        }.forEach {
+            val state = if (updated.state == "CANCELLED") "CANCELLED" else "PAUSED"
+            if (it.state != "WAITING_USER" || state == "CANCELLED")
+                replaceDefinition(it.copy(state = state, updatedAt = updated.updatedAt), it.version)
+        }
+        return true
+    }
+    @Query("DELETE FROM orbit_goals WHERE orbitId=:orbitId")
+    suspend fun deleteGoals(orbitId: String)
+
+    @Query("SELECT * FROM orbit_deliveries WHERE orbitId=:orbitId AND state != 'CANCELLED' ORDER BY createdAt DESC LIMIT 200")
+    fun observeFeed(orbitId: String): Flow<List<OrbitDeliveryEntity>>
+    @Query("SELECT * FROM orbit_artifact_versions WHERE orbitId=:orbitId ORDER BY createdAt DESC LIMIT 300")
+    fun observeArtifacts(orbitId: String): Flow<List<OrbitArtifactVersionEntity>>
+    @Query("SELECT * FROM orbit_artifact_versions WHERE id=:id")
+    suspend fun artifact(id: String): OrbitArtifactVersionEntity?
+    @Query("SELECT * FROM orbit_artifact_versions WHERE orbitId=:orbitId ORDER BY createdAt DESC LIMIT 100")
+    suspend fun artifacts(orbitId: String): List<OrbitArtifactVersionEntity>
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertArtifact(artifact: OrbitArtifactVersionEntity)
+    @Query("DELETE FROM orbit_artifact_versions WHERE orbitId=:orbitId")
+    suspend fun deleteArtifacts(orbitId: String)
+
+    @Transaction
+    suspend fun confirmArtifact(artifact: OrbitArtifactVersionEntity, generation: Long, summary: String): Boolean {
+        val receipt = action(artifact.actionId) ?: return false
+        val task = task(receipt.taskId) ?: return false
+        require(task.orbitId == artifact.orbitId && task.id == artifact.taskId && receipt.runId == artifact.runId)
+        val saved = artifact(artifact.id)
+        if (saved != null) return saved == artifact && receipt.generation == generation &&
+            receipt.state == "CONFIRMED"
+        if (!confirmAction(receipt.id, generation, summary, artifact.createdAt)) return false
+        insertArtifact(artifact)
+        return true
+    }
+
+    @Transaction
+    suspend fun verifyArtifact(artifact: OrbitArtifactVersionEntity, now: Long): Boolean {
+        val receipt = action(artifact.actionId) ?: return false
+        val task = task(receipt.taskId) ?: return false
+        require(task.orbitId == artifact.orbitId && task.id == artifact.taskId && receipt.runId == artifact.runId)
+        if (!resolveAction(task.id, receipt.id, true, now)) return false
+        insertArtifact(artifact)
+        return true
+    }
+
+    @Query("SELECT * FROM orbit_events WHERE id=:id")
+    suspend fun event(id: String): OrbitEventEntity?
+    @Query("SELECT * FROM orbit_tasks WHERE triggerTaskId=:taskId AND scheduleMode='EVENT' AND state='ACTIVE'")
+    suspend fun subscribers(taskId: String): List<OrbitTaskEntity>
+
     @Query("SELECT * FROM orbit_task_inputs WHERE taskId=:taskId")
     suspend fun input(taskId: String): OrbitTaskInputEntity?
 
@@ -25,11 +126,14 @@ interface OrbitTaskDao {
     @Transaction
     suspend fun resumeWithInput(taskId: String, version: Long, note: String, observation: String, now: Long): Boolean {
         val task = task(taskId)?.takeIf { it.state == "WAITING_USER" && it.version == version } ?: return false
+        if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return false
         if (unresolvedActions(taskId).isNotEmpty()) return false
+        val sourceRunId = latestRun(taskId)?.let { event(it.eventId)?.sourceRunId }.orEmpty()
         updateTask(task.copy(state = "ACTIVE", nextRunAt = now, updatedAt = now, version = version + 1))
         cancelDeliveries(taskId)
         deleteTaskEvents(taskId)
         saveInput(OrbitTaskInputEntity(taskId, version + 1, userNote = note, pageObservation = observation))
+        insertEvent(OrbitEventEntity("$taskId:${version + 1}:user-input", taskId, version + 1, now, now, sourceRunId))
         return true
     }
 
@@ -155,6 +259,21 @@ interface OrbitTaskDao {
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertTask(task: OrbitTaskEntity): Long
 
+    /** Subscribe and catch an already completed one-shot in the same transaction as completion. */
+    @Transaction
+    suspend fun insertSubscribedTask(task: OrbitTaskEntity, now: Long) {
+        val source = if (task.scheduleMode == "EVENT") task(task.triggerTaskId) else null
+        if (task.scheduleMode == "EVENT") require(source != null && source.orbitId == task.orbitId &&
+            source.id != task.id && source.state != "CANCELLED")
+        if (insertTask(task) == -1L) return
+        if (source?.state == "DONE") {
+            val completed = lastFinishedRun(source.id)?.takeIf { it.state == "COMPLETED" }
+                ?: error("The predecessor did not complete successfully")
+            insertEvent(OrbitEventEntity("${task.id}:${task.version}:completed:${completed.id}",
+                task.id, task.version, now, now, completed.id))
+        }
+    }
+
     @Update
     suspend fun updateTask(task: OrbitTaskEntity)
 
@@ -197,6 +316,9 @@ interface OrbitTaskDao {
     @Update
     suspend fun updateDelivery(delivery: OrbitDeliveryEntity)
 
+    @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId AND state='PENDING'")
+    suspend fun markBatchDelivered(orbitId: String, messageId: Long)
+
     /** The application supplies DAOs from the same database and holds its chat lock. */
     @Transaction
     suspend fun appendDelivery(deliveryId: String, now: Long, chats: ChatDao, messages: MessageDao): OrbitDeliveryEntity? {
@@ -205,7 +327,7 @@ interface OrbitTaskDao {
         val task = task(delivery.taskId)
         val chat = chats.getChatById(delivery.chatId)
         if (task == null || task.version != delivery.taskVersion ||
-            task.state !in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY") || chat == null) {
+            task.state !in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY", "PAUSED") || chat == null) {
             updateDelivery(delivery.copy(state = "CANCELLED"))
             return null
         }
@@ -248,6 +370,9 @@ interface OrbitTaskDao {
 
     @Transaction
     suspend fun removeOrbit(orbitId: String) {
+        deleteNotificationPolicy(orbitId)
+        deleteGoals(orbitId)
+        deleteArtifacts(orbitId)
         deleteOrbitInputs(orbitId)
         deleteOrbitBindings(orbitId)
         deleteOrbitActions(orbitId)
@@ -280,6 +405,7 @@ interface OrbitTaskDao {
     suspend fun enqueueDue(taskId: String, now: Long): OrbitEventEntity? {
         val current = task(taskId)?.takeIf { it.state == "ACTIVE" } ?: return null
         pendingEvent(current.id, current.version)?.let { return it }
+        if (current.scheduleMode == "EVENT") return null
         if (current.nextRunAt > now) return null
         val event = OrbitEventEntity("${current.id}:${current.version}:${current.nextRunAt}",
             current.id, current.version, current.nextRunAt, now)
@@ -304,6 +430,7 @@ interface OrbitTaskDao {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
         if (pendingEvent(task.id, task.version)?.id != event.id) return null
+        if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return null
         val old = eventRun(event.id)
         if (old != null && (old.state != "RUNNING" ||
                 (old.bootId == bootId && old.leaseUntilElapsed > elapsed && old.leaseUntilWall > now))) return null
@@ -334,6 +461,7 @@ interface OrbitTaskDao {
     suspend fun currentLease(token: OrbitRunEntity, bootId: String, now: Long, elapsed: Long): OrbitRunEntity? {
         val current = run(token.id) ?: return null
         val task = task(current.taskId) ?: return null
+        if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return null
         return current.takeIf {
             task.state == "ACTIVE" && task.version == token.taskVersion && it.state == "RUNNING" &&
                 it.owner == token.owner && it.generation == token.generation && it.bootId == bootId &&
@@ -367,7 +495,11 @@ interface OrbitTaskDao {
         updateRun(current.copy(state = if (error.isEmpty()) "COMPLETED" else "FAILED", sourceText = "",
             observation = observation, error = error, finishedAt = now))
         updateTask(task.copy(nextRunAt = nextRunAt, updatedAt = now,
-            state = if (task.kind == "ONCE") "DONE" else task.state,
+            state = when {
+                task.kind == "ONCE" -> "DONE" // Internal manual check-ins have no resume UI.
+                task.scheduleMode == "ONCE" -> if (error.isEmpty()) "DONE" else "PAUSED"
+                else -> task.state
+            },
             lastObservation = if (error.isEmpty()) observation else task.lastObservation,
             lastFingerprint = if (error.isEmpty()) current.fingerprint else task.lastFingerprint))
         if (message.isNotBlank() && (!repeatFailure || task.notifyPolicy == "ALWAYS")) insertDelivery(OrbitDeliveryEntity(
@@ -376,6 +508,11 @@ interface OrbitTaskDao {
             createdAt = now, state = "PENDING", messageId = null, messageTimestamp = null, notificationSent = false,
         ))
         deleteEvent(current.eventId)
+        if (error.isEmpty()) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
+            insertEvent(OrbitEventEntity(
+                "${subscriber.id}:${subscriber.version}:completed:${current.id}",
+                subscriber.id, subscriber.version, now, now, current.id))
+        }
         return true
     }
 }

@@ -32,7 +32,9 @@ object OrbitTaskScheduler {
         val now = System.currentTimeMillis()
         var due: Long? = null
         for (task in tasks) {
+            if (task.goalId.isNotEmpty() && repo.dao.goal(task.goalId)?.state != "ACTIVE") continue
             val event = repo.dao.pendingEvent(task.id, task.version)
+            if (event == null && task.scheduleMode == "EVENT") continue
             val run = event?.let { repo.dao.eventRun(it.id) }
             val retryAt = when {
                 event == null -> task.nextRunAt
@@ -42,7 +44,10 @@ object OrbitTaskScheduler {
             }
             due = minOf(due ?: retryAt, retryAt)
         }
-        if (repo.dao.pendingDeliveries(active.id).isNotEmpty()) due = minOf(due ?: now, now + 60_000)
+        for (delivery in repo.dao.pendingDeliveries(active.id)) {
+            val ready = OrbitDelivery.dueAt(context, delivery, now).coerceAtLeast(now + 60_000)
+            due = minOf(due ?: ready, ready)
+        }
         if (due == null) {
             manager.cancelUniqueWork(WAKE)
             return

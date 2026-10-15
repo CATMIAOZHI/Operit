@@ -3,6 +3,7 @@ package com.ai.assistance.operit.data.model
 import androidx.room.Entity
 import androidx.room.Index
 import androidx.room.PrimaryKey
+import androidx.room.ColumnInfo
 
 /** Orbit IDs live in preferences; deletion is coordinated by the application, not a cross-store FK. */
 @Entity(tableName = "orbit_tasks", indices = [Index("orbitId")])
@@ -12,14 +13,14 @@ data class OrbitTaskEntity(
     val chatId: String,
     val title: String,
     val instruction: String,
-    /** URL_CHANGE, DAILY or ONCE. URL_CHANGE fetches an http(s) document using GET. */
+    /** URL_CHANGE, ASSIST, DAILY or internal ONCE check-in. */
     val kind: String,
     val source: String,
     val intervalMinutes: Int,
     val dailyMinute: Int,
-    /** CHANGES or ALWAYS. */
+    /** CHANGES, ALWAYS or DIGEST. */
     val notifyPolicy: String,
-    /** ACTIVE, PAUSED, CANCELLED, DONE. */
+    /** ACTIVE, PAUSED, WAITING_USER, VERIFY, CANCELLED, DONE. */
     val state: String,
     val version: Long,
     val nextRunAt: Long,
@@ -27,6 +28,10 @@ data class OrbitTaskEntity(
     val lastFingerprint: String,
     val createdAt: Long,
     val updatedAt: Long,
+    @ColumnInfo(defaultValue = "'INTERVAL'") val scheduleMode: String = "INTERVAL",
+    @ColumnInfo(defaultValue = "''") val goalId: String = "",
+    @ColumnInfo(defaultValue = "''") val triggerTaskId: String = "",
+    @ColumnInfo(defaultValue = "''") val sourceArtifactVersionId: String = "",
 )
 
 @Entity(tableName = "orbit_events", indices = [Index("taskId")])
@@ -37,6 +42,7 @@ data class OrbitEventEntity(
     val taskVersion: Long,
     val dueAt: Long,
     val createdAt: Long,
+    @ColumnInfo(defaultValue = "''") val sourceRunId: String = "",
 )
 
 @Entity(tableName = "orbit_runs", indices = [Index(value = ["eventId"], unique = true), Index("taskId")])

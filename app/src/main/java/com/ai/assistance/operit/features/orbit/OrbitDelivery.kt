@@ -20,18 +20,30 @@ import com.ai.assistance.operit.ui.main.MainActivity
 import com.ai.assistance.operit.util.WaifuMessageProcessor
 
 object OrbitDelivery {
+    internal suspend fun dueAt(context: Context, item: com.ai.assistance.operit.data.model.OrbitDeliveryEntity, now: Long): Long {
+        val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+        val policy = dao.notificationPolicy(item.orbitId)
+            ?: com.ai.assistance.operit.data.model.OrbitNotificationEntity(item.orbitId)
+        return OrbitDeliveryPolicy.nextAllowed(if (item.messageId == null) policy else policy.copy(intervalMinutes = 0),
+            item.createdAt, item.messageId == null && dao.task(item.taskId)?.notifyPolicy == "DIGEST", now)
+    }
+
     suspend fun sendPending(context: Context, orbitId: String) {
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
-        for (item in dao.pendingDeliveries(orbitId)) {
-            val saved = OrbitExecutionGate.serialized {
+        val now = System.currentTimeMillis()
+        val saved = OrbitExecutionGate.serialized {
                 val orbit = OrbitPreferences.getInstance(context).current().active
                 if (orbit?.id != orbitId || orbit.deleting) return@serialized null
-                ChatHistoryManager.getInstance(context).appendOrbitDelivery(item.id)?.also { delivery ->
-                    val task = dao.task(delivery.taskId) ?: return@also
-                    if (task.version != delivery.taskVersion || task.state !in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY")) return@also
-                    if (!delivery.notificationSent) notify(context, delivery)
-                    dao.updateDelivery(delivery.copy(state = "SENT", notificationSent = true))
-                }
+                val due = dao.pendingDeliveries(orbitId).filter { dueAt(context, it, now) <= now }
+                val existing = due.firstOrNull { it.messageId != null }?.messageId
+                val selected = if (existing == null) due.take(6) else due.filter { it.messageId == existing }
+                val batch = ChatHistoryManager.getInstance(context).appendOrbitDeliveryBatch(selected.map { it.id })
+                val first = batch.firstOrNull() ?: return@serialized null
+                if (batch.any { !it.notificationSent }) notify(context, first.copy(
+                    id = "message-${first.messageId}",
+                    body = batch.joinToString("\n\n") { if (batch.size == 1) it.body else "${it.title}\n${it.body}" }))
+                dao.markBatchDelivered(orbitId, checkNotNull(first.messageId))
+                first
             }
             if (saved != null) {
                 val runtimes = ChatRuntimeHolder.getInstance(context)
@@ -42,7 +54,6 @@ object OrbitDelivery {
                     }
                 }
             }
-        }
     }
 
     private fun notify(context: Context, delivery: com.ai.assistance.operit.data.model.OrbitDeliveryEntity) {
