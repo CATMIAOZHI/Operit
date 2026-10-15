@@ -1,4 +1,5 @@
 <resources>
+    <string name="web_session_download_storage_unavailable">Protected download records could not be read or saved. Records are preserved; restart the app and try again. Downloaded files have not been deleted.</string>
     <string name="memory_editor_process_records">Process · Reasoning and tools</string>
     <string name="memory_editor_expand_process">Expand process records</string>
     <string name="memory_editor_collapse_process">Collapse process records</string>

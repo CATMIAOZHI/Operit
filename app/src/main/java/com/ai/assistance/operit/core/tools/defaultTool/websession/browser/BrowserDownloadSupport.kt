@@ -11,6 +11,8 @@ import com.ai.assistance.operit.core.application.ActivityLifecycleManager
 import com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.HttpMultiPartDownloader
+import com.ai.assistance.operit.features.orbit.OrbitSecretFile
+import com.ai.assistance.operit.R
 import java.io.File
 import java.io.FileOutputStream
 import java.util.LinkedHashMap
@@ -20,6 +22,7 @@ import java.util.concurrent.ConcurrentHashMap
 import kotlin.math.max
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -230,7 +233,13 @@ internal class BrowserDownloadManager private constructor(
     private val tasks = LinkedHashMap<String, BrowserDownloadTaskRecord>()
     private val activeControls = ConcurrentHashMap<String, BrowserDownloadActiveControl>()
     private val inlinePayloads = ConcurrentHashMap<String, BrowserDownloadInlinePayload>()
-    private val stateFile = File(appContext.filesDir, BROWSER_DOWNLOAD_STATE_FILE)
+    private val stateStore = BrowserDownloadStore(
+        OrbitSecretFile.forBrowserDownloads(appContext),
+        File(appContext.filesDir, BROWSER_DOWNLOAD_STATE_FILE)
+    )
+    private val persistenceLock = Any()
+    @Volatile var storageUnavailable: Boolean = false
+        private set
 
     @Volatile private var taskListener: ((BrowserDownloadTaskRecord, WebDownloadEvent) -> Unit)? = null
     @Volatile private var uiRefreshListener: (() -> Unit)? = null
@@ -284,6 +293,7 @@ internal class BrowserDownloadManager private constructor(
         mimeType: String?,
         headers: Map<String, String>
     ): BrowserDownloadTaskRecord {
+        checkStorage()
         val destination = resolveUniqueDestinationFile(suggestedFileName)
         val now = System.currentTimeMillis()
         val task =
@@ -311,6 +321,7 @@ internal class BrowserDownloadManager private constructor(
             tasks[task.id] = task
         }
         persistState(force = true)
+        checkStorage()
         notifyTaskChanged(task, buildTaskEvent(task, "started"), forceUi = true)
         startWorker(task.id)
         return task.snapshot()
@@ -324,6 +335,7 @@ internal class BrowserDownloadManager private constructor(
         bytes: ByteArray,
         sourceUrl: String? = null
     ): BrowserDownloadTaskRecord {
+        checkStorage()
         val destination = resolveUniqueDestinationFile(suggestedFileName)
         val now = System.currentTimeMillis()
         val task =
@@ -361,12 +373,14 @@ internal class BrowserDownloadManager private constructor(
             tasks[task.id] = task
         }
         persistState(force = true)
+        checkStorage()
         notifyTaskChanged(task, buildTaskEvent(task, "started"), forceUi = true)
         startWorker(task.id)
         return task.snapshot()
     }
 
     fun performAction(taskId: String, action: BrowserDownloadAction) {
+        checkStorage()
         when (action) {
             BrowserDownloadAction.PAUSE -> pauseTask(taskId)
             BrowserDownloadAction.RESUME -> resumeTask(taskId)
@@ -378,6 +392,7 @@ internal class BrowserDownloadManager private constructor(
     }
 
     fun renderDownloads(marker: Long = 0L, includeAll: Boolean = false): String? {
+        if (storageUnavailable) return appContext.getString(R.string.web_session_download_storage_unavailable)
         val visibleTasks =
             snapshotTasks()
                 .filter { includeAll || it.updatedAt > marker || it.activeOrPending() }
@@ -500,12 +515,13 @@ internal class BrowserDownloadManager private constructor(
         deleteTaskArtifacts(taskId, deleteFile)
     }
 
-    private fun startWorker(taskId: String) {
+    private fun startWorker(taskId: String) = synchronized(persistenceLock) {
+        checkStorage()
         if (activeControls.containsKey(taskId)) {
-            return
+            return@synchronized
         }
         val job =
-            scope.launch {
+            scope.launch(start = CoroutineStart.LAZY) {
                 val task = synchronized(tasks) { tasks[taskId]?.snapshot() } ?: return@launch
                 try {
                     when (task.type) {
@@ -517,6 +533,7 @@ internal class BrowserDownloadManager private constructor(
                 }
             }
         activeControls[taskId] = BrowserDownloadActiveControl(job = job)
+        job.start()
     }
 
     private suspend fun runInlineTask(taskId: String) {
@@ -728,6 +745,7 @@ internal class BrowserDownloadManager private constructor(
     }
 
     private fun mergeCompletedTask(taskId: String) {
+        if (storageUnavailable) throw CancellationException("Download storage unavailable")
         val task = synchronized(tasks) { tasks[taskId]?.snapshot() } ?: return
         val destinationFile = File(task.destinationPath)
         destinationFile.parentFile?.mkdirs()
@@ -968,10 +986,15 @@ internal class BrowserDownloadManager private constructor(
             error = task.errorMessage
         )
 
-    private fun persistState(force: Boolean) {
+    private fun checkStorage() {
+        check(!storageUnavailable) { appContext.getString(R.string.web_session_download_storage_unavailable) }
+    }
+
+    private fun persistState(force: Boolean) = synchronized(persistenceLock) {
+        if (storageUnavailable) return@synchronized
         val now = System.currentTimeMillis()
         if (!force && now - lastPersistAt < 500L) {
-            return
+            return@synchronized
         }
         lastPersistAt = now
         val payload =
@@ -983,21 +1006,21 @@ internal class BrowserDownloadManager private constructor(
                 }
             }
         runCatching {
-            stateFile.writeText(payload.toString())
+            stateStore.write(payload.toString())
         }.onFailure {
-            AppLogger.w(DOWNLOAD_SUPPORT_TAG, "Failed to persist browser downloads: ${it.message}")
+            storageUnavailable = true
+            activeControls.values.forEach { control ->
+                control.stopAction = BrowserDownloadAction.PAUSE
+                control.job.cancel(CancellationException("Download storage unavailable"))
+            }
+            AppLogger.w(DOWNLOAD_SUPPORT_TAG, "Protected browser download storage unavailable")
+            dispatchUiRefresh(force = true)
         }
     }
 
     private fun loadState() {
-        if (!stateFile.exists()) {
-            return
-        }
         runCatching {
-            val raw = stateFile.readText()
-            if (raw.isBlank()) {
-                return@runCatching
-            }
+            val raw = stateStore.read() ?: return@runCatching
             val array = JSONArray(raw)
             synchronized(tasks) {
                 tasks.clear()
@@ -1007,7 +1030,8 @@ internal class BrowserDownloadManager private constructor(
                 }
             }
         }.onFailure {
-            AppLogger.w(DOWNLOAD_SUPPORT_TAG, "Failed to load browser downloads: ${it.message}")
+            storageUnavailable = true
+            AppLogger.w(DOWNLOAD_SUPPORT_TAG, "Protected browser download storage unavailable")
         }
     }
 
@@ -1092,13 +1116,16 @@ internal fun StandardBrowserSessionTools.startBrowserManagedDownload(
     session.currentUrl.takeIf { it.isNotBlank() }?.let {
         headers["Referer"] = it
     }
-    browserDownloadManager().startHttpDownload(
+    runCatching { browserDownloadManager().startHttpDownload(
         sessionId = session.id,
         url = url,
         suggestedFileName = fileName,
         mimeType = mimeType,
         headers = headers
-    )
+    ) }.onFailure {
+        showToast(context.getString(R.string.web_session_download_storage_unavailable))
+        return
+    }
     showToast(context.getString(com.ai.assistance.operit.R.string.download_started, fileName))
 }
 
@@ -1113,14 +1140,17 @@ internal fun StandardBrowserSessionTools.startInlineManagedDownload(
     val normalizedMimeType = mimeType.ifBlank { guessMimeTypeFromDataUrl(base64Data) }
     val resolvedFileName = resolveInlineDownloadFileName(fileName, normalizedMimeType)
     val bytes = decodeInlineDownloadBytes(base64Data)
-    browserDownloadManager().startInlineDownload(
+    runCatching { browserDownloadManager().startInlineDownload(
         sessionId = session.id,
         type = type,
         suggestedFileName = resolvedFileName,
         mimeType = normalizedMimeType,
         bytes = bytes,
         sourceUrl = sourceUrl
-    )
+    ) }.onFailure {
+        showToast(context.getString(R.string.web_session_download_storage_unavailable))
+        return
+    }
     showToast(context.getString(com.ai.assistance.operit.R.string.download_started, resolvedFileName))
 }
 
@@ -1184,7 +1214,7 @@ internal fun StandardBrowserSessionTools.buildBrowserDownloadUiState(): BrowserD
                 canOpenLocation = task.status == BrowserDownloadStatus.COMPLETED
             )
         }
-    return BrowserDownloadUiState(tasks = tasks)
+    return BrowserDownloadUiState(tasks = tasks, storageUnavailable = browserDownloadManager().storageUnavailable)
 }
 
 internal fun StandardBrowserSessionTools.renderManagedDownloads(
@@ -1204,14 +1234,16 @@ internal fun StandardBrowserSessionTools.performBrowserDownloadAction(
     taskId: String,
     action: BrowserDownloadAction
 ) {
-    browserDownloadManager().performAction(taskId, action)
+    runCatching { browserDownloadManager().performAction(taskId, action) }.onFailure {
+        showToast(context.getString(R.string.web_session_download_storage_unavailable))
+    }
 }
 
 internal fun StandardBrowserSessionTools.performBrowserDownloadDelete(
     taskId: String,
     deleteFile: Boolean
 ) {
-    browserDownloadManager().performAction(
+    performBrowserDownloadAction(
         taskId,
         if (deleteFile) BrowserDownloadAction.DELETE_WITH_FILE else BrowserDownloadAction.DELETE_RECORD
     )

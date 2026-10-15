@@ -63,6 +63,11 @@ internal fun WebSessionDownloadSheet(
         subtitle = stringResource(R.string.web_session_downloads_summary, activeCount, failedCount),
         modifier = modifier
     ) {
+        if (uiState.storageUnavailable) {
+            Text(stringResource(R.string.web_session_download_storage_unavailable),
+                color = MaterialTheme.colorScheme.error)
+            return@WebSessionSheetScaffold
+        }
         FlowRow(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.spacedBy(8.dp),

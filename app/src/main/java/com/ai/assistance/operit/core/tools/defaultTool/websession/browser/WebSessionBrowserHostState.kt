@@ -91,6 +91,7 @@ internal data class BrowserDownloadItem(
 @Immutable
 internal data class BrowserDownloadUiState(
     val tasks: List<BrowserDownloadItem> = emptyList(),
+    val storageUnavailable: Boolean = false,
     val selectedFilter: BrowserDownloadFilter = BrowserDownloadFilter.IN_PROGRESS
 )
 

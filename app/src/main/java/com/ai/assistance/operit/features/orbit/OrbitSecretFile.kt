@@ -13,12 +13,17 @@ import javax.crypto.SecretKey
 import javax.crypto.spec.GCMParameterSpec
 
 /** Host-only ciphertext; intentionally outside both Android and Operit's files/shared_prefs backups. */
-internal class OrbitSecretFile(private val file: File, private val key: () -> SecretKey) {
+internal class OrbitSecretFile(
+    private val file: File,
+    private val maxPlainBytes: Int = 1_900_000,
+    private val key: () -> SecretKey
+) {
     fun delete() { Files.deleteIfExists(file.toPath()) }
     fun read(): String? {
         if (!file.exists()) return null
+        require(file.length() in 30L..(maxPlainBytes.toLong() + 29)) { "Invalid protected store" }
         val bytes = file.readBytes()
-        require(bytes.size in 30..2_000_000 && bytes[0] == 1.toByte()) { "Invalid protected store" }
+        require(bytes[0] == 1.toByte()) { "Invalid protected store" }
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.DECRYPT_MODE, key(), GCMParameterSpec(128, bytes.copyOfRange(1, 13)))
         cipher.updateAAD(file.name.toByteArray())
@@ -26,7 +31,7 @@ internal class OrbitSecretFile(private val file: File, private val key: () -> Se
     }
 
     fun write(text: String) {
-        require(text.toByteArray().size <= 1_900_000)
+        require(text.toByteArray().size <= maxPlainBytes)
         val cipher = Cipher.getInstance("AES/GCM/NoPadding")
         cipher.init(Cipher.ENCRYPT_MODE, key())
         cipher.updateAAD(file.name.toByteArray())
@@ -53,7 +58,11 @@ internal class OrbitSecretFile(private val file: File, private val key: () -> Se
         fun forOrbit(context: Context, orbitId: String): OrbitSecretFile {
             val id = java.security.MessageDigest.getInstance("SHA-256").digest(orbitId.toByteArray())
                 .joinToString("") { "%02x".format(it) }
-            return OrbitSecretFile(File(context.noBackupFilesDir, "orbit-connections/$id.bin"), ::androidKey)
+            return OrbitSecretFile(File(context.noBackupFilesDir, "orbit-connections/$id.bin"), key = ::androidKey)
         }
+        fun forBrowserDownloads(context: Context): OrbitSecretFile =
+            // Existing download journals had no connector-sized limit; preserve their capacity.
+            OrbitSecretFile(File(context.noBackupFilesDir, "browser-downloads-v1.bin"),
+                maxPlainBytes = Int.MAX_VALUE - 29, key = ::androidKey)
     }
 }
