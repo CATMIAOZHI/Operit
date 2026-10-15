@@ -51,6 +51,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.collects.PricingCurrency
 import com.ai.assistance.operit.data.stats.TokenStatCategory
@@ -103,6 +104,7 @@ internal fun TokenStatsWhiteCard(
     ) {
         Card(
             modifier = modifier,
+            shape = SettingsCardShape,
             colors = CardDefaults.cardColors(
                 containerColor = TokenStatsCardContainer,
                 contentColor = TokenStatsCardContent,

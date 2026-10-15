@@ -26,6 +26,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.graphics.Color
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.ui.graphics.vector.ImageVector
+import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
+import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.EnhancedAIService
 import com.ai.assistance.operit.data.model.ModelConfigData
@@ -439,9 +441,8 @@ fun ModelParametersSection(
         modifier = Modifier
             .fillMaxWidth()
             .padding(vertical = 4.dp),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+            shape = SettingsCardShape,
+            colors = CardDefaults.cardColors(containerColor = rememberSettingsCardColor())
     ) {
         Column(
                 modifier = Modifier.padding(16.dp),
