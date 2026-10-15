@@ -224,7 +224,13 @@ jobs:
             case "$artifact" in
               *.apk)
                 certificate="$("$apksigner" verify --print-certs "$artifact")"
-                grep -Fqi "Signer #1 certificate SHA-256 digest: $expected_apk_digest" <<< "$certificate"
+                # The signer label depends on the build-tools release ("Signer #1" in 35.x,
+                # "V2 Signer" in 37.x), so match the digest at the end of any signer line.
+                if ! grep -Eqi "certificate SHA-256 digest: ${expected_apk_digest}$" <<< "$certificate"; then
+                  echo "Unexpected signing certificate for $artifact" >&2
+                  echo "$certificate" >&2
+                  exit 1
+                fi
                 ;;
               *.aab)
                 jarsigner -verify "$artifact"
