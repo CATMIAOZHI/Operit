@@ -808,6 +808,10 @@
     <string name="theme_bg_opacity">Background opacity: %1$d%%</string>
     <string name="theme_reset">Reset to Default Theme</string>
     <string name="theme_saved">Settings saved</string>
+    <string name="theme_reset_done">Default theme restored</string>
+    <string name="chat_style_bubble_fine_tuning">Crop and scale</string>
+    <string name="theme_reset_confirm_title">Reset theme?</string>
+    <string name="theme_reset_confirm_message">All theme settings return to default, and the theme saved for the current character is deleted. This cannot be undone.</string>
     <string name="theme_video_too_large">Video file is too large and may cause lag or crashes. Please select videos less than 30MB.</string>
     <string name="theme_video_saved">Background video saved</string>
     <string name="theme_image_saved">Background image saved</string>

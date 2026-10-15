@@ -724,6 +724,10 @@
     <string name="theme_bg_opacity">背景不透明度: %1$d%%</string>
     <string name="theme_reset">重置为默认主题</string>
     <string name="theme_saved">设置已保存</string>
+    <string name="theme_reset_done">已恢复默认主题</string>
+    <string name="chat_style_bubble_fine_tuning">裁切与缩放</string>
+    <string name="theme_reset_confirm_title">重置主题？</string>
+    <string name="theme_reset_confirm_message">所有主题设置会恢复默认，当前角色绑定的主题也会删除，无法撤销。</string>
     <string name="theme_video_too_large">视频文件过大，可能导致应用卡顿或崩溃。请选择小于30MB的视频。</string>
     <string name="theme_video_saved">背景视频已保存</string>
     <string name="theme_image_saved">背景图片已保存</string>
