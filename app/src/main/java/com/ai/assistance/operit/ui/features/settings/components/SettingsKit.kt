@@ -47,6 +47,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import kotlinx.coroutines.delay
@@ -284,7 +285,9 @@ fun SettingsSwitchRow(
     subtitle: String? = null,
     enabled: Boolean = true,
     /** False for rows that only link to a page, such as the settings home and its search results. */
-    searchable: Boolean = true
+    searchable: Boolean = true,
+    /** 0.dp lines the text up with other content in a card that already has its own padding. */
+    horizontalPadding: Dp = 8.dp
 ) {
     Row(
         modifier =
@@ -292,7 +295,7 @@ fun SettingsSwitchRow(
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(14.dp))
                 .clickable(enabled = enabled) { onCheckedChange(!checked) }
-                .padding(horizontal = 8.dp, vertical = 10.dp)
+                .padding(horizontal = horizontalPadding, vertical = 10.dp)
                 .alpha(if (enabled) 1f else 0.38f),
         verticalAlignment = Alignment.CenterVertically
     ) {

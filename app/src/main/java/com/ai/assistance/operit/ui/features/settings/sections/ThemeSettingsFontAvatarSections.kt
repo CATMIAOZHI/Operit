@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.settings.sections
 
+import com.ai.assistance.operit.ui.features.settings.components.SettingsSwitchRow
+import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import android.content.Context
 import android.net.Uri
 import androidx.activity.compose.ManagedActivityResultLauncher
@@ -67,32 +69,18 @@ internal fun ThemeSettingsFontSection(
 
     Card(modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp), colors = cardColors, shape = SettingsCardShape) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-            ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = context.getString(R.string.enable_custom_font),
-                        style = MaterialTheme.typography.bodyMedium,
-                    )
-                    Text(
-                        text = context.getString(R.string.use_system_or_custom_font),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Switch(
-                    checked = useCustomFontInput,
-                    onCheckedChange = {
-                        onUseCustomFontInputChange(it)
-                        saveThemeSettingsWithCharacterCard {
-                            preferencesManager.saveThemeSettings(useCustomFont = it)
-                        }
-                    },
-                )
-            }
+            SettingsSwitchRow(
+                title = context.getString(R.string.enable_custom_font),
+                subtitle = context.getString(R.string.use_system_or_custom_font),
+                checked = useCustomFontInput,
+                onCheckedChange = {
+                    onUseCustomFontInputChange(it)
+                    saveThemeSettingsWithCharacterCard {
+                        preferencesManager.saveThemeSettings(useCustomFont = it)
+                    }
+                },
+                horizontalPadding = 0.dp,
+            )
 
             if (useCustomFontInput) {
                 HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
@@ -415,7 +403,7 @@ internal fun ThemeSettingsAvatarSection(
             Text(
                 text = stringResource(id = R.string.avatar_shape_title),
                 style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.padding(bottom = 8.dp),
+                modifier = Modifier.settingsSearchTarget(stringResource(id = R.string.avatar_shape_title)).padding(bottom = 8.dp),
             )
             Row(
                 modifier = Modifier.fillMaxWidth(),
