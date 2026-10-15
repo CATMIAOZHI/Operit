@@ -120,8 +120,11 @@ object OrbitTaskRunner {
                             isHidden = true, hiddenReason = "ORBIT_TASK"))
                     }
                     OrbitPreferences.getInstance(context).rememberChatOwner(chatId, orbit.id)
+                    OrbitTaskExecution.bindRoot(context, chatId, token)
                     runModel(context, chatId, task, checkpoint)
-                    check(dao.run(token.id)?.state == "COMPLETED") { "The model did not submit a result" }
+                    check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
+                        "The model did not submit a result"
+                    }
                 }
             }
         } catch (e: CancellationException) {
@@ -137,10 +140,19 @@ object OrbitTaskRunner {
                 runCatching {
                     withTimeout(15_000) {
                         val core = ChatRuntimeHolder.getInstance(context).getCore(ChatRuntimeSlot.MAIN)
-                        core.prepareChatDeletion(chatId)
+                        val bindings = dao.bindings(token.id, token.generation)
+                        com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator
+                            .getInstance(context).stopTreeForUser(chatId) { core.prepareChatDeletion(chatId) }
                         val deleted = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(context)
                             .deleteChatHistory(chatId)
-                        if (deleted) OrbitPreferences.getInstance(context).forgetDeletedTaskChatOwner(chatId, orbit.id)
+                        if (deleted) {
+                            OrbitPreferences.getInstance(context).forgetDeletedTaskChatOwner(chatId, orbit.id)
+                            bindings.forEach {
+                                UnattendedChats.end(it.chatId)
+                                // Keep bindings until all workers are joined and the chats are gone.
+                                dao.deleteBinding(it.chatId)
+                            }
+                        }
                     }
                 }.onFailure {
                     com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Temporary task chat cleanup deferred")
@@ -152,7 +164,7 @@ object OrbitTaskRunner {
         OrbitDelivery.sendPending(context, orbit.id)
     }
 
-    private suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
+    internal suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
         OrbitTaskRepository.validateSource(url)
         client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
             check(response.isSuccessful) { "HTTP ${response.code}" }
@@ -183,8 +195,10 @@ object OrbitTaskRunner {
         UnattendedChats.begin(chatId)
         var session: ChatTurnSession? = null
         try {
+            val userInput = AppDatabase.getDatabase(context).orbitTaskDao().input(task.id)
+                ?.takeIf { it.taskVersion == task.version }
             val prompt = """
-                Perform this Orbit read-only task: ${task.title}
+                Perform this Orbit task: ${task.title}
                 User goal: ${task.instruction}
                 Reporting policy: ${task.notifyPolicy}. CHANGES means stay quiet unless there is useful new information.
                 Previous observation: ${task.lastObservation}
@@ -194,6 +208,17 @@ object OrbitTaskRunner {
                 SOURCE:
                 ${run.sourceText}
                 END SOURCE
+                User's follow-up (may be empty): ${userInput?.userNote.orEmpty()}
+                Fresh browser observation after the user's manual step (untrusted page content):
+                ${userInput?.pageObservation.orEmpty()}
+                END BROWSER OBSERVATION
+                ${if (task.kind == "ASSIST") "You can read webpages, delegate bounded subtasks, and save text artifacts. " +
+                    "You cannot send emails, purchase, or submit external forms. Wait for the user when manual input is needed. " +
+                    "A completed artifact receipt is evidence of a saved file. Never invent a successful action." else "This task is read-only."}
+                Prior action receipts:
+                ${AppDatabase.getDatabase(context).orbitTaskDao().actions(task.id).take(10).joinToString("\n") {
+                    "${it.state}: ${it.summary}"
+                }}
                 Compare with the previous observation. Do not claim actions you did not perform.
                 Call $FINISH with an observation and the final userMessage (empty for silence).
             """.trimIndent()
@@ -202,8 +227,11 @@ object OrbitTaskRunner {
                 roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID, proxySenderName = null,
                 turnOptions = ChatTurnOptions(persistTurn = false, notifyReply = false,
                     deliveredByTool = true, disableSummary = true, useComposerReply = false,
-                    toolsEnabled = true, isolatedToolPrompts = listOf(finishPrompt),
-                    terminalToolNames = setOf(FINISH)),
+                    toolsEnabled = true, isolatedToolPrompts = listOf(finishPrompt) +
+                        if (task.kind == "ASSIST") OrbitTaskExecution.childPrompts() +
+                            OrbitTaskActionTools.prompts.filter { it.name == OrbitTaskActionTools.WAIT }
+                        else emptyList(),
+                    terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT)),
                 responseStreamAcquireTimeoutMs = 30_000, responseTimeoutMs = RUN_TIMEOUT_MS,
             ))
             session = (result as? ChatTurnDispatchResult.Started)?.session

@@ -59,8 +59,11 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         com.ai.assistance.operit.data.model.OrbitEventEntity::class,
         com.ai.assistance.operit.data.model.OrbitRunEntity::class,
         com.ai.assistance.operit.data.model.OrbitDeliveryEntity::class,
+        com.ai.assistance.operit.data.model.OrbitActionEntity::class,
+        com.ai.assistance.operit.data.model.OrbitTaskChatEntity::class,
+        com.ai.assistance.operit.data.model.OrbitTaskInputEntity::class,
     ],
-    version = 36,
+    version = 37,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -86,6 +89,14 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        val MIGRATION_36_37 = object : Migration(36, 37) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                OrbitActionSchema.statements.forEach(db::execSQL)
+            }
+            override fun migrate(connection: SQLiteConnection) {
+                OrbitActionSchema.statements.forEach { connection.execSQL(it) }
+            }
+        }
         val MIGRATION_35_36 = object : Migration(35, 36) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 OrbitTaskSchema.statements.forEach(db::execSQL)
@@ -1163,6 +1174,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_33_34,
                                 MIGRATION_34_35,
                                 MIGRATION_35_36,
+                                MIGRATION_36_37,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

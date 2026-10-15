@@ -28,7 +28,7 @@ object OrbitDelivery {
                 if (orbit?.id != orbitId || orbit.deleting) return@serialized null
                 ChatHistoryManager.getInstance(context).appendOrbitDelivery(item.id)?.also { delivery ->
                     val task = dao.task(delivery.taskId) ?: return@also
-                    if (task.version != delivery.taskVersion || task.state !in setOf("ACTIVE", "DONE")) return@also
+                    if (task.version != delivery.taskVersion || task.state !in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY")) return@also
                     if (!delivery.notificationSent) notify(context, delivery)
                     dao.updateDelivery(delivery.copy(state = "SENT", notificationSent = true))
                 }

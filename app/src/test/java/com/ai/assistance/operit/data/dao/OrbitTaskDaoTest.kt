@@ -28,7 +28,7 @@ class OrbitTaskDaoTest {
         whenever(context.filesDir).thenReturn(dir)
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
-            .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36)
+            .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {
@@ -42,6 +42,74 @@ class OrbitTaskDaoTest {
     private suspend fun claim(id: String = "task", owner: String = "worker", boot: String = "boot",
         now: Long = 1000, elapsed: Long = 10) =
         dao.claim(checkNotNull(dao.enqueueDue(id, now)), owner, boot, now, elapsed, 100)
+
+    @Test fun `unreceipted write after reboot requires explicit verification before new generation`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val action = com.ai.assistance.operit.data.model.OrbitActionEntity(
+            "write", "task", token.id, token.generation, "orbit_write_artifact", "digest",
+            "PREPARED", "Save report", 1001, 1001)
+        assertEquals("STARTED", dao.beginAction(token, action, "boot", 1001, 11)?.state)
+        assertNull(dao.beginAction(token, action, "boot", 1002, 12))
+        assertFalse(dao.complete(token, "done", "done", "", 2000, "boot", 1002, 12))
+        database.close()
+        database = open()
+        assertNull(claim(boot = "new-boot", now = 1003, elapsed = 1))
+        assertEquals("VERIFY", dao.task("task")?.state)
+        assertEquals("UNKNOWN", dao.action("write")?.state)
+        assertFalse(dao.replaceDefinition(checkNotNull(dao.task("task")).copy(state = "ACTIVE"), 1))
+        assertTrue(dao.resolveAction("task", "write", false, 1004))
+        assertTrue(dao.replaceDefinition(checkNotNull(dao.task("task")).copy(state = "ACTIVE"), 1))
+        assertNotNull(claim(boot = "new-boot", now = 1005, elapsed = 3))
+    }
+
+    @Test fun `pause fences write start but a known late result can still be recorded`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val action = com.ai.assistance.operit.data.model.OrbitActionEntity(
+            "write", "task", token.id, token.generation, "orbit_write_artifact", "digest",
+            "PREPARED", "Save report", 1001, 1001)
+        assertNotNull(dao.beginAction(token, action, "boot", 1001, 11))
+        assertTrue(dao.replaceDefinition(definition(kind = "ASSIST").copy(state = "PAUSED"), 1))
+        assertNull(dao.beginAction(token, action.copy(id = "second"), "boot", 1002, 12))
+        assertTrue(dao.confirmAction("write", token.generation, "Saved and verified", 1003))
+        assertEquals("PAUSED", dao.task("task")?.state)
+        assertTrue(dao.unresolvedActions("task").isEmpty())
+    }
+
+    @Test fun `waiting survives restart and produces one request without rerunning`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        assertTrue(dao.waitForUser(token, "Choose a source", "boot", 1001, 11))
+        assertFalse(dao.waitForUser(token, "duplicate", "boot", 1002, 12))
+        database.close()
+        database = open()
+        assertEquals("WAITING_USER", dao.task("task")?.state)
+        assertNull(dao.enqueueDue("task", 9000))
+        assertEquals("Choose a source", dao.latestRun("task")?.error)
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
+        assertFalse(dao.replaceDefinition(definition(kind = "ASSIST").copy(title = "stale edit"), 1))
+        assertTrue(dao.resumeWithInput("task", 1, "Use this source", "new snapshot", 1003))
+        assertFalse(dao.resumeWithInput("task", 1, "double tap", "", 1004))
+        assertEquals("Use this source", dao.input("task")?.userNote)
+        assertEquals(2L, dao.input("task")?.taskVersion)
+        assertNotNull(dao.enqueueDue("task", 1003))
+    }
+
+    @Test fun `waiting while child finishes reconciles unknown receipt without losing user request`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val action = com.ai.assistance.operit.data.model.OrbitActionEntity(
+            "write", "task", token.id, token.generation, "orbit_write_artifact", "digest",
+            "PREPARED", "Save report", 1001, 1001)
+        dao.beginAction(token, action, "boot", 1001, 11)
+        assertTrue(dao.waitForUser(token, "Log in", "boot", 1002, 12, "https://example.com"))
+        assertEquals("VERIFY", dao.task("task")?.state)
+        assertEquals("UNKNOWN", dao.action("write")?.state)
+        assertTrue(dao.confirmAction("write", token.generation, "Verified saved file", 1003))
+        assertEquals("WAITING_USER", dao.task("task")?.state)
+        assertEquals("https://example.com", dao.input("task")?.requestedUrl)
+    }
 
     @Test fun `repeated events and racing workers give one execution owner`() = runBlocking {
         dao.insertTask(definition())
@@ -159,7 +227,8 @@ class OrbitTaskDaoTest {
         database.close()
         DriverManager.getConnection("jdbc:sqlite:${File(dir, "orbit-test").absolutePath}").use { connection ->
             connection.createStatement().use { statement ->
-                listOf("orbit_deliveries", "orbit_runs", "orbit_events", "orbit_tasks").forEach {
+                listOf("orbit_deliveries", "orbit_runs", "orbit_events", "orbit_tasks",
+                    "orbit_actions", "orbit_task_chats", "orbit_task_inputs").forEach {
                     statement.execute("DROP TABLE $it")
                 }
                 statement.execute("PRAGMA user_version=35")

@@ -135,6 +135,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         includeProfilePrompt: Boolean = true,
     ): CollaborationAgent {
         require(message.isNotBlank()) { "Empty task message" }
+        val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, chatId)
         val parent = caller(chatId)
         val generation = synchronized(lock) { stopGate.generation(parent.rootChatId) }
         val path = AgentPath.child(parent.path, taskName)
@@ -213,7 +214,12 @@ class CollaborationCoordinator private constructor(context: Context) {
                         collaborationHistory = inheritedHistory.map { it.toPromptTurn() },
                         profileOverride = profile,
                         collaborationRoleCardId = roleCardId ?: parent.roleCardId,
+                        isolatedToolPrompts = orbitTask?.let {
+                            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.childPrompts()
+                        },
                         onRunCreated = { run ->
+                            com.ai.assistance.operit.features.orbit.OrbitTaskExecution.bindChild(
+                                appContext, chatId, run.childChatId)
                             val agent = CollaborationAgent(
                                 rootChatId = parent.rootChatId, path = path, chatId = run.childChatId,
                                 runId = run.id, parentPath = parent.path, profileId = profileId,
@@ -325,6 +331,7 @@ class CollaborationCoordinator private constructor(context: Context) {
         write(state.update(agent.copy(status = CollaborationStatus.RUNNING, lastError = null)))
         val job = scope.launch(start = CoroutineStart.LAZY) {
             try {
+                val orbitTask = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(appContext, agent.chatId)
                 val result = runner.runTask(SubagentTaskRequest(
                     parentChatId = requireNotNull(list(agent.chatId, null).firstOrNull {
                         it.path == agent.parentPath
@@ -341,6 +348,9 @@ class CollaborationCoordinator private constructor(context: Context) {
                     collaborationHistory = agent.inheritedHistory.map { it.toPromptTurn() },
                     collaborationHistoryCutoff = agent.historyCutoff,
                     collaborationRoleCardId = agent.roleCardId,
+                    isolatedToolPrompts = orbitTask?.let {
+                        com.ai.assistance.operit.features.orbit.OrbitTaskExecution.childPrompts()
+                    },
                     onTurnStarted = {
                         synchronized(lock) {
                             write(state.acknowledge(agent.rootChatId, agent.path, inputs.mapTo(mutableSetOf()) { it.id }))

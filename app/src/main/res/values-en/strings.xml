@@ -9152,4 +9152,19 @@
     <string name="orbit_tool_name_too_long">The name is too long; at most %1$d characters</string>
     <string name="orbit_tool_name_set">Name changed to \"%1$s\"</string>
     <string name="orbit_tool_not_orbit_chat">Only an Orbit in its own chat can change its name</string>
+    <string name="orbit_action_receipt">Action receipt</string>
+    <string name="orbit_action_verify">Verify the action outcome</string>
+    <string name="orbit_action_verify_help">The task is paused. Check whether the artifact was saved before choosing what to do, to avoid repeating an action.</string>
+    <string name="orbit_action_verified">Verified: the action completed</string>
+    <string name="orbit_action_retry_allowed">Verified: retry is safe</string>
+    <string name="orbit_action_verify_confirm">This updates the action record. Resume the task separately when ready; nothing runs immediately.</string>
+    <string name="orbit_task_waiting_user">Waiting for you</string>
+    <string name="orbit_task_done">Completed</string>
+    <string name="orbit_browser_open">Open page to continue</string>
+    <string name="orbit_browser_handoff_help">AI browser actions pause while you handle this page. Return here when finished. Do not include passwords in your note.</string>
+    <string name="orbit_browser_overlay_required">Allow Operit to display over other apps in system settings before opening the page.</string>
+    <string name="orbit_browser_reopen">The page was closed or the app restarted. Open the page again before continuing.</string>
+    <string name="orbit_browser_not_ready">Wait for the page to load and resolve any security errors or dialogs in the browser first.</string>
+    <string name="orbit_task_user_note">Additional note for Orbit (optional)</string>
+    <string name="orbit_task_continue">Done, continue task</string>
 </resources>

@@ -11,9 +11,10 @@ internal object OrbitTaskTools {
     const val NAME = "orbit_task"
     val prompt = ToolPrompt(
         name = NAME,
-        description = "管理当前 Orbit 的持久只读监控任务。任务会在手机允许运行时检查网页变化，可暂停、取消、查看结果；普通聊天能力不受影响。",
+        description = "管理当前 Orbit 的持久任务：监控网页变化，或安排资料整理和文稿成果任务。可暂停、取消、查看结果。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run"),
+            ToolParameterSchema("kind", description = "URL_CHANGE（默认）：网页监控；ASSIST：读取网页、委派和保存文本成果", required = false),
             ToolParameterSchema("task_id", description = "list 返回的任务编号；detail/update/pause/resume/cancel/run 必填", required = false),
             ToolParameterSchema("title", description = "创建时任务名称，最多80字符", required = false),
             ToolParameterSchema("instruction", description = "创建时用户希望关注的变化及汇报要求，最多4000字符", required = false),
@@ -22,7 +23,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报", required = false),
         ),
         details = "只有用户要求持续检查、跟踪或提醒时创建。手机关机/强停/断网时不能承诺准点。" +
-            "当前持久任务只执行网页读取与分析，不支持后台发送邮件、购买或提交表单。" +
+            "ASSIST 可读取网页、委派子任务及保存自己的文本成果；不支持后台发送邮件、购买或提交表单。" +
             "任务的中间工具输出不会进入主聊天，正式结果可在任务详情中继续查询。",
     )
 
@@ -35,9 +36,9 @@ internal object OrbitTaskTools {
         val payload: Any = when (action) {
             "create" -> json(repository.create(orbit,
                 arguments["title"] ?: error("Missing title"), arguments["instruction"] ?: error("Missing instruction"),
-                arguments["url"] ?: error("Missing url"), arguments["interval_minutes"]?.toInt() ?: 60,
+                arguments["url"].orEmpty(), arguments["interval_minutes"]?.toInt() ?: 60,
                 arguments["notify_policy"] ?: "CHANGES",
-                runtime?.callId ?: java.util.UUID.randomUUID().toString()))
+                runtime?.callId ?: java.util.UUID.randomUUID().toString(), arguments["kind"] ?: "URL_CHANGE"))
             "list" -> JSONArray(repository.dao.tasks(orbit.id).filter { it.kind != "ONCE" }.map(::json))
             else -> {
                 val id = arguments["task_id"] ?: error("Missing task_id")
@@ -68,6 +69,7 @@ internal object OrbitTaskTools {
     }
 
     private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
+        .put("kind", task.kind)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
         .put("nextRunAt", task.nextRunAt).put("lastObservation", task.lastObservation)

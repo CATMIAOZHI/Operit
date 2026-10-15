@@ -356,7 +356,11 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         // Nobody watches an unattended turn, and a turn that another chat runs for it would ask
         // there with nobody around to answer, so handing work to other chats is refused here.
         if (UnattendedChats.contains(callerChatId) && UnattendedChats.isHandOffTool(tool.name)) {
-            return permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+            val taskScope = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.resolve(context, callerChatId)
+            if (taskScope == null ||
+                tool.name !in com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.names) {
+                return permissionDeniedBySettings(UNATTENDED_DENIAL_REASON)
+            }
         }
 
         val effectiveLevel = getEffectivePermissionLevel(tool.name, callerChatId)

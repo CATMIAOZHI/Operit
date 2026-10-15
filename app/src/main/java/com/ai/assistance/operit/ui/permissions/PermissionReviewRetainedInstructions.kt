@@ -296,9 +296,15 @@ internal object PermissionReviewChatScope {
         val resolved =
             runCatching {
                 val repository = SubagentRunRepository.getInstance(context)
+                val orbitTasks = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
                 val visited = mutableSetOf<String>()
                 var current = normalized
                 while (visited.size < MAX_HOPS && visited.add(current)) {
+                    val binding = orbitTasks.binding(current)
+                    if (binding != null) {
+                        val task = orbitTasks.run(binding.runId)?.let { orbitTasks.task(it.taskId) }
+                        if (task != null) { current = task.chatId; break }
+                    }
                     val parent = repository.getByChildChatId(current)?.parentChatId?.trim()
                     if (parent.isNullOrEmpty() || parent == current) break
                     current = parent

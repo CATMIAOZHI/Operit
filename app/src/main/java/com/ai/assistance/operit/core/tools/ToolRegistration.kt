@@ -99,6 +99,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.submit(context, tool)
         } },
     )
+    com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.names.forEach { name ->
+        handler.registerTool(name = name, executor = { tool ->
+            runBlockingIoPreservingToolRuntimeContext {
+                com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.execute(context, tool)
+            }
+        })
+    }
 
     // Helper function to wrap UI tool execution with visibility changes
     suspend fun executeUiToolWithVisibility(
