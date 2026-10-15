@@ -640,7 +640,7 @@ class MessageCoordinationDelegate(
         // so the role card it was made from no longer affects it.
         val isOrbitChat =
             com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
-                .loadedSettingsBlocking().orbitForChat(chatId) != null
+                .loadedSettingsBlocking().ownerForChat(chatId) != null
         val roleCardId =
             roleCardIdOverride?.takeIf { it.isNotBlank() }
                 ?: if (turnOptions.isSubTask) {

@@ -26,6 +26,7 @@ import com.ai.assistance.operit.data.backup.OperitBackupDirs
 import com.ai.assistance.operit.data.dao.ChatDao
 import com.ai.assistance.operit.data.dao.ChatFolderDao
 import com.ai.assistance.operit.data.db.AppDatabase
+import com.ai.assistance.operit.data.db.appendOrbitDelivery
 import com.ai.assistance.operit.data.model.ChatEntity
 import com.ai.assistance.operit.data.model.ChatKind
 import com.ai.assistance.operit.data.model.ChatFolderEntity
@@ -3016,6 +3017,15 @@ class ChatHistoryManager private constructor(private val context: Context) {
             } catch (e: Exception) {
                 throw e
             }
+        }
+    }
+
+    /** The message and its outbox acknowledgement must commit together, under the normal chat lock. */
+    suspend fun appendOrbitDelivery(deliveryId: String): com.ai.assistance.operit.data.model.OrbitDeliveryEntity? {
+        val outbox = database.orbitTaskDao()
+        val pending = outbox.delivery(deliveryId) ?: return null
+        return chatMutex(pending.chatId).withLock {
+            database.appendOrbitDelivery(deliveryId, System.currentTimeMillis())
         }
     }
 

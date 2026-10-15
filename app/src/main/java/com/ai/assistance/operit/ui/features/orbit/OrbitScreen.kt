@@ -191,6 +191,7 @@ private fun OrbitChatPage(
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var showMemory by remember(orbit.id) { mutableStateOf(false) }
+    var showTasks by remember(orbit.id) { mutableStateOf(false) }
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null
@@ -218,6 +219,10 @@ private fun OrbitChatPage(
         }
     }
 
+    if (showTasks) {
+        OrbitTasksPage(orbit.id, onBack = { showTasks = false })
+        return
+    }
     if (showMemory) {
         val id = memoryResult?.getOrNull()
         if (id != null) {
@@ -251,6 +256,10 @@ private fun OrbitChatPage(
             onOpenMemory = {
                 showSettings = false
                 showMemory = true
+            },
+            onOpenTasks = {
+                showSettings = false
+                showTasks = true
             },
             onPause = {
                 showSettings = false
@@ -394,6 +403,7 @@ private fun OrbitSettingsSheet(
     hasBackgroundImage: Boolean,
     onDismiss: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenTasks: () -> Unit,
     onPause: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -498,9 +508,20 @@ private fun OrbitSettingsSheet(
                     icon = lucide("calendar-clock"),
                 )
                 SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_tasks_title),
+                        subtitle = stringResource(R.string.orbit_tasks_subtitle),
+                        icon = lucide("list-checks"),
+                        searchable = false,
+                        onClick = onOpenTasks,
+                    )
+                    SettingsRowDivider(inset = false)
                     FocusNotesField(
                         initialNotes = settings.focusNotes,
-                        onSave = { notes -> preferences.setFocusNotes(notes) },
+                        onSave = { notes ->
+                            preferences.setFocusNotes(notes)
+                            OrbitCompanion.applySchedule(context)
+                        },
                     )
                     Spacer(modifier = Modifier.height(12.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -508,7 +529,14 @@ private fun OrbitSettingsSheet(
                             enabled = !showRunning,
                             onClick = {
                                 runRequestedAt = System.currentTimeMillis()
-                                OrbitCompanion.runNow(context)
+                                scope.launch {
+                                    try { OrbitCompanion.runNow(context) }
+                                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                                    catch (e: Exception) {
+                                        runRequestedAt = 0L
+                                        toast(context, R.string.orbit_run_failed_unknown)
+                                    }
+                                }
                             },
                         ) {
                             if (showRunning) {

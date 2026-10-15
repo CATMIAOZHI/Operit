@@ -23,7 +23,9 @@ data class ResolvedCharacterCardToolAccess(
         return when (toolName) {
             "package_proxy" -> hasAnyAllowedExternalSource
             // Orbit's own tool is not a user-managed builtin; it is gated by the calling chat.
-            com.ai.assistance.operit.core.tools.OrbitTools.SET_NAME -> true
+            com.ai.assistance.operit.core.tools.OrbitTools.SET_NAME,
+            com.ai.assistance.operit.core.tools.OrbitTaskTools.NAME,
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH -> true
             else -> effectiveBuiltinToolVisibility[toolName] == true
         }
     }

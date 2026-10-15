@@ -438,7 +438,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         !chatId.isNullOrBlank() &&
             com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
                 .current()
-                .orbitForChat(chatId) != null
+                .ownerForChat(chatId) != null
     
     /**
      * Request permission from the user to execute a tool.

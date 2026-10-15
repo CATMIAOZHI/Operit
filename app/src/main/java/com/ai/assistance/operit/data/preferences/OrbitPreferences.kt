@@ -101,20 +101,22 @@ class OrbitPreferences private constructor(context: Context) {
     private val dataStore = appContext.orbitDataStore
 
     val settingsFlow: Flow<OrbitSettings> = dataStore.data.map { preferences ->
+        val activeId = preferences[ACTIVE_ORBIT_ID]
+        val daily = activeId?.let { dailySettings(preferences, it) } ?: JSONObject()
         OrbitSettings(
             orbits = decodeOrbits(preferences[ORBITS]),
             activeOrbitId = preferences[ACTIVE_ORBIT_ID]?.takeIf { it.isNotBlank() },
-            proactiveEnabled = preferences[PROACTIVE_ENABLED] ?: false,
+            proactiveEnabled = daily.optBoolean("enabled", false),
             checkInMinuteOfDay =
-                (preferences[CHECK_IN_MINUTE] ?: OrbitSettings.DEFAULT_CHECK_IN_MINUTE)
+                daily.optInt("minute", OrbitSettings.DEFAULT_CHECK_IN_MINUTE)
                     .coerceIn(0, 24 * 60 - 1),
-            focusNotes = preferences[FOCUS_NOTES].orEmpty(),
-            lastRunAt = preferences[LAST_RUN_AT] ?: 0L,
+            focusNotes = daily.optString("focus", ""),
+            lastRunAt = daily.optLong("lastAt", 0),
             lastRunOutcome =
-                preferences[LAST_RUN_OUTCOME]?.let { name ->
+                daily.optString("outcome", "").let { name ->
                     OrbitRunOutcome.entries.firstOrNull { it.name == name }
                 },
-            lastRunDetail = preferences[LAST_RUN_DETAIL].orEmpty(),
+            lastRunDetail = daily.optString("detail", ""),
             chatOwners = preferences[CHAT_OWNERS]?.let { raw ->
                 val json = JSONObject(raw)
                 json.keys().asSequence().associateWith { json.getString(it) }
@@ -152,16 +154,39 @@ class OrbitPreferences private constructor(context: Context) {
     fun loadedSettingsBlocking(): OrbitSettings =
         if (snapshotLoaded) snapshot else runBlocking(Dispatchers.IO) { current() }
 
-    suspend fun setProactiveEnabled(enabled: Boolean) {
-        dataStore.edit { it[PROACTIVE_ENABLED] = enabled }
+    suspend fun setProactiveEnabled(enabled: Boolean, orbitId: String? = null) {
+        editDaily(orbitId) { it.put("enabled", enabled) }
     }
 
     suspend fun setCheckInMinuteOfDay(minuteOfDay: Int) {
-        dataStore.edit { it[CHECK_IN_MINUTE] = minuteOfDay.coerceIn(0, 24 * 60 - 1) }
+        editDaily(null) { it.put("minute", minuteOfDay.coerceIn(0, 24 * 60 - 1)) }
     }
 
     suspend fun setFocusNotes(notes: String) {
-        dataStore.edit { it[FOCUS_NOTES] = notes.take(OrbitSettings.MAX_FOCUS_NOTES_LENGTH) }
+        editDaily(null) { it.put("focus", notes.take(OrbitSettings.MAX_FOCUS_NOTES_LENGTH)) }
+    }
+
+    private fun dailyKey(id: String) = stringPreferencesKey("daily_$id")
+
+    /** Only the old active companion may inherit the legacy global settings, exactly once. */
+    private fun dailySettings(preferences: Preferences, id: String): JSONObject =
+        preferences[dailyKey(id)]?.let(::JSONObject) ?: if (preferences[ACTIVE_ORBIT_ID] == id) {
+            JSONObject().put("enabled", preferences[PROACTIVE_ENABLED] ?: false)
+                .put("minute", preferences[CHECK_IN_MINUTE] ?: OrbitSettings.DEFAULT_CHECK_IN_MINUTE)
+                .put("focus", preferences[FOCUS_NOTES].orEmpty())
+                .put("lastAt", preferences[LAST_RUN_AT] ?: 0)
+                .put("outcome", preferences[LAST_RUN_OUTCOME].orEmpty())
+                .put("detail", preferences[LAST_RUN_DETAIL].orEmpty())
+        } else JSONObject()
+
+    private suspend fun editDaily(orbitId: String?, change: (JSONObject) -> Unit) {
+        dataStore.edit { preferences ->
+            val id = orbitId ?: preferences[ACTIVE_ORBIT_ID] ?: return@edit
+            check(decodeOrbits(preferences[ORBITS]).any { it.id == id && !it.deleting })
+            val value = dailySettings(preferences, id)
+            change(value)
+            preferences[dailyKey(id)] = value.toString()
+        }
     }
 
     /** Adds [profile], or replaces the Orbit with the same id. */
@@ -175,6 +200,20 @@ class OrbitPreferences private constructor(context: Context) {
             check(!owners.has(chatId) || owners.getString(chatId) == orbitId)
             owners.put(chatId, orbitId)
             preferences[CHAT_OWNERS] = owners.toString()
+        }
+    }
+
+    /** Temporary model chats have no user archive; only forget ownership after confirmed deletion. */
+    internal suspend fun forgetDeletedTaskChatOwner(chatId: String, orbitId: String) {
+        require(chatId.startsWith("orbit-task-"))
+        check(com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext)
+            .chatDao().getChatById(chatId) == null)
+        dataStore.edit { preferences ->
+            val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
+            if (owners.optString(chatId) == orbitId) {
+                owners.remove(chatId)
+                preferences[CHAT_OWNERS] = owners.toString()
+            }
         }
     }
 
@@ -195,6 +234,7 @@ class OrbitPreferences private constructor(context: Context) {
             preferences[CHAT_OWNERS] = owners.toString()
             avatarUri = orbits.firstOrNull { it.id == orbitId }?.avatarUri
             preferences[ORBITS] = encodeOrbits(orbits.filterNot { it.id == orbitId })
+            preferences.remove(dailyKey(orbitId))
             if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
         }
         withContext(Dispatchers.IO) {
@@ -253,22 +293,38 @@ class OrbitPreferences private constructor(context: Context) {
     }
 
     /** Starts the Orbit [orbitId], or pauses every Orbit when it is null. */
-    suspend fun setActive(orbitId: String?) {
+    suspend fun setActive(orbitId: String?) = com.ai.assistance.operit.features.orbit.OrbitExecutionGate.serialized {
+        val previous = dataStore.data.first()[ACTIVE_ORBIT_ID]
+        if (previous != null && previous != orbitId) {
+            val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
+            val now = System.currentTimeMillis()
+            dao.tasks(previous).filter { it.state == "ACTIVE" }.forEach { task ->
+                dao.replaceDefinition(task.copy(
+                    nextRunAt = com.ai.assistance.operit.features.orbit.OrbitTaskRepository.nextAt(task, now),
+                    updatedAt = now,
+                ), task.version)
+            }
+        }
         dataStore.edit { preferences ->
+            val previousId = preferences[ACTIVE_ORBIT_ID]
+            if (previousId != null && preferences[dailyKey(previousId)] == null) {
+                preferences[dailyKey(previousId)] = dailySettings(preferences, previousId).toString()
+            }
             if (orbitId == null) {
                 preferences.remove(ACTIVE_ORBIT_ID)
             } else {
                 check(decodeOrbits(preferences[ORBITS]).any { it.id == orbitId && !it.deleting })
+                if (preferences[dailyKey(orbitId)] == null) preferences[dailyKey(orbitId)] = "{}"
                 preferences[ACTIVE_ORBIT_ID] = orbitId
             }
         }
     }
 
-    suspend fun recordRun(outcome: OrbitRunOutcome, detail: String) {
-        dataStore.edit {
-            it[LAST_RUN_AT] = System.currentTimeMillis()
-            it[LAST_RUN_OUTCOME] = outcome.name
-            it[LAST_RUN_DETAIL] = detail.take(MAX_DETAIL_LENGTH)
+    suspend fun recordRun(outcome: OrbitRunOutcome, detail: String, orbitId: String? = null) {
+        editDaily(orbitId) {
+            it.put("lastAt", System.currentTimeMillis())
+            it.put("outcome", outcome.name)
+            it.put("detail", detail.take(MAX_DETAIL_LENGTH))
         }
     }
 
