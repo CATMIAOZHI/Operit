@@ -3029,6 +3029,13 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
+    suspend fun appendOrbitDeliveryBatch(ids: List<String>): List<com.ai.assistance.operit.data.model.OrbitDeliveryEntity> {
+        val first = ids.firstOrNull()?.let { database.orbitTaskDao().delivery(it) } ?: return emptyList()
+        return chatMutex(first.chatId).withLock {
+            database.orbitTaskDao().appendDeliveryBatch(ids, System.currentTimeMillis(), database.chatDao(), database.messageDao())
+        }
+    }
+
     suspend fun setMessageFavorite(chatId: String, timestamp: Long, isFavorite: Boolean) {
         chatMutex(chatId).withLock {
             try {

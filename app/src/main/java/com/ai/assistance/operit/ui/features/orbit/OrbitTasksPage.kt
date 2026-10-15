@@ -26,11 +26,11 @@ import java.util.Date
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
+internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: String? = null) {
     val context = LocalContext.current
     val repository = remember(context) { OrbitTaskRepository(context) }
     val scope = rememberCoroutineScope()
-    var selected by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
+    var selected by rememberSaveable(orbitId) { mutableStateOf(initialTaskId) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
     var errorDetail by remember { mutableStateOf<String?>(null) }
@@ -55,7 +55,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
             finally { busy = false }
         }
     }
-    fun back() { if (selected != null) selected = null else onBack() }
+    fun back() { if (selected != null && initialTaskId == null) selected = null else onBack() }
     BackHandler { back() }
     val detail = tasks?.firstOrNull { it.id == selected }
     val listState = rememberLazyListState()
@@ -112,8 +112,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
                             Text(taskState(task), color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall)
                             if (task.state == "ACTIVE") Text(
-                                stringResource(R.string.orbit_task_next, DateFormat.getDateTimeInstance(
-                                    DateFormat.SHORT, DateFormat.SHORT).format(Date(task.nextRunAt))),
+                                taskSchedule(task, tasks.orEmpty()),
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -127,10 +126,12 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
                             Text(detail.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) })
                             if (detail.source.isNotBlank()) Text(detail.source,
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(stringResource(if (detail.notifyPolicy == "ALWAYS")
-                                R.string.orbit_task_report_always else R.string.orbit_task_report_changes))
-                            if (detail.state == "ACTIVE") Text(stringResource(R.string.orbit_task_next,
-                                DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(detail.nextRunAt))))
+                            Text(stringResource(when (detail.notifyPolicy) {
+                                "ALWAYS" -> R.string.orbit_task_report_always
+                                "DIGEST" -> R.string.orbit_report_digest
+                                else -> R.string.orbit_task_report_changes
+                            }))
+                            if (detail.state == "ACTIVE") Text(taskSchedule(detail, tasks.orEmpty()))
                         }
                     }
                 }
@@ -229,7 +230,14 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun taskState(task: OrbitTaskEntity): String = stringResource(when (task.state) {
+private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>): String =
+    if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
+        tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId)
+    else stringResource(R.string.orbit_task_next, DateFormat.getDateTimeInstance(
+        DateFormat.SHORT, DateFormat.SHORT).format(Date(task.nextRunAt)))
+
+@Composable
+internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (task.state) {
     "ACTIVE" -> R.string.orbit_task_active
     "PAUSED" -> R.string.orbit_task_paused
     "WAITING_USER" -> R.string.orbit_task_waiting_user

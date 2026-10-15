@@ -15,12 +15,16 @@ internal object OrbitTaskTools {
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run"),
             ToolParameterSchema("kind", description = "URL_CHANGE（默认）：网页监控；ASSIST：读取网页、委派和保存文本成果", required = false),
+            ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认）；INTERVAL 周期执行（网页监控默认）；EVENT 指定任务成功后执行", required = false),
+            ToolParameterSchema("goal_id", description = "可选，orbit_goal 返回的当前 Orbit 目标编号", required = false),
+            ToolParameterSchema("trigger_task_id", description = "EVENT 必填：成功后触发本任务的同 Orbit 任务编号", required = false),
+            ToolParameterSchema("source_artifact_version_id", description = "可选，继续修改的成果版本编号，由 orbit_artifact 获取", required = false),
             ToolParameterSchema("task_id", description = "list 返回的任务编号；detail/update/pause/resume/cancel/run 必填", required = false),
             ToolParameterSchema("title", description = "创建时任务名称，最多80字符", required = false),
             ToolParameterSchema("instruction", description = "创建时用户希望关注的变化及汇报要求，最多4000字符", required = false),
             ToolParameterSchema("url", description = "创建时需要检查的 http(s) 网页，不带账号密码；仅执行 GET", required = false),
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
-            ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报", required = false),
+            ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
         ),
         details = "只有用户要求持续检查、跟踪或提醒时创建。手机关机/强停/断网时不能承诺准点。" +
             "ASSIST 可读取网页、委派子任务及保存自己的文本成果；不支持后台发送邮件、购买或提交表单。" +
@@ -38,7 +42,9 @@ internal object OrbitTaskTools {
                 arguments["title"] ?: error("Missing title"), arguments["instruction"] ?: error("Missing instruction"),
                 arguments["url"].orEmpty(), arguments["interval_minutes"]?.toInt() ?: 60,
                 arguments["notify_policy"] ?: "CHANGES",
-                runtime?.callId ?: java.util.UUID.randomUUID().toString(), arguments["kind"] ?: "URL_CHANGE"))
+                runtime?.callId ?: java.util.UUID.randomUUID().toString(), arguments["kind"] ?: "URL_CHANGE",
+                arguments["schedule_mode"] ?: if (arguments["kind"] == "ASSIST") "ONCE" else "INTERVAL",
+                arguments["goal_id"].orEmpty(), arguments["trigger_task_id"].orEmpty(), arguments["source_artifact_version_id"].orEmpty()))
             "list" -> JSONArray(repository.dao.tasks(orbit.id).filter { it.kind != "ONCE" }.map(::json))
             else -> {
                 val id = arguments["task_id"] ?: error("Missing task_id")
@@ -70,6 +76,7 @@ internal object OrbitTaskTools {
 
     private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
         .put("kind", task.kind)
+        .put("schedule_mode", task.scheduleMode).put("goal_id", task.goalId).put("trigger_task_id", task.triggerTaskId)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
         .put("nextRunAt", task.nextRunAt).put("lastObservation", task.lastObservation)

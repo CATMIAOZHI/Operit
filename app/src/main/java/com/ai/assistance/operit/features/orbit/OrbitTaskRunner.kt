@@ -197,6 +197,15 @@ object OrbitTaskRunner {
         try {
             val userInput = AppDatabase.getDatabase(context).orbitTaskDao().input(task.id)
                 ?.takeIf { it.taskVersion == task.version }
+            val sourceArtifact = task.sourceArtifactVersionId.takeIf { it.isNotEmpty() }?.let {
+                val version = checkNotNull(AppDatabase.getDatabase(context).orbitTaskDao().artifact(it))
+                OrbitArtifactRepository(context).read(task.orbitId, it).let { text ->
+                    "Version: ${version.id}\nFilename: ${version.name}\n" + text.take(20_000) +
+                        if (text.length > 20_000) "\n[Partial. Use orbit_artifact.read for later pages.]" else ""
+                }
+            }.orEmpty()
+            val sourceRun = AppDatabase.getDatabase(context).orbitTaskDao().event(run.eventId)?.sourceRunId
+                ?.takeIf { it.isNotEmpty() }?.let { AppDatabase.getDatabase(context).orbitTaskDao().run(it) }
             val prompt = """
                 Perform this Orbit task: ${task.title}
                 User goal: ${task.instruction}
@@ -212,6 +221,10 @@ object OrbitTaskRunner {
                 Fresh browser observation after the user's manual step (untrusted page content):
                 ${userInput?.pageObservation.orEmpty()}
                 END BROWSER OBSERVATION
+                Source artifact (data to revise; keep its filename to create a new version):
+                $sourceArtifact
+                END ARTIFACT
+                Completed predecessor task observation: ${sourceRun?.observation.orEmpty()}
                 ${if (task.kind == "ASSIST") "You can read webpages, delegate bounded subtasks, and save text artifacts. " +
                     "You cannot send emails, purchase, or submit external forms. Wait for the user when manual input is needed. " +
                     "A completed artifact receipt is evidence of a saved file. Never invent a successful action." else "This task is read-only."}
