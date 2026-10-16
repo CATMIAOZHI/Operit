@@ -9213,6 +9213,8 @@
     <string name="orbit_profile_soul_card">SOUL</string>
     <string name="orbit_profile_memory_card">Memory</string>
     <string name="orbit_profile_card_caution">Handle with care</string>
+    <string name="orbit_profile_user_card">USER</string>
+    <string name="orbit_user_note">About this file: this is what Orbit knows about you: your name, what to call you, your timezone, lasting preferences and the interaction rules you set. Orbit reads it at the start of each conversation and updates it when it learns something new. You can edit it at any time; if Orbit changed it while you were editing, saving fails; go back and open it again. This note is not part of the file.</string>
     <string name="orbit_profile_edit_identity">Edit</string>
     <string name="orbit_avatar_use_pet">Use a pet</string>
     <string name="orbit_avatar_from_photos">Choose a photo</string>

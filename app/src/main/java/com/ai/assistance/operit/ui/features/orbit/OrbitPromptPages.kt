@@ -78,6 +78,7 @@ internal fun OrbitFilePage(
     save: suspend (String) -> Unit,
     onBack: () -> Unit,
     actions: List<OrbitFileAction> = emptyList(),
+    maxChars: Int = OrbitPromptFiles.MAX_CHARS,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -188,7 +189,7 @@ internal fun OrbitFilePage(
             content == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             editing -> OutlinedTextField(
                 value = draft,
-                onValueChange = { draft = it.take(OrbitPromptFiles.MAX_CHARS) },
+                onValueChange = { draft = it.take(maxChars) },
                 textStyle = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxSize().imePadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
             )
@@ -255,6 +256,31 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
     )
 }
 
+/**
+ * Orbit's own user.md. User edits go through [UserProfileDocumentRepository.saveUserEdit], the
+ * same reviewed path as the memory settings, and are refused if Orbit changed the file meanwhile.
+ */
+@Composable
+internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
+    val context = LocalContext.current
+    var loaded by remember(orbit.id) { mutableStateOf<String?>(null) }
+    suspend fun repository(): UserProfileDocumentRepository {
+        val spaceId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
+        return UserProfileDocumentRepository.forMemorySpace(context, spaceId)
+    }
+    OrbitFilePage(
+        title = UserProfileDocumentRepository.USER_FILE_NAME,
+        note = stringResource(R.string.orbit_user_note),
+        load = { repository().load().also { loaded = it } },
+        save = { body ->
+            val expected = checkNotNull(loaded)
+            if (body != expected) repository().saveUserEdit(body, expected)
+        },
+        onBack = onBack,
+        maxChars = UserProfileDocumentRepository.MAX_CONTENT_CHARS,
+    )
+}
+
 @Composable
 internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit, onOpenHistory: () -> Unit) {
     val context = LocalContext.current
@@ -293,6 +319,7 @@ internal fun OrbitPromptLayersPage(
     onOpenPrompt: () -> Unit,
     onOpenSoul: () -> Unit,
     onOpenIdentity: () -> Unit,
+    onOpenUser: () -> Unit,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -371,7 +398,7 @@ internal fun OrbitPromptLayersPage(
                         LayerRow(4, stringResource(R.string.orbit_layer_user), "user.md",
                             stringResource(R.string.orbit_layer_user_desc), size(current.userBytes),
                             layers[OrbitPromptFiles.Layer.USER] == true,
-                            { toggle(OrbitPromptFiles.Layer.USER, it) }, null)
+                            { toggle(OrbitPromptFiles.Layer.USER, it) }, onOpenUser)
                         HorizontalDivider(Modifier.padding(start = 52.dp))
                         LayerRow(5, stringResource(R.string.orbit_layer_runtime), null,
                             stringResource(R.string.orbit_layer_runtime_desc), null, null, null, null)
