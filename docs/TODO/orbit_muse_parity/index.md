@@ -31,7 +31,7 @@ status: in-progress
 | 技能按需加载 | `orbit_skills` 查目录，再加载正文 |
 | 沉淀新技能 | `memory_review` 工具包的 `manage`（action=skill_create） |
 | 提醒、每日、每周、每月、每年、间隔、接力任务 | `orbit_task`（ONCE / DAILY / WEEKLY / MONTHLY / YEARLY / INTERVAL / EVENT）[DONE 5414eec65] |
-| 任务执行时限 | `orbit_task` 的 `timeout_minutes`（1–1440 分钟，默认 5，和 Muse 一样最多 24 小时；8 分钟以内走普通后台，更长的走单独的前台队列并显示通知，提醒不会被长任务耽误）[DONE edaf27ee7] |
+| 任务执行时限 | `orbit_task` 的 `timeout_minutes`（1–1440 分钟，默认 5，和 Muse 一样最多 24 小时；8 分钟以内走普通后台，更长的走单独的前台队列并显示通知，提醒不会被长任务耽误）[DONE edaf27ee7, ca6626aaf] |
 | 网页变化监测 | `orbit_task` 的 `kind=URL_CHANGE` |
 | 汇报方式 | `notify_policy`：有变化才说 / 每次都说 / 每日汇总 |
 | 运行记录、暂停、取消、继续 | `orbit_task` 的 detail / pause / resume / cancel |
