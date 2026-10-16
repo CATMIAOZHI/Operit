@@ -11,8 +11,36 @@ import kotlinx.coroutines.flow.Flow
 
 data class OrbitSourceMessage(val sender: String, val content: String)
 
+/** One run of an Orbit task, with its task title, for the profile's activity list. */
+data class OrbitActivityRow(
+    val id: String,
+    val taskId: String,
+    val title: String,
+    val kind: String,
+    val state: String,
+    val observation: String,
+    val error: String,
+    val startedAt: Long,
+    val finishedAt: Long,
+)
+
+/** One recorded outward action of an Orbit task, for the profile's approval list. */
+data class OrbitActionRow(
+    val id: String,
+    val taskId: String,
+    val taskTitle: String,
+    val toolName: String,
+    val state: String,
+    val summary: String,
+    val updatedAt: Long,
+)
+
 @Dao
 interface OrbitTaskDao {
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT 200")
+    fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
+    @Query("SELECT a.id AS id, a.taskId AS taskId, t.title AS taskTitle, a.toolName AS toolName, a.state AS state, a.summary AS summary, a.updatedAt AS updatedAt FROM orbit_actions a INNER JOIN orbit_tasks t ON t.id = a.taskId WHERE t.orbitId = :orbitId ORDER BY a.updatedAt DESC LIMIT 200")
+    fun observeOrbitActions(orbitId: String): Flow<List<OrbitActionRow>>
     @Query("SELECT * FROM orbit_notifications WHERE orbitId=:orbitId")
     suspend fun notificationPolicy(orbitId: String): OrbitNotificationEntity?
     @Insert(onConflict = OnConflictStrategy.REPLACE)

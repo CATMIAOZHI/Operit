@@ -7,6 +7,18 @@ import android.text.format.DateUtils
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.EnterTransition
+import androidx.compose.animation.ExitTransition
+import androidx.compose.animation.core.CubicBezierEasing
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -25,8 +37,10 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -58,6 +72,7 @@ import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -67,11 +82,14 @@ import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -93,6 +111,7 @@ import com.ai.assistance.operit.data.preferences.OrbitSettings
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
+import com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
 import com.ai.assistance.operit.ui.features.settings.components.SettingsIconBadge
 import com.ai.assistance.operit.ui.features.settings.components.SettingsInfoBanner
@@ -175,7 +194,6 @@ fun OrbitScreen(
         orbit = orbit,
         settings = loadedSettings,
         hasBackgroundImage = hasBackgroundImage,
-        onOpenMemory = onOpenMemory,
         chatContent = chatContent,
     )
 }
@@ -185,14 +203,13 @@ private fun OrbitChatPage(
     orbit: OrbitProfile,
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
-    onOpenMemory: () -> Unit,
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
-    var showMemory by remember(orbit.id) { mutableStateOf(false) }
-    var showTasks by remember(orbit.id) { mutableStateOf(false) }
-    var showSoul by remember(orbit.id) { mutableStateOf(false) }
+    var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
+    var subPage by rememberSaveable(orbit.id) { mutableStateOf<OrbitSubPage?>(null) }
+    var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null
@@ -220,36 +237,96 @@ private fun OrbitChatPage(
         }
     }
 
-    if (showSoul) {
-        OrbitSoulPage(orbit.id, onBack = { showSoul = false })
-        return
-    }
-    if (showTasks) {
-        OrbitWorkspacePage(orbit.id, onBack = { showTasks = false })
-        return
-    }
-    if (showMemory) {
-        val id = memoryResult?.getOrNull()
-        if (id != null) {
-            com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage(
-                stringResource(R.string.orbit_memory_row), id, { showMemory = false }
-            ) { com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen(fixedMemorySpaceId = id) }
-        } else {
-            Column(Modifier.fillMaxSize().padding(24.dp),
-                verticalArrangement = Arrangement.Center,
-                horizontalAlignment = Alignment.CenterHorizontally) {
-                if (memoryResult == null) CircularProgressIndicator()
-                else {
-                    Text(stringResource(R.string.orbit_memory_unavailable))
-                    TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
-                }
-                TextButton(onClick = { showMemory = false }) { Text(stringResource(R.string.back)) }
+    // The chat always stays underneath, so closing the profile never reloads it. The profile
+    // slides up over it and the pages opened from the profile slide in from the right, like iOS.
+    Box(Modifier.fillMaxSize()) {
+        CompositionLocalProvider(LocalOrbitChatLook provides true) {
+            chatContent(orbit.chatId) {
+                OrbitHeader(orbit = orbit, onOpenProfile = { showProfile = true })
             }
         }
-        return
-    }
-    chatContent(orbit.chatId) {
-        OrbitHeader(orbit = orbit, onOpenSettings = { showSettings = true })
+        val profileDim by animateFloatAsState(
+            targetValue = if (showProfile) 0.18f else 0f,
+            animationSpec = tween(OrbitMotion.PRESENT_MS, easing = OrbitMotion.Easing),
+            label = "orbitProfileDim",
+        )
+        if (profileDim > 0f) {
+            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = profileDim)))
+        }
+        AnimatedVisibility(
+            visible = showProfile,
+            enter = slideInVertically(tween(OrbitMotion.PRESENT_MS, easing = OrbitMotion.Easing)) { it },
+            exit = slideOutVertically(tween(OrbitMotion.DISMISS_MS, easing = OrbitMotion.Easing)) { it },
+        ) {
+            Box(Modifier.fillMaxSize()) {
+                // Pushed pages move the profile a little to the left underneath them.
+                val pushOffset by animateFloatAsState(
+                    targetValue = if (subPage != null) -0.3f else 0f,
+                    animationSpec = tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing),
+                    label = "orbitProfileParallax",
+                )
+                Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * pushOffset }) {
+                    OrbitProfilePage(
+                        orbit = orbit,
+                        visible = showProfile && subPage == null,
+                        onClose = { showProfile = false },
+                        onOpenSettings = { showSettings = true },
+                        onOpenTask = {
+                            openTaskId = it
+                            subPage = OrbitSubPage.TASK
+                        },
+                        onOpenSoul = { subPage = OrbitSubPage.SOUL },
+                        onOpenMemory = { subPage = OrbitSubPage.MEMORY },
+                    )
+                }
+                AnimatedContent(
+                    targetState = subPage,
+                    transitionSpec = {
+                        val forward = targetState != null && initialState == null
+                        if (forward) {
+                            slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
+                                ExitTransition.None
+                        } else {
+                            EnterTransition.None togetherWith
+                                slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it }
+                        }
+                    },
+                    label = "orbitSubPage",
+                ) { page ->
+                    val back = { subPage = null }
+                    when (page) {
+                        null -> Box(Modifier.fillMaxSize())
+                        OrbitSubPage.SOUL -> OrbitSoulPage(orbit.id, onBack = back)
+                        OrbitSubPage.WORKSPACE -> OrbitWorkspacePage(orbit.id, onBack = back)
+                        OrbitSubPage.TASK ->
+                            openTaskId?.let { taskId ->
+                                OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
+                            }
+                        OrbitSubPage.MEMORY -> {
+                            val id = memoryResult?.getOrNull()
+                            if (id != null) {
+                                com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage(
+                                    stringResource(R.string.orbit_memory_row), id, back
+                                ) { com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen(fixedMemorySpaceId = id) }
+                            } else {
+                                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                                    Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
+                                        verticalArrangement = Arrangement.Center,
+                                        horizontalAlignment = Alignment.CenterHorizontally) {
+                                        if (memoryResult == null) CircularProgressIndicator()
+                                        else {
+                                            Text(stringResource(R.string.orbit_memory_unavailable))
+                                            TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                                        }
+                                        TextButton(onClick = back) { Text(stringResource(R.string.back)) }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     if (showSettings) {
@@ -258,15 +335,10 @@ private fun OrbitChatPage(
             settings = settings,
             hasBackgroundImage = hasBackgroundImage,
             onDismiss = { showSettings = false },
-            onOpenMemory = {
-                showSettings = false
-                showMemory = true
-            },
             onOpenTasks = {
                 showSettings = false
-                showTasks = true
+                subPage = OrbitSubPage.WORKSPACE
             },
-            onOpenSoul = { showSettings = false; showSoul = true },
             onPause = {
                 showSettings = false
             },
@@ -274,92 +346,77 @@ private fun OrbitChatPage(
     }
 }
 
-/** Muse-style top: Orbit's look in the middle with its name below, and a settings button. */
-@Composable
-private fun OrbitHeader(orbit: OrbitProfile, onOpenSettings: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val preferences = remember { OrbitPreferences.getInstance(context) }
-    var showAvatarMenu by remember { mutableStateOf(false) }
-    val latestOrbitId by rememberUpdatedState(orbit.id)
-    val pickImage =
-        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri == null) return@rememberLauncherForActivityResult
-            val orbitId = latestOrbitId
-            scope.launch {
-                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar")
-                if (saved == null) {
-                    toast(context, R.string.orbit_avatar_save_failed)
-                } else {
-                    preferences.setAvatar(orbitId, saved.toString())
-                }
-            }
-        }
+private enum class OrbitSubPage { TASK, SOUL, MEMORY, WORKSPACE }
 
-    Box(modifier = Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 4.dp)) {
-        Column(
-            modifier = Modifier.align(Alignment.TopCenter),
-            horizontalAlignment = Alignment.CenterHorizontally,
-        ) {
-            Box {
-                OrbitAvatar(
-                    orbit = orbit,
-                    size = 84,
-                    modifier = Modifier.clickable { showAvatarMenu = true },
-                )
-                DropdownMenu(expanded = showAvatarMenu, onDismissRequest = { showAvatarMenu = false }) {
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.orbit_change_avatar)) },
-                        leadingIcon = { Icon(lucide("image"), contentDescription = null) },
-                        onClick = {
-                            showAvatarMenu = false
-                            pickImage.launch("image/*")
-                        },
+/** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
+internal object OrbitMotion {
+    val Easing = CubicBezierEasing(0.32f, 0.72f, 0f, 1f)
+    const val PRESENT_MS = 500
+    const val DISMISS_MS = 380
+    const val PUSH_MS = 420
+}
+
+/**
+ * Muse-style top over the chat: a round menu button on the left, and Orbit's look in the middle
+ * with its name over its lower edge. The page color fades out below them, so messages that
+ * scroll up slide softly under the header instead of running into it.
+ */
+@Composable
+private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
+    val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
+    val pageColor = MaterialTheme.colorScheme.background
+    Box(
+        modifier =
+            Modifier.fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to pageColor,
+                        0.55f to pageColor.copy(alpha = 0.92f),
+                        1f to pageColor.copy(alpha = 0f),
                     )
-                    if (orbit.avatarUri != null) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.orbit_reset_avatar)) },
-                            leadingIcon = { Icon(lucide("rotate-ccw"), contentDescription = null) },
-                            onClick = {
-                                showAvatarMenu = false
-                                scope.launch { preferences.setAvatar(orbit.id, null) }
-                            },
-                        )
-                    }
-                }
-            }
-            Spacer(modifier = Modifier.height(6.dp))
-            // Only Orbit renames itself, through its tool; a tap explains that.
+                )
+                .statusBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 18.dp)
+    ) {
+        OrbitCircleButton(
+            icon = orbitIcon("equal"),
+            contentDescription = stringResource(R.string.menu),
+            onClick = openDrawer,
+            modifier = Modifier.align(Alignment.TopStart),
+        )
+        Box(modifier = Modifier.align(Alignment.TopCenter), contentAlignment = Alignment.TopCenter) {
+            OrbitAvatar(
+                orbit = orbit,
+                size = 76,
+                modifier = Modifier.clickable(onClickLabel = stringResource(R.string.orbit_profile_open), onClick = onOpenProfile),
+            )
+            // The name pill sits over the bottom edge of the picture, like Muse.
             Surface(
                 shape = RoundedCornerShape(50),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier =
-                    Modifier.widthIn(max = 240.dp)
+                    Modifier.padding(top = 62.dp)
+                        .widthIn(max = 240.dp)
                         .clip(RoundedCornerShape(50))
-                        .clickable { toast(context, R.string.orbit_name_hint) },
+                        .clickable(onClick = onOpenProfile),
             ) {
                 Text(
                     text = orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
-                    style = MaterialTheme.typography.titleMedium,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.padding(horizontal = 18.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
                 )
             }
-        }
-        IconButton(onClick = onOpenSettings, modifier = Modifier.align(Alignment.TopEnd).padding(end = 4.dp)) {
-            Icon(
-                imageVector = lucide("settings-2"),
-                contentDescription = stringResource(R.string.orbit_settings),
-            )
         }
     }
 }
 
 /** Orbit's own picture, or a role card's avatar in the picker. */
 @Composable
-private fun OrbitAvatar(orbit: OrbitProfile?, size: Int, modifier: Modifier = Modifier, card: CharacterCard? = null) {
+internal fun OrbitAvatar(orbit: OrbitProfile?, size: Int, modifier: Modifier = Modifier, card: CharacterCard? = null) {
     val context = LocalContext.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
@@ -408,9 +465,7 @@ private fun OrbitSettingsSheet(
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
     onDismiss: () -> Unit,
-    onOpenMemory: () -> Unit,
     onOpenTasks: () -> Unit,
-    onOpenSoul: () -> Unit,
     onPause: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -574,22 +629,6 @@ private fun OrbitSettingsSheet(
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
-                    title = stringResource(R.string.orbit_soul_title),
-                    subtitle = stringResource(R.string.orbit_soul_subtitle),
-                    icon = lucide("notebook-pen"),
-                    searchable = false,
-                    onClick = onOpenSoul,
-                )
-                SettingsRowDivider()
-                SettingsNavRow(
-                    title = stringResource(R.string.orbit_memory_row),
-                    subtitle = stringResource(R.string.orbit_memory_row_desc),
-                    icon = lucide("brain"),
-                    searchable = false,
-                    onClick = onOpenMemory,
-                )
-                SettingsRowDivider()
-                SettingsNavRow(
                     title = stringResource(R.string.orbit_pause),
                     subtitle = stringResource(R.string.orbit_pause_desc),
                     icon = lucide("pause"),
@@ -644,6 +683,7 @@ private fun OrbitHome(
     var pendingDelete by remember { mutableStateOf<OrbitProfile?>(null) }
     var starting by remember { mutableStateOf(false) }
     var removingId by remember { mutableStateOf<String?>(null) }
+    val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
 
     fun start(action: suspend () -> Unit) {
         if (starting) return
@@ -661,10 +701,16 @@ private fun OrbitHome(
     Column(
         modifier =
             Modifier.fillMaxSize()
+                .statusBarsPadding()
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(20.dp),
     ) {
+        OrbitCircleButton(
+            icon = orbitIcon("equal"),
+            contentDescription = stringResource(R.string.menu),
+            onClick = openDrawer,
+        )
         OrbitHeroCard(cardColor = cardColor)
 
         if (settings.orbits.isNotEmpty()) {

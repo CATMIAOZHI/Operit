@@ -63,6 +63,9 @@ import com.ai.assistance.operit.util.AppLogger
 // 它允许子组件（如AIChatScreen）向上提供它们的action Composable
 val LocalTopBarActions = compositionLocalOf<(@Composable (RowScope.() -> Unit)) -> Unit> { {} }
 
+/** Opens the side drawer (phone) or toggles the sidebar (tablet), for pages without a top bar. */
+val LocalOpenAppDrawer = compositionLocalOf<() -> Unit> { {} }
+
 class TopBarTitleContent(val content: @Composable () -> Unit)
 
 val LocalTopBarTitleContent = compositionLocalOf<(TopBarTitleContent?) -> Unit> { {} }
