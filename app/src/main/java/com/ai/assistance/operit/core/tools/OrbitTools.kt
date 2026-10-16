@@ -101,7 +101,8 @@ internal object OrbitTools {
 
     /**
      * The system prompt part that tells an Orbit who it is in its own chat, or an empty string in
-     * any other chat. It changes only when Orbit renames itself, so the prompt cache stays warm.
+     * any other chat. It includes PROMPT.md and IDENTITY.md from the Orbit's folder, so it changes
+     * only when Orbit renames itself or one of those files or layer switches changes.
      */
     suspend fun systemPromptBlock(context: Context, chatId: String?, useEnglish: Boolean): String {
         val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return ""
@@ -126,12 +127,19 @@ internal object OrbitTools {
                     "审核下使用现有命令或文件工具，仅读取用户要求的内容，不要自动导入自己的记忆。"
             }
         val controls = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.additionalPrompts(context, chatId)
-        val proactive = if (useEnglish)
-            "Proactively advance the user's ongoing goals using the existing Operit tools and skills under FAST review. " +
-                "Use orbit_task to continue work later; report useful results, and ask when genuinely blocked."
-            else "使用 Operit 已有工具和技能，在自动审核快速下主动推进用户交代的事情。" +
-                "需要以后继续做时使用 orbit_task；有价值的结果再汇报，真正需要用户时再询问。"
-        return "<orbit>\n$body\n$proactive\n${controls.joinToString("\n")}\n</orbit>"
+        val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
+        val layers = files.layers(context, orbit.id)
+        // File text is data inside our tags, so escape it the way memory notes are escaped.
+        fun escape(text: String) = text.trim().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        val proactive = if (layers[com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.BASE] == true) {
+            "\n<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
+        } else ""
+        val identity = if (layers[com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.IDENTITY] == true) {
+            "\n<orbit_identity source=\"IDENTITY.md\">\n" +
+                escape(files.identity(context, orbit.id)) +
+                "\n</orbit_identity>"
+        } else ""
+        return "<orbit>\n$body$proactive$identity\n${controls.joinToString("\n")}\n</orbit>"
     }
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {
@@ -155,6 +163,7 @@ internal object OrbitTools {
                         context.getString(R.string.orbit_tool_not_orbit_chat)
                     )
             preferences.setName(orbit.id, name)
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitPromptFiles.syncIdentityName(context, orbit.id, name) }
             // Keep the chat list and notifications in step with the new name.
             runCatching {
                 com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)

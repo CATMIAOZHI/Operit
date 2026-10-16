@@ -93,7 +93,8 @@ class OrbitLearningBoundary(
             val preferences = OrbitPreferences.getInstance(context)
             val orbit = preferences.current().orbits.single { it.id == orbitId }
             val generation = orbit.memorySpaceId?.let { guard(context, it).generation } ?: 0
-            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1"
+            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:" +
+                OrbitPromptFiles.revision(context, orbitId)
         }
 
         suspend fun <T> explicitEdit(context: Context, spaceId: String, action: suspend () -> T): T {

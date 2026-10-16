@@ -208,7 +208,12 @@ private fun OrbitChatPage(
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
     var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
-    var subPage by rememberSaveable(orbit.id) { mutableStateOf<OrbitSubPage?>(null) }
+    // Pages pushed over the profile, as names so the stack survives recreation.
+    var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
+    val stack = remember(stackNames) { stackNames.split(',').filter { it.isNotEmpty() }.map(OrbitSubPage::valueOf) }
+    val subPage = stack.lastOrNull()
+    fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
+    fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
@@ -273,16 +278,17 @@ private fun OrbitChatPage(
                         onOpenSettings = { showSettings = true },
                         onOpenTask = {
                             openTaskId = it
-                            subPage = OrbitSubPage.TASK
+                            push(OrbitSubPage.TASK)
                         },
-                        onOpenSoul = { subPage = OrbitSubPage.SOUL },
-                        onOpenMemory = { subPage = OrbitSubPage.MEMORY },
+                        onOpenSoul = { push(OrbitSubPage.SOUL) },
+                        onOpenMemory = { push(OrbitSubPage.MEMORY) },
+                        onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                     )
                 }
                 AnimatedContent(
-                    targetState = subPage,
+                    targetState = stack,
                     transitionSpec = {
-                        val forward = targetState != null && initialState == null
+                        val forward = targetState.size > initialState.size
                         if (forward) {
                             slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
                                 ExitTransition.None
@@ -292,11 +298,23 @@ private fun OrbitChatPage(
                         }
                     },
                     label = "orbitSubPage",
-                ) { page ->
-                    val back = { subPage = null }
+                ) { pages ->
+                    val page = pages.lastOrNull()
+                    val back = { pop() }
                     when (page) {
                         null -> Box(Modifier.fillMaxSize())
-                        OrbitSubPage.SOUL -> OrbitSoulPage(orbit.id, onBack = back)
+                        OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back,
+                            onOpenHistory = { push(OrbitSubPage.SOUL_HISTORY) })
+                        OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
+                        OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
+                        OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
+                        OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
+                            orbit = orbit,
+                            onBack = back,
+                            onOpenPrompt = { push(OrbitSubPage.PROMPT) },
+                            onOpenSoul = { push(OrbitSubPage.SOUL) },
+                            onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                        )
                         OrbitSubPage.WORKSPACE -> OrbitWorkspacePage(orbit.id, onBack = back)
                         OrbitSubPage.TASK ->
                             openTaskId?.let { taskId ->
@@ -337,7 +355,11 @@ private fun OrbitChatPage(
             onDismiss = { showSettings = false },
             onOpenTasks = {
                 showSettings = false
-                subPage = OrbitSubPage.WORKSPACE
+                push(OrbitSubPage.WORKSPACE)
+            },
+            onOpenPrompts = {
+                showSettings = false
+                push(OrbitSubPage.PROMPTS)
             },
             onPause = {
                 showSettings = false
@@ -346,7 +368,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, MEMORY, WORKSPACE }
+private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, WORKSPACE, IDENTITY, PROMPTS, PROMPT }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -420,7 +442,9 @@ internal fun OrbitAvatar(orbit: OrbitProfile?, size: Int, modifier: Modifier = M
     val context = LocalContext.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
+    // A built-in role's picture ships with the app, so an Orbit without its own picture uses it.
     val customUri = orbit?.avatarUri
+        ?: orbit?.sourceRoleCardId?.let { UserPreferencesManager.getBuiltInCharacterAvatarUri(it) }
     val avatarUri by
         produceState<String?>(initialValue = customUri, roleCardId, customUri) {
             value =
@@ -466,6 +490,7 @@ private fun OrbitSettingsSheet(
     hasBackgroundImage: Boolean,
     onDismiss: () -> Unit,
     onOpenTasks: () -> Unit,
+    onOpenPrompts: () -> Unit,
     onPause: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -562,6 +587,22 @@ private fun OrbitSettingsSheet(
                     text = stringResource(R.string.orbit_proactive_banner),
                     backgroundColor = cardColor,
                 )
+            }
+
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_prompts),
+                    icon = lucide("file-text"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_prompt_layers),
+                        subtitle = stringResource(R.string.orbit_prompt_layers_desc),
+                        icon = lucide("layers"),
+                        searchable = false,
+                        onClick = onOpenPrompts,
+                    )
+                }
             }
 
             Column {
