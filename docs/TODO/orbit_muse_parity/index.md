@@ -61,6 +61,13 @@ status: in-progress
 - [ ] 主动消息偏好文件（Muse 的 `PROACTIVE_PREFERENCES.md`；现在记在 memory.md）
 - [ ] 用户时区文件（Muse 的 `timezones.yaml`；现在记在 user.md）
 - [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
+- [ ] 更多定时方式：每周、每月、每年（Muse cron 的 weekly / monthly / yearly；现在只有一次、每日、间隔、接力）
+- [ ] 任务执行时限：每个定时任务单独设超时（Muse 的 `timeout_secs`）
+- [ ] 每日流水日志：观察和运行记录按天追加（Muse 的 `memory/YYYY-MM-DD.md`），和长期记忆分开
+- [ ] 经验本：Orbit 自己攒的做事约定和教训（Muse 的 `AGENTS.md` 的 Conventions / Lessons）
+- [ ] 主动消息逐条决定：后台准备的每条消息记录「发 / 不发」和理由（Muse 的 `proactivity.select`）
+- [ ] 待审批列表：Orbit 能查看还在等用户批准的操作（Muse 的 `permissions.list_pending`）
+- [ ] 回收站：Orbit 删除的文件先进回收站，30 天内可恢复（Muse 的 `trash.*`）
 
 ## 还没做，可以做
 
@@ -78,6 +85,9 @@ status: in-progress
 - [ ] 系统提示词副本：用户要时直接发文件
 - [ ] 分享到 Operit：从别的 App 分享内容给 Orbit
 - [ ] Tailscale 等内网设备连接
+- [ ] 「忘掉」流程：先找出一条信息在记忆、聊天、目标、任务里的所有副本，给用户确认后一起删（Muse 的 `forget.plan` / `forget.confirm`）
+- [ ] 起名卡片：新 Orbit 第一次聊天时用卡片让用户选名字和气质（Muse 的 `onboarding.*`）
+- [ ] 专项技能：购物、订机票、订酒店、出行交通、约时间、替用户发消息、管理邮件（Muse 预装技能，可改写成 Orbit 技能）
 
 ## 做不了（及原因）
 
@@ -92,16 +102,35 @@ status: in-progress
 | HomeKit、健康数据、Home Link、Mac 配对 | 依赖苹果生态或 Muse 自家硬件 |
 | 锁价、预订占位（holds） | 依赖 Muse 和商家的合作接口 |
 
-## 还缺的参考文档
+## 参考资料
 
-补齐这些，「部分有」和「可以做」的项目才能照着实现：
+两个参考包都由用户从 Muse 导出：
 
-1. 工具目录和参数：cron、hooks、subagent、chat、device、credentials、artifact、widget、feed、idea、process、todo、workflow、tracking、user_goal 的真实函数名和参数
-2. 预装技能原文：`tts/SKILL.md`、shopping、booking、`forget`、`muse_db/references/schema.md`
-3. 运行时文件样例（脱敏）：AGENTS、SOUL、IDENTITY、USER、MEMORY、PROACTIVE_PREFERENCES、GOAL.md、ALIGNMENT_SYNTHESIS.md
-4. 记忆库结构：bank / index 目录、people 和 groups 的 INDEX.md 与人物页格式
-5. 一个 cron 的完整定义、运行记录样例、hook 脚本协议
-6. `docs/chat-connections/` 下除 WhatsApp 以外的渠道
-7. `docs/devices/` 里手机的 `device.describe` 命令族
-8. 案例全文：PR 审计心跳、邮件监测的任务说明、脚本和记录字段
-9. Feed 提示词原文和 taste summary 样例
+- `muse-orbit-reference.zip`：完整系统提示词 `system-prompt.md`、导读和 `docs/` 下 29 份子系统文档。
+- `muse-orbit-reference-supplement.zip`：工具参数、技能原文、运行时文件样例、记忆库和调度结构、实战案例。
+
+做某一项之前，先读对应资料：
+
+| 待办 | 补充包里的资料 | 要点 |
+| - | - | - |
+| Hook、更多定时方式、任务时限 | `tools/10`、`22-调度数据结构.md` | 时间触发和条件触发分开；hook 脚本每轮只能以一个 `silent` 或 `wake` 结束，新 hook 默认停用，试跑通过再启用 |
+| Tracking、目标简报 | `tools/11` | Tracking 是「替用户扛的事」，目标是「用户自己的目标」，两者分开；只有进行中和已完成两种状态 |
+| 主动消息偏好、主动消息逐条决定 | `tools/11`、`runtime-samples/20` | 偏好文件分「要说 / 别说 / 什么时间 / 怎么说」四块；默认不打扰 |
+| 侧聊、聊天渠道 | `tools/12`、`23-聊天渠道.md` | 侧聊是和用户的一对一聊天；定时结果回到创建它的那个聊天 |
+| 设备命令族 | `tools/12`、`24-设备命令.md`、`skills/device-data` | 先列设备、再查命令、再调用，命令表不写死；没授权的命令在调用时弹框让用户批准；离线读缓存必须告诉用户是缓存 |
+| 密码保险箱 | `tools/12`、`skills/00-凭证注入模式.md` | 录入卡片直接把值存进保险箱，助手只看到站点和字段名；脚本拿不到明文，只能向白名单主机发带凭证的请求 |
+| 富格式成果、动态 UI 卡片 | `tools/13` | 成果创建时就定好归属，之后不搬；改成果时传用户原话 |
+| Feed | `31-Feed提示词与unit结构.md` | Feed 只由一段文字提示词决定；每条内容必须写一句「为什么给你看」 |
+| Ideas、图片生成、回收站、「忘掉」流程、起名卡片 | `tools/13`、`skills/forget` | 「忘掉」先做只读规划，用户确认最新计划后才删 |
+| 人物和群组记忆、每日流水日志 | `21-记忆库结构.md` | 人物页只记用户亲口说的关系；按需读取，不整个塞进提示词 |
+| 经验本、对齐总结、用户资料格式 | `runtime-samples/20` | USER 的固定三项是名字、称呼、时区 |
+| 专项技能 | `skills/*`、`skills/muse_db/references` | 可改写成 Orbit 技能包 |
+| 定时任务写法 | `cases/30-实战案例全文.md` | 用水位文件去重，无新增就静默；对外发帖只由主代理统一发，子代理只起草 |
+
+## 还缺的参考资料
+
+下面这些在资料里被引用了，但两个包都没有。做到对应功能时再请用户补：
+
+- 技能附属文件：flight-booking 的 `flights.md`、`browser-booking.md`、`checkout.md`；hotel-booking 的 `hotels.md`；shopping 的 `browser-checkout.md`、`social-shopping-links.md`、`marketplace.md`；spoken-audio 的 `speech.md`；forget 的 `artifact-inventory.md`
+- 未打包的技能：`goals`、`custom-connector-setup`、`generate_podcast`、`trip-planning`、`marketplaces`、`wearables-comms`
+- 后台循环的提示词：夜间 Dreaming、对齐总结、人物关系整理、Ideas 生成、主动消息准备
