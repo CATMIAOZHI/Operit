@@ -1141,6 +1141,15 @@ fun getJsToolsDefinition(): String {
             },
             // 记忆管理
             Memory: {
+                // Native memory tools run on another thread and cannot see which chat called them.
+                // Pass the host-filled chat ID so an Orbit reads and writes its own memory space.
+                _withHostChat: (params) => {
+                    const root = typeof globalThis !== 'undefined' ? globalThis : this;
+                    const runtime = root && root.__operit_call_runtime_ref;
+                    const chatId = runtime && typeof runtime.getChatId === 'function' ? runtime.getChatId() : undefined;
+                    if (chatId !== undefined && chatId !== null && String(chatId).trim()) params.__operit_package_chat_id = String(chatId).trim();
+                    return params;
+                },
                 _normalizeCallerCardId: (callerCardId) => {
                     if (callerCardId === undefined || callerCardId === null) return undefined;
                     const normalized = String(callerCardId).trim();
@@ -1170,6 +1179,7 @@ fun getJsToolsDefinition(): String {
                     if (options.threshold !== undefined) params.threshold = options.threshold;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("query_memory", params);
                 },
                 // 通过标题获取记忆
@@ -1192,6 +1202,7 @@ fun getJsToolsDefinition(): String {
                     if (options.limit !== undefined) params.limit = options.limit;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("get_memory_by_title", params);
                 },
                 // 创建记忆
@@ -1215,6 +1226,7 @@ fun getJsToolsDefinition(): String {
                     if (options.tags) params.tags = options.tags;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("create_memory", params);
                 },
                 // 更新记忆
@@ -1234,6 +1246,7 @@ fun getJsToolsDefinition(): String {
                     if (options.tags) params.tags = options.tags;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("update_memory", params);
                 },
                 // 删除记忆
@@ -1245,6 +1258,7 @@ fun getJsToolsDefinition(): String {
                     const params = { title: options.title };
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("delete_memory", params);
                 },
                 // 批量移动记忆（按标题列表和/或来源文件夹筛选）
@@ -1260,6 +1274,7 @@ fun getJsToolsDefinition(): String {
                     if (options.sourceFolderPath !== undefined && options.sourceFolderPath !== null) params.source_folder_path = String(options.sourceFolderPath);
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("move_memory", params);
                 },
                 // 链接记忆
@@ -1274,6 +1289,7 @@ fun getJsToolsDefinition(): String {
                     if (options.description) params.description = options.description;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("link_memories", params);
                 },
                 // 查询记忆链接
@@ -1290,6 +1306,7 @@ fun getJsToolsDefinition(): String {
                     if (options.limit !== undefined) params.limit = options.limit;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("query_memory_links", params);
                 },
                 // 更新记忆链接（优先按 linkId）
@@ -1308,6 +1325,7 @@ fun getJsToolsDefinition(): String {
                     if (options.description !== undefined) params.description = options.description;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("update_memory_link", params);
                 },
                 // 删除记忆链接（优先按 linkId）
@@ -1323,6 +1341,7 @@ fun getJsToolsDefinition(): String {
                     if (options.linkType) params.link_type = options.linkType;
                     const normalizedCallerCardId = Tools.Memory._normalizeCallerCardId(options.callerCardId);
                     if (normalizedCallerCardId !== undefined) params.caller_card_id = normalizedCallerCardId;
+                    Tools.Memory._withHostChat(params);
                     return toolCall("delete_memory_link", params);
                 }
             },

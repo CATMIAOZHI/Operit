@@ -429,10 +429,24 @@ object ToolExecutionManager {
         if (value.isNullOrBlank()) {
             return
         }
-        if (params.any { it.name == name }) {
-            return
+        val existingIndex = params.indexOfFirst { it.name == name }
+        if (existingIndex >= 0) {
+            params[existingIndex] = ToolParameter(name, value)
+        } else {
+            params.add(ToolParameter(name, value))
         }
-        params.add(ToolParameter(name, value))
+    }
+
+    private fun stripReservedPackageContextParams(invocation: ToolInvocation): ToolInvocation {
+        val parameters = invocation.tool.parameters
+        if (parameters.none { it.name in reservedPackageContextParams }) {
+            return invocation
+        }
+        return invocation.copy(
+            tool = invocation.tool.copy(
+                parameters = parameters.filterNot { it.name in reservedPackageContextParams }
+            )
+        )
     }
 
     private fun injectPackageCallContext(
@@ -449,7 +463,7 @@ object ToolExecutionManager {
         addPackageContextParamIfMissing(updatedParams, PACKAGE_CHAT_ID_PARAM, hostContext.callerChatId)
         addPackageContextParamIfMissing(updatedParams, PACKAGE_CALLER_CARD_ID_PARAM, hostContext.callerCardId)
 
-        if (updatedParams.size == invocation.tool.parameters.size) {
+        if (updatedParams == invocation.tool.parameters) {
             return invocation
         }
 
@@ -903,7 +917,10 @@ object ToolExecutionManager {
                         tool = bindProxyContextParameters(repaired.tool, hostContext)
                     )
                 } else {
-                    repaired
+                    // Direct `package:tool` calls must never carry model-supplied host context:
+                    // package code trusts these names, so strip them before review and let
+                    // injectPackageCallContext add the real host values afterwards.
+                    stripReservedPackageContextParams(repaired)
                 }
             }
         // Exact-repeat detection must fingerprint the model's raw call, never the bound copy:

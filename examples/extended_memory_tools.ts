@@ -264,7 +264,7 @@ const ExtendedMemoryTools = (function () {
         if (params.occupation !== undefined) toolParams.occupation = params.occupation;
         if (params.ai_style !== undefined) toolParams.ai_style = params.ai_style;
 
-        const result = await toolCall({ name: "update_user_preferences", params: toolParams });
+        const result = await toolCall({ name: "update_user_preferences", params: { ...toolParams, __operit_package_chat_id: getChatId() || '' } });
         const success = result.length > 0;
         return { success, message: '用户偏好更新完成', data: result };
     }
@@ -328,8 +328,8 @@ exports.delete_memory_link = ExtendedMemoryTools.delete_memory_link;
 exports.update_user_preferences = ExtendedMemoryTools.update_user_preferences;
 exports.main = ExtendedMemoryTools.main;
 exports.query_memory = async (params: any) => complete(await toolCall({
-    name: "query_memory", params: {...params, caller_card_id: getCallerCardId()}
+    name: "query_memory", params: {...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || ''}
 }));
 exports.get_memory_by_title = async (params: any) => complete(await toolCall({
-    name: "get_memory_by_title", params: {...params, caller_card_id: getCallerCardId()}
+    name: "get_memory_by_title", params: {...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || ''}
 }));

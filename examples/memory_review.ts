@@ -59,7 +59,8 @@
 }
 */
 async function callMemoryNative(name: string, params: any) {
-    complete(await toolCall({name, params: {...params, caller_card_id: getCallerCardId()}}));
+    // The host fills getChatId(); it tells native memory tools whose memory space (main or an Orbit) to use.
+    complete(await toolCall({name, params: {...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || ''}}));
 }
 exports.notes = (params: any) => callMemoryNative("memory_notes", params);
 exports.history = (params: any) => callMemoryNative("search_chat_history", params);

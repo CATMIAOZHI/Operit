@@ -794,6 +794,7 @@ async function buildMemoryContent(messageText, chatId, activePrompt) {
         limit: settings.memoryLimit,
         ...(reuseSnapshot ? { snapshot_id: snapshotId } : {}),
         ...(callerCardId ? { caller_card_id: callerCardId } : {}),
+        ...(String(chatId || "").trim() ? { __operit_package_chat_id: String(chatId).trim() } : {}),
     });
     const memories = Array.isArray(result?.memories) ? result.memories : [];
     lines.push(`${text.memoryResultCountLabel}: ${memories.length}`);
