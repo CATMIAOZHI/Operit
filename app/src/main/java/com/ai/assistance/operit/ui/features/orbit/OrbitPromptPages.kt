@@ -48,6 +48,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
@@ -79,6 +81,7 @@ internal fun OrbitFilePage(
     onBack: () -> Unit,
     actions: List<OrbitFileAction> = emptyList(),
     maxChars: Int = OrbitPromptFiles.MAX_CHARS,
+    startEditing: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -90,9 +93,14 @@ internal fun OrbitFilePage(
     var busy by remember { mutableStateOf(false) }
     var showMenu by remember { mutableStateOf(false) }
     var confirmDiscard by remember { mutableStateOf(false) }
+    var autoEdited by rememberSaveable { mutableStateOf(false) }
+    var warnedTooLong by remember { mutableStateOf(false) }
     LaunchedEffect(reload) {
         failed = false
         content = try { load() } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
+        if (startEditing && !autoEdited) {
+            content?.let { draft = it; editing = true; autoEdited = true }
+        }
     }
     fun toast(id: Int) = android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
     fun leaveEditor() { editing = false; draft = "" }
@@ -103,17 +111,22 @@ internal fun OrbitFilePage(
             else -> onBack()
         }
     }
-    fun run(block: suspend () -> Unit) {
+    fun run(failedMessage: Int = R.string.orbit_file_save_failed, block: suspend () -> Unit) {
         if (busy) return
         busy = true
         scope.launch {
-            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(R.string.orbit_file_save_failed) }
+            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(failedMessage) }
             finally { busy = false }
         }
     }
     BackHandler { back() }
 
-    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
+    // The empty tap handler keeps taps on the title or blank areas from reaching what is underneath.
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .pointerInput(Unit) { detectTapGestures() }
+            .statusBarsPadding(),
+    ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
@@ -167,7 +180,7 @@ internal fun OrbitFilePage(
                                         leadingIcon = { Icon(orbitIcon(action.icon), null) },
                                         onClick = {
                                             showMenu = false
-                                            run {
+                                            run(R.string.orbit_trash_failed) {
                                                 action.run()
                                                 leaveEditor()
                                                 reload++
@@ -189,7 +202,13 @@ internal fun OrbitFilePage(
             content == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
             editing -> OutlinedTextField(
                 value = draft,
-                onValueChange = { draft = it.take(maxChars) },
+                onValueChange = {
+                    if (it.length > maxChars && !warnedTooLong) {
+                        warnedTooLong = true
+                        toast(R.string.orbit_file_too_long)
+                    }
+                    draft = it.take(maxChars)
+                },
                 textStyle = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxSize().imePadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
             )

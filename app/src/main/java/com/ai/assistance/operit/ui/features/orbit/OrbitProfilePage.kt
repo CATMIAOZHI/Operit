@@ -109,6 +109,7 @@ internal fun OrbitProfilePage(
     onOpenMemoryLibrary: () -> Unit,
     onOpenIdentity: () -> Unit,
     onOpenUser: () -> Unit,
+    onOpenFiles: () -> Unit,
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -178,6 +179,7 @@ internal fun OrbitProfilePage(
                     onOpenMemory = onOpenMemory,
                     onOpenMemoryLibrary = onOpenMemoryLibrary,
                     onOpenUser = onOpenUser,
+                    onOpenFiles = onOpenFiles,
                 )
             }
         }
@@ -761,6 +763,7 @@ private fun IdentitySection(
     onOpenMemory: () -> Unit,
     onOpenMemoryLibrary: () -> Unit,
     onOpenUser: () -> Unit,
+    onOpenFiles: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Text(
@@ -818,29 +821,35 @@ private fun IdentitySection(
         )
         // The full memory library (profile, notes, skills, review history) sits below the cards;
         // the Memory card itself opens memory.md.
-        Surface(
-            onClick = onOpenMemoryLibrary,
-            shape = RoundedCornerShape(20.dp),
-            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+        IdentityNavRow("folder-open", stringResource(R.string.orbit_files_row), stringResource(R.string.orbit_files_row_desc), onOpenFiles)
+        IdentityNavRow("sparkles", stringResource(R.string.orbit_memory_row), stringResource(R.string.orbit_memory_row_desc), onOpenMemoryLibrary)
+    }
+}
+
+@Composable
+private fun IdentityNavRow(icon: String, title: String, description: String, onClick: () -> Unit) {
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(20.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+        modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+    ) {
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+            verticalAlignment = Alignment.CenterVertically,
         ) {
-            Row(
-                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                Icon(orbitIcon("sparkles"), contentDescription = null, modifier = Modifier.size(22.dp))
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.orbit_memory_row), style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        stringResource(R.string.orbit_memory_row_desc),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Icon(orbitIcon("chevron-right"), contentDescription = null, modifier = Modifier.size(20.dp),
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Icon(orbitIcon(icon), contentDescription = null, modifier = Modifier.size(22.dp))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(title, style = MaterialTheme.typography.titleMedium)
+                Text(
+                    description,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             }
+            Icon(orbitIcon("chevron-right"), contentDescription = null, modifier = Modifier.size(20.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }
