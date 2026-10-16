@@ -9296,5 +9296,9 @@
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
     <string name="orbit_run_timed_out">“%1$s”这次运行超过 %2$d 分钟，已停下并暂停。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
     <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
+    <string name="orbit_run_timed_out_background">“%1$s”需要更长时间，但没能切到前台运行，只能按后台上限跑 %2$d 分钟，已停下并暂停。请在系统设置里把 Operit 设为「不优化电池」（或开跑时让 Operit 停在屏幕上）后再继续；继续前先核实已经做了哪些操作。</string>
+    <string name="orbit_long_task_channel">Orbit 长任务</string>
+    <string name="orbit_long_task_running">Orbit 正在执行任务</string>
     <string name="orbit_execution_record">查看执行记录</string>
+    <string name="orbit_task_timeout_hours">每次运行最多 %1$d 小时</string>
 </resources>
