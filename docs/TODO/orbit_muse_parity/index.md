@@ -42,11 +42,15 @@ status: in-progress
 | 浏览器和人工接管 | `browser_*` 工具 |
 | 审批 | 固定「自动审核快速」权限，审批卡由系统弹出 |
 | 头像和名字 | 头像用户可换（相册 / 角色卡 / 宠物），名字只能 Orbit 自己改 |
-
+| 人物和群组笔记 | `orbit_file` 写 `memory/people/`、`memory/groups/`，应用自动维护 INDEX.md；详情页「身份 → 文件」可看可改 [DONE batch1] |
+| 每日流水 | `orbit_file` 的 daily，后台任务结果自动记一行 [DONE batch1] |
+| 经验本、主动消息偏好、时区、对齐总结、设备 | LESSONS.md、PROACTIVE_PREFERENCES.md（后台任务会读）、timezones.yaml、ALIGNMENT_SYNTHESIS.md、DEVICES.md [DONE batch1] |
+| 生成的文件 | `files/` 目录，构建页和文件页都能打开、分享、删除 [DONE batch1] |
+| 回收站 | 删掉的文件留 30 天，可恢复或彻底删除 [DONE batch1] |
+| 系统提示词副本 | `orbit_file` 的 prompt_copy，存 Orbit 部分的副本到 `files/` [DONE batch1] |
+| 技能管理 | 详情页「技能与学习」里查看、编辑、删除 Orbit 自己的技能 [DONE] |
 ## 部分有，需要接进 Orbit
 
-- [ ] 人物和群组记忆页（Muse 的 `memory/people/`、`memory/groups/` + INDEX.md）
-- [ ] 技能管理页：在 Orbit 详情页查看、编辑、删除它自己存的技能
 - [ ] Hook：轻量脚本轮询条件，有变化才唤醒 Orbit（现在只有网页变化监测）
 - [ ] 跨来源主动推送：通知、日历、短信等变化触发 Orbit
 - [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）
@@ -59,14 +63,9 @@ status: in-progress
 - [ ] 数据导出：一键导出 Orbit 的文件、记忆和记录
 - [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等
 - [ ] 表情回应：给用户消息点一个表情（Muse 的 `react_to_user_message`）
-- [ ] 主动消息偏好文件（Muse 的 `PROACTIVE_PREFERENCES.md`；现在记在 memory.md）
-- [ ] 用户时区文件（Muse 的 `timezones.yaml`；现在记在 user.md）
 - [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
-- [ ] 每日流水日志：观察和运行记录按天追加（Muse 的 `memory/YYYY-MM-DD.md`），和长期记忆分开
-- [ ] 经验本：Orbit 自己攒的做事约定和教训（Muse 的 `AGENTS.md` 的 Conventions / Lessons）
 - [ ] 主动消息逐条决定：后台准备的每条消息记录「发 / 不发」和理由（Muse 的 `proactivity.select`）
 - [ ] 待审批列表：Orbit 能查看还在等用户批准的操作（Muse 的 `permissions.list_pending`）
-- [ ] 回收站：Orbit 删除的文件先进回收站，30 天内可恢复（Muse 的 `trash.*`）
 
 ## 还没做，可以做
 
@@ -80,8 +79,6 @@ status: in-progress
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
 - [ ] 后台自我提升任务：整理记忆、更新对齐总结、维护技能（Muse 的 self_improvement）
-- [ ] 对齐总结文件（Muse 的 `ALIGNMENT_SYNTHESIS.md`）
-- [ ] 系统提示词副本：用户要时直接发文件
 - [ ] 分享到 Operit：从别的 App 分享内容给 Orbit
 - [ ] Tailscale 等内网设备连接
 - [ ] 「忘掉」流程：先找出一条信息在记忆、聊天、目标、任务里的所有副本，给用户确认后一起删（Muse 的 `forget.plan` / `forget.confirm`）
