@@ -9421,4 +9421,5 @@
     <string name="orbit_files_help">These are Orbit\'s own files. You and Orbit can both read them, and edit most of them.</string>
     <string name="orbit_trash_deleted_at">Deleted %1$s</string>
     <string name="orbit_files_made">Files Orbit made</string>
+    <string name="orbit_file_open_in_browser">Open in browser</string>
 </resources>

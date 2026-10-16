@@ -291,7 +291,13 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Un
         load = { files.read(path) },
         save = { files.write(path, it) },
         onBack = onBack,
-        actions = listOf(
+        actions = listOfNotNull(
+            // A web page Orbit exported is read in a browser; the editor only shows its source.
+            if (path.substringAfterLast('.').lowercase() in setOf("html", "htm")) {
+                OrbitFileAction(stringResource(R.string.orbit_file_open_in_browser), "globe") {
+                    openOrbitFile(context) { files.fileFor(path) }
+                }
+            } else null,
             OrbitFileAction(stringResource(R.string.orbit_file_share), "share-2") {
                 shareOrbitFile(context) { files.fileFor(path) }
             },
@@ -413,9 +419,10 @@ private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
 
 internal fun orbitFileIcon(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
     "png", "jpg", "jpeg", "webp", "gif" -> "image"
-    "mp3", "wav", "m4a", "ogg", "aac" -> "audio-lines"
+    "mp3", "wav", "m4a", "ogg", "aac", "flac", "opus", "oga" -> "audio-lines"
     "mp4", "webm", "mov" -> "film"
     "pdf" -> "file-type"
+    "doc", "docx" -> "file-pen-line"
     "html", "htm" -> "app-window"
     "json", "csv", "xml", "yaml", "yml" -> "file-code"
     else -> "file-text"
@@ -434,7 +441,8 @@ internal fun openOrbitFile(context: android.content.Context, fileOf: () -> java.
         val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
             .setDataAndType(orbitFileUri(context, file), mimeOf(file))
             .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
-        context.startActivity(android.content.Intent.createChooser(intent, file.name).addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        // Started directly so a phone with no app for this kind of file reports it to us.
+        context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
     } catch (e: android.content.ActivityNotFoundException) {
         toast(context, R.string.orbit_file_no_app)
     } catch (e: Exception) {

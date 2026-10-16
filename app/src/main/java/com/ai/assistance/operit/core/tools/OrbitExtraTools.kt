@@ -16,6 +16,7 @@ internal object OrbitExtraTools {
     val specs: List<Spec> by lazy {
         listOf(
             Spec(OrbitFileTools.prompt, true, OrbitFileTools::execute),
+            Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute),
         )
     }
     val prompts: List<ToolPrompt> get() = specs.map { it.prompt }

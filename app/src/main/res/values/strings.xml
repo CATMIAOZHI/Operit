@@ -9398,4 +9398,5 @@
     <string name="orbit_files_help">这些是 Orbit 自己的文件，你和它都能看，大多数还能直接改。</string>
     <string name="orbit_trash_deleted_at">删除于 %1$s</string>
     <string name="orbit_files_made">Orbit 生成的文件</string>
+    <string name="orbit_file_open_in_browser">用浏览器打开</string>
 </resources>
