@@ -88,13 +88,23 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         }
     }
 
+    /**
+     * The chat that called this tool. A ToolPkg such as memory_review calls these native tools from
+     * its own thread, where the runtime context is gone; it passes the host-filled chat ID under the
+     * reserved package parameter, which the host strips from model arguments. Without it an Orbit's
+     * memory package calls would read and write the main memory.
+     */
+    private fun resolveCallerChatId(tool: AITool): String? =
+        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId?.takeIf { it.isNotBlank() }
+            ?: tool.parameters.find { it.name == "__operit_package_chat_id" }?.value?.trim()?.takeIf { it.isNotBlank() }
+
     private suspend fun resolveActiveProfileId(tool: AITool): String {
         val runtime = ToolExecutionManager.currentToolRuntimeContext()
         val requested = runtime?.resolvedMemorySpaceId?.takeIf { it.isNotBlank() }
             ?: resolveRoleCardProfileId(resolveCallerCardId(tool))
             ?: resolveGlobalActiveProfileId()
         return com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
-            context, runtime?.callerChatId, requested) ?: requested
+            context, resolveCallerChatId(tool), requested) ?: requested
     }
 
     private fun getMemoryRepository(profileId: String): MemoryRepository =
@@ -727,7 +737,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
     private suspend fun executeChatRecall(tool: AITool): ToolResult {
         return try {
             val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(
-                context, ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
+                context, resolveCallerChatId(tool))
             val json = repository.execute(tool.parameters.associate { it.name to it.value })
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -744,7 +754,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         val params = json.keys().asSequence().associateWith { json.get(it).toString() }
         val actions = com.ai.assistance.operit.api.chat.library.MemoryLearningActions(
             context,resolveActiveProfileId(tool),
-            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty(),
+            resolveCallerChatId(tool).orEmpty(),
             notesEnabled=true,skillsEnabled=true,background=false)
         val result = actions.execute(args["action"].orEmpty(),params)
         ToolResult(toolName=tool.name,success=true,result=StringResultData(result.toString()))
@@ -766,7 +776,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                 val change = review.applyAutomaticDecision(context,
                     review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
-                        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty())
+                        resolveCallerChatId(tool).orEmpty())
                 )
                 return ToolResult(toolName = tool.name, success = true,
                     result = StringResultData(org.json.JSONObject().put("change_id", change.id)
@@ -857,7 +867,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
             val before = UserProfileDocumentRepository.forMemorySpace(context, resolveActiveProfileId(tool)).load()
             val change = review.applyAutomaticDecision(context, review.proposeUser(before, markdown,
-                ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+                resolveCallerChatId(tool).orEmpty()))
             val message = "user.md change ${change.id}: ${change.status}"
             AppLogger.d(TAG, message)
             
@@ -919,7 +929,7 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                 val after = sections.copy(profile = sections.profile.trimEnd() + "\n\n" + importedSection).markdown()
                 val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, resolveActiveProfileId(tool))
                 review.applyAutomaticDecision(context, review.proposeUser(current, after,
-                    ToolExecutionManager.currentToolRuntimeContext()?.callerChatId.orEmpty()))
+                    resolveCallerChatId(tool).orEmpty()))
             }
             ToolResult(
                 toolName = tool.name,
