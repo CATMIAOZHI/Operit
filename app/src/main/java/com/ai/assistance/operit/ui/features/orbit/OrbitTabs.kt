@@ -121,7 +121,13 @@ internal fun sendToOrbit(context: android.content.Context, orbit: OrbitProfile, 
  * so going back to Chat never reloads it.
  */
 @Composable
-internal fun OrbitTabPage(orbit: OrbitProfile, tab: OrbitTab, onOpenChat: () -> Unit) {
+internal fun OrbitTabPage(
+    orbit: OrbitProfile,
+    tab: OrbitTab,
+    onOpenChat: () -> Unit,
+    filesVersion: Int = 0,
+    onOpenFile: (String) -> Unit = {},
+) {
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (tab) {
@@ -129,7 +135,7 @@ internal fun OrbitTabPage(orbit: OrbitProfile, tab: OrbitTab, onOpenChat: () -> 
             OrbitTab.FEED -> OrbitFeedPage(orbit, onOpenChat)
             OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onOpenChat)
             OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it })
-            OrbitTab.BUILDS -> OrbitBuildsPage(orbit, onOpenTask = { openTaskId = it })
+            OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile)
         }
         openTaskId?.let { taskId ->
             OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId)
@@ -725,11 +731,25 @@ private fun GoalEditor(goal: OrbitGoalEntity?, onDismiss: () -> Unit, onSave: (S
 // ---------------------------------------------------------------- Builds
 
 @Composable
-private fun OrbitBuildsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
+private fun OrbitBuildsPage(
+    orbit: OrbitProfile,
+    filesVersion: Int,
+    onOpenTask: (String) -> Unit,
+    onOpenFile: (String) -> Unit,
+) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val versions by remember(orbit.id) { dao.observeArtifacts(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
     var openArtifact by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // files/ in Orbit's folder: things made for the user (reports, voice messages, shared files).
+    val orbitFiles = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
+    var filesReload by remember { mutableIntStateOf(0) }
+    val userFiles by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>>?>(null, orbit.id, filesReload, filesVersion) {
+        value = try {
+            Result.success(orbitFiles.list().filter { it.path.startsWith("files/") }.sortedByDescending { it.modifiedAt })
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+    }
+    var fileActions by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry?>(null) }
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
     if (!history.isNullOrEmpty()) {
@@ -747,7 +767,7 @@ private fun OrbitBuildsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
                     .sortedByDescending { it.first.createdAt }
                 items(groups, key = { it.first.artifactId }) { (latest, count) ->
                     OrbitListRow(
-                        icon = orbitIcon(buildIcon(latest.name)),
+                        icon = orbitIcon(orbitFileIcon(latest.name)),
                         title = latest.name,
                         detail = if (count > 1) stringResource(R.string.orbit_builds_versions, count) else null,
                         meta = shortDate(latest.createdAt),
@@ -757,15 +777,32 @@ private fun OrbitBuildsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
                 }
             }
         }
+        item(key = "files-title") { GroupTitle(stringResource(R.string.orbit_builds_files)) }
+        val filesResult = userFiles
+        val filesList = filesResult?.getOrNull()
+        when {
+            filesResult == null -> item(key = "files-loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            filesList == null -> item(key = "files-failed") {
+                Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                    Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = { filesReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                }
+            }
+            filesList.isEmpty() -> item(key = "files-empty") { Hint(stringResource(R.string.orbit_builds_files_empty)) }
+            else -> items(filesList, key = { it.path }) { entry ->
+                OrbitMadeFileRow(entry) {
+                    if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(entry.path)) onOpenFile(entry.path)
+                    else fileActions = entry
+                }
+            }
+        }
+    }
+    fileActions?.let { entry ->
+        OrbitMadeFileActions(orbitFiles, entry, onDismiss = { fileActions = null }, onDeleted = { filesReload++ })
     }
 }
 
-private fun buildIcon(name: String) = when (name.substringAfterLast('.', "").lowercase()) {
-    "html", "htm" -> "app-window"
-    "md", "txt" -> "file-text"
-    "json", "csv" -> "table"
-    else -> "file"
-}
+
 
 @Composable
 private fun BuildDetail(

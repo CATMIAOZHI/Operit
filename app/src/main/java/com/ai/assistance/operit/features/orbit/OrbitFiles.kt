@@ -1,0 +1,339 @@
+package com.ai.assistance.operit.features.orbit
+
+import android.content.Context
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.util.LocaleUtils
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
+import java.io.File
+import java.io.InputStream
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+
+/**
+ * Orbit's own files besides SOUL.md, IDENTITY.md, user.md and memory.md, all inside its folder:
+ * notes on people and groups (with an INDEX.md the app keeps), the daily log, the lessons book,
+ * a few small settings files, and files/ for things made for the user. Deleting moves a file to
+ * a trash that keeps it for [TRASH_DAYS] days.
+ */
+class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { false }) {
+    data class Entry(val path: String, val size: Long, val modifiedAt: Long, val title: String)
+    data class TrashItem(val id: String, val path: String, val deletedAt: Long, val size: Long)
+
+    private val mutex = locks.computeIfAbsent(root.absolutePath) { Mutex() }
+    // Read on first use, which is always inside io(), so the UI never blocks on the setting.
+    private val english by lazy(englishProvider)
+
+    private suspend fun <T> io(block: () -> T): T = withContext(Dispatchers.IO) { mutex.withLock { block() } }
+
+    fun fileFor(path: String): File {
+        val p = normalize(path)
+        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        return inside(File(root, p))
+    }
+
+    /**
+     * Refuses a file that a link would take outside Orbit's folder: checks the file if it exists,
+     * otherwise the nearest folder above it that does, so a linked folder is caught too.
+     */
+    private fun inside(f: File): File {
+        root.mkdirs()
+        var probe: File? = f
+        // A dangling link counts as existing, so toRealPath below fails on it instead of skipping it.
+        while (probe != null && !Files.exists(probe.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) probe = probe.parentFile
+        // toRealPath resolves links on every platform (canonicalFile does not on all of them).
+        val base = root.toPath().toRealPath()
+        val real = probe?.let { runCatching { it.toPath().toRealPath() }.getOrNull() }
+        require(real != null && real.startsWith(base)) { "Not one of Orbit's files" }
+        return f
+    }
+
+    /** Deletes a folder without following links inside it. */
+    private fun deleteTree(dir: File) {
+        val start = dir.toPath()
+        if (!Files.exists(start, java.nio.file.LinkOption.NOFOLLOW_LINKS)) return
+        if (Files.isSymbolicLink(start)) { Files.delete(start); return }
+        Files.walkFileTree(start, object : java.nio.file.SimpleFileVisitor<java.nio.file.Path>() {
+            override fun visitFile(file: java.nio.file.Path, attrs: java.nio.file.attribute.BasicFileAttributes) =
+                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(file) }
+            override fun postVisitDirectory(d: java.nio.file.Path, e: java.io.IOException?) =
+                java.nio.file.FileVisitResult.CONTINUE.also { Files.delete(d) }
+        })
+    }
+
+    private fun trashDir(id: String): File = inside(File(root, "$TRASH/$id"))
+
+    /** The trash folder, or null when it is a link out of Orbit's folder. */
+    private fun safeTrashRoot(): File? = File(root, TRASH).takeIf { runCatching { inside(it) }.isSuccess }
+
+    /** Every file, including the fixed files that are still empty templates (size -1). */
+    suspend fun list(): List<Entry> = io {
+        val found = mutableListOf<Entry>()
+        SINGLE.forEach { p ->
+            val f = File(root, p)
+            found += if (f.isFile) entry(p, f) else Entry(p, -1, 0, p)
+        }
+        listOf("memory/people", "memory/groups").forEach { dir ->
+            File(root, dir).listFiles()?.filter { it.isFile && it.name.endsWith(".md") }?.forEach { found += entry("$dir/${it.name}", it) }
+        }
+        File(root, "memory").listFiles()?.filter { it.isFile && DAILY.matches("memory/${it.name}") }
+            ?.forEach { found += entry("memory/${it.name}", it) }
+        val filesRoot = File(root, "files")
+        if (filesRoot.isDirectory) filesRoot.walkTopDown().maxDepth(4).filter { it.isFile }.forEach { f ->
+            val p = "files/" + f.relativeTo(filesRoot).invariantSeparatorsPath
+            if (FILES.matches(p) && p.split('/').none { it.startsWith(".") }) found += entry(p, f)
+        }
+        // Leave out anything a link takes outside Orbit's folder; it could not be opened anyway.
+        found.filter { it.size < 0 || runCatching { inside(File(root, it.path)) }.isSuccess }
+    }
+
+    suspend fun read(path: String): String = io {
+        val p = normalize(path)
+        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        val f = inside(File(root, p))
+        if (!f.isFile) return@io template(p) ?: error("No such file: $p")
+        require(isText(p)) { "Not a text file: $p" }
+        require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
+        f.readText()
+    }
+
+    suspend fun write(path: String, text: String) = io {
+        val p = writable(path)
+        require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
+        atomic(File(root, p), text)
+        afterChange(p)
+    }
+
+    suspend fun append(path: String, text: String) = io {
+        val p = writable(path)
+        appendLocked(p, text)
+    }
+
+    /** Adds one line to today's (or [time]'s) daily log, memory/YYYY-MM-DD.md. */
+    suspend fun appendDaily(line: String, time: Long = System.currentTimeMillis()) = io {
+        val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(time))
+        val clock = SimpleDateFormat("HH:mm", Locale.US).format(Date(time))
+        val p = "memory/$day.md"
+        val f = File(root, p)
+        if (!f.isFile) atomic(f, "# $day\n")
+        appendLocked(p, "- $clock ${line.replace(Regex("\\s+"), " ").trim().take(600)}")
+    }
+
+    private fun appendLocked(p: String, text: String) {
+        val f = File(root, p)
+        val old = if (f.isFile) inside(f).readText() else template(p).orEmpty()
+        val next = old.trimEnd() + "\n" + text.trim() + "\n"
+        require(next.length <= MAX_TEXT) { "The file is full; tidy it up with write first" }
+        atomic(f, next.trimStart('\n'))
+        afterChange(p)
+    }
+
+    /** Moves a file to the trash. It can be restored for [TRASH_DAYS] days. */
+    suspend fun delete(path: String): TrashItem = io {
+        val p = normalize(path)
+        require(allowed(p) && !isIndex(p)) { "This file cannot be deleted: $path" }
+        val f = inside(File(root, p))
+        require(f.isFile) { "No such file: $p" }
+        val now = System.currentTimeMillis()
+        val id = "$now-${UUID.randomUUID().toString().take(8)}"
+        val dir = trashDir(id)
+        check(dir.mkdirs()) { "Could not make the trash folder" }
+        val size = f.length()
+        // Write the note first, so a trashed file is never left without a way back.
+        try {
+            File(dir, META).writeText(JSONObject().put("path", p).put("deletedAt", now).put("size", size).toString())
+            Files.move(f.toPath(), File(dir, PAYLOAD).toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } catch (e: Exception) {
+            deleteTree(dir)
+            throw e
+        }
+        afterChange(p)
+        purgeOld()
+        TrashItem(id, p, now, size)
+    }
+
+    suspend fun trash(): List<TrashItem> = io {
+        purgeOld()
+        safeTrashRoot()?.listFiles()?.mapNotNull(::trashItem)?.sortedByDescending { it.deletedAt }.orEmpty()
+    }
+
+    suspend fun restore(id: String): String = io {
+        require(TRASH_ID.matches(id)) { "Bad trash id" }
+        val dir = trashDir(id)
+        val item = trashItem(dir) ?: error("Nothing in the trash with id $id")
+        require(allowed(item.path)) { "Cannot restore this file" }
+        val target = inside(File(root, item.path))
+        require(!target.exists()) { "A file already exists at ${item.path}; rename or delete it first" }
+        target.parentFile?.mkdirs()
+        Files.move(File(dir, PAYLOAD).toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        deleteTree(dir)
+        afterChange(item.path)
+        item.path
+    }
+
+    /** Deletes a trashed file for good; only the user does this, from the Files page. */
+    suspend fun purge(id: String) = io {
+        require(TRASH_ID.matches(id)) { "Bad trash id" }
+        deleteTree(trashDir(id))
+        Unit
+    }
+
+    /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
+    suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
+        var p = normalize(path)
+        require(p.startsWith("files/") && FILES.matches(p)) { "Only files/ takes new files: $path" }
+        val folder = p.substringBeforeLast('/')
+        val name = p.substringAfterLast('/')
+        val base = "$folder/" + name.substringBeforeLast('.', name).take(100)
+        val ext = name.substringAfterLast('.', "").let { if (it.isEmpty()) "" else ".$it" }
+        var n = 2
+        while (File(root, p).exists()) p = "$base-${n++}$ext"
+        require(FILES.matches(p)) { "File name is too long: $path" }
+        val target = inside(File(root, p))
+        target.parentFile?.mkdirs()
+        val temporary = File.createTempFile(".file-", ".tmp", target.parentFile)
+        try {
+            temporary.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    require(total <= maxBytes) { "File is larger than ${maxBytes / 1024 / 1024} MB" }
+                    out.write(buffer, 0, count)
+                }
+            }
+            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            temporary.delete()
+        }
+        entry(p, target)
+    }
+
+    private fun writable(path: String): String {
+        val p = normalize(path)
+        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        require(!isIndex(p)) { "INDEX.md is kept by the app; write the person or group file instead" }
+        require(isText(p)) { "Only text files can be written: $p" }
+        return p
+    }
+
+    private fun afterChange(p: String) {
+        val dir = p.substringBeforeLast('/', "")
+        if (dir == "memory/people" || dir == "memory/groups") rebuildIndex(dir)
+    }
+
+    private fun rebuildIndex(dir: String) {
+        val folder = File(root, dir)
+        val files = folder.listFiles()
+            ?.filter { it.isFile && it.name.endsWith(".md") && it.name != INDEX && runCatching { inside(it) }.isSuccess }
+            ?.sortedBy { it.name.lowercase() }.orEmpty()
+        val index = File(folder, INDEX)
+        if (files.isEmpty()) { index.delete(); return }
+        val heading = if (dir.endsWith("people")) (if (english) "People" else "人物") else (if (english) "Groups" else "群组")
+        val lines = files.map { f ->
+            val text = f.readText()
+            val summary = text.lineSequence().map { it.trim() }
+                .firstOrNull { it.isNotEmpty() && !it.startsWith("#") }.orEmpty().take(100)
+            "- [${titleOf(text, f.nameWithoutExtension)}](${f.name})" + if (summary.isNotEmpty()) " — $summary" else ""
+        }
+        atomic(index, "# $heading\n\n" + lines.joinToString("\n") + "\n")
+    }
+
+    private fun entry(p: String, f: File): Entry {
+        val safe = runCatching { inside(f) }.isSuccess
+        return Entry(p, f.length(), f.lastModified(),
+            if (safe && isText(p) && f.length() < 64_000) titleOf(f.readText(), f.nameWithoutExtension) else f.name)
+    }
+
+    private fun trashItem(dir: File): TrashItem? = runCatching {
+        val meta = JSONObject(File(dir, META).readText())
+        TrashItem(dir.name, meta.getString("path"), meta.getLong("deletedAt"), meta.optLong("size"))
+    }.getOrNull()
+
+    private fun purgeOld() {
+        val limit = System.currentTimeMillis() - TRASH_DAYS * 24L * 60 * 60 * 1000
+        safeTrashRoot()?.listFiles()?.forEach { dir ->
+            // A folder whose note cannot be read is judged by its own age.
+            val deletedAt = trashItem(dir)?.deletedAt ?: dir.lastModified()
+            if (deletedAt < limit) deleteTree(dir)
+        }
+    }
+
+    private fun atomic(target: File, text: String) {
+        inside(target)
+        target.parentFile?.mkdirs()
+        val temporary = File.createTempFile(".orbit-", ".tmp", target.parentFile)
+        try {
+            temporary.writeText(text)
+            Files.move(temporary.toPath(), target.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+        } finally {
+            temporary.delete()
+        }
+    }
+
+    fun template(p: String): String? = when (p) {
+        LESSONS -> if (english) "# Lessons\n\nConventions and lessons you picked up while working, for your future self.\n\n## Conventions\n\n## Lessons\n"
+            else "# 经验本\n\n做事时攒下的约定和教训，写给以后的自己。\n\n## 约定\n\n## 教训\n"
+        PROACTIVE -> if (english) "# Proactive preferences\n\nWhen and about what the user wants you to reach out first.\n\n## Wants\n\n## Does not want\n\n## Timing\n"
+            else "# 主动消息偏好\n\n用户希望你在什么时候、为了什么事主动找他。\n\n## 想要\n\n## 不要\n\n## 时间\n"
+        TIMEZONES -> if (english) "# The user's time zone and those of people they deal with\nhome: \nothers: []\n"
+            else "# 用户所在的时区，以及常联系的人的时区\nhome: \nothers: []\n"
+        ALIGNMENT -> if (english) "# Alignment synthesis\n\nWhat matters most about this user: what they care about, how they judge good work, and how they like to work with you. Background self-improvement keeps it current.\n"
+            else "# 对齐总结\n\n你对这位用户最重要的理解：他在乎什么、怎么判断好坏、喜欢怎么和你合作。后台自我整理会定期更新它。\n"
+        DEVICES -> if (english) "# Devices\n\nDevices you can reach (for example computers or a NAS on the user's Tailscale network): name, address, what it is for and how to connect. Never write passwords here.\n"
+            else "# 设备\n\n你能连上的设备（比如用户 Tailscale 组网里的电脑、NAS）：名字、地址、用途和连接方式。不要写密码。\n"
+        else -> null
+    }
+
+    companion object {
+        const val MAX_TEXT = 200_000
+        const val MAX_FILE_BYTES = 50L * 1024 * 1024
+        const val TRASH_DAYS = 30
+        const val LESSONS = "LESSONS.md"
+        const val PROACTIVE = "PROACTIVE_PREFERENCES.md"
+        const val TIMEZONES = "timezones.yaml"
+        const val ALIGNMENT = "ALIGNMENT_SYNTHESIS.md"
+        const val DEVICES = "DEVICES.md"
+        val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)
+        private const val INDEX = "INDEX.md"
+        private const val TRASH = ".trash"
+        private const val PAYLOAD = "payload"
+        private const val META = "meta.json"
+        private val PEOPLE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")
+        private val DAILY = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")
+        private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
+        private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
+        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml")
+        private val locks = ConcurrentHashMap<String, Mutex>()
+
+        fun of(context: Context, orbitId: String) =
+            OrbitFiles(OrbitPreferences.getInstance(context).orbitDir(orbitId)) {
+                LocaleUtils.usesEnglishPrompt(context.applicationContext)
+            }
+
+        fun normalize(path: String): String {
+            val p = path.trim().replace('\\', '/').trimStart('/')
+            val parts = p.split('/')
+            require(p.isNotEmpty() && p.none { it < ' ' } &&
+                parts.none { it.isBlank() || it.startsWith(".") }) { "Bad path: $path" }
+            return p
+        }
+
+        fun allowed(p: String) = p in SINGLE || PEOPLE.matches(p) || DAILY.matches(p) || FILES.matches(p)
+        fun isIndex(p: String) = PEOPLE.matches(p) && p.endsWith("/$INDEX")
+        fun isText(p: String) = p.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
+        fun titleOf(text: String, fallback: String) =
+            text.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#") }
+                ?.trimStart('#')?.trim()?.takeIf { it.isNotEmpty() }?.take(80) ?: fallback
+    }
+}

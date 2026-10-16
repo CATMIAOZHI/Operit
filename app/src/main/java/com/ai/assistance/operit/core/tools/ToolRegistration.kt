@@ -109,6 +109,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     OrbitBoardTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitBoardTools.execute(context, it) })
     }
+    OrbitExtraTools.specs.forEach { spec ->
+        handler.registerTool(name = spec.prompt.name, executor = { spec.run(context, it) })
+    }
     OrbitProductTools.prompts.forEach { prompt ->
         handler.registerTool(name = prompt.name, executor = { OrbitProductTools.execute(context, it) })
     }

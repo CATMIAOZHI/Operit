@@ -231,6 +231,10 @@ private fun OrbitChatPage(
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
     var pageTab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.FEED) }
+    // A text file from the Builds tab opens full screen, over the bottom tabs, so a stray tap
+    // on a tab cannot drop an unsaved edit.
+    var editingFile by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    var filesVersion by remember(orbit.id) { mutableStateOf(0) }
     val imeVisible = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
@@ -289,7 +293,8 @@ private fun OrbitChatPage(
                     exit = fadeOut(tween(OrbitMotion.PUSH_MS / 2)),
                 ) {
                     Crossfade(targetState = pageTab, animationSpec = tween(OrbitMotion.PUSH_MS / 2), label = "orbitTab") { shown ->
-                        OrbitTabPage(orbit, shown, onOpenChat = { tab = OrbitTab.CHAT })
+                        OrbitTabPage(orbit, shown, onOpenChat = { tab = OrbitTab.CHAT },
+                            filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
                 }
             }
@@ -299,6 +304,19 @@ private fun OrbitChatPage(
                     if (it != OrbitTab.CHAT) pageTab = it
                     tab = it
                 })
+            }
+        }
+        // Keeps the last file on screen while the page slides away.
+        var shownFile by remember(orbit.id) { mutableStateOf(editingFile) }
+        LaunchedEffect(editingFile) { editingFile?.let { shownFile = it } }
+        AnimatedVisibility(
+            visible = editingFile != null,
+            enter = slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it },
+            exit = slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it },
+        ) {
+            (editingFile ?: shownFile)?.let { path ->
+                val files = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
+                OrbitMadeFilePage(files, path, onBack = { editingFile = null; filesVersion++ })
             }
         }
         val profileDim by animateFloatAsState(
@@ -336,6 +354,7 @@ private fun OrbitChatPage(
                         onOpenMemoryLibrary = { push(OrbitSubPage.MEMORY_LIBRARY) },
                         onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                         onOpenUser = { push(OrbitSubPage.USER) },
+                        onOpenFiles = { push(OrbitSubPage.FILES) },
                     )
                 }
                 AnimatedContent(
@@ -372,6 +391,7 @@ private fun OrbitChatPage(
                             onOpenUser = { push(OrbitSubPage.USER) },
                         )
                         OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
+                        OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
                         OrbitSubPage.TASK ->
                             openTaskId?.let { taskId ->
                                 OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
@@ -424,7 +444,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT }
+private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

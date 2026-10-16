@@ -34,6 +34,7 @@ data class ResolvedCharacterCardToolAccess(
             com.ai.assistance.operit.core.tools.OrbitBoardTools.IDEA,
             com.ai.assistance.operit.core.tools.OrbitBoardTools.TRACKING,
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH -> true
+            in com.ai.assistance.operit.core.tools.OrbitExtraTools.names -> true
             else -> effectiveBuiltinToolVisibility[toolName] == true
         }
     }
