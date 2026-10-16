@@ -227,6 +227,19 @@ private fun OrbitChatPage(
             Result.failure(e)
         }
     }
+    // Orbit's memory changes never wait for approval; clear any left from before, off the path
+    // that opens the memory pages. A failure here only gets logged.
+    val memorySpaceId = memoryResult?.getOrNull()
+    LaunchedEffect(memorySpaceId) {
+        val spaceId = memorySpaceId ?: return@LaunchedEffect
+        try {
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.approveWaitingChanges(context, spaceId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w(TAG, "Could not approve waiting memory changes: ${e.message}")
+        }
+    }
 
     // The chat screen follows the app-wide current chat. It shows this Orbit while the page is
     // open; put the chat the user had back when the page closes. Sending in an Orbit chat always
@@ -283,6 +296,7 @@ private fun OrbitChatPage(
                         },
                         onOpenSoul = { push(OrbitSubPage.SOUL) },
                         onOpenMemory = { push(OrbitSubPage.MEMORY) },
+                        onOpenMemoryLibrary = { push(OrbitSubPage.MEMORY_LIBRARY) },
                         onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                         onOpenUser = { push(OrbitSubPage.USER) },
                     )
@@ -310,6 +324,7 @@ private fun OrbitChatPage(
                         OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
                         OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
                         OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
+                        OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
                         OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
                         OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
                             orbit = orbit,
@@ -324,7 +339,7 @@ private fun OrbitChatPage(
                             openTaskId?.let { taskId ->
                                 OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
                             }
-                        OrbitSubPage.MEMORY -> {
+                        OrbitSubPage.MEMORY_LIBRARY -> {
                             val id = memoryResult?.getOrNull()
                             if (id != null) {
                                 com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage(
@@ -372,7 +387,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, WORKSPACE, IDENTITY, USER, PROMPTS, PROMPT }
+private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, WORKSPACE, IDENTITY, USER, PROMPTS, PROMPT }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

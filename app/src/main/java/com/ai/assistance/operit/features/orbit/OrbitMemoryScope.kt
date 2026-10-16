@@ -87,6 +87,25 @@ object OrbitMemoryScope {
         }
     }
 
+    /**
+     * Orbit memory changes never wait for the user. New proposals are approved as they come in;
+     * this clears the ones left waiting from before that rule. A restored file version still
+     * needs the user, and a proposal that no longer fits is skipped.
+     */
+    suspend fun approveWaitingChanges(context: Context, spaceId: String) {
+        if (!com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(spaceId)) return
+        val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, spaceId)
+        reviews.list().filter { it.status == "pending" && it.restoredFrom.isBlank() }.forEach { change ->
+            try {
+                reviews.decide(context, change.id, true, "automatic", "Orbit memory changes are always approved")
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.ai.assistance.operit.util.AppLogger.w("OrbitMemoryScope", "Could not approve ${change.id}: ${e.message}")
+            }
+        }
+    }
+
     suspend fun privateOwner(context: Context, spaceId: String): String? =
         UserPreferencesManager.getInstance(context).getMemorySpaceFlow(spaceId).first().ownerOrbitId
 

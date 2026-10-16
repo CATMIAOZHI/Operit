@@ -106,6 +106,7 @@ internal fun OrbitProfilePage(
     onOpenTask: (String) -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenMemoryLibrary: () -> Unit,
     onOpenIdentity: () -> Unit,
     onOpenUser: () -> Unit,
 ) {
@@ -175,6 +176,7 @@ internal fun OrbitProfilePage(
                     onOpenIdentity = onOpenIdentity,
                     onOpenSoul = onOpenSoul,
                     onOpenMemory = onOpenMemory,
+                    onOpenMemoryLibrary = onOpenMemoryLibrary,
                     onOpenUser = onOpenUser,
                 )
             }
@@ -757,6 +759,7 @@ private fun IdentitySection(
     onOpenIdentity: () -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenMemoryLibrary: () -> Unit,
     onOpenUser: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -813,6 +816,32 @@ private fun IdentitySection(
             aspectRatio = 2.4f,
             modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
         )
+        // The full memory library (profile, notes, skills, review history) sits below the cards;
+        // the Memory card itself opens memory.md.
+        Surface(
+            onClick = onOpenMemoryLibrary,
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(orbitIcon("library-big"), contentDescription = null, modifier = Modifier.size(22.dp))
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(stringResource(R.string.orbit_memory_row), style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        stringResource(R.string.orbit_memory_row_desc),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Icon(orbitIcon("chevron-right"), contentDescription = null, modifier = Modifier.size(20.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
     }
 }
 

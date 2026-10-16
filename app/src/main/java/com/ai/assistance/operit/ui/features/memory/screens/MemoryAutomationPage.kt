@@ -43,7 +43,10 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                 prefs.setIncludeThinking(it); includeThinking = it
             }
             AutomationSwitch(stringResource(R.string.memory_auto_approve),
-                stringResource(R.string.memory_auto_approve_desc), autoApprove) {
+                stringResource(
+                    if (prefs.isAutoApprovalLocked) R.string.memory_auto_approve_orbit_locked
+                    else R.string.memory_auto_approve_desc
+                ), autoApprove, enabled = !prefs.isAutoApprovalLocked) {
                 prefs.setAutoApproveChanges(it); autoApprove = it
             }
             if (!master) Text(stringResource(R.string.memory_auto_master_off),
@@ -117,10 +120,16 @@ private fun LearningIntervalSetting(title: String, value: Int, unit: String, onC
 }
 
 @Composable
-private fun AutomationSwitch(title: String, detail: String, value: Boolean, onChange: (Boolean) -> Unit) {
+private fun AutomationSwitch(
+    title: String,
+    detail: String,
+    value: Boolean,
+    enabled: Boolean = true,
+    onChange: (Boolean) -> Unit,
+) {
     ListItem(
         headlineContent = { Text(title) },
         supportingContent = { Text(detail) },
-        trailingContent = { Switch(value, onChange) }
+        trailingContent = { Switch(value, onChange, enabled = enabled) }
     )
 }

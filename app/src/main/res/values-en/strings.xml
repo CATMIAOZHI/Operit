@@ -9215,6 +9215,7 @@
     <string name="orbit_profile_card_caution">Handle with care</string>
     <string name="orbit_profile_user_card">USER</string>
     <string name="orbit_user_note">About this file: this is what Orbit knows about you: your name, what to call you, your timezone, lasting preferences and the interaction rules you set. Orbit reads it at the start of each conversation and updates it when it learns something new. You can edit it at any time; if Orbit changed it while you were editing, saving fails; go back and open it again. This note is not part of the file.</string>
+    <string name="orbit_memory_note">About this file: this is Orbit\'s memory.md, the lasting points it has learned from your conversations. Orbit reads it at the start of each conversation and updates it when it learns something new; its changes apply right away. You can edit it at any time; if Orbit changed it while you were editing, saving fails; go back and open it again. This note is not part of the file.</string>
     <string name="orbit_profile_edit_identity">Edit</string>
     <string name="orbit_avatar_use_pet">Use a pet</string>
     <string name="orbit_avatar_from_photos">Choose a photo</string>
@@ -9318,10 +9319,10 @@
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
     <string name="orbit_run_timed_out">“%1$s” ran past %2$d minutes, so it was stopped and paused. Verify what it already did before continuing; it will not replay automatically.</string>
-    <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>
     <string name="orbit_run_timed_out_background">“%1$s” needs more time, but it could not move to the foreground, so it ran for the background limit of %2$d minutes and was stopped and paused. Set Operit to \"unrestricted\" / not optimized for battery in system settings (or keep Operit on screen when it starts), then continue; verify what it already did first.</string>
     <string name="orbit_long_task_channel">Orbit long tasks</string>
     <string name="orbit_long_task_running">Orbit is working on a task</string>
-    <string name="orbit_execution_record">View execution record</string>
+    <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>
     <string name="orbit_task_timeout_hours">Each run can take up to %1$d hours</string>
+    <string name="orbit_execution_record">View execution record</string>
 </resources>
