@@ -165,7 +165,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     fun isEnglishLanguage(): Boolean {
-        return LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+        return LocaleUtils.usesEnglishPrompt(context)
     }
 
     fun buildToolErrorResult(tool: AITool, error: String): ToolResult {
