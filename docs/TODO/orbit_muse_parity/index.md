@@ -29,7 +29,8 @@ status: in-progress
 | 找回聊天原话 | `memory_review` 工具包的 `history` |
 | 技能按需加载 | `orbit_skills` 查目录，再加载正文 |
 | 沉淀新技能 | `memory_review` 工具包的 `manage`（action=skill_create） |
-| 提醒、每日、每周、每月、每年、间隔、接力任务 | `orbit_task`（ONCE / DAILY / WEEKLY / MONTHLY / YEARLY / INTERVAL / EVENT） |
+| 提醒、每日、每周、每月、每年、间隔、接力任务 | `orbit_task`（ONCE / DAILY / WEEKLY / MONTHLY / YEARLY / INTERVAL / EVENT）[DONE 5414eec65] |
+| 任务执行时限 | `orbit_task` 的 `timeout_minutes`（1–8 分钟，默认 5；手机后台约 10 分钟会被系统停止，所以上限低于 Muse 的 86400 秒） [DONE] |
 | 网页变化监测 | `orbit_task` 的 `kind=URL_CHANGE` |
 | 汇报方式 | `notify_policy`：有变化才说 / 每次都说 / 每日汇总 |
 | 运行记录、暂停、取消、继续 | `orbit_task` 的 detail / pause / resume / cancel |
@@ -61,8 +62,7 @@ status: in-progress
 - [ ] 主动消息偏好文件（Muse 的 `PROACTIVE_PREFERENCES.md`；现在记在 memory.md）
 - [ ] 用户时区文件（Muse 的 `timezones.yaml`；现在记在 user.md）
 - [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
-- [x] 更多定时方式：每周、每月、每年（Muse cron 的 weekly / monthly / yearly）[DONE]
-- [ ] 任务执行时限：每个定时任务单独设超时（Muse 的 `timeout_secs`）
+- [ ] 长任务前台运行：超过 8 分钟的后台任务需要改成前台服务运行（现在只能拆成接力任务）
 - [ ] 每日流水日志：观察和运行记录按天追加（Muse 的 `memory/YYYY-MM-DD.md`），和长期记忆分开
 - [ ] 经验本：Orbit 自己攒的做事约定和教训（Muse 的 `AGENTS.md` 的 Conventions / Lessons）
 - [ ] 主动消息逐条决定：后台准备的每条消息记录「发 / 不发」和理由（Muse 的 `proactivity.select`）

@@ -174,6 +174,7 @@ internal object OrbitPromptDefaults {
 - 创建前先 list，避免重复。修改前先 detail 看清原来的说明，再用 update 保存完整的新说明，保留无关的内容；改完再看一遍，确认后才说以后会按新的执行。
 - 反复检查同一类东西（新邮件、新回复、新版本）时，在任务说明里要求把处理过的条目记进一个记录文件，下次只看新的，没有新东西就安静结束。
 - 安排好就简单告诉用户已经设好，然后停下。工具拒绝时，告诉用户接下来要怎么做，不要暗示任务已经存在。
+- 每次运行默认最多 5 分钟，超时会停下并暂停任务。步骤多的任务（要看好几个网页、要派子代理）把 timeout_minutes 设大一点，最多 8 分钟；8 分钟也做不完的，拆成几个接力任务。
 - 选时间时说“大概”。用户只说了频率时，不要自作主张定具体时刻；只有用户或事情本身需要时才用精确时间。
 - 任务报错或没拿到预期结果时，查看执行记录，在原范围内修好。用户的拒绝、频率限制和结果不明的外部操作要保持原样。修不好就暂停任务并告诉用户，不要让它一直发坏掉的报告。预期的结果失败、需要用户输入、或者以后不会再来时，都要告诉用户。
 - 后台结果回来时，决定要不要告诉用户。用户明确要的结果一定要说。用户没要的，只有真的是新的、值得打扰他时才说；例行的、没变化的、什么都没做的结果保持安静。
@@ -383,6 +384,7 @@ Rules:
 - List before creating to avoid duplicates. Before changing a job, read it with detail, then save the complete revised instruction with update, preserving unrelated parts; read it back before saying future runs are updated.
 - For jobs that keep checking the same kind of thing (new emails, new replies, new versions), have the instruction record handled items in a file so each run looks only at new ones and ends quietly when nothing is new.
 - When a job is set, tell the user briefly and stop. If the tool rejects it, say what the user needs to do next and never imply the schedule exists.
+- Each run gets 5 minutes by default; a run that hits its limit is stopped and the task is paused. Give jobs with many steps (several pages, subagents) a larger timeout_minutes, up to 8. Split work that cannot finish in 8 minutes into follow-on tasks.
 - Describe chosen times as approximate. If the user only gave a frequency, do not pick an exact time; use exact times only when the user or the event needs one.
 - When a job errors or misses its expected result, inspect the run and repair it within its scope. Preserve the user's denials, rate-limit stops and uncertain external outcomes. If you cannot repair it, pause it and tell the user instead of letting it send broken reports. Tell the user when an expected result fails, needs their input, or will no longer arrive.
 - When background work returns a result, decide whether to notify. Always surface results the user asked for. For unrequested results, speak up only when they are meaningfully new and worth the interruption; stay quiet for routine, unchanged or no-op results.

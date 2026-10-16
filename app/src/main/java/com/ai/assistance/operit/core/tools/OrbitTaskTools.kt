@@ -29,11 +29,13 @@ internal object OrbitTaskTools {
             ToolParameterSchema("url", description = "创建时需要检查的 http(s) 网页，不带账号密码；仅执行 GET", required = false),
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
+            ToolParameterSchema("timeout_minutes", "integer", "单次运行时限，1到8分钟，不填默认5分钟；超时会停下并暂停任务。手机后台约10分钟会被系统停止，所以最多8分钟", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
             "“每天几点”用 DAILY+daily_time；“每周几几点”用 WEEKLY+repeat_on+daily_time；“每月几号”用 MONTHLY+repeat_on+daily_time；" +
             "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
             "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
+            "每次运行默认最多5分钟，步骤多的任务（多个网页、多个子代理）可把 timeout_minutes 调到最多8分钟；做不完的大事拆成几个 EVENT 接力任务。" +
             "后台与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
             "工具过程保存在执行记录，有价值的正式结果才回到主聊天。",
@@ -61,7 +63,8 @@ internal object OrbitTaskTools {
                 runAt = runAt,
                 dailyMinute = arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
                     ?: if (mode == "DAILY" || calendar) error("$mode needs daily_time (HH:mm)") else 0,
-                calendarRule = arguments["repeat_on"].orEmpty()))
+                calendarRule = arguments["repeat_on"].orEmpty(),
+                timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0))
             }
             "list" -> JSONArray(repository.dao.tasks(orbit.id).map(::json))
             else -> {
@@ -74,7 +77,8 @@ internal object OrbitTaskTools {
                         arguments["notify_policy"] ?: task.notifyPolicy,
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
                         arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute,
-                        arguments["repeat_on"]?.takeIf { it.isNotBlank() } ?: task.calendarRule))
+                        arguments["repeat_on"]?.takeIf { it.isNotBlank() } ?: task.calendarRule,
+                        parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes))
                     "detail" -> json(task).put("executionRecord", repository.executionRecord(id))
                         .put("lastRun", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
@@ -125,11 +129,23 @@ internal object OrbitTaskTools {
         return hour * 60 + minute
     }
 
+    /** Null when the model left it out; a value outside 1..9 is rejected by the repository. */
+    private fun parseTimeout(value: String?): Int? {
+        val text = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        val number = text.toDoubleOrNull()?.takeIf { it % 1.0 == 0.0 }
+            ?: error("timeout_minutes must be a whole number of minutes from 1 to ${OrbitTaskRepository.MAX_TIMEOUT_MINUTES}")
+        require(number in 1.0..OrbitTaskRepository.MAX_TIMEOUT_MINUTES.toDouble()) {
+            "timeout_minutes must be 1 to ${OrbitTaskRepository.MAX_TIMEOUT_MINUTES} (Android stops background work after about 10 minutes)"
+        }
+        return number.toInt()
+    }
+
     private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
         .put("kind", task.kind)
         .put("schedule_mode", task.scheduleMode).put("goal_id", task.goalId).put("trigger_task_id", task.triggerTaskId)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
+        .put("timeout_minutes", OrbitTaskRepository.timeoutMinutes(task))
         .apply {
             if (task.scheduleMode == "DAILY" || task.scheduleMode in OrbitCalendarSchedule.modes)
                 put("daily_time", String.format(java.util.Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60))
