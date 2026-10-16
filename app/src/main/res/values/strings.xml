@@ -9057,8 +9057,8 @@
     <string name="orbit_choose_companion">选择陪伴角色</string>
     <string name="orbit_manage_role_cards">管理角色卡</string>
     <string name="orbit_manage_role_cards_desc">角色卡只用来给新 Orbit 起个人设，之后改它不会影响已有的 Orbit</string>
-    <string name="orbit_memory_row">记忆库</string>
-    <string name="orbit_memory_row_desc">查看和整理这个 Orbit 的资料、笔记与技能</string>
+    <string name="orbit_memory_row">技能与学习</string>
+    <string name="orbit_memory_row_desc">它学到的技能、学习记录和记忆改动历史</string>
     <string name="orbit_memory_unavailable">暂时无法打开这个 Orbit 的记忆，请重试。不会改用全局记忆。</string>
     <string name="orbit_memory_retry">重试</string>
     <string name="orbit_daily_task">每日主动关心</string>
@@ -9116,7 +9116,13 @@
     <string name="orbit_role_label">由「%1$s」创建</string>
     <string name="orbit_delete">删除</string>
     <string name="orbit_delete_title">删除 %1$s？</string>
-    <string name="orbit_delete_message">它的聊天记录、人设、名字和形象会一起删除，无法恢复。</string>
+    <string name="orbit_delete_message">它的聊天记录、人设、名字、形象、记忆和技能会一起删除，无法恢复。</string>
+    <string name="orbit_delete_continue">继续删除</string>
+    <string name="orbit_delete_confirm_title">再确认一次</string>
+    <string name="orbit_delete_type_hint">请输入下面这句话来确认删除：</string>
+    <string name="orbit_delete_phrase">我确认删除%1$s</string>
+    <string name="orbit_delete_wait">删除（%1$d）</string>
+    <string name="orbit_memory_graph_unavailable">Orbit 没有记忆图谱，它的记忆都写在 memory.md 里</string>
     <string name="orbit_settings">Orbit 设置</string>
     <string name="orbit_pause">暂停 Orbit</string>
     <string name="orbit_pause_desc">暂停后可以换成别的角色，聊天记录会保留</string>

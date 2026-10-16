@@ -15,9 +15,15 @@ import kotlinx.coroutines.withContext
  * Small, space-scoped notes included when a system prompt is built. All writers re-read under
  * the same lock; an editor must supply the version it opened so it cannot overwrite new notes.
  */
-class MemoryNotesRepository internal constructor(private val root: File, val profileId: String) {
+class MemoryNotesRepository internal constructor(
+    private val root: File,
+    val profileId: String,
+    /** Set for an Orbit: memory.md lives in this folder instead of under [root]. */
+    private val folder: File? = null,
+) {
     constructor(context: Context, profileId: String) :
-        this(File(context.filesDir, "memory_notes"), profileId)
+        this(File(context.filesDir, "memory_notes"), profileId,
+            MemorySearchSettingsPreferences.orbitMemoryDir(context.filesDir, profileId))
 
     companion object {
         const val MAX_CHARS = 6_000
@@ -72,10 +78,12 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
     enum class Failure { FULL, CONFLICT, EMPTY, NOT_UNIQUE, INVALID }
     class NotesException(val reason: Failure) : IllegalArgumentException(reason.name)
 
-    private val file = File(File(root, digest(profileId)), "memory.md")
+    private val legacyFile = File(File(root, digest(profileId)), "memory.md")
+    private val file = folder?.let { File(it, "memory.md") } ?: legacyFile
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
 
     private fun read(): Snapshot {
+        MemorySearchSettingsPreferences.moveLegacyFile(legacyFile, file)
         val text = if (file.exists()) file.readText(Charsets.UTF_8) else ""
         return Snapshot(text, digest(text))
     }
@@ -85,6 +93,9 @@ class MemoryNotesRepository internal constructor(private val root: File, val pro
     suspend fun delete() = withContext(Dispatchers.IO) {
         mutex.withLock {
             Files.deleteIfExists(file.toPath())
+            Files.deleteIfExists(legacyFile.toPath())
+            legacyFile.parentFile?.delete()
+            // Only removes the folder once it is empty, so an Orbit's changes.json stays put.
             file.parentFile?.delete()
             Unit
         }

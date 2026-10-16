@@ -37,6 +37,11 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         private const val TAG = "MemoryQueryToolExecutor"
         private const val MAX_QUERY_SNAPSHOTS_PER_PROFILE = 32
         private const val DEFAULT_RELEVANCE_THRESHOLD = 0.0
+        /** Tools that read or change the memory graph. */
+        private val GRAPH_TOOLS = setOf(
+            "query_memory", "get_memory_by_title", "create_memory", "update_memory", "delete_memory",
+            "move_memory", "link_memories", "query_memory_links", "update_memory_link", "delete_memory_link",
+        )
 
         private data class QuerySnapshotState(
             val id: String,
@@ -203,6 +208,18 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
 
     override fun invoke(tool: AITool): ToolResult {
         return kotlinx.coroutines.runBlocking {
+            // An Orbit's memory is memory.md only; it has no memory graph to read or change.
+            if (tool.name in GRAPH_TOOLS &&
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(resolveActiveProfileId(tool))
+            ) {
+                return@runBlocking ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "Orbit has no memory graph. Its memory is memory.md: read and edit it with memory_notes, " +
+                        "and use search_chat_history to look through earlier conversations."
+                )
+            }
             return@runBlocking when (tool.name) {
                 "query_memory" -> executeQueryMemory(tool)
                 "get_memory_by_title" -> executeGetMemoryByTitle(tool)

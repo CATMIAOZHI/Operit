@@ -38,6 +38,20 @@ class MemoryNotesRepositoryTest {
         assertEquals("New fact", repo().load().markdown)
     }
 
+    @Test fun `an Orbit memory md moves once from the old place into its own memory folder`() = runBlocking {
+        val old = File(folder.root, "notes")
+        MemoryNotesRepository(old, "orbit_abc").mutate("add", "Likes tea")
+        val orbitFolder = MemorySearchSettingsPreferences.orbitMemoryDir(File(folder.root, "files"), "orbit_abc")!!
+        assertEquals(File(folder.root, "files/orbit/abc/memory"), orbitFolder)
+        val moved = MemoryNotesRepository(old, "orbit_abc", orbitFolder)
+        assertEquals("Likes tea", moved.load().markdown)
+        assertTrue(File(orbitFolder, "memory.md").isFile)
+        assertEquals(0, old.listFiles()!!.size)
+        moved.mutate("add", "Walks at night")
+        assertEquals("Likes tea\n\nWalks at night", moved.load().markdown)
+        assertNull(MemorySearchSettingsPreferences.orbitMemoryDir(folder.root, "memory_123"))
+    }
+
     @Test fun `a prefix of an existing note is not an exact duplicate`() = runBlocking {
         repo().mutate("add", "Use port 2202")
         repo().mutate("add", "Use port 22")

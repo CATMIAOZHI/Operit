@@ -1581,6 +1581,10 @@ class MessageCoordinationDelegate(
                 val profileId =
                     roleCardId?.let { resolveRoleCardMemoryProfileOverride(it) }
                         ?: preferencesManager.activeMemorySpaceIdFlow.first()
+                if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+                    uiStateDelegate.showToast(context.getString(R.string.orbit_memory_graph_unavailable))
+                    return@launch
+                }
                 MemoryAutoSaveCandidateRepository(context, profileId)
                     .enqueueSelectedUserMessages(
                         chatId = currentChatId,
