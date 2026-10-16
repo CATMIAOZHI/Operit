@@ -162,7 +162,9 @@ fun MemoryScreen(fixedMemorySpaceId: String? = null) {
     val scope = rememberCoroutineScope()
     var page by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf<String?>(null) }
     var pageProfileId by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf("") }
-    val destination = page
+    // An Orbit keeps its memory in memory.md only; it has no memory graph.
+    val graphless = com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(activeProfileId)
+    val destination = page?.takeUnless { graphless && it == "graph" }
     if (destination == "graph") {
         MemoryLibraryPage(stringResource(R.string.memory_graph_title), activeProfileId, { page = null }) {
             MemoryGraphPage(activeProfileId, fixedMemorySpaceId != null)
@@ -202,7 +204,7 @@ fun MemoryScreen(fixedMemorySpaceId: String? = null) {
                 pageProfileId = activeProfileId
                 page = "user"
             }) { Text(stringResource(R.string.user_preferences_settings)) }
-            MemoryLibraryNavigation {
+            MemoryLibraryNavigation(showGraph = !graphless) {
                 pageProfileId = activeProfileId
                 page = it
             }
@@ -761,12 +763,16 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
 }
 
 @Composable
-private fun MemoryLibraryNavigation(modifier: Modifier = Modifier, onOpen: (String) -> Unit) {
+private fun MemoryLibraryNavigation(
+    modifier: Modifier = Modifier,
+    showGraph: Boolean = true,
+    onOpen: (String) -> Unit,
+) {
     // Grouped so the two skill pages sit side by side and read as different things, and so the
     // extraction pipeline (learn -> log -> approve) is visually one sequence.
     val groups = listOf(
-        R.string.memory_group_content to listOf(
-            Triple("graph", R.string.memory_graph_title, R.string.memory_nav_graph),
+        R.string.memory_group_content to listOfNotNull(
+            Triple("graph", R.string.memory_graph_title, R.string.memory_nav_graph).takeIf { showGraph },
             Triple("notes", R.string.memory_notes_title, R.string.memory_nav_notes)
         ),
         R.string.memory_group_learning to listOf(

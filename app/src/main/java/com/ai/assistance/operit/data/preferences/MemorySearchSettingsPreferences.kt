@@ -213,5 +213,25 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
 
         /** Orbit memory spaces are named `orbit_<orbitId>` (UserPreferencesManager.createOrbitMemorySpace). */
         fun isOrbitSpace(profileId: String): Boolean = profileId.startsWith("orbit_")
+
+        /**
+         * An Orbit keeps its memory inside its own folder, like Muse: `orbit/<orbitId>/memory/`
+         * holds memory.md and the record of changes to it. Other spaces return null.
+         */
+        fun orbitMemoryDir(filesDir: java.io.File, profileId: String): java.io.File? {
+            if (!isOrbitSpace(profileId)) return null
+            val orbitId = profileId.removePrefix("orbit_")
+            // An odd id can only come from edited or restored data; keep it on the old path rather than crash.
+            if (!orbitId.matches(Regex("[a-zA-Z0-9-]+"))) return null
+            return java.io.File(filesDir, "orbit/$orbitId/memory")
+        }
+
+        /** Moves a file written by an older version to its new place, once. */
+        internal fun moveLegacyFile(legacy: java.io.File, target: java.io.File) {
+            if (legacy == target || target.exists() || !legacy.isFile) return
+            target.parentFile?.mkdirs()
+            java.nio.file.Files.move(legacy.toPath(), target.toPath(), java.nio.file.StandardCopyOption.ATOMIC_MOVE)
+            legacy.parentFile?.takeIf { it.list()?.isEmpty() == true }?.delete()
+        }
     }
 }

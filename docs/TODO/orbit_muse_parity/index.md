@@ -25,7 +25,7 @@ status: in-progress
 | 工作手册 | PROMPT.md，可在 Orbit 设置里查看和编辑 |
 | 用户资料和长期笔记 | user.md、memory.md，`memory_review` 工具包 |
 | user.md 查看编辑入口 | Orbit 详情页「身份」里的 USER 卡片，或提示词分层页点 user.md；用户保存走 saveUserEdit 并留审核记录 [DONE b541e2e25] |
-| 旧记忆查询 | `extended_memory_tools` 工具包的 `query_memory` |
+| 记忆文件夹 | 像 Muse 一样只有 memory.md，没有记忆图谱；memory.md 和它的改动记录放在 `orbit/<UUID>/memory/`，技能放在 `orbit/<UUID>/skills/`，图谱工具对 Orbit 一律拒绝 [DONE] |
 | 记忆隔离 | 每个 Orbit 只读写自己的记忆，用户要求时才读别处 |
 | 找回聊天原话 | `memory_review` 工具包的 `history` |
 | 技能按需加载 | `orbit_skills` 查目录，再加载正文 |

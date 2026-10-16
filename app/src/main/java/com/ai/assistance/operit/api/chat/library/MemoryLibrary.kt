@@ -176,6 +176,16 @@ object MemoryLibrary {
     ) {
         val resolvedProfile = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
             .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
+        // An Orbit keeps its memory in memory.md only; it has no memory graph.
+        val orbitSpace =
+            com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(resolvedProfile)
+        val includeGraph = includeGraph && !orbitSpace
+        if (!includeGraph && !includeNotes && !includeSkills) {
+            // Manual "update memory" and rebuilds only write the graph; say so instead of reporting success.
+            if (orbitSpace) throw IllegalStateException(
+                context.getString(com.ai.assistance.operit.R.string.orbit_memory_graph_unavailable))
+            return
+        }
         withSpaceOperation(resolvedProfile) {
         val logs = com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository(context, resolvedProfile)
         val log = com.ai.assistance.operit.data.preferences.MemoryExtractionLog(

@@ -828,7 +828,7 @@ private fun IdentitySection(
                 Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 14.dp),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(orbitIcon("library-big"), contentDescription = null, modifier = Modifier.size(22.dp))
+                Icon(orbitIcon("sparkles"), contentDescription = null, modifier = Modifier.size(22.dp))
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(stringResource(R.string.orbit_memory_row), style = MaterialTheme.typography.titleMedium)

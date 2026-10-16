@@ -9080,8 +9080,8 @@
     <string name="orbit_choose_companion">Choose a companion</string>
     <string name="orbit_manage_role_cards">Manage role cards</string>
     <string name="orbit_manage_role_cards_desc">A role card only seeds a new Orbit; later edits do not change existing Orbits</string>
-    <string name="orbit_memory_row">Memory library</string>
-    <string name="orbit_memory_row_desc">Manage this Orbit’s profile, notes and skills</string>
+    <string name="orbit_memory_row">Skills and learning</string>
+    <string name="orbit_memory_row_desc">Skills it learned, its learning log and memory change history</string>
     <string name="orbit_memory_unavailable">This Orbit’s memory is unavailable. Please retry. Global memory will not be used instead.</string>
     <string name="orbit_memory_retry">Retry</string>
     <string name="orbit_daily_task">Daily check-in</string>
@@ -9139,7 +9139,13 @@
     <string name="orbit_role_label">Made from %1$s</string>
     <string name="orbit_delete">Delete</string>
     <string name="orbit_delete_title">Delete %1$s?</string>
-    <string name="orbit_delete_message">Its chat, persona, name and look are deleted too. This cannot be undone.</string>
+    <string name="orbit_delete_message">Its chat, persona, name, look, memory and skills are deleted too. This cannot be undone.</string>
+    <string name="orbit_delete_continue">Continue</string>
+    <string name="orbit_delete_confirm_title">Confirm once more</string>
+    <string name="orbit_delete_type_hint">Type this sentence to confirm:</string>
+    <string name="orbit_delete_phrase">I confirm deleting %1$s</string>
+    <string name="orbit_delete_wait">Delete (%1$d)</string>
+    <string name="orbit_memory_graph_unavailable">Orbit has no memory graph. Its memory lives in memory.md.</string>
     <string name="orbit_settings">Orbit settings</string>
     <string name="orbit_pause">Pause Orbit</string>
     <string name="orbit_pause_desc">Pause to switch to another role; the chat is kept</string>

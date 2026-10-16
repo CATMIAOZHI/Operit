@@ -245,6 +245,11 @@ class MemoryAutoSaveScheduler(
         val extractGraph = isSelectedUserBatch ||
             (api.enableMemoryAutoUpdateFlow.first() && api.enableLegacyMemoryExtractionFlow.first())
         if (!extractGraph) return
+        // These candidates feed the memory graph, which an Orbit does not have.
+        if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            repository.deleteCandidates(candidateIds)
+            return
+        }
         repository.markProcessing(candidateIds)
 
         try {

@@ -95,14 +95,18 @@ class MemoryReviewRepository internal constructor(
     private val staged: MutableList<MemoryReviewChange>? = null,
     private val boundary: suspend () -> com.ai.assistance.operit.features.orbit.OrbitLearningBoundary? = { null },
     private val learningGeneration: Long? = null,
-    private val evidence: String = ""
+    private val evidence: String = "",
+    /** Set for an Orbit, whose record lives in its own memory folder: where older versions kept it. */
+    private val legacyRoot: File? = null,
 ) {
     constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null,
         learningGeneration: Long? = null, evidence: String = "") :
-        this(File(context.filesDir, "memory_reviews"), profileId,
+        this(MemorySearchSettingsPreferences.orbitMemoryDir(context.filesDir, profileId)
+            ?: File(context.filesDir, "memory_reviews"), profileId,
         { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged,
         { com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) },
-        learningGeneration, evidence)
+        learningGeneration, evidence,
+        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) })
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
@@ -128,9 +132,11 @@ class MemoryReviewRepository internal constructor(
             return unfinished + finished.take(HISTORY_LIMIT)
         }
     }
-    private val file = File(root, "${hash(profileId)}.json")
+    private val legacyFile = File(legacyRoot ?: root, "${hash(profileId)}.json")
+    private val file = if (legacyRoot != null) File(root, "changes.json") else legacyFile
     private val mutex = locks.computeIfAbsent(file.absolutePath) { Mutex() }
     private fun read(): List<MemoryReviewChange> {
+        MemorySearchSettingsPreferences.moveLegacyFile(legacyFile, file)
         if (!file.exists()) return emptyList()
         val array = JSONArray(file.readText())
         return (0 until array.length()).map { i ->
@@ -512,7 +518,15 @@ class MemoryReviewRepository internal constructor(
             decided
         }
     }
-    suspend fun delete() = withContext(Dispatchers.IO) { mutex.withLock { Files.deleteIfExists(file.toPath()); Unit } }
+    suspend fun delete() = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            Files.deleteIfExists(file.toPath())
+            Files.deleteIfExists(legacyFile.toPath())
+            // An Orbit's memory folder goes once it is empty; File.delete leaves a folder with files in it.
+            if (legacyRoot != null) file.parentFile?.delete()
+            Unit
+        }
+    }
 
     private suspend fun installSkill(context: Context, draft: MemoryReviewChange) {
         val validated = parseSkillDrafts(JSONArray().put(JSONObject().put("name", draft.title)

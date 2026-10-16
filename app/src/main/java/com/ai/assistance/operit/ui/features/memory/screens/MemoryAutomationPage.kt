@@ -51,9 +51,12 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
             }
             if (!master) Text(stringResource(R.string.memory_auto_master_off),
                 Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
-            AutomationSwitch(stringResource(R.string.memory_extract_old),
-                stringResource(R.string.memory_graph_path_desc), graph) {
-                scope.launch { api.saveEnableLegacyMemoryExtraction(it) }
+            // An Orbit has no memory graph, so the graph extraction switch does not apply to it.
+            if (!MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+                AutomationSwitch(stringResource(R.string.memory_extract_old),
+                    stringResource(R.string.memory_graph_path_desc), graph) {
+                    scope.launch { api.saveEnableLegacyMemoryExtraction(it) }
+                }
             }
             AutomationSwitch(stringResource(R.string.memory_extract_new),
                 stringResource(R.string.memory_notes_path_desc), notes) {
