@@ -284,6 +284,7 @@ private fun OrbitChatPage(
                         onOpenSoul = { push(OrbitSubPage.SOUL) },
                         onOpenMemory = { push(OrbitSubPage.MEMORY) },
                         onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                        onOpenUser = { push(OrbitSubPage.USER) },
                     )
                 }
                 AnimatedContent(
@@ -308,6 +309,7 @@ private fun OrbitChatPage(
                             onOpenHistory = { push(OrbitSubPage.SOUL_HISTORY) })
                         OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
                         OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
+                        OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
                         OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
                         OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
                             orbit = orbit,
@@ -315,6 +317,7 @@ private fun OrbitChatPage(
                             onOpenPrompt = { push(OrbitSubPage.PROMPT) },
                             onOpenSoul = { push(OrbitSubPage.SOUL) },
                             onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                            onOpenUser = { push(OrbitSubPage.USER) },
                         )
                         OrbitSubPage.WORKSPACE -> OrbitWorkspacePage(orbit.id, onBack = back)
                         OrbitSubPage.TASK ->
@@ -369,7 +372,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, WORKSPACE, IDENTITY, PROMPTS, PROMPT }
+private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, WORKSPACE, IDENTITY, USER, PROMPTS, PROMPT }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

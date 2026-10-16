@@ -107,6 +107,7 @@ internal fun OrbitProfilePage(
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
     onOpenIdentity: () -> Unit,
+    onOpenUser: () -> Unit,
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -174,6 +175,7 @@ internal fun OrbitProfilePage(
                     onOpenIdentity = onOpenIdentity,
                     onOpenSoul = onOpenSoul,
                     onOpenMemory = onOpenMemory,
+                    onOpenUser = onOpenUser,
                 )
             }
         }
@@ -755,6 +757,7 @@ private fun IdentitySection(
     onOpenIdentity: () -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenUser: () -> Unit,
 ) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Text(
@@ -801,6 +804,15 @@ private fun IdentitySection(
                 modifier = Modifier.weight(1f),
             )
         }
+        // user.md: what Orbit knows about the user. A wide card under the two square ones.
+        IdentityCard(
+            title = stringResource(R.string.orbit_profile_user_card),
+            icon = orbitIcon("user-round"),
+            colors = listOf(Color(0xFF6B8FC7), Color(0xFF4F6FA8), Color(0xFF3B5590)),
+            onClick = onOpenUser,
+            aspectRatio = 2.4f,
+            modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
+        )
     }
 }
 
@@ -811,10 +823,11 @@ private fun IdentityCard(
     colors: List<Color>,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    aspectRatio: Float = 1.12f,
 ) {
     Box(
         modifier =
-            modifier.aspectRatio(1.12f)
+            modifier.aspectRatio(aspectRatio)
                 .clip(RoundedCornerShape(28.dp))
                 .background(Brush.linearGradient(colors))
                 .clickable(onClick = onClick)
