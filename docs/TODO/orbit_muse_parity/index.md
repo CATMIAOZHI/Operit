@@ -54,7 +54,7 @@ status: in-progress
 - [ ] 富格式成果：Word / PDF / 网页成果（仓库已有 `util/DocumentConversionUtil.kt` 可借用）
 - [ ] 媒体库（Muse 的 Library 标签页）
 - [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）
-- [ ] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示
+- [x] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示（25d778e8c）
 - [ ] 设备命令族：读取通讯录、日历、位置等（Muse 的 `device.invoke`）
 - [ ] 数据导出：一键导出 Orbit 的文件、记忆和记录
 - [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等
@@ -77,8 +77,8 @@ status: in-progress
 - [ ] 文件分享链接：上传文件生成有效期链接
 - [ ] 多音色播客 / 语音消息
 - [ ] 目标简报：定期汇总目标进展
-- [ ] Feed：Orbit 在后台写的短文章信息流
-- [ ] Ideas：Orbit 主动提出的建议卡片
+- [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
+- [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
 - [ ] 后台自我提升任务：整理记忆、更新对齐总结、维护技能（Muse 的 self_improvement）
 - [ ] 对齐总结文件（Muse 的 `ALIGNMENT_SYNTHESIS.md`）
 - [ ] 系统提示词副本：用户要时直接发文件
