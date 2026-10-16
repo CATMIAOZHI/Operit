@@ -135,7 +135,7 @@ fun ContextSummarySettingsScreen(onBackPressed: () -> Unit) {
     var dialogueReviewTitleInput by remember(currentConfig?.id) {
         mutableStateOf(currentConfig?.summaryDialogueReviewTitle.orEmpty())
     }
-    val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+    val useEnglish = LocaleUtils.usesEnglishPrompt(context)
     var summarySectionsInput by remember(currentConfig?.id) {
         mutableStateOf(emptyList<SummarySectionConfig>())
     }

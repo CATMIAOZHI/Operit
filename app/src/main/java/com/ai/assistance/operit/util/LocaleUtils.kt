@@ -103,6 +103,10 @@ object LocaleUtils {
         return context.createConfigurationContext(configuration)
     }
 
+    /** System prompts are written in Chinese only for Chinese; every other language gets English. */
+    fun usesEnglishPrompt(context: Context): Boolean =
+        !getCurrentLanguage(context).lowercase().startsWith("zh")
+
     /**
      * 获取当前应用设置的语言
      * @param context 上下文

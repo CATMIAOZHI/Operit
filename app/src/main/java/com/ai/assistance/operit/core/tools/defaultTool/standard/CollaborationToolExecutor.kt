@@ -149,5 +149,5 @@ class CollaborationToolExecutor(context: Context) : ToolExecutor {
     }
 
     /** Keeps result text in the same language the caller's tool prompts were rendered in. */
-    private fun isChineseLanguage(): Boolean = LocaleUtils.getCurrentLanguage(appContext) != "en"
+    private fun isChineseLanguage(): Boolean = !LocaleUtils.usesEnglishPrompt(appContext)
 }
