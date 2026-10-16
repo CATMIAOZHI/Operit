@@ -111,16 +111,17 @@ fun BubbleAiMessageComposable(
     val preferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val settings = LocalBubbleAiRenderSettings.current ?: rememberBubbleAiRenderSettings() ?: return
-    val bubbleShowAvatar = settings.layout.avatar
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val bubbleShowAvatar = settings.layout.avatar && !orbitLook
     val bubbleWideLayoutEnabled = settings.layout.wide
     val showThinkingProcess = settings.layout.thinking
     val showStatusTags = settings.layout.status
     val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
     val avatarShapePref = settings.identity.shape
     val avatarCornerRadius = settings.identity.radius
-    val showModelProvider = settings.identity.provider
-    val showModelName = settings.identity.model
-    val showRoleName = settings.identity.role
+    val showModelProvider = settings.identity.provider && !orbitLook
+    val showModelName = settings.identity.model && !orbitLook
+    val showRoleName = settings.identity.role && !orbitLook
     val collapseCompletedProcess = settings.collapse
     val toolCollapseMode = settings.toolMode
     

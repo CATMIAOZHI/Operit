@@ -193,8 +193,10 @@ fun BubbleUserMessageComposable(
         }
     }
     val resolvedDisplayName = if (isProxySender) proxySenderName else globalUserName
-    val shouldShowResolvedName = !isHiddenPlaceholder && if (isProxySender) true else showUserName
-    val shouldShowAvatar = !isHiddenPlaceholder && bubbleShowAvatar
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val shouldShowResolvedName =
+        !isHiddenPlaceholder && !orbitLook && if (isProxySender) true else showUserName
+    val shouldShowAvatar = !isHiddenPlaceholder && !orbitLook && bubbleShowAvatar
 
     // 添加状态控制内容预览
     val showContentPreview = remember { mutableStateOf(false) }
