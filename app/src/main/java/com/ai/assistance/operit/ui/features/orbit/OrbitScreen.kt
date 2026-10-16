@@ -90,6 +90,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -410,7 +411,8 @@ private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
             OrbitAvatar(
                 orbit = orbit,
                 size = 76,
-                modifier = Modifier.clickable(onClickLabel = stringResource(R.string.orbit_profile_open), onClick = onOpenProfile),
+                onClickLabel = stringResource(R.string.orbit_profile_open),
+                onClick = onOpenProfile,
             )
             // The name pill sits over the bottom edge of the picture, like Muse.
             Surface(
@@ -438,7 +440,14 @@ private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
 
 /** Orbit's own picture, or a role card's avatar in the picker. */
 @Composable
-internal fun OrbitAvatar(orbit: OrbitProfile?, size: Int, modifier: Modifier = Modifier, card: CharacterCard? = null) {
+internal fun OrbitAvatar(
+    orbit: OrbitProfile?,
+    size: Int,
+    modifier: Modifier = Modifier,
+    card: CharacterCard? = null,
+    onClickLabel: String? = null,
+    onClick: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
@@ -455,10 +464,25 @@ internal fun OrbitAvatar(orbit: OrbitProfile?, size: Int, modifier: Modifier = M
                             .first()
                     }
         }
+    // A tap shrinks the round picture a little, like iOS, instead of a square ripple.
+    val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
+    val pressScale by animateFloatAsState(if (pressed) 0.93f else 1f, tween(140), label = "orbitAvatarPress")
     Box(
         modifier =
             modifier.size(size.dp)
+                .graphicsLayer { scaleX = pressScale; scaleY = pressScale }
                 .clip(CircleShape)
+                .then(
+                    if (onClick != null) {
+                        Modifier.clickable(
+                            interactionSource = interaction,
+                            indication = null,
+                            onClickLabel = onClickLabel,
+                            onClick = onClick,
+                        )
+                    } else Modifier
+                )
                 .background(MaterialTheme.colorScheme.secondaryContainer)
                 .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
         contentAlignment = Alignment.Center,

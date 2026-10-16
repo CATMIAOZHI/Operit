@@ -31,6 +31,11 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.rememberModalBottomSheetState
+import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.runtime.produceState
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -201,34 +206,19 @@ internal fun OrbitCircleButton(
     }
 }
 
-/** Orbit's picture with a small pencil: the user picks a new picture or goes back to the copy. */
+/** Orbit's picture with a small pencil. Tapping either opens the avatar sheet. */
 @Composable
 private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    val preferences = remember { OrbitPreferences.getInstance(context) }
-    var showMenu by remember { mutableStateOf(false) }
-    var showPets by remember { mutableStateOf(false) }
-    val latestOrbitId by rememberUpdatedState(orbit.id)
-    val pickImage =
-        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri == null) return@rememberLauncherForActivityResult
-            val orbitId = latestOrbitId
-            scope.launch {
-                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar")
-                if (saved == null) {
-                    android.widget.Toast.makeText(
-                        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
-                    ).show()
-                } else {
-                    preferences.setAvatar(orbitId, saved.toString())
-                }
-            }
-        }
+    var showSheet by remember { mutableStateOf(false) }
     Box(modifier) {
-        OrbitAvatar(orbit = orbit, size = 96, modifier = Modifier.clickable { showMenu = true })
+        OrbitAvatar(
+            orbit = orbit,
+            size = 96,
+            onClickLabel = stringResource(R.string.orbit_change_avatar),
+            onClick = { showSheet = true },
+        )
         Surface(
-            onClick = { showMenu = true },
+            onClick = { showSheet = true },
             shape = CircleShape,
             color = MaterialTheme.colorScheme.surface,
             shadowElevation = 2.dp,
@@ -242,69 +232,189 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifi
                 )
             }
         }
-        DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.orbit_change_avatar)) },
-                leadingIcon = { Icon(orbitIcon("image"), contentDescription = null) },
-                onClick = {
-                    showMenu = false
-                    pickImage.launch("image/*")
-                },
-            )
-            DropdownMenuItem(
-                text = { Text(stringResource(R.string.orbit_avatar_use_pet)) },
-                leadingIcon = { Icon(orbitIcon("cat"), contentDescription = null) },
-                onClick = {
-                    showMenu = false
-                    showPets = true
-                },
-            )
-            if (orbit.avatarUri != null) {
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.orbit_reset_avatar)) },
-                    leadingIcon = { Icon(orbitIcon("rotate-ccw"), contentDescription = null) },
-                    onClick = {
-                        showMenu = false
-                        scope.launch { preferences.setAvatar(orbit.id, null) }
-                    },
-                )
+    }
+    if (showSheet) OrbitAvatarSheet(orbit = orbit, onDismiss = { showSheet = false })
+}
+
+/**
+ * One sheet for every way to change the picture: a photo, the role card's own picture, or one
+ * of the user's pets shown as round previews.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun OrbitAvatarSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val preferences = remember { OrbitPreferences.getInstance(context) }
+    val latestOrbitId by rememberUpdatedState(orbit.id)
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var busy by remember { mutableStateOf(false) }
+    fun failed() = android.widget.Toast.makeText(
+        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
+    ).show()
+    fun apply(block: suspend () -> Unit) {
+        if (busy) return
+        busy = true
+        scope.launch {
+            val ok = try { block(); true } catch (error: Exception) {
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                failed()
+                false
+            } finally { busy = false }
+            // The user may have closed the sheet while the picture was being saved.
+            if (ok && sheetState.isVisible) {
+                sheetState.hide()
+                onDismiss()
             }
         }
     }
-    if (showPets) {
-        val pets by remember { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
-        AlertDialog(
-            onDismissRequest = { showPets = false },
-            title = { Text(stringResource(R.string.orbit_avatar_use_pet)) },
-            text = {
-                Column {
-                    pets.forEach { pet ->
-                        Text(
-                            text = pet.settings.displayName(),
-                            style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
-                                showPets = false
-                                val orbitId = latestOrbitId
-                                scope.launch {
-                                    val file = com.ai.assistance.operit.pet.PetAvatar.export(
-                                        context, pet, OrbitPreferences.AVATAR_FILE_PREFIX,
-                                    )
-                                    if (file == null) {
-                                        android.widget.Toast.makeText(
-                                            context, context.getString(R.string.orbit_avatar_save_failed),
-                                            android.widget.Toast.LENGTH_SHORT,
-                                        ).show()
-                                    } else {
-                                        preferences.setAvatar(orbitId, Uri.fromFile(file).toString())
+    val pickImage =
+        rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
+            if (uri == null) return@rememberLauncherForActivityResult
+            val orbitId = latestOrbitId
+            apply {
+                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar")
+                if (saved == null) failed() else preferences.setAvatar(orbitId, saved.toString())
+            }
+        }
+    val pets by remember { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
+
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+        ) {
+            Text(
+                stringResource(R.string.orbit_change_avatar),
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 16.dp),
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                AvatarSourceTile(
+                    icon = orbitIcon("image"),
+                    label = stringResource(R.string.orbit_avatar_from_photos),
+                    enabled = !busy,
+                    onClick = { pickImage.launch("image/*") },
+                    modifier = Modifier.weight(1f),
+                )
+                AvatarSourceTile(
+                    icon = orbitIcon("rotate-ccw"),
+                    label = stringResource(R.string.orbit_reset_avatar),
+                    enabled = !busy,
+                    onClick = { apply { com.ai.assistance.operit.features.orbit.OrbitCompanion.resetAvatar(context, latestOrbitId) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (pets.isNotEmpty()) {
+                Text(
+                    stringResource(R.string.orbit_avatar_use_pet),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 24.dp, bottom = 12.dp, start = 4.dp),
+                )
+                // A few columns of round previews; the list is short, so a plain flow layout is enough.
+                pets.chunked(4).forEach { row ->
+                    Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
+                        row.forEach { pet ->
+                            PetAvatarChoice(
+                                pet = pet,
+                                enabled = !busy,
+                                modifier = Modifier.weight(1f),
+                                onClick = {
+                                    val orbitId = latestOrbitId
+                                    apply {
+                                        val file = com.ai.assistance.operit.pet.PetAvatar.export(
+                                            context, pet, OrbitPreferences.AVATAR_FILE_PREFIX,
+                                        )
+                                        if (file == null) failed()
+                                        else preferences.setAvatar(orbitId, Uri.fromFile(file).toString())
                                     }
-                                }
-                            }.padding(horizontal = 8.dp, vertical = 14.dp),
-                        )
+                                },
+                            )
+                        }
+                        repeat(4 - row.size) { Spacer(Modifier.weight(1f)) }
                     }
                 }
-            },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { showPets = false }) { Text(stringResource(R.string.cancel)) } },
+            }
+        }
+    }
+}
+
+@Composable
+private fun AvatarSourceTile(
+    icon: ImageVector,
+    label: String,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = RoundedCornerShape(22.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f),
+        modifier = modifier,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(vertical = 18.dp, horizontal = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, modifier = Modifier.size(22.dp))
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                label,
+                style = MaterialTheme.typography.bodyMedium,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PetAvatarChoice(
+    pet: com.ai.assistance.operit.pet.PetProfile,
+    enabled: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val preview by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, pet) {
+        value = com.ai.assistance.operit.pet.PetAvatar.preview(context, pet)
+    }
+    Column(
+        modifier.clip(RoundedCornerShape(18.dp)).clickable(enabled = enabled, onClick = onClick).padding(vertical = 6.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Box(
+            Modifier.size(64.dp).clip(CircleShape).background(MaterialTheme.colorScheme.secondaryContainer),
+            contentAlignment = Alignment.Center,
+        ) {
+            val image = preview
+            if (image != null) {
+                androidx.compose.foundation.Image(
+                    bitmap = image,
+                    contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    modifier = Modifier.fillMaxSize(),
+                )
+            } else {
+                Icon(orbitIcon("cat"), contentDescription = null, modifier = Modifier.size(26.dp))
+            }
+        }
+        Spacer(Modifier.height(6.dp))
+        Text(
+            pet.settings.displayName(),
+            style = MaterialTheme.typography.labelMedium,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 4.dp),
         )
     }
 }

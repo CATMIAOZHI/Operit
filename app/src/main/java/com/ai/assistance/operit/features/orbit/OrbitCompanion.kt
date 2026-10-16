@@ -145,18 +145,7 @@ object OrbitCompanion {
         val orbitId = UUID.randomUUID().toString()
         val preferences = OrbitPreferences.getInstance(context)
         preferences.writeSoul(orbitId, cardManager.combinePrompts(roleCardId).trim())
-        val avatarUri =
-            runCatching {
-                UserPreferencesManager.getInstance(context)
-                    .getResolvedAiAvatarForCharacterCardFlow(roleCardId)
-                    .first()
-                    ?.takeIf { it.isNotBlank() }
-                    ?.let {
-                        // Built-in role pictures ship with the app and never change, so use them directly.
-                        if (it.startsWith(ANDROID_ASSET_URI)) it
-                        else FileUtils.copyFileToInternalStorage(context, Uri.parse(it), "orbit_avatar")?.toString()
-                    }
-            }.getOrNull()
+        val avatarUri = roleAvatarCopy(context, roleCardId)
         val chatId = createChat(context, roleCardId, card.name)
         val profile =
             OrbitProfile(
@@ -171,6 +160,37 @@ object OrbitCompanion {
         preferences.putOrbit(profile)
         val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
         return profile.copy(memorySpaceId = memorySpaceId)
+    }
+
+    /**
+     * Orbit's own copy of the role card's current picture. Built-in role pictures ship with the
+     * app and never change, so they are used directly. Null when the card has no picture.
+     */
+    private suspend fun roleAvatarCopy(context: Context, roleCardId: String): String? =
+        runCatching {
+            UserPreferencesManager.getInstance(context)
+                .getResolvedAiAvatarForCharacterCardFlow(roleCardId)
+                .first()
+                ?.takeIf { it.isNotBlank() }
+                ?.let {
+                    if (it.startsWith(ANDROID_ASSET_URI)) it
+                    else FileUtils.copyFileToInternalStorage(context, Uri.parse(it), "orbit_avatar")?.toString()
+                }
+        }.getOrNull()
+
+    /**
+     * Puts the role card's picture back. Uses the card's picture as it is now; if the card was
+     * deleted, a built-in role's picture still works and other Orbits go back to the plain icon.
+     */
+    suspend fun resetAvatar(context: Context, orbitId: String) {
+        val preferences = OrbitPreferences.getInstance(context)
+        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+        val cardExists = runCatching {
+            orbit.sourceRoleCardId in CharacterCardManager.getInstance(context).characterCardListFlow.first()
+        }.getOrDefault(false)
+        val uri = if (cardExists) roleAvatarCopy(context, orbit.sourceRoleCardId)
+            else UserPreferencesManager.getBuiltInCharacterAvatarUri(orbit.sourceRoleCardId)
+        preferences.setAvatar(orbitId, uri)
     }
 
     /** Makes the Orbit's chat again when the user deleted it; everything else stays. */
