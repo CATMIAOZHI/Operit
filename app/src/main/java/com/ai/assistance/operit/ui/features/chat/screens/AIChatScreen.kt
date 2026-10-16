@@ -505,9 +505,27 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         "chat_history_auto_switch_chat_on_character_select",
         false
     )
-    val visibleAllChatHistories = remember(chatHistories) {
+    // Orbit chats belong to Orbit's own page and stay out of the normal chat list.
+    val orbitChatIds by com.ai.assistance.operit.features.orbit.rememberOrbitChatIds()
+    val visibleAllChatHistories = remember(chatHistories, orbitChatIds) {
         chatHistories.filter {
-            it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden
+            it.chatKind != ChatKind.SUBAGENT.name && !it.isHidden && it.id !in orbitChatIds
+        }
+    }
+    // The normal chat page never stays on an Orbit chat: it can be left there when Orbit closes
+    // with no earlier chat to return to, or when the app restarts on it. The short wait lets
+    // Orbit's own hand-back finish first; any chat change cancels this check.
+    if (chatIdOverride == null && !isFloatingMode && !embedded) {
+        LaunchedEffect(currentChatId, orbitChatIds, chatHistoriesLoaded, isCurrentScreen) {
+            val stuckOn = currentChatId ?: return@LaunchedEffect
+            if (!isCurrentScreen || !chatHistoriesLoaded || stuckOn !in orbitChatIds) return@LaunchedEffect
+            delay(400)
+            val fallback = visibleAllChatHistories.maxByOrNull { it.updatedAt }
+            if (fallback != null) {
+                actualViewModel.switchChat(fallback.id, scrollToBottom = false)
+            } else {
+                actualViewModel.createNewChat(inheritGroupFromCurrent = false)
+            }
         }
     }
     val localizedUserRoleName = stringResource(R.string.message_role_user)
