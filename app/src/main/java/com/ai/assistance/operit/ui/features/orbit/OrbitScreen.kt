@@ -9,6 +9,12 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.Crossfade
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.layout.ime
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
 import androidx.compose.animation.core.CubicBezierEasing
@@ -174,9 +180,15 @@ fun OrbitScreen(
     val readyChatId by
         produceState<String?>(initialValue = null, activeOrbitId) {
             value =
-                runCatching { OrbitCompanion.ensureActiveChat(context)?.chatId }
-                    .onFailure { AppLogger.e(TAG, "Could not prepare the Orbit chat", it) }
-                    .getOrNull()
+                try {
+                    OrbitCompanion.ensureActiveChat(context)?.chatId
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // Leaving this page (or switching Orbit) is not a failure; never pause for it.
+                    throw e
+                } catch (e: Exception) {
+                    AppLogger.e(TAG, "Could not prepare the Orbit chat", e)
+                    null
+                }
             if (value == null) {
                 // The chat could not be made: show the list instead.
                 toast(context, R.string.orbit_open_chat_failed)
@@ -216,6 +228,10 @@ private fun OrbitChatPage(
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
+    var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
+    var pageTab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.FEED) }
+    val imeVisible = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null
@@ -259,9 +275,30 @@ private fun OrbitChatPage(
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
-        CompositionLocalProvider(LocalOrbitChatLook provides true) {
-            chatContent(orbit.chatId) {
-                OrbitHeader(orbit = orbit, onOpenProfile = { showProfile = true })
+        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile) { tab = OrbitTab.CHAT }
+        Column(Modifier.fillMaxSize()) {
+            Box(Modifier.weight(1f).fillMaxWidth()) {
+                CompositionLocalProvider(LocalOrbitChatLook provides true) {
+                    chatContent(orbit.chatId) {
+                        OrbitHeader(orbit = orbit, onOpenProfile = { showProfile = true })
+                    }
+                }
+                androidx.compose.animation.AnimatedVisibility(
+                    visible = tab != OrbitTab.CHAT,
+                    enter = fadeIn(tween(OrbitMotion.PUSH_MS / 2)),
+                    exit = fadeOut(tween(OrbitMotion.PUSH_MS / 2)),
+                ) {
+                    Crossfade(targetState = pageTab, animationSpec = tween(OrbitMotion.PUSH_MS / 2), label = "orbitTab") { shown ->
+                        OrbitTabPage(orbit, shown, onOpenChat = { tab = OrbitTab.CHAT })
+                    }
+                }
+            }
+            // Hidden while typing so the input sits right on the keyboard.
+            if (!imeVisible) {
+                OrbitBottomBar(selected = tab, onSelect = {
+                    if (it != OrbitTab.CHAT) pageTab = it
+                    tab = it
+                })
             }
         }
         val profileDim by animateFloatAsState(
@@ -334,7 +371,7 @@ private fun OrbitChatPage(
                             onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                             onOpenUser = { push(OrbitSubPage.USER) },
                         )
-                        OrbitSubPage.WORKSPACE -> OrbitWorkspacePage(orbit.id, onBack = back)
+                        OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                         OrbitSubPage.TASK ->
                             openTaskId?.let { taskId ->
                                 OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
@@ -372,9 +409,9 @@ private fun OrbitChatPage(
             settings = settings,
             hasBackgroundImage = hasBackgroundImage,
             onDismiss = { showSettings = false },
-            onOpenTasks = {
+            onOpenNotifications = {
                 showSettings = false
-                push(OrbitSubPage.WORKSPACE)
+                push(OrbitSubPage.NOTIFICATIONS)
             },
             onOpenPrompts = {
                 showSettings = false
@@ -387,7 +424,7 @@ private fun OrbitChatPage(
     }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, WORKSPACE, IDENTITY, USER, PROMPTS, PROMPT }
+private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -531,7 +568,7 @@ private fun OrbitSettingsSheet(
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
     onDismiss: () -> Unit,
-    onOpenTasks: () -> Unit,
+    onOpenNotifications: () -> Unit,
     onOpenPrompts: () -> Unit,
     onPause: () -> Unit,
 ) {
@@ -654,11 +691,11 @@ private fun OrbitSettingsSheet(
                 )
                 SettingsCard(backgroundColor = cardColor) {
                     SettingsNavRow(
-                        title = stringResource(R.string.orbit_workspace),
-                        subtitle = stringResource(R.string.orbit_tasks_subtitle),
-                        icon = lucide("list-checks"),
+                        title = stringResource(R.string.orbit_notifications_row),
+                        subtitle = stringResource(R.string.orbit_notifications_row_desc),
+                        icon = lucide("bell"),
                         searchable = false,
-                        onClick = onOpenTasks,
+                        onClick = onOpenNotifications,
                     )
                     SettingsRowDivider(inset = false)
                     FocusNotesField(
@@ -772,11 +809,15 @@ private fun OrbitHome(
         if (starting) return
         starting = true
         scope.launch {
-            runCatching { action() }
-                .onFailure {
-                    AppLogger.e(TAG, "Could not start Orbit", it)
-                    toast(context, R.string.orbit_open_chat_failed)
-                }
+            try {
+                action()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Starting an Orbit swaps this list for its chat, which cancels this scope. That is success.
+                throw e
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Could not start Orbit", e)
+                toast(context, R.string.orbit_open_chat_failed)
+            }
             starting = false
         }
     }

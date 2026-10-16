@@ -467,7 +467,7 @@ private fun OrbitTabBar(selected: OrbitProfileTab, onSelect: (OrbitProfileTab) -
 
 /** One row of a profile list: a round icon, a title, up to two lines of detail and a time. */
 @Composable
-private fun OrbitListRow(
+internal fun OrbitListRow(
     icon: ImageVector,
     title: String,
     detail: String?,
@@ -528,7 +528,7 @@ private fun OrbitListRow(
 }
 
 @Composable
-private fun SectionTitle(text: String) {
+internal fun SectionTitle(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.titleMedium,
@@ -538,7 +538,7 @@ private fun SectionTitle(text: String) {
 }
 
 @Composable
-private fun EmptyHint(text: String) {
+internal fun EmptyHint(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
