@@ -315,6 +315,9 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_runs WHERE eventId = :eventId")
     suspend fun eventRun(eventId: String): OrbitRunEntity?
 
+    @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state = 'RUNNING' AND eventId != :eventId")
+    suspend fun otherRunningRuns(taskId: String, eventId: String): List<OrbitRunEntity>
+
     @Query("SELECT * FROM orbit_runs WHERE id = :id")
     suspend fun run(id: String): OrbitRunEntity?
 
@@ -464,6 +467,11 @@ interface OrbitTaskDao {
             ?: return null
         if (pendingEvent(task.id, task.version)?.id != event.id) return null
         if (task.goalId.isNotEmpty() && goal(task.goalId)?.state != "ACTIVE") return null
+        // Short and long tasks run in separate lanes; after an edit moves a task across the
+        // boundary, its new version must wait until the old run still holding a live lease ends.
+        if (otherRunningRuns(task.id, event.id).any {
+                it.bootId == bootId && it.leaseUntilElapsed > elapsed && it.leaseUntilWall > now
+            }) return null
         val old = eventRun(event.id)
         if (old != null && (old.state != "RUNNING" ||
                 (old.bootId == bootId && old.leaseUntilElapsed > elapsed && old.leaseUntilWall > now))) return null

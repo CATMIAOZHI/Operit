@@ -64,12 +64,30 @@ object OrbitTaskRunner {
         Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
             .takeIf { it >= 0 }?.toString() ?: processBootFallback
 
-    suspend fun runNext(context: Context) = coroutineScope {
+    /** True while this process is executing [runId]; its own worker reschedules when it ends. */
+    internal fun isRunningHere(runId: String): Boolean = active.values.any { it.token.id == runId }
+
+    /** True while this process runs a task in that lane; the lane reschedules when it ends. */
+    internal fun laneBusyHere(longLane: Boolean): Boolean =
+        active.values.any { OrbitTaskRepository.isLongRun(it.task) == longLane }
+
+    /**
+     * Runs one due task. Short tasks and long ones ([OrbitTaskRepository.isLongRun]) use separate
+     * lanes so a run of several hours never holds back a reminder. For a long run, [promote] moves
+     * the worker to the foreground; if that is refused the run is held to the background limit.
+     */
+    suspend fun runNext(
+        context: Context,
+        longLane: Boolean = false,
+        promote: suspend (OrbitTaskEntity) -> Boolean = { false },
+    ) = coroutineScope {
         val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope
         val repository = OrbitTaskRepository(context)
         val dao = repository.dao
         OrbitDelivery.sendPending(context, orbit.id)
-        val tasks = dao.tasks(orbit.id).filter { it.state == "ACTIVE" }.sortedBy { it.nextRunAt }
+        val tasks = dao.tasks(orbit.id)
+            .filter { it.state == "ACTIVE" && OrbitTaskRepository.isLongRun(it) == longLane }
+            .sortedBy { it.nextRunAt }
         val now = System.currentTimeMillis()
         val boot = bootId(context)
         // A live lease for one task must not starve the other due tasks.
@@ -79,7 +97,9 @@ object OrbitTaskRunner {
                 context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
         } ?: return@coroutineScope
         val task = dao.task(token.taskId) ?: return@coroutineScope
-        val timeoutMinutes = OrbitTaskRepository.timeoutMinutes(task)
+        val requestedMinutes = OrbitTaskRepository.timeoutMinutes(task)
+        var heldToBackground = false
+        var timeoutMinutes = requestedMinutes
         // A stale model turn must never submit through a successor's execution token.
         val chatId = "orbit-task-" + UUID.nameUUIDFromBytes("${token.id}:${token.generation}".toByteArray())
         val job = currentCoroutineContext().job
@@ -98,6 +118,14 @@ object OrbitTaskRunner {
             }
         }
         try {
+            // The heartbeat is already renewing the lease while this waits for the foreground.
+            if (requestedMinutes > OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES) {
+                heldToBackground = !try { promote(task) } catch (e: CancellationException) { throw e } catch (e: Exception) {
+                    com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Foreground run refused: ${e.message}")
+                    false
+                }
+                if (heldToBackground) timeoutMinutes = OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES
+            }
             withTimeout(timeoutMinutes * 60_000L) {
                 check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
                 var checkpoint = checkNotNull(dao.run(token.id))
@@ -131,7 +159,9 @@ object OrbitTaskRunner {
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException && currentCoroutineContext().isActive) {
                 dao.interrupt(token, System.currentTimeMillis(), context.getString(
-                    com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes))
+                    if (heldToBackground) com.ai.assistance.operit.R.string.orbit_run_timed_out_background
+                    else com.ai.assistance.operit.R.string.orbit_run_timed_out,
+                    task.title, timeoutMinutes))
             } else throw e
         } catch (e: Exception) {
             dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))

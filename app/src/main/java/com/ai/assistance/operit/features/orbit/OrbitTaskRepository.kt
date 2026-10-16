@@ -187,16 +187,25 @@ class OrbitTaskRepository(private val context: Context) {
         /** A run without its own limit gets five minutes. */
         const val DEFAULT_TIMEOUT_MINUTES = 5
 
-        /** Android stops a background worker after about ten minutes, so a run and its cleanup must end before that. */
-        const val MAX_TIMEOUT_MINUTES = 8
+        /**
+         * Android stops a normal background worker after about ten minutes, so runs up to this long
+         * (plus cleanup) fit there. Longer runs go to a separate foreground lane.
+         */
+        const val BACKGROUND_TIMEOUT_MINUTES = 8
+
+        /** Longer runs move to a foreground worker with a notification; the ceiling matches Muse's 24 hours. */
+        const val MAX_TIMEOUT_MINUTES = 24 * 60
 
         /** 0 keeps the default; otherwise 1 to [MAX_TIMEOUT_MINUTES]. */
         fun checkTimeout(minutes: Int) = require(minutes in 0..MAX_TIMEOUT_MINUTES) {
-            "timeout_minutes must be 1 to $MAX_TIMEOUT_MINUTES (Android stops background work after about 10 minutes)"
+            "timeout_minutes must be 1 to $MAX_TIMEOUT_MINUTES (24 hours)"
         }
 
         fun timeoutMinutes(task: OrbitTaskEntity): Int =
             task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
+
+        /** Runs longer than a normal background worker allows; they use the foreground lane. */
+        fun isLongRun(task: OrbitTaskEntity): Boolean = timeoutMinutes(task) > BACKGROUND_TIMEOUT_MINUTES
 
         /** Modes that run at a chosen time of day or moment, so resuming waits for the next one. */
         private val timedModes = setOf("ONCE", "DAILY") + OrbitCalendarSchedule.modes

@@ -144,8 +144,9 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                                 "DIGEST" -> R.string.orbit_report_digest
                                 else -> R.string.orbit_task_report_changes
                             }))
-                            Text(stringResource(R.string.orbit_task_timeout,
-                                com.ai.assistance.operit.features.orbit.OrbitTaskRepository.timeoutMinutes(detail)),
+                            val limit = com.ai.assistance.operit.features.orbit.OrbitTaskRepository.timeoutMinutes(detail)
+                            Text(if (limit >= 120 && limit % 60 == 0) stringResource(R.string.orbit_task_timeout_hours, limit / 60)
+                                else stringResource(R.string.orbit_task_timeout, limit),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             if (detail.state == "ACTIVE") Text(taskSchedule(detail, tasks.orEmpty()))
                         }
