@@ -19,7 +19,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                OrbitProductTools.prompts + listOf(OrbitSkillTools.prompt, OrbitSoulTools.prompt, OrbitTaskTools.prompt,
+                OrbitProductTools.prompts + OrbitBoardTools.prompts + listOf(OrbitSkillTools.prompt, OrbitSoulTools.prompt, OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "Change your own name as the user's Orbit. The new name shows at the top of this chat.",
@@ -44,7 +44,7 @@ internal object OrbitTools {
         SystemToolPromptCategory(
             categoryName = "Orbit",
             tools =
-                OrbitProductTools.prompts + listOf(OrbitSkillTools.prompt, OrbitSoulTools.prompt, OrbitTaskTools.prompt,
+                OrbitProductTools.prompts + OrbitBoardTools.prompts + listOf(OrbitSkillTools.prompt, OrbitSoulTools.prompt, OrbitTaskTools.prompt,
                     ToolPrompt(
                         name = SET_NAME,
                         description = "修改你作为用户 Orbit 的名字，新名字会显示在这个聊天顶部。",
@@ -79,6 +79,8 @@ internal object OrbitTools {
         return mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
             OrbitProductTools.GOAL to isOrbitChat, OrbitProductTools.ARTIFACT to isOrbitChat,
+            OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
+            OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false)
     }
 
