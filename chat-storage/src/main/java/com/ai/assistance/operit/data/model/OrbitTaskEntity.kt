@@ -32,6 +32,8 @@ data class OrbitTaskEntity(
     @ColumnInfo(defaultValue = "''") val goalId: String = "",
     @ColumnInfo(defaultValue = "''") val triggerTaskId: String = "",
     @ColumnInfo(defaultValue = "''") val sourceArtifactVersionId: String = "",
+    /** Day rule for WEEKLY ("1,3,5"), MONTHLY ("15") and YEARLY ("12-03"); empty otherwise. */
+    @ColumnInfo(defaultValue = "''") val calendarRule: String = "",
 )
 
 @Entity(tableName = "orbit_events", indices = [Index("taskId")])

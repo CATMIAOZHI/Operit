@@ -9177,6 +9177,13 @@
     <string name="orbit_profile_schedule_interval">时间间隔</string>
     <string name="orbit_profile_schedule_event">事件触发</string>
     <string name="orbit_profile_schedule_daily_at">每天 %1$s</string>
+    <string name="orbit_profile_schedule_weekly">每周</string>
+    <string name="orbit_profile_schedule_monthly">每月</string>
+    <string name="orbit_profile_schedule_yearly">每年</string>
+    <string name="orbit_profile_schedule_weekly_at">每%1$s %2$s</string>
+    <string name="orbit_profile_schedule_monthly_at">每月 %1$d 日 %2$s</string>
+    <string name="orbit_profile_schedule_yearly_at">每年 %1$s %2$s</string>
+    <string name="orbit_profile_weekday_separator">、</string>
     <string name="orbit_profile_every_hours">每 %1$d 小时</string>
     <string name="orbit_profile_every_minutes">每 %1$d 分钟</string>
     <string name="orbit_profile_identity_help">名字只能由 Orbit 自己修改</string>
