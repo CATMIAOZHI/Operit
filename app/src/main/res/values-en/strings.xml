@@ -9315,5 +9315,7 @@
 
 
     <string name="orbit_run_interrupted">Execution was interrupted and paused. Verify earlier tool effects before continuing; the turn will not replay automatically.</string>
+    <string name="orbit_run_timed_out">“%1$s” ran past %2$d minutes, so it was stopped and paused. Verify what it already did before continuing; it will not replay automatically.</string>
+    <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>
     <string name="orbit_execution_record">View execution record</string>
 </resources>

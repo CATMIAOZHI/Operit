@@ -9292,5 +9292,7 @@
 
 
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_run_timed_out">“%1$s”这次运行超过 %2$d 分钟，已停下并暂停。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
+    <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
     <string name="orbit_execution_record">查看执行记录</string>
 </resources>

@@ -34,6 +34,8 @@ data class OrbitTaskEntity(
     @ColumnInfo(defaultValue = "''") val sourceArtifactVersionId: String = "",
     /** Day rule for WEEKLY ("1,3,5"), MONTHLY ("15") and YEARLY ("12-03"); empty otherwise. */
     @ColumnInfo(defaultValue = "''") val calendarRule: String = "",
+    /** Per-run time limit in minutes; 0 uses the default. */
+    @ColumnInfo(defaultValue = "0") val timeoutMinutes: Int = 0,
 )
 
 @Entity(tableName = "orbit_events", indices = [Index("taskId")])

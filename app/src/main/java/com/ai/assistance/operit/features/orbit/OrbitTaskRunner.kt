@@ -28,7 +28,6 @@ import okhttp3.Request
 object OrbitTaskRunner {
     const val FINISH = "orbit_submit_monitor_result"
     private const val LEASE_MS = 120_000L
-    private const val RUN_TIMEOUT_MS = 300_000L
     private val runningState = MutableStateFlow(false)
     val running = runningState.asStateFlow()
     private data class ActiveRun(
@@ -80,6 +79,7 @@ object OrbitTaskRunner {
                 context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
         } ?: return@coroutineScope
         val task = dao.task(token.taskId) ?: return@coroutineScope
+        val timeoutMinutes = OrbitTaskRepository.timeoutMinutes(task)
         // A stale model turn must never submit through a successor's execution token.
         val chatId = "orbit-task-" + UUID.nameUUIDFromBytes("${token.id}:${token.generation}".toByteArray())
         val job = currentCoroutineContext().job
@@ -98,7 +98,7 @@ object OrbitTaskRunner {
             }
         }
         try {
-            withTimeout(RUN_TIMEOUT_MS) {
+            withTimeout(timeoutMinutes * 60_000L) {
                 check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
                 var checkpoint = checkNotNull(dao.run(token.id))
                 if (!checkpoint.hasSource) {
@@ -122,7 +122,7 @@ object OrbitTaskRunner {
                     }
                     OrbitPreferences.getInstance(context).rememberChatOwner(chatId, orbit.id)
                     OrbitTaskExecution.bindRoot(context, chatId, token)
-                    runModel(context, chatId, task, checkpoint)
+                    runModel(context, chatId, task, checkpoint, timeoutMinutes)
                     check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
                         "The model did not submit a result"
                     }
@@ -130,7 +130,8 @@ object OrbitTaskRunner {
             }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException && currentCoroutineContext().isActive) {
-                dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+                dao.interrupt(token, System.currentTimeMillis(), context.getString(
+                    com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes))
             } else throw e
         } catch (e: Exception) {
             dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
@@ -183,7 +184,8 @@ object OrbitTaskRunner {
     private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    private suspend fun runModel(context: Context, chatId: String, task: OrbitTaskEntity, run: OrbitRunEntity) {
+    private suspend fun runModel(context: Context, chatId: String, task: OrbitTaskEntity, run: OrbitRunEntity,
+        timeoutMinutes: Int) {
         val core = ChatRuntimeHolder.getInstance(context).getCore(ChatRuntimeSlot.MAIN)
         UnattendedChats.begin(chatId)
         var session: ChatTurnSession? = null
@@ -201,6 +203,8 @@ object OrbitTaskRunner {
                 ?.takeIf { it.isNotEmpty() }?.let { AppDatabase.getDatabase(context).orbitTaskDao().run(it) }
             val prompt = """
                 Perform this Orbit task: ${task.title}
+                Time limit for this run: $timeoutMinutes minutes. Finish or call orbit_wait_for_user before it runs out;
+                a run that hits the limit is stopped and the task is paused.
                 User goal: ${task.instruction}
                 Reporting policy: ${task.notifyPolicy}. CHANGES means stay quiet unless there is useful new information.
                 Previous observation: ${task.lastObservation}
@@ -241,7 +245,7 @@ object OrbitTaskRunner {
                     deliveredByTool = true, disableSummary = true, useComposerReply = false,
                     toolsEnabled = true,
                     terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT)),
-                responseStreamAcquireTimeoutMs = 30_000, responseTimeoutMs = RUN_TIMEOUT_MS,
+                responseStreamAcquireTimeoutMs = 30_000, responseTimeoutMs = timeoutMinutes * 60_000L,
             ))
             session = (result as? ChatTurnDispatchResult.Started)?.session
                 ?: error((result as ChatTurnDispatchResult.Failed).error)
