@@ -15,9 +15,10 @@ internal object OrbitTaskTools {
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run"),
             ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型", required = false),
-            ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天 daily_time 执行；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行", required = false),
+            ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
-            ToolParameterSchema("daily_time", description = "DAILY 必填：每天执行的本地时间 HH:mm", required = false),
+            ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
+            ToolParameterSchema("repeat_on", description = "WEEKLY/MONTHLY/YEARLY 必填。WEEKLY：星期几，逗号分隔，1=周一…7=周日，如 1,3,5；MONTHLY：每月几号 1-31，如 15（小月取最后一天）；YEARLY：月-日，如 12-03（2月29日在平年取2月28日）", required = false),
             ToolParameterSchema("goal_id", description = "可选，orbit_goal 返回的当前 Orbit 目标编号", required = false),
             ToolParameterSchema("trigger_task_id", description = "EVENT 必填：成功后触发本任务的同 Orbit 任务编号", required = false),
             ToolParameterSchema("source_artifact_version_id", description = "可选，继续修改的成果版本编号，由 orbit_artifact 获取", required = false),
@@ -30,7 +31,9 @@ internal object OrbitTaskTools {
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
-            "“每天几点”用 DAILY+daily_time；“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
+            "“每天几点”用 DAILY+daily_time；“每周几几点”用 WEEKLY+repeat_on+daily_time；“每月几号”用 MONTHLY+repeat_on+daily_time；" +
+            "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
+            "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
             "后台与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
             "工具过程保存在执行记录，有价值的正式结果才回到主聊天。",
@@ -46,17 +49,19 @@ internal object OrbitTaskTools {
             "create" -> {
                 val mode = arguments["schedule_mode"] ?: if (arguments["kind"] != "URL_CHANGE") "ONCE" else "INTERVAL"
                 val runAt = arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt)
+                val calendar = mode in OrbitCalendarSchedule.modes
                 json(repository.create(orbit,
                 arguments["title"] ?: error("Missing title"), arguments["instruction"] ?: error("Missing instruction"),
                 arguments["url"].orEmpty(), arguments["interval_minutes"]?.toInt() ?: 60,
                 // A reminder exists to reach the user, so it always reports unless told otherwise.
-                arguments["notify_policy"] ?: if (runAt != null) "ALWAYS" else "CHANGES",
+                arguments["notify_policy"] ?: if (runAt != null || calendar) "ALWAYS" else "CHANGES",
                 runtime?.callId ?: java.util.UUID.randomUUID().toString(), arguments["kind"] ?: "ASSIST",
                 mode,
                 arguments["goal_id"].orEmpty(), arguments["trigger_task_id"].orEmpty(), arguments["source_artifact_version_id"].orEmpty(),
                 runAt = runAt,
                 dailyMinute = arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
-                    ?: if (mode == "DAILY") error("DAILY needs daily_time (HH:mm)") else 0))
+                    ?: if (mode == "DAILY" || calendar) error("$mode needs daily_time (HH:mm)") else 0,
+                calendarRule = arguments["repeat_on"].orEmpty()))
             }
             "list" -> JSONArray(repository.dao.tasks(orbit.id).map(::json))
             else -> {
@@ -68,7 +73,8 @@ internal object OrbitTaskTools {
                         arguments["url"] ?: task.source, arguments["interval_minutes"]?.toInt() ?: task.intervalMinutes,
                         arguments["notify_policy"] ?: task.notifyPolicy,
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
-                        arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute))
+                        arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute,
+                        arguments["repeat_on"]?.takeIf { it.isNotBlank() } ?: task.calendarRule))
                     "detail" -> json(task).put("executionRecord", repository.executionRecord(id))
                         .put("lastRun", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
@@ -124,7 +130,11 @@ internal object OrbitTaskTools {
         .put("schedule_mode", task.scheduleMode).put("goal_id", task.goalId).put("trigger_task_id", task.triggerTaskId)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
-        .apply { if (task.scheduleMode == "DAILY") put("daily_time", String.format(java.util.Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60)) }
+        .apply {
+            if (task.scheduleMode == "DAILY" || task.scheduleMode in OrbitCalendarSchedule.modes)
+                put("daily_time", String.format(java.util.Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60))
+            if (task.calendarRule.isNotEmpty()) put("repeat_on", task.calendarRule)
+        }
         .put("nextRunAt", task.nextRunAt)
         .put("next_run", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(task.nextRunAt)))
         .put("lastObservation", task.lastObservation)

@@ -32,16 +32,17 @@ class OrbitTaskRepository(private val context: Context) {
         intervalMinutes: Int, notifyPolicy: String, requestId: String, kind: String = "URL_CHANGE",
         scheduleMode: String = if (kind == "ASSIST") "ONCE" else "INTERVAL",
         goalId: String = "", triggerTaskId: String = "", sourceArtifactVersionId: String = "",
-        runAt: Long? = null, dailyMinute: Int = 0,
+        runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
     ): OrbitTaskEntity {
         require(title.isNotBlank() && title.length <= 80)
         require(instruction.isNotBlank() && instruction.length <= 4000)
         require(intervalMinutes in 15..10080)
         require(notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
         require(kind in setOf("URL_CHANGE", "ASSIST"))
-        require(scheduleMode in setOf("ONCE", "INTERVAL", "EVENT", "DAILY"))
+        require(scheduleMode in setOf("ONCE", "INTERVAL", "EVENT", "DAILY") + OrbitCalendarSchedule.modes)
         require(dailyMinute in 0 until 24 * 60)
         require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
+        val rule = checkedRule(scheduleMode, calendarRule)
         if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
@@ -50,11 +51,12 @@ class OrbitTaskRepository(private val context: Context) {
         val firstRun = when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: now, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
+            in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
             else -> now
         }
         val task = OrbitTaskEntity(id, orbit.id, orbit.chatId, title.trim(), instruction.trim(),
             kind, source, intervalMinutes, dailyMinute, notifyPolicy, "ACTIVE", 1, firstRun,
-            "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId)
+            "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule)
         OrbitExecutionGate.serialized {
             check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
             if (dao.task(id) != null) return@serialized
@@ -92,7 +94,7 @@ class OrbitTaskRepository(private val context: Context) {
             if (state == "ACTIVE") check(dao.unresolvedActions(taskId).isEmpty()) {
                 "Verify the unfinished operation in task details before resuming"
             }
-            val resumeAt = if (task.scheduleMode in setOf("ONCE", "DAILY") && task.kind != "DAILY") nextAt(task, now) else now
+            val resumeAt = if (task.scheduleMode in timedModes && task.kind != "DAILY") nextAt(task, now) else now
             dao.replaceDefinition(task.copy(state = targetState, nextRunAt = if (state == "ACTIVE") resumeAt else nextAt(task, now),
                 updatedAt = now), task.version)
         }
@@ -106,7 +108,8 @@ class OrbitTaskRepository(private val context: Context) {
     }
 
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
-        intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute): Boolean {
+        intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute,
+        calendarRule: String = task.calendarRule): Boolean {
         check(task.kind in setOf("URL_CHANGE", "ASSIST") && task.state != "CANCELLED")
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
@@ -115,17 +118,19 @@ class OrbitTaskRepository(private val context: Context) {
         require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
         require(dailyMinute in 0 until 24 * 60)
         require(runAt == null || task.scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
+        val rule = checkedRule(task.scheduleMode, calendarRule)
         if (task.kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         val now = System.currentTimeMillis()
         val nextRun = when (task.scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
+            in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(task.scheduleMode, rule, dailyMinute, now)
             else -> now
         }
         val changed = OrbitExecutionGate.serialized {
             dao.replaceDefinition(task.copy(title = title, instruction = instruction, source = source,
                 intervalMinutes = intervalMinutes, notifyPolicy = notifyPolicy, nextRunAt = nextRun,
-                dailyMinute = dailyMinute,
+                dailyMinute = dailyMinute, calendarRule = rule,
                 lastFingerprint = if (source == task.source) task.lastFingerprint else "",
                 lastObservation = if (source == task.source) task.lastObservation else "",
                 updatedAt = now), task.version)
@@ -175,6 +180,19 @@ class OrbitTaskRepository(private val context: Context) {
     }
 
     companion object {
+        /** Modes that run at a chosen time of day or moment, so resuming waits for the next one. */
+        private val timedModes = setOf("ONCE", "DAILY") + OrbitCalendarSchedule.modes
+
+        /** The stored day rule: required and normalized for calendar modes, empty for the rest. */
+        fun checkedRule(scheduleMode: String, rule: String): String =
+            if (scheduleMode in OrbitCalendarSchedule.modes) {
+                require(rule.isNotBlank()) { "$scheduleMode needs repeat_on" }
+                OrbitCalendarSchedule.normalize(scheduleMode, rule)
+            } else {
+                require(rule.isBlank()) { "repeat_on only works with WEEKLY, MONTHLY or YEARLY" }
+                ""
+            }
+
         fun validateSource(source: String) {
             require(source.length <= 2048)
             val uri = URI(source)
@@ -184,6 +202,8 @@ class OrbitTaskRepository(private val context: Context) {
 
         fun nextAt(task: OrbitTaskEntity, now: Long): Long =
             if (task.kind == "DAILY" || task.scheduleMode == "DAILY") now + OrbitCompanion.delayUntilNextCheckIn(now, task.dailyMinute)
+            else if (task.scheduleMode in OrbitCalendarSchedule.modes)
+                OrbitCalendarSchedule.next(task.scheduleMode, task.calendarRule, task.dailyMinute, now)
             else if (task.scheduleMode == "ONCE") maxOf(task.nextRunAt, now)
             else now + task.intervalMinutes.coerceAtLeast(15) * 60_000L
     }

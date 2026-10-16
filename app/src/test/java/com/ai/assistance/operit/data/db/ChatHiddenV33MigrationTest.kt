@@ -88,7 +88,8 @@ class ChatHiddenV33MigrationTest {
     private fun openV33Database(tempDir: File): AppDatabase =
         Room.databaseBuilder(mockContext(tempDir), AppDatabase::class.java, "app_database")
             .setDriver(JdbcSQLiteDriver())
-            .addMigrations(AppDatabase.MIGRATION_32_33, AppDatabase.MIGRATION_33_34, AppDatabase.MIGRATION_34_35)
+            .addMigrations(AppDatabase.MIGRATION_32_33, AppDatabase.MIGRATION_33_34, AppDatabase.MIGRATION_34_35,
+                AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37, AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39)
             .allowMainThreadQueries()
             .build()
 

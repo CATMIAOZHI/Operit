@@ -673,6 +673,12 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
             .sortedBy { it.nextRunAt },
         R.string.orbit_profile_schedule_daily to live.filter { it.kind == "DAILY" || it.scheduleMode == "DAILY" }
             .sortedBy { it.dailyMinute },
+        R.string.orbit_profile_schedule_weekly to live.filter { it.kind != "DAILY" && it.scheduleMode == "WEEKLY" }
+            .sortedBy { it.nextRunAt },
+        R.string.orbit_profile_schedule_monthly to live.filter { it.kind != "DAILY" && it.scheduleMode == "MONTHLY" }
+            .sortedBy { it.nextRunAt },
+        R.string.orbit_profile_schedule_yearly to live.filter { it.kind != "DAILY" && it.scheduleMode == "YEARLY" }
+            .sortedBy { it.nextRunAt },
         R.string.orbit_profile_schedule_interval to live.filter { it.kind != "DAILY" && it.scheduleMode == "INTERVAL" },
         R.string.orbit_profile_schedule_event to live.filter { it.kind != "DAILY" && it.scheduleMode == "EVENT" },
     )
@@ -687,6 +693,9 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
                     R.string.orbit_profile_schedule_daily_at,
                     String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60),
                 )
+                task.scheduleMode == "WEEKLY" -> "calendar-range" to calendarScheduleText(task)
+                task.scheduleMode == "MONTHLY" -> "calendar-days" to calendarScheduleText(task)
+                task.scheduleMode == "YEARLY" -> "calendar-heart" to calendarScheduleText(task)
                 task.scheduleMode == "ONCE" -> "bell" to DateFormat.getDateInstance(DateFormat.MEDIUM)
                     .format(Date(task.nextRunAt))
                 task.scheduleMode == "EVENT" -> "zap" to stringResource(R.string.orbit_task_event_wait, trigger)
@@ -711,6 +720,34 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
 private fun intervalText(minutes: Int): String =
     if (minutes % 60 == 0) stringResource(R.string.orbit_profile_every_hours, minutes / 60)
     else stringResource(R.string.orbit_profile_every_minutes, minutes)
+
+/** "每周一、周三 09:00", "每月 15 日 09:00" or "每年 12月3日 09:00" in the app's language. */
+@Composable
+private fun calendarScheduleText(task: OrbitTaskEntity): String {
+    val locale = androidx.compose.ui.platform.LocalConfiguration.current.locales[0]
+    val resources = LocalContext.current.resources
+    val time = String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60)
+    val schedule = com.ai.assistance.operit.features.orbit.OrbitCalendarSchedule
+    return runCatching {
+        when (task.scheduleMode) {
+            "WEEKLY" -> resources.getString(
+                R.string.orbit_profile_schedule_weekly_at,
+                schedule.weekdays(task.calendarRule).joinToString(resources.getString(R.string.orbit_profile_weekday_separator)) {
+                    schedule.dayOfWeek(it).getDisplayName(java.time.format.TextStyle.SHORT, locale)
+                },
+                time,
+            )
+            "MONTHLY" -> resources.getString(R.string.orbit_profile_schedule_monthly_at, task.calendarRule.toInt(), time)
+            else -> {
+                val (month, day) = schedule.monthDay(task.calendarRule)
+                val pattern = android.text.format.DateFormat.getBestDateTimePattern(locale, "MMMd")
+                val date = java.time.MonthDay.of(month, day)
+                    .format(java.time.format.DateTimeFormatter.ofPattern(pattern, locale))
+                resources.getString(R.string.orbit_profile_schedule_yearly_at, date, time)
+            }
+        }
+    }.getOrDefault(time)
+}
 
 @Composable
 private fun IdentitySection(

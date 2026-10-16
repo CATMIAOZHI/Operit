@@ -9200,6 +9200,13 @@
     <string name="orbit_profile_schedule_interval">Intervals</string>
     <string name="orbit_profile_schedule_event">Triggered</string>
     <string name="orbit_profile_schedule_daily_at">Every day at %1$s</string>
+    <string name="orbit_profile_schedule_weekly">Weekly</string>
+    <string name="orbit_profile_schedule_monthly">Monthly</string>
+    <string name="orbit_profile_schedule_yearly">Yearly</string>
+    <string name="orbit_profile_schedule_weekly_at">%1$s at %2$s</string>
+    <string name="orbit_profile_schedule_monthly_at">Day %1$d of every month at %2$s</string>
+    <string name="orbit_profile_schedule_yearly_at">Every year on %1$s at %2$s</string>
+    <string name="orbit_profile_weekday_separator">", "</string>
     <string name="orbit_profile_every_hours">Every %1$d h</string>
     <string name="orbit_profile_every_minutes">Every %1$d min</string>
     <string name="orbit_profile_identity_help">Only Orbit can change its own name</string>

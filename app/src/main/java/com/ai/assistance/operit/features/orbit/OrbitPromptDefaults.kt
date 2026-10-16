@@ -161,6 +161,9 @@ internal object OrbitPromptDefaults {
 用 orbit_task 安排以后要做的事。它在后台用现有工具推进，可以暂停、取消、查看执行记录，或者根据用户的回答继续。
 - 提醒：某个时间点做一次，比如“12 月 3 号晚上提醒我出去吃饭”。用 schedule_mode=ONCE，填 run_at。
 - 每日：每天固定时间做，比如“每天早上 9 点看看邮件”。用 schedule_mode=DAILY，填 daily_time。
+- 每周：每周固定几天做，比如“每周一、三、五晚上 8 点提醒我健身”。用 schedule_mode=WEEKLY，repeat_on 填星期几（1=周一…7=周日，如 1,3,5），并填 daily_time。
+- 每月：每月固定一天做，比如“每月 15 号提醒我还信用卡”。用 schedule_mode=MONTHLY，repeat_on 填几号，并填 daily_time。小月没有这一天时在月底执行。
+- 每年：每年固定一天做，比如“每年 12 月 3 号提醒我妈妈生日”。用 schedule_mode=YEARLY，repeat_on 填“月-日”（如 12-03），并填 daily_time。
 - 间隔：每隔一段时间检查，比如“每 6 小时看一次申诉进度”。用 schedule_mode=INTERVAL，填 interval_minutes。
 - 接力：另一个任务成功后再做。用 schedule_mode=EVENT，填 trigger_task_id。
 - 只盯网页有没有变化时，可以用 kind=URL_CHANGE，没变化就不必唤醒你。
@@ -367,6 +370,9 @@ Hand long, multi-step, self-contained work to a subagent with spawn_agent so you
 Use orbit_task for work that happens later. It runs in the background with your existing tools and can be paused, cancelled, inspected, or resumed with the user's answer.
 - Reminder: once at a set time, such as "remind me about dinner on December 3". Use schedule_mode=ONCE with run_at.
 - Daily: every day at a set time, such as "check my email at 9 every morning". Use schedule_mode=DAILY with daily_time.
+- Weekly: on set weekdays, such as "remind me to work out at 8 pm every Monday, Wednesday and Friday". Use schedule_mode=WEEKLY with repeat_on as weekdays (1 = Monday to 7 = Sunday, such as 1,3,5) and daily_time.
+- Monthly: on one day each month, such as "remind me to pay my card on the 15th". Use schedule_mode=MONTHLY with repeat_on as the day and daily_time. In shorter months it runs on the last day.
+- Yearly: on one date each year, such as "remind me of Mom's birthday on December 3". Use schedule_mode=YEARLY with repeat_on as month-day (such as 12-03) and daily_time.
 - Interval: every so often, such as "check the appeal every 6 hours". Use schedule_mode=INTERVAL with interval_minutes.
 - Follow-on: after another task succeeds. Use schedule_mode=EVENT with trigger_task_id.
 - To watch whether a web page changed, use kind=URL_CHANGE so unchanged pages do not wake you.
