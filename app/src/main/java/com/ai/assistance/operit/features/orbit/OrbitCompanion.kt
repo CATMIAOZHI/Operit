@@ -38,6 +38,7 @@ import kotlinx.coroutines.withTimeout
 object OrbitCompanion {
     private const val CHAT_CREATE_TIMEOUT_MS = 15_000L
     private const val MIN_SCHEDULE_DELAY_MS = 60_000L
+    private const val ANDROID_ASSET_URI = "file:///android_asset/"
     private val chatMutex = Mutex()
 
     /** True while a check-in is running in this process. */
@@ -150,8 +151,11 @@ object OrbitCompanion {
                     .getResolvedAiAvatarForCharacterCardFlow(roleCardId)
                     .first()
                     ?.takeIf { it.isNotBlank() }
-                    ?.let { FileUtils.copyFileToInternalStorage(context, Uri.parse(it), "orbit_avatar") }
-                    ?.toString()
+                    ?.let {
+                        // Built-in role pictures ship with the app and never change, so use them directly.
+                        if (it.startsWith(ANDROID_ASSET_URI)) it
+                        else FileUtils.copyFileToInternalStorage(context, Uri.parse(it), "orbit_avatar")?.toString()
+                    }
             }.getOrNull()
         val chatId = createChat(context, roleCardId, card.name)
         val profile =

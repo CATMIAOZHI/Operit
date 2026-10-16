@@ -30,6 +30,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
@@ -37,6 +38,7 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -71,6 +73,7 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
+import com.ai.assistance.operit.pet.displayName
 import com.ai.assistance.operit.util.FileUtils
 import java.text.DateFormat
 import java.util.Date
@@ -98,6 +101,7 @@ internal fun OrbitProfilePage(
     onOpenTask: (String) -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
+    onOpenIdentity: () -> Unit,
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -160,7 +164,12 @@ internal fun OrbitProfilePage(
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, actions, onOpenTask)
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
-                IdentitySection(orbit = orbit, onOpenSoul = onOpenSoul, onOpenMemory = onOpenMemory)
+                IdentitySection(
+                    orbit = orbit,
+                    onOpenIdentity = onOpenIdentity,
+                    onOpenSoul = onOpenSoul,
+                    onOpenMemory = onOpenMemory,
+                )
             }
         }
     }
@@ -199,6 +208,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifi
     val scope = rememberCoroutineScope()
     val preferences = remember { OrbitPreferences.getInstance(context) }
     var showMenu by remember { mutableStateOf(false) }
+    var showPets by remember { mutableStateOf(false) }
     val latestOrbitId by rememberUpdatedState(orbit.id)
     val pickImage =
         rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
@@ -241,6 +251,14 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifi
                     pickImage.launch("image/*")
                 },
             )
+            DropdownMenuItem(
+                text = { Text(stringResource(R.string.orbit_avatar_use_pet)) },
+                leadingIcon = { Icon(orbitIcon("cat"), contentDescription = null) },
+                onClick = {
+                    showMenu = false
+                    showPets = true
+                },
+            )
             if (orbit.avatarUri != null) {
                 DropdownMenuItem(
                     text = { Text(stringResource(R.string.orbit_reset_avatar)) },
@@ -252,6 +270,42 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifi
                 )
             }
         }
+    }
+    if (showPets) {
+        val pets by remember { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
+        AlertDialog(
+            onDismissRequest = { showPets = false },
+            title = { Text(stringResource(R.string.orbit_avatar_use_pet)) },
+            text = {
+                Column {
+                    pets.forEach { pet ->
+                        Text(
+                            text = pet.settings.displayName(),
+                            style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).clickable {
+                                showPets = false
+                                val orbitId = latestOrbitId
+                                scope.launch {
+                                    val file = com.ai.assistance.operit.pet.PetAvatar.export(
+                                        context, pet, OrbitPreferences.AVATAR_FILE_PREFIX,
+                                    )
+                                    if (file == null) {
+                                        android.widget.Toast.makeText(
+                                            context, context.getString(R.string.orbit_avatar_save_failed),
+                                            android.widget.Toast.LENGTH_SHORT,
+                                        ).show()
+                                    } else {
+                                        preferences.setAvatar(orbitId, Uri.fromFile(file).toString())
+                                    }
+                                }
+                            }.padding(horizontal = 8.dp, vertical = 14.dp),
+                        )
+                    }
+                }
+            },
+            confirmButton = {},
+            dismissButton = { TextButton(onClick = { showPets = false }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 }
 
@@ -505,8 +559,10 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
         return
     }
     val groups = listOf(
-        R.string.orbit_profile_schedule_once to live.filter { it.kind != "DAILY" && it.scheduleMode == "ONCE" },
-        R.string.orbit_profile_schedule_daily to live.filter { it.kind == "DAILY" },
+        R.string.orbit_profile_schedule_once to live.filter { it.kind != "DAILY" && it.scheduleMode == "ONCE" }
+            .sortedBy { it.nextRunAt },
+        R.string.orbit_profile_schedule_daily to live.filter { it.kind == "DAILY" || it.scheduleMode == "DAILY" }
+            .sortedBy { it.dailyMinute },
         R.string.orbit_profile_schedule_interval to live.filter { it.kind != "DAILY" && it.scheduleMode == "INTERVAL" },
         R.string.orbit_profile_schedule_event to live.filter { it.kind != "DAILY" && it.scheduleMode == "EVENT" },
     )
@@ -517,11 +573,11 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
             val paused = task.state != "ACTIVE"
             val trigger = tasks.firstOrNull { it.id == task.triggerTaskId }?.title.orEmpty()
             val (icon, detail) = when {
-                task.kind == "DAILY" -> "calendar-clock" to stringResource(
+                task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock" to stringResource(
                     R.string.orbit_profile_schedule_daily_at,
                     String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60),
                 )
-                task.scheduleMode == "ONCE" -> "bell" to DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT)
+                task.scheduleMode == "ONCE" -> "bell" to DateFormat.getDateInstance(DateFormat.MEDIUM)
                     .format(Date(task.nextRunAt))
                 task.scheduleMode == "EVENT" -> "zap" to stringResource(R.string.orbit_task_event_wait, trigger)
                 else -> "timer" to intervalText(task.intervalMinutes)
@@ -532,6 +588,7 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
                 detail = detail,
                 meta = if (paused) taskState(task)
                     else if (task.scheduleMode == "EVENT") null
+                    else if (task.scheduleMode == "ONCE") DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(task.nextRunAt))
                     else stringResource(R.string.orbit_task_next, relativeTime(task.nextRunAt)),
                 showChevron = true,
                 onClick = { onOpenTask(task.id) },
@@ -546,7 +603,12 @@ private fun intervalText(minutes: Int): String =
     else stringResource(R.string.orbit_profile_every_minutes, minutes)
 
 @Composable
-private fun IdentitySection(orbit: OrbitProfile, onOpenSoul: () -> Unit, onOpenMemory: () -> Unit) {
+private fun IdentitySection(
+    orbit: OrbitProfile,
+    onOpenIdentity: () -> Unit,
+    onOpenSoul: () -> Unit,
+    onOpenMemory: () -> Unit,
+) {
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
         Text(
             orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
@@ -557,8 +619,25 @@ private fun IdentitySection(orbit: OrbitProfile, onOpenSoul: () -> Unit, onOpenM
             stringResource(R.string.orbit_profile_identity_help),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = 16.dp),
+            modifier = Modifier.padding(bottom = 12.dp),
         )
+        // Like Muse: one wide button opens IDENTITY.md, Orbit's name, character and vibe.
+        Surface(
+            onClick = onOpenIdentity,
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+            modifier = Modifier.fillMaxWidth().padding(bottom = 18.dp),
+        ) {
+            Row(
+                Modifier.fillMaxWidth().padding(vertical = 16.dp),
+                horizontalArrangement = Arrangement.Center,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(orbitIcon("pencil"), contentDescription = null, modifier = Modifier.size(20.dp))
+                Spacer(Modifier.width(10.dp))
+                Text(stringResource(R.string.orbit_profile_edit_identity), style = MaterialTheme.typography.titleMedium)
+            }
+        }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
             IdentityCard(
                 title = stringResource(R.string.orbit_profile_soul_card),

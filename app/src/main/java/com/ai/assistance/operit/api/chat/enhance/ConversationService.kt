@@ -147,7 +147,7 @@ class ConversationService(
             summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         try {
-            val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+            val useEnglish = LocaleUtils.usesEnglishPrompt(context)
             val activePromptMetadata = buildActivePromptHookMetadata(context)
             var systemPrompt =
                 FunctionalPrompts.buildSummarySystemPrompt(
@@ -371,7 +371,7 @@ class ConversationService(
         fromRecentConversation: Boolean = false,
     ): String {
         return try {
-            val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+            val useEnglish = LocaleUtils.usesEnglishPrompt(context)
             val systemPrompt = FunctionalPrompts.conversationTitleSystemPrompt(useEnglish, fromRecentConversation)
             val userPrompt = if (fromRecentConversation) userText else FunctionalPrompts.conversationTitleUserPrompt(
                 userText = userText,
@@ -551,6 +551,11 @@ class ConversationService(
                     UserProfileDocumentRepository.forMemorySpace(context, it)
                 } ?: userProfileDocumentRepository
                 val userRevisionKey = privateOwner?.let { "orbit-user:$it" } ?: "user"
+                // An Orbit can leave its user profile out of the prompt from its prompt layers page.
+                val orbitUserLayerOn = privateOwner?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitPromptFiles.layers(context, it)[
+                        com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.USER] != false
+                } ?: true
                 val learningSnapshot = chatId?.takeIf { it.isNotBlank() && !isSubTask }?.let {
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
                 }
@@ -645,7 +650,7 @@ class ConversationService(
                     apiPreferences.safBookmarksFlow.first().map { it.name }
                 }.getOrElse { emptyList() }
 
-                val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+                val useEnglish = LocaleUtils.usesEnglishPrompt(context)
                 resolvedUseEnglish = useEnglish
                 val roleCardToolAccess = characterCardToolAccessResolver.resolve(
                     roleCardId = effectiveRoleCardId,
@@ -735,6 +740,7 @@ class ConversationService(
                     }
                     if (
                         allowPersonalContext &&
+                            orbitUserLayerOn &&
                             !disableUserPreferenceDescription &&
                             userProfileMarkdown.isNotEmpty()
                     ) {
@@ -1263,7 +1269,7 @@ ${FunctionalPrompts.translationUserPrompt(targetLanguage, text)}
         
         val toolList = toolDescriptions.joinToString("\n") { "- $it" }
 
-        val useEnglish = LocaleUtils.getCurrentLanguage(context).lowercase().startsWith("en")
+        val useEnglish = LocaleUtils.usesEnglishPrompt(context)
         val descriptionPrompt =
             FunctionalPrompts.packageDescriptionUserPrompt(
                 pluginName = pluginName,
