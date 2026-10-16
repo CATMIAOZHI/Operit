@@ -236,9 +236,10 @@ internal fun RecentChatSelectorOverlay(
     val characterCardManager = remember { CharacterCardManager.getInstance(context) }
     val userPreferencesManager = remember { UserPreferencesManager.getInstance(context) }
     val coroutineScope = rememberCoroutineScope()
-    val items = remember(chatHistories) {
+    val orbitChatIds by com.ai.assistance.operit.features.orbit.rememberOrbitChatIds()
+    val items = remember(chatHistories, orbitChatIds) {
         chatHistories
-            .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden }
+            .filterNot { it.chatKind == ChatKind.SUBAGENT.name || it.isHidden || it.id in orbitChatIds }
             .sortedByDescending { it.updatedAt }
             .take(20)
     }
