@@ -49,13 +49,14 @@ status: in-progress
 | 回收站 | 删掉的文件留 30 天，可恢复或彻底删除 [DONE batch1] |
 | 系统提示词副本 | `orbit_file` 的 prompt_copy，存 Orbit 部分的副本到 `files/` [DONE batch1] |
 | 技能管理 | 详情页「技能与学习」里查看、编辑、删除 Orbit 自己的技能 [DONE] |
+| 富格式成果 | `orbit_file` 的 export，把 `files/` 里的 Markdown 导出成网页、Word、PDF；import 把应用里别处的文件收进 `files/` [DONE batch2] |
+| 多音色播客 / 语音消息 | `orbit_voice` 用手机自带语音引擎做语音消息和多人对话，存在 `files/voice/`，聊天里能直接播放 [DONE batch2] |
 ## 部分有，需要接进 Orbit
 
 - [ ] Hook：轻量脚本轮询条件，有变化才唤醒 Orbit（现在只有网页变化监测）
 - [ ] 跨来源主动推送：通知、日历、短信等变化触发 Orbit
 - [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）
 - [ ] 深度研究（Muse 的 `browser.deep_research`）
-- [ ] 富格式成果：Word / PDF / 网页成果（仓库已有 `util/DocumentConversionUtil.kt` 可借用）
 - [ ] 媒体库（Muse 的 Library 标签页）
 - [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）
 - [x] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示（25d778e8c）
@@ -74,7 +75,6 @@ status: in-progress
 - [ ] 发送前检查：对外发消息前自动核对隐私和授权
 - [ ] 密码保险箱：安全输入卡片，凭证不进入聊天和记忆（Muse 的 Secure Vault）
 - [ ] 文件分享链接：上传文件生成有效期链接
-- [ ] 多音色播客 / 语音消息
 - [ ] 目标简报：定期汇总目标进展
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
