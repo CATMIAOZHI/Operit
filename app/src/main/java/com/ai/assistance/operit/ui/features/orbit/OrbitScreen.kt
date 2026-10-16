@@ -867,35 +867,26 @@ private fun OrbitHome(
     }
 
     pendingDelete?.let { orbit ->
-        AlertDialog(
-            onDismissRequest = { pendingDelete = null },
-            title = { Text(stringResource(R.string.orbit_delete_title, orbit.name)) },
-            text = { Text(stringResource(R.string.orbit_delete_message)) },
-            confirmButton = {
-                TextButton(
-                    onClick = {
-                        if (removingId != null) return@TextButton
-                        pendingDelete = null
-                        removingId = orbit.id
-                        scope.launch {
-                            try {
-                                OrbitCompanion.remove(context, orbit.id)
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                AppLogger.e(TAG, "Orbit deletion did not finish", e)
-                                toast(context, R.string.orbit_delete_incomplete)
-                            } finally {
-                                removingId = null
-                            }
+        OrbitDeleteDialog(
+            orbit = orbit,
+            onDismiss = { pendingDelete = null },
+            onConfirm = {
+                if (removingId == null) {
+                    pendingDelete = null
+                    removingId = orbit.id
+                    scope.launch {
+                        try {
+                            OrbitCompanion.remove(context, orbit.id)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            AppLogger.e(TAG, "Orbit deletion did not finish", e)
+                            toast(context, R.string.orbit_delete_incomplete)
+                        } finally {
+                            removingId = null
                         }
-                    },
-                ) {
-                    Text(stringResource(R.string.orbit_delete), color = MaterialTheme.colorScheme.error)
+                    }
                 }
-            },
-            dismissButton = {
-                TextButton(onClick = { pendingDelete = null }) { Text(stringResource(R.string.cancel)) }
             },
         )
     }
