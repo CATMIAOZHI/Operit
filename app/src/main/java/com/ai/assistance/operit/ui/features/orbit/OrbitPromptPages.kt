@@ -281,6 +281,43 @@ internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     )
 }
 
+/**
+ * Orbit's own memory.md, opened straight from the Memory card. A user edit is saved through the
+ * reviewed notes path like the memory settings, and is refused if Orbit changed the file meanwhile.
+ */
+@Composable
+internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val reason = stringResource(R.string.memory_review_manual_edit)
+    var loaded by remember(orbit.id) {
+        mutableStateOf<com.ai.assistance.operit.data.preferences.MemoryNotesRepository.Snapshot?>(null)
+    }
+    suspend fun spaceId() = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
+    OrbitFilePage(
+        title = "memory.md",
+        note = stringResource(R.string.orbit_memory_note),
+        load = {
+            com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, spaceId()).load()
+                .also { loaded = it }.markdown
+        },
+        save = { body ->
+            val opened = checkNotNull(loaded)
+            if (body != opened.markdown) {
+                val space = spaceId()
+                val latest = com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, space).load()
+                check(latest.version == opened.version) { "memory.md changed while editing" }
+                val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, space)
+                val change = reviews.proposeNotes(latest, body)
+                check(reviews.decide(context, change.id, true, "user", reason).status == "approved") {
+                    "memory.md changed while editing"
+                }
+            }
+        },
+        onBack = onBack,
+        maxChars = com.ai.assistance.operit.data.preferences.MemoryNotesRepository.MAX_CHARS,
+    )
+}
+
 @Composable
 internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit, onOpenHistory: () -> Unit) {
     val context = LocalContext.current

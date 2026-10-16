@@ -9192,6 +9192,7 @@
     <string name="orbit_profile_card_caution">请谨慎访问</string>
     <string name="orbit_profile_user_card">USER</string>
     <string name="orbit_user_note">关于这个文件：这是 Orbit 对你的了解，记着你的名字、它该怎么称呼你、你的时区、长期偏好和你定下的交流规则。Orbit 每次对话都会读它，了解到新情况时会更新这里。你可以随时编辑；如果 Orbit 在你编辑时也改了它，保存会失败，返回后重新打开再改就行。这段说明不属于文件内容。</string>
+    <string name="orbit_memory_note">关于这个文件：这是 Orbit 的 memory.md，记着它从你们的对话里学到的长期要点。Orbit 每次对话都会读它，学到新东西时会自己更新，改动会自动生效。你可以随时编辑；如果 Orbit 在你编辑时也改了它，保存会失败，返回后重新打开再改就行。这段说明不属于文件内容。</string>
     <string name="orbit_profile_edit_identity">编辑</string>
     <string name="orbit_avatar_use_pet">用宠物当头像</string>
     <string name="orbit_avatar_from_photos">从相册选择</string>
@@ -9295,10 +9296,10 @@
 
     <string name="orbit_run_interrupted">执行意外中断，已暂停。请先核实此前工具是否已完成操作，再继续；不会自动从头重做。</string>
     <string name="orbit_run_timed_out">“%1$s”这次运行超过 %2$d 分钟，已停下并暂停。请先核实已经做了哪些操作，再继续；不会自动从头重做。</string>
-    <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
     <string name="orbit_run_timed_out_background">“%1$s”需要更长时间，但没能切到前台运行，只能按后台上限跑 %2$d 分钟，已停下并暂停。请在系统设置里把 Operit 设为「不优化电池」（或开跑时让 Operit 停在屏幕上）后再继续；继续前先核实已经做了哪些操作。</string>
     <string name="orbit_long_task_channel">Orbit 长任务</string>
     <string name="orbit_long_task_running">Orbit 正在执行任务</string>
-    <string name="orbit_execution_record">查看执行记录</string>
+    <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
     <string name="orbit_task_timeout_hours">每次运行最多 %1$d 小时</string>
+    <string name="orbit_execution_record">查看执行记录</string>
 </resources>

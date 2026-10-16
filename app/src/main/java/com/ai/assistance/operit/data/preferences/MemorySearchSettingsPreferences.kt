@@ -91,8 +91,12 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
     }
     fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
-    fun shouldAutoApproveChanges(): Boolean = searchPrefs.getBoolean("auto_approve_memory_changes", true)
+    /** An Orbit's own memory space always applies changes without asking; it cannot be turned off. */
+    val isAutoApprovalLocked: Boolean get() = isOrbitSpace(profileId)
+    fun shouldAutoApproveChanges(): Boolean =
+        isAutoApprovalLocked || searchPrefs.getBoolean("auto_approve_memory_changes", true)
     fun setAutoApproveChanges(enabled: Boolean) {
+        if (isAutoApprovalLocked) return
         searchPrefs.edit().putBoolean("auto_approve_memory_changes", enabled).apply()
     }
     fun setAiReviewChanges(enabled: Boolean) {
@@ -206,5 +210,8 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         const val DEFAULT_AUTO_SAVE_INTERVAL_MINUTES = 5
         const val MIN_AUTO_SAVE_INTERVAL_MINUTES = 1
         const val MAX_AUTO_SAVE_INTERVAL_MINUTES = 30
+
+        /** Orbit memory spaces are named `orbit_<orbitId>` (UserPreferencesManager.createOrbitMemorySpace). */
+        fun isOrbitSpace(profileId: String): Boolean = profileId.startsWith("orbit_")
     }
 }
