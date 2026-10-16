@@ -3,7 +3,10 @@ package com.ai.assistance.operit.pet
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.graphics.BitmapRegionDecoder
+import android.graphics.Rect
 import android.media.MediaMetadataRetriever
+import androidx.compose.ui.graphics.asImageBitmap
 import java.io.File
 import java.util.UUID
 import kotlinx.coroutines.Dispatchers
@@ -13,6 +16,20 @@ import kotlinx.coroutines.withContext
 internal object PetAvatar {
     private const val CELL_WIDTH = 192
     private const val CELL_HEIGHT = 208
+
+    /** A small still for showing the pet in a picker, or null when it cannot be read. */
+    suspend fun preview(context: Context, pet: PetProfile): androidx.compose.ui.graphics.ImageBitmap? =
+        withContext(Dispatchers.IO) {
+            runCatching { still(context, pet.settings) }.getOrNull()?.let { bitmap ->
+                val side = 192
+                val scaled = if (bitmap.width > side * 2 || bitmap.height > side * 2) {
+                    val ratio = side.toFloat() / maxOf(bitmap.width, bitmap.height)
+                    Bitmap.createScaledBitmap(bitmap, (bitmap.width * ratio).toInt().coerceAtLeast(1),
+                        (bitmap.height * ratio).toInt().coerceAtLeast(1), true).also { bitmap.recycle() }
+                } else bitmap
+                scaled.asImageBitmap()
+            }
+        }
 
     /** Writes the still as `<prefix><uuid>.png` in the app's files and returns it, or null. */
     suspend fun export(context: Context, pet: PetProfile, prefix: String): File? = withContext(Dispatchers.IO) {
@@ -32,16 +49,23 @@ internal object PetAvatar {
     private fun still(context: Context, settings: PetSettings): Bitmap? {
         val id = settings.artwork(PetAnimation.IDLE)?.id.orEmpty()
         if (settings.mediaType == PetMediaType.ATLAS) {
-            val atlas = if (id.isEmpty()) {
-                context.assets.open("pets/shuiqingmiao/spritesheet.webp").use(BitmapFactory::decodeStream)
+            val stream = if (id.isEmpty()) {
+                context.assets.open("pets/shuiqingmiao/spritesheet.webp")
             } else {
-                BitmapFactory.decodeFile(PetAssets.assetFile(context, id).path)
-            } ?: return null
-            // The first cell of the first row is the resting pose.
-            return try {
-                Bitmap.createBitmap(atlas, 0, 0, CELL_WIDTH.coerceAtMost(atlas.width), CELL_HEIGHT.coerceAtMost(atlas.height))
-            } finally {
-                atlas.recycle()
+                PetAssets.assetFile(context, id).inputStream()
+            }
+            // The first cell of the first row is the resting pose; decode only that cell, not the sheet.
+            return stream.use {
+                @Suppress("DEPRECATION")
+                val decoder = BitmapRegionDecoder.newInstance(it, false) ?: return null
+                try {
+                    decoder.decodeRegion(
+                        Rect(0, 0, CELL_WIDTH.coerceAtMost(decoder.width), CELL_HEIGHT.coerceAtMost(decoder.height)),
+                        null,
+                    )
+                } finally {
+                    decoder.recycle()
+                }
             }
         }
         if (id.isEmpty()) return null

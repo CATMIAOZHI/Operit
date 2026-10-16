@@ -9143,8 +9143,8 @@
     <string name="orbit_settings">Orbit settings</string>
     <string name="orbit_pause">Pause Orbit</string>
     <string name="orbit_pause_desc">Pause to switch to another role; the chat is kept</string>
-    <string name="orbit_change_avatar">Change look</string>
-    <string name="orbit_reset_avatar">Remove picture</string>
+    <string name="orbit_change_avatar">Change picture</string>
+    <string name="orbit_reset_avatar">Role card picture</string>
     <string name="orbit_avatar_save_failed">Couldn\'t save this picture</string>
     <string name="orbit_name_hint">Orbit picks its own name. Talk it over in the chat.</string>
     <string name="orbit_permission_locked">Orbit always uses the %1$s permission. It cannot be changed.</string>
@@ -9208,6 +9208,7 @@
     <string name="orbit_profile_card_caution">Handle with care</string>
     <string name="orbit_profile_edit_identity">Edit</string>
     <string name="orbit_avatar_use_pet">Use a pet</string>
+    <string name="orbit_avatar_from_photos">Choose a photo</string>
     <string name="orbit_file_edit">Edit</string>
     <string name="orbit_file_save">Save</string>
     <string name="orbit_file_more">More</string>
