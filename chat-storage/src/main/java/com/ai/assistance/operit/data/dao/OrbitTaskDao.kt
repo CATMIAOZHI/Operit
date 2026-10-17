@@ -37,7 +37,7 @@ data class OrbitActionRow(
 
 @Dao
 interface OrbitTaskDao {
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId ORDER BY r.startedAt DESC LIMIT 200")
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "') ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
     @Query("SELECT a.id AS id, a.taskId AS taskId, t.title AS taskTitle, a.toolName AS toolName, a.state AS state, a.summary AS summary, a.updatedAt AS updatedAt FROM orbit_actions a INNER JOIN orbit_tasks t ON t.id = a.taskId WHERE t.orbitId = :orbitId ORDER BY a.updatedAt DESC LIMIT 200")
     fun observeOrbitActions(orbitId: String): Flow<List<OrbitActionRow>>
@@ -327,6 +327,11 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
     suspend fun lastFinishedRun(taskId: String): OrbitRunEntity?
 
+    /** The last finished run that actually checked something; a skipped check is not a baseline. */
+    @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND decision != '" + OrbitRunEntity.SKIPPED +
+        "' AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
+    suspend fun lastRealRun(taskId: String): OrbitRunEntity?
+
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId ORDER BY startedAt DESC LIMIT 1")
     fun observeLatestRun(taskId: String): Flow<OrbitRunEntity?>
 
@@ -497,7 +502,10 @@ interface OrbitTaskDao {
             sourceText = "", fingerprint = "", hasSource = false, observation = "", error = "",
             startedAt = now, finishedAt = 0,
         ) else old.copy(owner = owner, generation = old.generation + 1, bootId = bootId,
-            leaseUntilElapsed = elapsed + leaseMs, leaseUntilWall = now + leaseMs)
+            leaseUntilElapsed = elapsed + leaseMs, leaseUntilWall = now + leaseMs).let {
+            // No model turn started yet. Phone sources (WATCH) go stale quickly, so read them again.
+            if (task.kind == "WATCH") it.copy(sourceText = "", fingerprint = "", hasSource = false) else it
+        }
         if (old == null) insertRun(run) else updateRun(run)
         return run
     }
@@ -547,13 +555,15 @@ interface OrbitTaskDao {
     /** Result + next schedule + delivery form one commit. Recovery never reruns a submitted result. */
     @Transaction
     suspend fun complete(token: OrbitRunEntity, observation: String, message: String, error: String,
-        nextRunAt: Long, bootId: String, now: Long, elapsed: Long): Boolean {
+        nextRunAt: Long, bootId: String, now: Long, elapsed: Long, decision: String = ""): Boolean {
         val current = currentLease(token, bootId, now, elapsed) ?: return false
         if (unresolvedActions(token.taskId).isNotEmpty()) return false
         val task = checkNotNull(task(current.taskId))
-        val repeatFailure = error.isNotEmpty() && lastFinishedRun(task.id)?.error == error
+        // The same kind of failure is told once; a changing detail after the colon (such as stderr) does not re-alert.
+        fun kind(text: String) = text.substringBefore('：').substringBefore(": ").take(48)
+        val repeatFailure = error.isNotEmpty() && lastRealRun(task.id)?.error?.let(::kind) == kind(error)
         updateRun(current.copy(state = if (error.isEmpty()) "COMPLETED" else "FAILED", sourceText = "",
-            observation = observation, error = error, finishedAt = now))
+            observation = observation, error = error, finishedAt = now, decision = decision.take(1000)))
         updateTask(task.copy(nextRunAt = nextRunAt, updatedAt = now,
             state = when {
                 task.kind == "ONCE" -> "DONE" // Internal manual check-ins have no resume UI.
@@ -561,14 +571,16 @@ interface OrbitTaskDao {
                 else -> task.state
             },
             lastObservation = if (error.isEmpty()) observation else task.lastObservation,
-            lastFingerprint = if (error.isEmpty()) current.fingerprint else task.lastFingerprint))
+            // A run that never read its source (a skipped check) keeps the last known fingerprint.
+            lastFingerprint = if (error.isEmpty() && current.hasSource) current.fingerprint else task.lastFingerprint))
         if (message.isNotBlank() && (!repeatFailure || task.notifyPolicy == "ALWAYS")) insertDelivery(OrbitDeliveryEntity(
             id = current.id, runId = current.id, taskId = task.id, taskVersion = task.version,
             orbitId = task.orbitId, chatId = task.chatId, title = task.title, body = message,
             createdAt = now, state = "PENDING", messageId = null, messageTimestamp = null, notificationSent = false,
         ))
         deleteEvent(current.eventId)
-        if (error.isEmpty()) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
+        // A check skipped because its source was not ready is not a success that relays to EVENT tasks.
+        if (error.isEmpty() && decision != OrbitRunEntity.SKIPPED) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
             insertEvent(OrbitEventEntity(
                 "${subscriber.id}:${subscriber.version}:completed:${current.id}",
                 subscriber.id, subscriber.version, now, now, current.id))
