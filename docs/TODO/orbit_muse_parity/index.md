@@ -51,10 +51,11 @@ status: in-progress
 | 技能管理 | 详情页「技能与学习」里查看、编辑、删除 Orbit 自己的技能 [DONE] |
 | 富格式成果 | `orbit_file` 的 export，把 `files/` 里的 Markdown 导出成网页、Word、PDF；import 把应用里别处的文件收进 `files/` [DONE batch2] |
 | 多音色播客 / 语音消息 | `orbit_voice` 用手机自带语音引擎做语音消息和多人对话，存在 `files/voice/`，聊天里能直接播放 [DONE batch2] |
+| Hook 轻量脚本 / 跨来源推送 | `orbit_task` 的 `kind=WATCH`：盯通知、短信、日历或 `files/hooks/` 里按哈希钉住的只读脚本，内容没变不叫醒 Orbit；缺权限时任务详情有「去打开权限」[DONE batch3a] |
+| 主动消息逐条决定 | 每次后台运行都记下 `decision`（发 / 不发和理由），任务详情显示「为什么」[DONE batch3a] |
+| 待审批 / 等待中的任务 | `orbit_task` 的 `pending`：等用户答复、等核实、失败后停下的任务 [DONE batch3a] |
 ## 部分有，需要接进 Orbit
 
-- [ ] Hook：轻量脚本轮询条件，有变化才唤醒 Orbit（现在只有网页变化监测）
-- [ ] 跨来源主动推送：通知、日历、短信等变化触发 Orbit
 - [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）
 - [ ] 深度研究（Muse 的 `browser.deep_research`）
 - [ ] 媒体库（Muse 的 Library 标签页）
@@ -65,8 +66,6 @@ status: in-progress
 - [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等
 - [ ] 表情回应：给用户消息点一个表情（Muse 的 `react_to_user_message`）
 - [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
-- [ ] 主动消息逐条决定：后台准备的每条消息记录「发 / 不发」和理由（Muse 的 `proactivity.select`）
-- [ ] 待审批列表：Orbit 能查看还在等用户批准的操作（Muse 的 `permissions.list_pending`）
 
 ## 还没做，可以做
 
