@@ -24,6 +24,16 @@ through orbit_task. ASSIST is the default; it can discover existing tools, load 
 delegate through v2. Daily proactive turns have the same tool capabilities. URL_CHANGE can
 skip a model call when a bounded public-page text fingerprint is unchanged; it is an optional
 optimization, not the assistant's capability boundary.
+WATCH does the same for phone sources (notifications still in the tray, SMS inbox, calendar
+instances) and for a read-only script in `files/hooks/`, pinned by hash at create/update and run
+as base64 through the current shell executor. A source that cannot be read (permission off,
+script changed or failed) fails the run with a user-facing reason; the same kind of failure
+alerts once. A notification listener that is still binding skips the check quietly once
+(COMPLETED, `@skipped`, fingerprint kept, no EVENT relay, hidden from activity); a one-time
+task or a second skip in a row fails with a "turn notification access off and on" reason, and
+every later check keeps failing that way until a real read, alerting once (dedupe ignores
+`@skipped` runs via `lastRealRun`).
+Every run stores a `decision` (`@unchanged` for skipped unchanged checks).
 
 Task controls are appended to ordinary tools, including in textual-tool mode. Only root runs
 can submit the final result or wait for the user. Children retain host-owned task/Orbit identity
