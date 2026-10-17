@@ -34,6 +34,11 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         IDEAS("ideas.json", 60),
         /** Things Orbit carries for the user (a parcel, a booking, a promise) until they are done. */
         TRACKING("tracking.json", 100),
+        /**
+         * Notes on the user's goals: BRIEF is a briefing the background routine wrote, LOG a dated
+         * progress entry. `extra` holds the goal id.
+         */
+        GOAL_NOTES("goal_notes.json", 300),
     }
 
     data class Note(val at: Long, val text: String)
@@ -105,16 +110,20 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         extra: String = "",
         requestId: String = UUID.randomUUID().toString(),
         expiresAt: Long = 0,
+        state: String? = null,
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
+        state?.let { require(it in states()) { "State must be one of ${states()}" } }
         val now = System.currentTimeMillis()
-        val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), initialState(), false, now, now,
+        val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), false, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList())
         // Keep at most `limit` items; finished ones go before open ones, older before newer.
         val all = listOf(item) + items
         val kept = if (all.size <= board.limit) all else {
-            val drop = all.drop(1).sortedWith(compareBy<Item> { it.state == initialState() }.thenBy { it.updatedAt })
+            // Briefings and progress entries are equals: the oldest go first.
+            val drop = all.drop(1).sortedWith(compareBy<Item> { board != Board.GOAL_NOTES && it.state == initialState() }
+                .thenBy { it.updatedAt })
                 .take(all.size - board.limit).map { it.id }.toSet()
             all.filterNot { it.id in drop }
         }
@@ -167,12 +176,14 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         Board.FEED -> "LIVE"
         Board.IDEAS -> "OPEN"
         Board.TRACKING -> "ACTIVE"
+        Board.GOAL_NOTES -> "LOG"
     }
 
     fun states(): Set<String> = when (board) {
         Board.FEED -> setOf("LIVE")
         Board.IDEAS -> setOf("OPEN", "DISMISSED", "BUILT")
         Board.TRACKING -> setOf("ACTIVE", "DONE")
+        Board.GOAL_NOTES -> setOf("LOG", "BRIEF")
     }
 
     private fun checkTitle(value: String) = value.replace(Regex("\\s+"), " ").trim().also {

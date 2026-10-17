@@ -826,6 +826,35 @@ private fun IdentitySection(
         // the Memory card itself opens memory.md.
         IdentityNavRow("folder-open", stringResource(R.string.orbit_files_row), stringResource(R.string.orbit_files_row_desc), onOpenFiles)
         IdentityNavRow("sparkles", stringResource(R.string.orbit_memory_row), stringResource(R.string.orbit_memory_row_desc), onOpenMemoryLibrary)
+        OrbitExportRow(orbit)
+    }
+}
+
+/** Like Muse's data export: one zip with Orbit's files, memory, records and chat, handed to the share sheet. */
+@Composable
+private fun OrbitExportRow(orbit: OrbitProfile) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var exporting by remember { mutableStateOf(false) }
+    IdentityNavRow(
+        if (exporting) "loader" else "archive",
+        stringResource(if (exporting) R.string.orbit_export_running else R.string.orbit_export_row),
+        stringResource(R.string.orbit_export_row_desc),
+    ) {
+        if (exporting) return@IdentityNavRow
+        exporting = true
+        scope.launch {
+            try {
+                val zip = com.ai.assistance.operit.features.orbit.OrbitDataExport.export(context.applicationContext, orbit)
+                shareOrbitFile(context) { zip }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, R.string.orbit_export_failed, android.widget.Toast.LENGTH_SHORT).show()
+            } finally {
+                exporting = false
+            }
+        }
     }
 }
 

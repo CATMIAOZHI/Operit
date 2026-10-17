@@ -151,6 +151,7 @@ internal object OrbitBoardTools {
             Board.TRACKING -> value.put("detail", body).put("notes", JSONArray(item.notes.takeLast(10).map {
                 JSONObject().put("at", it.at).put("text", it.text)
             }))
+            Board.GOAL_NOTES -> value.put("text", body).put("goal_id", item.extra)
         }
         return value
     }

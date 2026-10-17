@@ -96,4 +96,43 @@ class OrbitFilesTest {
         files.trash()
         assertFalse(broken.exists())
     }
+
+    @Test fun libraryPinsKeepTheNewestFirstAndOnlyMadeFiles() = runBlocking {
+        val files = store()
+        files.setPinned("files/a.png", true)
+        files.setPinned("files/voice/b.mp3", true)
+        assertEquals(listOf("files/voice/b.mp3", "files/a.png"), files.pins())
+        files.setPinned("files/a.png", true)
+        assertEquals(listOf("files/a.png", "files/voice/b.mp3"), files.pins())
+        files.setPinned("files/a.png", false)
+        assertEquals(listOf("files/voice/b.mp3"), files.pins())
+        assertTrue(runCatching { files.setPinned("LESSONS.md", true) }.isFailure)
+        assertTrue(runCatching { files.setPinned("files/../x", true) }.isFailure)
+        // The pins file is the app's own and never shows up as one of Orbit's files.
+        assertTrue(files.list().none { it.path.contains("library_pins") })
+    }
+
+    @Test fun libraryKindsComeFromTheExtension() {
+        assertEquals(OrbitFiles.Kind.IMAGE, OrbitFiles.kindOf("files/x.JPG"))
+        assertEquals(OrbitFiles.Kind.AUDIO, OrbitFiles.kindOf("files/voice/x.wav"))
+        assertEquals(OrbitFiles.Kind.DOCUMENT, OrbitFiles.kindOf("files/report.pdf"))
+        assertEquals(OrbitFiles.Kind.OTHER, OrbitFiles.kindOf("files/archive.zip"))
+    }
+
+    @Test fun goalNotesKeepTheirKind() = runBlocking {
+        val board = OrbitBoardRepository(folder.newFolder("board"), OrbitBoardRepository.Board.GOAL_NOTES)
+        val brief = board.create("Morning", "Body", "goal-1", "r1", state = "BRIEF")
+        val log = board.create("Done step", "Done step", "goal-1", "r2")
+        assertEquals("BRIEF", brief.state)
+        assertEquals("LOG", log.state)
+        assertTrue(runCatching { board.create("x", "y", "goal-1", "r3", state = "DONE") }.isFailure)
+        assertEquals(setOf("r1", "r2").size, board.list().count { it.extra == "goal-1" })
+    }
+
+    @Test fun routineSourcesAreOnlyForAssistTasks() {
+        OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.CHAT_SOURCE)
+        OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.GOALS_SOURCE)
+        assertTrue(runCatching { OrbitTaskRepository.checkSource("URL_CHANGE", OrbitRoutines.CHAT_SOURCE) }.isFailure)
+        assertTrue(runCatching { OrbitTaskRepository.checkSource("WATCH", OrbitRoutines.GOALS_SOURCE) }.isFailure)
+    }
 }

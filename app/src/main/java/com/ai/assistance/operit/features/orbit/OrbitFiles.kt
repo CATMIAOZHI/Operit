@@ -27,6 +27,8 @@ import java.util.concurrent.ConcurrentHashMap
 class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { false }) {
     data class Entry(val path: String, val size: Long, val modifiedAt: Long, val title: String)
     data class TrashItem(val id: String, val path: String, val deletedAt: Long, val size: Long)
+    /** The Library's kinds of file. */
+    enum class Kind { IMAGE, AUDIO, DOCUMENT, OTHER }
 
     private val mutex = locks.computeIfAbsent(root.absolutePath) { Mutex() }
     // Read on first use, which is always inside io(), so the UI never blocks on the setting.
@@ -103,6 +105,25 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         require(isText(p)) { "Not a text file: $p" }
         require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
         f.readText()
+    }
+
+    /** Library pins: files/ paths the user keeps at the top of the Library, newest pin first. */
+    suspend fun pins(): List<String> = io { readPins() }
+
+    suspend fun setPinned(path: String, pinned: Boolean) = io {
+        val p = normalize(path)
+        require(FILES.matches(p)) { "Only files Orbit made can be pinned" }
+        val next = readPins().filterNot { it == p }.let { if (pinned) listOf(p) + it else it }.take(100)
+        atomic(File(root, PINS), org.json.JSONArray(next).toString())
+    }
+
+    private fun readPins(): List<String> {
+        val f = File(root, PINS)
+        if (!f.isFile || runCatching { inside(f) }.isFailure) return emptyList()
+        return runCatching {
+            val array = org.json.JSONArray(f.readText())
+            (0 until array.length()).map { array.getString(it) }.filter { FILES.matches(it) }
+        }.getOrDefault(emptyList())
     }
 
     suspend fun write(path: String, text: String) = io {
@@ -304,6 +325,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         const val TIMEZONES = "timezones.yaml"
         const val ALIGNMENT = "ALIGNMENT_SYNTHESIS.md"
         const val DEVICES = "DEVICES.md"
+        /** Not one of the files Orbit reads or writes; the app keeps the user's Library pins here. */
+        private const val PINS = "library_pins.json"
         val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)
         private const val INDEX = "INDEX.md"
         private const val TRASH = ".trash"
@@ -332,6 +355,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         fun allowed(p: String) = p in SINGLE || PEOPLE.matches(p) || DAILY.matches(p) || FILES.matches(p)
         fun isIndex(p: String) = PEOPLE.matches(p) && p.endsWith("/$INDEX")
         fun isText(p: String) = p.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
+
+        /** The Library's kind of a file, by extension. */
+
+        fun kindOf(p: String): Kind = when (p.substringAfterLast('.', "").lowercase()) {
+            "png", "jpg", "jpeg", "gif", "webp", "bmp", "heic" -> Kind.IMAGE
+            "mp3", "wav", "m4a", "ogg", "aac", "flac", "opus" -> Kind.AUDIO
+            "md", "txt", "pdf", "doc", "docx", "html", "htm", "csv", "json", "xls", "xlsx", "ppt", "pptx",
+            "yaml", "yml", "xml", "rtf", "odt" -> Kind.DOCUMENT
+            else -> Kind.OTHER
+        }
         fun titleOf(text: String, fallback: String) =
             text.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#") && !it.startsWith("#!") }
                 ?.trimStart('#')?.trim()?.takeIf { it.isNotEmpty() }?.take(80) ?: fallback

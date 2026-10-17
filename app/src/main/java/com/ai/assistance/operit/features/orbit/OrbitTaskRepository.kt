@@ -223,11 +223,13 @@ class OrbitTaskRepository(private val context: Context) {
         /** A WATCH task names what it watches; other tasks may name a web page. */
         fun checkSource(kind: String, source: String) {
             if (kind == OrbitWatchSources.KIND) OrbitWatchSources.validate(source)
+            else if (kind == "ASSIST" && OrbitRoutines.isRoutineSource(source)) return
             else if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         }
 
         /** Tasks whose source is read without the model; an unchanged source can skip the model. */
-        fun prechecked(task: OrbitTaskEntity) = task.kind == "URL_CHANGE" || task.kind == OrbitWatchSources.KIND
+        fun prechecked(task: OrbitTaskEntity) = task.kind == "URL_CHANGE" || task.kind == OrbitWatchSources.KIND ||
+            (task.kind == "ASSIST" && task.source == OrbitRoutines.CHAT_SOURCE)
 
         fun validateSource(source: String) {
             require(source.length <= 2048)

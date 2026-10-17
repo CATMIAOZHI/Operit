@@ -17,6 +17,9 @@ internal class OrbitGoalRepository(private val context: Context) {
             check(dao.goals(orbitId).count { it.state != "CANCELLED" } < 50 || dao.goal(id) != null)
             dao.insertGoal(OrbitGoalEntity(id, orbitId, title.trim(), plan.trim(), "ACTIVE", 1, now, now))
         }
+        // The first goal starts the morning briefing; it skips itself while no goal is active.
+        OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId }
+            ?.let { OrbitRoutines.ensureGoalBriefing(context, it) }
         return checkNotNull(dao.goal(id))
     }
     suspend fun update(goal: OrbitGoalEntity, title: String, plan: String, state: String) {
