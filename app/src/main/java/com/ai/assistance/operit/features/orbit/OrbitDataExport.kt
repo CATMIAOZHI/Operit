@@ -40,13 +40,15 @@ internal object OrbitDataExport {
         val tasks = dao.tasks(orbit.id)
         val goals = dao.goals(orbit.id)
         val activity = dao.observeActivity(orbit.id).first()
-        val messages = try {
-            ChatHistoryManager.getInstance(context).loadChatMessages(orbit.chatId)
+        suspend fun load(chatId: String) = try {
+            ChatHistoryManager.getInstance(context).loadChatMessages(chatId)
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
             emptyList()
         }
+        val messages = load(orbit.chatId)
+        val sideChats = orbit.sideChats.map { it to load(it.chatId) }
         val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id)
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         ZipOutputStream(zip.outputStream().buffered()).use { out ->
@@ -75,14 +77,19 @@ internal object OrbitDataExport {
                     .put("observation", it.observation).put("error", it.error)
                     .put("startedAt", time(it.startedAt)).put("finishedAt", time(it.finishedAt))
             }).toString(2))
-            put("chat.md", buildString {
-                append("# ${orbit.name}\n\n")
-                messages.forEach { m ->
+            fun chatMarkdown(title: String, list: List<com.ai.assistance.operit.data.model.ChatMessage>) = buildString {
+                append("# $title\n\n")
+                list.forEach { m ->
                     val who = if (m.sender == "user") "User" else orbit.name
                     append("### $who · ${time(m.timestamp)}\n\n")
                     append(ChatUtils.removeThinkingContent(m.content).trim()).append("\n\n")
                 }
-            })
+            }
+            put("chat.md", chatMarkdown(orbit.name, messages))
+            sideChats.forEachIndexed { index, (side, list) ->
+                val name = side.title.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_').ifEmpty { "chat" }.take(40)
+                put("side-chats/${index + 1}-$name.md", chatMarkdown("${orbit.name} · ${side.title}", list))
+            }
         }
         zip
     }
@@ -97,6 +104,7 @@ internal object OrbitDataExport {
         orbit/      Orbit's own folder: SOUL.md, IDENTITY.md, user.md, memory/, skills/, files/ and its boards
         records/    tasks, goals and the history of background runs
         chat.md     the Orbit chat
+        side-chats/ Orbit's side chats, one file each
     """.trimIndent() + "\n"
 
     private fun taskJson(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)

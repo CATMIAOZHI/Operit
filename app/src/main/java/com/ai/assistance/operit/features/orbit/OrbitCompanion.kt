@@ -19,10 +19,12 @@ import com.ai.assistance.operit.util.FileUtils
 import java.util.Calendar
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
 /**
@@ -112,6 +114,8 @@ object OrbitCompanion {
                 preferences.removeOrbit(orbitId)
             }
         core(appContext).deleteChatHistory(orbit.chatId)
+        orbit.sideChats.forEach { core(appContext).deleteChatHistory(it.chatId) }
+        OrbitReactions.drop(orbitId)
         // Model-only task chats are independent NORMAL nodes, not children in the archive graph.
         val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(appContext)
         chats.filter { it.id in chatIds && it.hiddenReason == "ORBIT_TASK" }.forEach {
@@ -123,6 +127,71 @@ object OrbitCompanion {
     /** Stops a check-in whose Orbit is no longer the running one. */
     private suspend fun stopInFlightUnlessActive(context: Context) {
         OrbitTaskRunner.cancelUnlessActive(OrbitPreferences.getInstance(context).current().activeOrbitId)
+    }
+
+    /**
+     * Opens a side chat: a separate, lasting conversation with the same Orbit about one topic,
+     * like Muse's side chats. It shares Orbit's memory and tools; its history stays its own.
+     */
+    suspend fun createSideChat(context: Context, orbitId: String, title: String): String {
+        val appContext = context.applicationContext
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        require(clean.isNotEmpty()) { "Missing title" }
+        return chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
+                ?: error("Orbit no longer exists")
+            check(orbit.sideChats.size < OrbitSettings.MAX_SIDE_CHATS) { "Too many side chats" }
+            val chatId = createChat(appContext, null, clean, titled = false)
+            preferences.rememberChatOwner(chatId, orbit.id)
+            preferences.addSideChat(orbit.id, chatId, clean)
+            chatId
+        }
+    }
+
+    suspend fun renameSideChat(context: Context, orbitId: String, chatId: String, title: String) {
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        require(clean.isNotEmpty()) { "Missing title" }
+        val appContext = context.applicationContext
+        OrbitPreferences.getInstance(appContext).renameSideChat(orbitId, chatId, clean)
+        runCatching { core(appContext).getChatHistoryDelegate().updateChatTitleAndWait(chatId, clean) }
+    }
+
+    /**
+     * Deletes a side chat and its history. Tasks made there report to the main chat from now on,
+     * and reports still waiting to be posted go there too. It finishes even if the screen that
+     * asked goes away, and the side chat stays listed until its history is really gone, so a
+     * failed delete can be tried again.
+     */
+    suspend fun deleteSideChat(context: Context, orbitId: String, chatId: String) = withContext(NonCancellable) {
+        val appContext = context.applicationContext
+        val preferences = OrbitPreferences.getInstance(appContext)
+        val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return@withContext
+        if (orbit.sideChats.none { it.chatId == chatId }) return@withContext
+        val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
+        OrbitExecutionGate.serialized {
+            dao.moveTaskChat(orbitId, chatId, orbit.chatId)
+            dao.movePendingDeliveries(orbitId, chatId, orbit.chatId)
+        }
+        // Deleting the chat on screen would make the chat screen jump to some unrelated chat, so
+        // show Orbit's main chat first.
+        val core = core(appContext)
+        if (core.currentChatId.value == chatId) {
+            withContext(kotlinx.coroutines.Dispatchers.Main) { core.switchChat(orbit.chatId, scrollToBottom = false) }
+            kotlinx.coroutines.withTimeoutOrNull(3_000) { core.currentChatId.first { it != chatId } }
+        }
+        // Its history may already be gone (deleted from chat history settings, or an earlier try
+        // that timed out after finishing); then only the list entry is left to remove.
+        if (core.chatExists(chatId)) {
+            val deleted = CompletableDeferred<Boolean>()
+            core.getChatHistoryDelegate().deleteChatHistory(chatId) { deleted.complete(it) }
+            check(withTimeout(CHAT_CREATE_TIMEOUT_MS) { deleted.await() } || !core.chatExists(chatId)) {
+                "Could not delete the chat"
+            }
+        }
+        preferences.removeSideChat(orbitId, chatId)
+        OrbitDelivery.markSeen(chatId)
+        runCatching { OrbitReactions.of(appContext, orbitId).removeChat(chatId) }
     }
 
     /** The running Orbit with a chat that exists, or null while every Orbit is paused. */
@@ -202,7 +271,8 @@ object OrbitCompanion {
         OrbitPreferences.getInstance(context).putOrbit(recreated)
         OrbitExecutionGate.serialized {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
-            dao.tasks(orbit.id).forEach { task ->
+            // Tasks made in a side chat keep reporting there.
+            dao.tasks(orbit.id).filter { it.chatId == orbit.chatId }.forEach { task ->
                 dao.replaceDefinition(task.copy(chatId = recreated.chatId, updatedAt = System.currentTimeMillis()),
                     task.version)
             }
@@ -214,18 +284,20 @@ object OrbitCompanion {
      * Creates an Orbit chat. A new Orbit's chat starts with its role card's opening message; after
      * that the chat no longer follows the role card.
      */
-    private suspend fun createChat(context: Context, roleCardId: String?, title: String): String {
+    private suspend fun createChat(context: Context, roleCardId: String?, title: String, titled: Boolean = true): String {
         val core = core(context)
         val created = CompletableDeferred<String>()
         core.createNewChat(
             inheritGroupFromCurrent = false,
             setAsCurrentChat = false,
             characterCardId = roleCardId ?: CharacterCardManager.DEFAULT_CHARACTER_CARD_ID,
+            // A side chat (no role card) starts empty: it is Orbit talking, not the default card.
+            withOpeningMessage = roleCardId != null,
             onCreated = { chatId -> created.complete(chatId) },
         )
         val chatId = withTimeout(CHAT_CREATE_TIMEOUT_MS) { created.await() }
         core.getChatHistoryDelegate()
-            .updateChatTitleAndWait(chatId, context.getString(R.string.orbit_chat_title, title))
+            .updateChatTitleAndWait(chatId, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
         return chatId
     }
 

@@ -52,6 +52,7 @@ fun BubbleStyleChatMessage(
 ) {
     when (if (message.displayMode.isCollaborationEvent) "ai" else message.sender) {
         "user" -> {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedUserMessage(message.timestamp) {
             BubbleUserMessageComposable(
                 message = message,
                 backgroundColor = userMessageColor,
@@ -64,6 +65,7 @@ fun BubbleStyleChatMessage(
                 bubbleContentPaddingRight = bubbleUserContentPaddingRight,
                 enableDialogs = enableDialogs,
             )
+            }
         }
         "ai" -> {
             // Cards tune their text to a solid bubble; images and glass have no single color. A nearly

@@ -40,6 +40,7 @@ fun CursorStyleChatMessage(
 ) {
     when (if (message.displayMode.isCollaborationEvent) "ai" else message.sender) {
         "user" -> {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedUserMessage(message.timestamp) {
             UserMessageComposable(
                     message = message,
                     backgroundColor = userMessageColor,
@@ -48,6 +49,7 @@ fun CursorStyleChatMessage(
                     textColor = userTextColor,
                     enableDialogs = enableDialogs,
             )
+            }
         }
         "ai" -> {
             AiMessageComposable(

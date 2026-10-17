@@ -893,6 +893,7 @@ class ChatHistoryDelegate(
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null,
+        withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
     ) {
         coroutineScope.launch {
@@ -921,7 +922,7 @@ class ChatHistoryDelegate(
                 setAsCurrentChat = shouldSyncCurrentChatToGlobal
             )
 
-            target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
+            if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }
             
             // 等待数据库Flow更新，确保新对话在列表中（最多等待500ms）
             withTimeoutOrNull(500) {

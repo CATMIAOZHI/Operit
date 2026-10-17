@@ -356,6 +356,7 @@ class ChatServiceCore(
         inheritGroupFromCurrent: Boolean = true,
         setAsCurrentChat: Boolean = true,
         characterCardId: String? = null,
+        withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
     ) {
         chatHistoryDelegate.createNewChat(
@@ -364,6 +365,7 @@ class ChatServiceCore(
             inheritGroupFromCurrent = inheritGroupFromCurrent,
             setAsCurrentChat = setAsCurrentChat,
             characterCardId = characterCardId,
+            withOpeningMessage = withOpeningMessage,
             onCreated = onCreated,
         )
     }

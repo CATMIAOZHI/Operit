@@ -237,8 +237,28 @@ private fun OrbitChatPage(
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // Which of Orbit's chats is shown: the main chat or a side chat. A deleted side chat falls back to main.
+    var talkChatId by rememberSaveable(orbit.id) { mutableStateOf(orbit.chatId) }
+    // A side chat made a moment ago may not be in the settings yet; keep showing it meanwhile.
+    var justCreatedChatId by remember(orbit.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(orbit.talkChatIds) { if (justCreatedChatId in orbit.talkChatIds) justCreatedChatId = null }
+    val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
+    val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
+    var showChats by remember { mutableStateOf(false) }
+    // Reports that reached a chat the user is not looking at show as a dot until it is opened.
+    val unreadChats by com.ai.assistance.operit.features.orbit.OrbitDelivery.unreadChats.collectAsState()
+    val reactions by remember(orbit.id, currentChatId) {
+        com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).observe(currentChatId)
+    }.collectAsState(initial = emptyMap())
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
+    // A report counts as seen only while its chat is really on screen: chat tab, app in front.
+    val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val chatOnScreen = tab == OrbitTab.CHAT && lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
+        if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
+    }
+    val hasUnread = unreadChats.any { (it != currentChatId || !chatOnScreen) && it in orbit.talkChatIds }
     var pageTab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.FEED) }
     // A text file from the Builds tab opens full screen, over the bottom tabs, so a stray tap
     // on a tab cannot drop an unsaved edit.
@@ -273,13 +293,19 @@ private fun OrbitChatPage(
     // The chat screen follows the app-wide current chat. It shows this Orbit while the page is
     // open; put the chat the user had back when the page closes. Sending in an Orbit chat always
     // uses Orbit's own Soul.md, whatever role card is active elsewhere.
-    DisposableEffect(orbit.chatId) {
+    DisposableEffect(orbit.id) {
         val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
-        val previousChatId = core.currentChatId.value?.takeIf { it != orbit.chatId }
+        val orbitPreferences = OrbitPreferences.getInstance(context.applicationContext)
+        fun isThisOrbit(chatId: String?) = orbitPreferences.snapshot.orbitForChat(chatId)?.id == orbit.id
+        val previousChatId = core.currentChatId.value?.takeIf { !isThisOrbit(it) }
         onDispose {
-            if (previousChatId != null && core.currentChatId.value == orbit.chatId) {
+            if (previousChatId != null) {
                 CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate).launch {
-                    core.switchChat(previousChatId, scrollToBottom = false)
+                    // Read the settings fresh: a side chat made a moment ago may not be in the snapshot yet.
+                    val shown = core.currentChatId.value
+                    if (orbitPreferences.current().orbitForChat(shown)?.id == orbit.id) {
+                        core.switchChat(previousChatId, scrollToBottom = false)
+                    }
                 }
             }
         }
@@ -291,9 +317,15 @@ private fun OrbitChatPage(
         BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile) { tab = OrbitTab.CHAT }
         Column(Modifier.fillMaxSize()) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                CompositionLocalProvider(LocalOrbitChatLook provides true) {
-                    chatContent(orbit.chatId) {
-                        OrbitHeader(orbit = orbit, onOpenProfile = { showProfile = true })
+                CompositionLocalProvider(
+                    LocalOrbitChatLook provides true,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
+                ) {
+                    chatContent(currentChatId) {
+                        OrbitHeader(
+                            orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
+                            onOpenProfile = { showProfile = true }, onOpenChats = { showChats = true },
+                        )
                     }
                 }
                 androidx.compose.animation.AnimatedVisibility(
@@ -316,6 +348,17 @@ private fun OrbitChatPage(
             }
         }
         // Keeps the last file on screen while the page slides away.
+        if (showChats) {
+            OrbitChatsSheet(
+                orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+                onSelect = {
+                    if (it !in orbit.talkChatIds) justCreatedChatId = it
+                    talkChatId = it
+                    tab = OrbitTab.CHAT
+                },
+                onDismiss = { showChats = false },
+            )
+        }
         var shownFile by remember(orbit.id) { mutableStateOf(editingFile) }
         LaunchedEffect(editingFile) { editingFile?.let { shownFile = it } }
         AnimatedVisibility(
@@ -469,7 +512,13 @@ internal object OrbitMotion {
  * scroll up slide softly under the header instead of running into it.
  */
 @Composable
-private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
+private fun OrbitHeader(
+    orbit: OrbitProfile,
+    sideTitle: String?,
+    hasUnread: Boolean,
+    onOpenProfile: () -> Unit,
+    onOpenChats: () -> Unit,
+) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
     val pageColor = MaterialTheme.colorScheme.background
     Box(
@@ -491,6 +540,23 @@ private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
             onClick = openDrawer,
             modifier = Modifier.align(Alignment.TopStart),
         )
+        Box(Modifier.align(Alignment.TopEnd)) {
+            OrbitCircleButton(
+                icon = orbitIcon("messages-square"),
+                contentDescription =
+                    if (hasUnread) stringResource(R.string.orbit_chats_title_unread)
+                    else stringResource(R.string.orbit_chats_title),
+                onClick = onOpenChats,
+            )
+            // A new report waits in another of Orbit's chats.
+            if (hasUnread) {
+                Box(
+                    Modifier.align(Alignment.TopEnd).padding(top = 4.dp, end = 4.dp).size(12.dp)
+                        .clip(androidx.compose.foundation.shape.CircleShape)
+                        .background(MaterialTheme.colorScheme.primary)
+                )
+            }
+        }
         Box(modifier = Modifier.align(Alignment.TopCenter), contentAlignment = Alignment.TopCenter) {
             OrbitAvatar(
                 orbit = orbit,
@@ -509,14 +575,28 @@ private fun OrbitHeader(orbit: OrbitProfile, onOpenProfile: () -> Unit) {
                         .clip(RoundedCornerShape(50))
                         .clickable(onClick = onOpenProfile),
             ) {
-                Text(
-                    text = orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = FontWeight.SemiBold,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
-                )
+                ) {
+                    Text(
+                        text = orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    // In a side chat, its topic sits under the name so the user knows where they are.
+                    if (sideTitle != null) {
+                        Text(
+                            text = sideTitle,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
             }
         }
     }

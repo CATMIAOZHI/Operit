@@ -138,7 +138,10 @@ object OrbitTaskRunner {
                         when (task.kind) {
                             "URL_CHANGE" -> readUrl(task.source)
                             OrbitWatchSources.KIND -> OrbitWatchSources.read(context, task.orbitId, task.source)
-                            else -> OrbitRoutines.source(context, task) ?: dao.recentSource(orbit.chatId).reversed().joinToString("\n\n") {
+                            // The conversation the task was made in: a side chat, or the main chat.
+                            else -> OrbitRoutines.source(context, task) ?: dao.recentSource(
+                                task.chatId.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
+                            ).reversed().joinToString("\n\n") {
                                 "${it.sender}: ${ChatUtils.removeThinkingContent(it.content)}"
                             }.take(20_000)
                         }

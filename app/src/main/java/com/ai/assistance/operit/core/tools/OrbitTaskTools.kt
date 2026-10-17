@@ -40,7 +40,7 @@ internal object OrbitTaskTools {
             "每次运行默认最多5分钟；步骤多或耗时长的任务（多个网页、多个子代理、长时间监控）按需调大 timeout_minutes，最多1440分钟。超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟。" +
             "后台与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
-            "工具过程保存在执行记录，有价值的正式结果才回到主聊天。" +
+            "工具过程保存在执行记录，有价值的正式结果才回到安排它的聊天（主聊天或侧聊）。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
             "现成来源不够时写一个只读的小脚本（比如查一个接口、看一个文件），只输出要比较的内容，不要输出时间戳这类每次都变的东西。" +
@@ -76,7 +76,10 @@ internal object OrbitTaskTools {
                 dailyMinute = arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
                     ?: if (mode == "DAILY" || calendar) error("$mode needs daily_time (HH:mm)") else 0,
                 calendarRule = arguments["repeat_on"].orEmpty(),
-                timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0))
+                timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0,
+                // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
+                // running task: its reports go where that task reports.
+                chatId = reportChatId(context, orbit, runtime?.callerChatId)))
             }
             "list" -> JSONArray(repository.dao.tasks(orbit.id).map(::json))
             "pending" -> JSONArray(repository.dao.tasks(orbit.id).mapNotNull { task ->
@@ -179,6 +182,22 @@ internal object OrbitTaskTools {
         val minute = match.groupValues[2].toInt()
         require(hour in 0..23 && minute in 0..59) { "daily_time must look like 08:30" }
         return hour * 60 + minute
+    }
+
+    /**
+     * The chat a new task reports to: the chat it was made in, or, when a running task made it
+     * from its own work chat, the chat that task reports to. Anything else goes to the main chat.
+     */
+    private suspend fun reportChatId(context: Context, orbit: com.ai.assistance.operit.data.preferences.OrbitProfile, caller: String?): String {
+        caller?.takeIf { it in orbit.talkChatIds }?.let { return it }
+        val running = try {
+            OrbitTaskExecution.resolve(context, caller)?.task
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            null
+        }
+        return running?.chatId?.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
     }
 
     /** Null when the model left it out; a value outside 1..MAX_TIMEOUT_MINUTES is rejected. */

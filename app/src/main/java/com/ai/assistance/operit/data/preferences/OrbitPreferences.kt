@@ -56,7 +56,14 @@ data class OrbitProfile(
     val ownedChatIds: Set<String> = emptySet(),
     /** Persisted before cancellation so restart cannot resume a partially deleted companion. */
     val deleting: Boolean = false,
-)
+    /** Separate topic chats next to the main chat, like Muse's side chats. Their ids are also owned chats. */
+    val sideChats: List<OrbitSideChat> = emptyList(),
+) {
+    /** The main chat and every side chat: the chats where the user talks to this Orbit. */
+    val talkChatIds: List<String> get() = listOf(chatId) + sideChats.map { it.chatId }
+}
+
+data class OrbitSideChat(val chatId: String, val title: String, val createdAt: Long)
 
 data class OrbitSettings(
     /** Every Orbit the user has made. */
@@ -79,7 +86,9 @@ data class OrbitSettings(
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
 
     fun orbitForChat(chatId: String?): OrbitProfile? =
-        chatId?.takeIf { it.isNotBlank() }?.let { id -> orbits.firstOrNull { it.chatId == id } }
+        chatId?.takeIf { it.isNotBlank() }?.let { id ->
+            orbits.firstOrNull { it.chatId == id || it.sideChats.any { side -> side.chatId == id } }
+        }
 
     fun orbitFromRoleCard(roleCardId: String): OrbitProfile? =
         orbits.firstOrNull { it.sourceRoleCardId == roleCardId }
@@ -93,6 +102,8 @@ data class OrbitSettings(
         const val DEFAULT_CHECK_IN_MINUTE = 9 * 60
         const val MAX_FOCUS_NOTES_LENGTH = 1000
         const val MAX_NAME_LENGTH = 24
+        const val MAX_SIDE_CHATS = 20
+        const val MAX_SIDE_CHAT_TITLE = 40
     }
 }
 
@@ -268,6 +279,35 @@ class OrbitPreferences private constructor(context: Context) {
         }
     }
 
+    suspend fun addSideChat(orbitId: String, chatId: String, title: String) {
+        updateOrbits { orbits ->
+            orbits.map {
+                if (it.id != orbitId) return@map it
+                check(it.sideChats.size < OrbitSettings.MAX_SIDE_CHATS) { "Too many side chats" }
+                it.copy(sideChats = it.sideChats + OrbitSideChat(chatId, title, System.currentTimeMillis()),
+                    ownedChatIds = it.ownedChatIds + chatId)
+            }
+        }
+    }
+
+    suspend fun renameSideChat(orbitId: String, chatId: String, title: String) {
+        updateOrbits { orbits ->
+            orbits.map { orbit ->
+                if (orbit.id != orbitId) orbit
+                else orbit.copy(sideChats = orbit.sideChats.map { if (it.chatId == chatId) it.copy(title = title) else it })
+            }
+        }
+    }
+
+    /** Drops the side chat from the list; the id stays owned so its rows never show up elsewhere. */
+    suspend fun removeSideChat(orbitId: String, chatId: String) {
+        updateOrbits { orbits ->
+            orbits.map { orbit ->
+                if (orbit.id != orbitId) orbit else orbit.copy(sideChats = orbit.sideChats.filterNot { it.chatId == chatId })
+            }
+        }
+    }
+
     suspend fun setAvatar(orbitId: String, avatarUri: String?) {
         var previous: String? = null
         updateOrbits { orbits ->
@@ -400,6 +440,15 @@ class OrbitPreferences private constructor(context: Context) {
                             (0 until ids.length()).map { ids.getString(it) }.toSet()
                         }.orEmpty(),
                         deleting = item.optBoolean("deleting", false),
+                        sideChats = item.optJSONArray("sideChats")?.let { list ->
+                            (0 until list.length()).mapNotNull { i ->
+                                list.optJSONObject(i)?.let { side ->
+                                    side.optString("chatId").takeIf { it.isNotBlank() }?.let {
+                                        OrbitSideChat(it, side.optString("title"), side.optLong("createdAt"))
+                                    }
+                                }
+                            }
+                        }.orEmpty(),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -419,6 +468,9 @@ class OrbitPreferences private constructor(context: Context) {
                             orbit.memorySpaceId?.let { put("memorySpaceId", it) }
                             put("ownedChatIds", JSONArray(orbit.ownedChatIds.toList()))
                             put("deleting", orbit.deleting)
+                            put("sideChats", JSONArray(orbit.sideChats.map {
+                                JSONObject().put("chatId", it.chatId).put("title", it.title).put("createdAt", it.createdAt)
+                            }))
                         }
                     )
                 }
