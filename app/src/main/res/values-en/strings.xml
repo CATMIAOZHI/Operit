@@ -9473,4 +9473,18 @@
     <string name="orbit_library_long_press_hint">Long press a file to pin, share or delete it</string>
     <string name="orbit_library_more_actions">More actions</string>
     <string name="orbit_goal_notes_recent">Showing the latest 20</string>
+    <string name="orbit_chats_title">Chats</string>
+    <string name="orbit_chats_main">Main chat</string>
+    <string name="orbit_chats_new">New side chat</string>
+    <string name="orbit_chats_new_hint">A side chat is for one topic and keeps its own messages. Reminders you set in a side chat are sent to that chat.</string>
+    <string name="orbit_chats_title_label">Title</string>
+    <string name="orbit_chats_title_hint">For example: Trip plans</string>
+    <string name="orbit_chats_delete">Delete side chat</string>
+    <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders set in this side chat will show up in the main chat.</string>
+    <string name="orbit_chats_limit">You can have up to %1$d side chats. Delete one to make another.</string>
+    <string name="orbit_chats_failed">That didn\'t work. Try again later.</string>
+    <string name="orbit_chats_long_press">Long press a side chat to rename or delete it</string>
+    <string name="orbit_chats_unread">New messages</string>
+    <string name="orbit_chats_title_unread">Chats — new messages</string>
+    <string name="orbit_reaction_label">Orbit reacted %1$s</string>
 </resources>

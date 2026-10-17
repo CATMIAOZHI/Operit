@@ -21,8 +21,8 @@ internal object OrbitSoulTools {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller))
         val task = OrbitTaskExecution.resolve(context, caller)
-        check(orbit.chatId == caller || task?.binding?.rootChatId == caller) {
-            "Only this Orbit's main conversation or root background turn can change Soul"
+        check(caller in orbit.talkChatIds || task?.binding?.rootChatId == caller) {
+            "Only this Orbit's conversations or root background turn can change Soul"
         }
         val repository = OrbitSoulRepository(context, orbit.id)
         val args = tool.parameters.associate { it.name to it.value }

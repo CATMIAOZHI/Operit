@@ -59,15 +59,16 @@ status: in-progress
 | 媒体库 | 构建页下方的媒体库：按图片、音频、文档筛选，图片有缩略图，长按置顶、分享、删除 [DONE batch3b] |
 | 设备命令族 | `orbit_device`：describe 列出命令和授权情况，invoke 读通讯录、日历、短信、位置；没授权时当场弹框请用户批准 [DONE batch3b] |
 | 数据导出 | 详情页「身份」里的「导出数据」：把 Orbit 文件夹、任务、目标、运行记录和聊天打成一个 zip 交给分享面板 [DONE batch3b] |
+| 选项卡片、地图卡片 | 用现有 dynamic_ui 工具包：选项用按钮 + ai_submit 把选择交回，地点用 Map 标出；提示词写了用法 [DONE batch4] |
+| 表情回应 | `orbit_react` 给用户最新的消息点一个表情，存在 `orbit/<UUID>/reactions.json`，显示在消息气泡右下角 [DONE batch4] |
+| 侧聊 | 顶部右边的「聊天」按钮里新建、切换、重命名、删除侧聊；`orbit_chat` list / create / read；在侧聊里安排的任务结果回到那个侧聊，侧聊删掉后回到主聊天 [DONE batch4] |
+| 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
 ## 部分有，需要接进 Orbit
 
 - [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）——暂不做
 - [ ] 深度研究（Muse 的 `browser.deep_research`）——暂不做
 - [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）——暂缓
 - [x] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示（25d778e8c）
-- [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等——不新做卡片框架，用现有动态 UI 包
-- [ ] 表情回应：给用户消息点一个表情（Muse 的 `react_to_user_message`）
-- [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
 
 ## 还没做，可以做
 
@@ -81,7 +82,6 @@ status: in-progress
 - [ ] 分享到 Operit：从别的 App 分享内容给 Orbit
 - [ ] Tailscale 等内网设备连接——暂缓
 - [ ] 「忘掉」流程：先找出一条信息在记忆、聊天、目标、任务里的所有副本，给用户确认后一起删（Muse 的 `forget.plan` / `forget.confirm`）
-- [ ] 起名卡片：新 Orbit 第一次聊天时用卡片让用户选名字和气质（Muse 的 `onboarding.*`）
 - [ ] 专项技能：购物、订机票、订酒店、出行交通、约时间、替用户发消息、管理邮件（Muse 预装技能，可改写成 Orbit 技能）
 
 ## 做不了（及原因）

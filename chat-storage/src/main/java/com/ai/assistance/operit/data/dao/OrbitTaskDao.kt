@@ -279,6 +279,8 @@ interface OrbitTaskDao {
     suspend fun previousRun(taskId: String, exclude: String): OrbitRunEntity?
     @Query("SELECT sender, SUBSTR(content,-12000) AS content FROM messages WHERE chatId=:chatId ORDER BY orderIndex DESC LIMIT 20")
     suspend fun executionSource(chatId: String): List<OrbitSourceMessage>
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId=:chatId AND sender='user'")
+    suspend fun userMessageCount(chatId: String): Int
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     fun observeTasks(orbitId: String): Flow<List<OrbitTaskEntity>>
 
@@ -355,6 +357,13 @@ interface OrbitTaskDao {
 
     @Update
     suspend fun updateDelivery(delivery: OrbitDeliveryEntity)
+
+    /** Reports of tasks made in a side chat go back to the main chat once that side chat is gone. */
+    @Query("UPDATE orbit_tasks SET chatId = :to WHERE orbitId = :orbitId AND chatId = :from")
+    suspend fun moveTaskChat(orbitId: String, from: String, to: String)
+
+    @Query("UPDATE orbit_deliveries SET chatId = :to WHERE orbitId = :orbitId AND chatId = :from AND state = 'PENDING'")
+    suspend fun movePendingDeliveries(orbitId: String, from: String, to: String)
 
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId AND state='PENDING'")
     suspend fun markBatchDelivered(orbitId: String, messageId: Long)

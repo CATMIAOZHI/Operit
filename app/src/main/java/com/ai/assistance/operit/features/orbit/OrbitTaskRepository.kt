@@ -33,7 +33,7 @@ class OrbitTaskRepository(private val context: Context) {
         scheduleMode: String = if (kind == "ASSIST") "ONCE" else "INTERVAL",
         goalId: String = "", triggerTaskId: String = "", sourceArtifactVersionId: String = "",
         runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
-        timeoutMinutes: Int = 0,
+        timeoutMinutes: Int = 0, chatId: String? = null,
     ): OrbitTaskEntity {
         require(title.isNotBlank() && title.length <= 80)
         require(instruction.isNotBlank() && instruction.length <= 4000)
@@ -46,7 +46,10 @@ class OrbitTaskRepository(private val context: Context) {
         require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
         val rule = checkedRule(scheduleMode, calendarRule)
         checkSource(kind, source)
-        check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
+        val latest = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id && !it.deleting }
+        checkNotNull(latest)
+        val reportChatId = chatId ?: latest.chatId
+        require(reportChatId in latest.talkChatIds) { "Reports can only go to this Orbit's chats" }
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
         dao.task(id)?.let { return it }
         val now = System.currentTimeMillis()
@@ -56,7 +59,7 @@ class OrbitTaskRepository(private val context: Context) {
             in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
             else -> now
         }
-        val task = OrbitTaskEntity(id, orbit.id, orbit.chatId, title.trim(), instruction.trim(),
+        val task = OrbitTaskEntity(id, orbit.id, reportChatId, title.trim(), instruction.trim(),
             kind, source, intervalMinutes, dailyMinute, notifyPolicy, "ACTIVE", 1, firstRun,
             "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes)
         OrbitExecutionGate.serialized {

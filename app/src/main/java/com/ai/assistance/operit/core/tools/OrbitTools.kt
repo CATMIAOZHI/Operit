@@ -142,7 +142,18 @@ internal object OrbitTools {
                 escape(files.identity(context, orbit.id)) +
                 "\n</orbit_identity>"
         } else ""
-        return "<orbit>\n$body$proactive$identity\n${controls.joinToString("\n")}\n</orbit>"
+        // A side chat is its own thread; work started here reports back here.
+        val side = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id }
+            ?.sideChats?.firstOrNull { it.chatId == chatId }
+        val sideNote = side?.let {
+            val title = escape(it.title)
+            if (useEnglish) "\nThis is a side chat titled \"$title\", separate from the main chat. It keeps its own history; " +
+                "reminders and tasks made here report back here unless the user asks for the main chat."
+            else "\n这是一个侧聊，标题是「$title」，和主聊天分开，有自己的记录。在这里安排的提醒和任务，结果回到这里，除非用户要求发到主聊天。"
+        }.orEmpty()
+        val firstTalk = com.ai.assistance.operit.features.orbit.OrbitOnboarding.hint(context, orbit, chatId, useEnglish)
+            ?.let { "\n$it" }.orEmpty()
+        return "<orbit>\n$body$sideNote$proactive$identity$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
     }
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {
@@ -166,6 +177,7 @@ internal object OrbitTools {
                         context.getString(R.string.orbit_tool_not_orbit_chat)
                     )
             preferences.setName(orbit.id, name)
+            runCatching { com.ai.assistance.operit.features.orbit.OrbitOnboarding.markDone(context, orbit.id) }
             runCatching { com.ai.assistance.operit.features.orbit.OrbitPromptFiles.syncIdentityName(context, orbit.id, name) }
             // Keep the chat list and notifications in step with the new name.
             runCatching {

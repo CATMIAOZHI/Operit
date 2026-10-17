@@ -9450,4 +9450,18 @@
     <string name="orbit_library_long_press_hint">长按文件可以置顶、分享或删除</string>
     <string name="orbit_library_more_actions">更多操作</string>
     <string name="orbit_goal_notes_recent">只显示最近 20 条</string>
+    <string name="orbit_chats_title">聊天</string>
+    <string name="orbit_chats_main">主聊天</string>
+    <string name="orbit_chats_new">新建侧聊</string>
+    <string name="orbit_chats_new_hint">侧聊用来单独聊一件事，有自己的聊天记录。在这个侧聊里安排的提醒，结果也会发到这里。</string>
+    <string name="orbit_chats_title_label">标题</string>
+    <string name="orbit_chats_title_hint">比如：旅行计划</string>
+    <string name="orbit_chats_delete">删除侧聊</string>
+    <string name="orbit_chats_delete_confirm">删除「%1$s」和它的全部聊天记录？这个侧聊里安排的提醒，以后会发到主聊天。</string>
+    <string name="orbit_chats_limit">最多只能有 %1$d 个侧聊，删掉一个再新建。</string>
+    <string name="orbit_chats_failed">没成功，请稍后再试</string>
+    <string name="orbit_chats_long_press">长按侧聊可以重命名或删除</string>
+    <string name="orbit_chats_unread">有新消息</string>
+    <string name="orbit_chats_title_unread">聊天，有新消息</string>
+    <string name="orbit_reaction_label">Orbit 回应了 %1$s</string>
 </resources>
