@@ -71,7 +71,20 @@ data class OrbitRunEntity(
     val error: String,
     val startedAt: Long,
     val finishedAt: Long,
-)
+    /** Why this run messaged the user or stayed quiet; empty for older runs. */
+    @ColumnInfo(defaultValue = "''") val decision: String = "",
+) {
+    companion object {
+        /**
+         * The decision of a check whose source had not changed. The app words it for the user, and
+         * keeps these routine runs out of the activity list so real results are not crowded out.
+         */
+        const val UNCHANGED = "@unchanged"
+
+        /** A check skipped because its source was not ready yet (the notification listener still binding). */
+        const val SKIPPED = "@skipped"
+    }
+}
 
 @Entity(tableName = "orbit_deliveries", indices = [Index(value = ["runId"], unique = true), Index("taskId")])
 data class OrbitDeliveryEntity(

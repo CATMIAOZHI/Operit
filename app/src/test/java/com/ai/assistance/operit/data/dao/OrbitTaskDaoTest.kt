@@ -10,6 +10,7 @@ import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.model.OrbitGoalEntity
 import com.ai.assistance.operit.data.model.OrbitActionEntity
 import com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity
+import com.ai.assistance.operit.data.model.OrbitRunEntity
 import com.ai.assistance.operit.data.stats.JdbcSQLiteDriver
 import java.io.File
 import java.sql.DriverManager
@@ -32,7 +33,7 @@ class OrbitTaskDaoTest {
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
             .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37,
-                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40)
+                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {
@@ -164,6 +165,41 @@ class OrbitTaskDaoTest {
         assertEquals(1, dao.pendingDeliveries("orbit").size)
         assertFalse(dao.complete(recovered, "new", "duplicate", "", 5000, "next-boot", 1004, 3))
         assertNull(dao.enqueueDue("task", 4000))
+    }
+
+    @Test fun `reclaimed watch run reads its phone source again`() = runBlocking {
+        dao.insertTask(definition(kind = "WATCH"))
+        val old = checkNotNull(claim())
+        assertTrue(dao.checkpoint(old, "old notifications", "sha", "boot", 1001, 11))
+        val recovered = checkNotNull(claim(owner = "new", boot = "next-boot", now = 1002, elapsed = 1))
+        assertEquals(2L, recovered.generation)
+        assertFalse(recovered.hasSource)
+        assertEquals("", recovered.sourceText)
+    }
+
+    @Test fun `skipped checks neither relay nor reset failure dedupe`() = runBlocking {
+        dao.insertTask(definition("source", kind = "WATCH"))
+        dao.insertTask(definition("follower").copy(scheduleMode = "EVENT", triggerTaskId = "source"))
+        val skipped = checkNotNull(claim("source"))
+        assertTrue(dao.complete(skipped, "", "", "", 1500, "boot", 1001, 11, OrbitRunEntity.SKIPPED))
+        assertNull(dao.enqueueDue("follower", 1001))
+        val stuck = "Notification service is stuck"
+        val first = checkNotNull(claim("source", now = 1500, elapsed = 20))
+        assertTrue(dao.complete(first, "", "failed", stuck, 2000, "boot", 1501, 21))
+        val again = checkNotNull(claim("source", now = 2000, elapsed = 30))
+        assertTrue(dao.complete(again, "", "", "", 2500, "boot", 2001, 31, OrbitRunEntity.SKIPPED))
+        val third = checkNotNull(claim("source", now = 2500, elapsed = 40))
+        assertTrue(dao.complete(third, "", "failed", stuck, 3000, "boot", 2501, 41))
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
+    }
+
+    @Test fun `a failure that only differs after the colon is told once`() = runBlocking {
+        dao.insertTask(definition(kind = "WATCH"))
+        val first = checkNotNull(claim())
+        assertTrue(dao.complete(first, "", "failed", "The check script failed: sh: line 1", 1500, "boot", 1001, 11))
+        val second = checkNotNull(claim(now = 1500, elapsed = 20))
+        assertTrue(dao.complete(second, "", "failed", "The check script failed: sh: line 2", 3000, "boot", 1501, 21))
+        assertEquals(1, dao.pendingDeliveries("orbit").size)
     }
 
     @Test fun `expired lease can be reclaimed on same boot`() = runBlocking {
