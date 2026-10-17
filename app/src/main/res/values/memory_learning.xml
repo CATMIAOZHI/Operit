@@ -148,4 +148,17 @@
     <string name="memory_delete_selected">删除选中</string>
     <string name="memory_linking_stop">结束连接模式</string>
     <string name="memory_box_select_stop">结束框选</string>
+    <string name="skill_folder_learned">自动生成</string>
+    <string name="skill_folder_learned_desc">从你们的对话里学会的</string>
+    <string name="skill_folder_user">你添加的</string>
+    <string name="skill_folder_user_desc">你导入或手动创建的</string>
+    <string name="skill_folder_builtin">系统内置</string>
+    <string name="skill_folder_builtin_desc">Operit 预装的专项技能</string>
+    <string name="skill_folder_total">共 %1$d 个技能</string>
+    <string name="orbit_learning_skills_group">技能</string>
+    <string name="orbit_learning_all_skills_desc">按来源分成文件夹查看</string>
+    <string name="orbit_learning_user_desc">它对你的了解，可以直接修改</string>
+    <string name="skill_folder_expanded">已展开</string>
+    <string name="skill_folder_collapsed">已收起</string>
+    <string name="skill_visible_to_ai">对 AI 可见：%1$s</string>
 </resources>

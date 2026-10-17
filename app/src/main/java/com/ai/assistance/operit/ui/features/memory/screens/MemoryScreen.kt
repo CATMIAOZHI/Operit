@@ -200,13 +200,72 @@ fun MemoryScreen(fixedMemorySpaceId: String? = null) {
                     scope.launch { preferencesManager.deleteMemorySpace(id) }
                 }
             )
-            if (fixedMemorySpaceId != null) TextButton(onClick = {
-                pageProfileId = activeProfileId
-                page = "user"
-            }) { Text(stringResource(R.string.user_preferences_settings)) }
-            MemoryLibraryNavigation(showGraph = !graphless) {
-                pageProfileId = activeProfileId
-                page = it
+            if (fixedMemorySpaceId != null && graphless) {
+                // An Orbit's page: the same card look as the settings pages.
+                OrbitLearningNavigation {
+                    pageProfileId = activeProfileId
+                    page = it
+                }
+            } else {
+                if (fixedMemorySpaceId != null) TextButton(onClick = {
+                    pageProfileId = activeProfileId
+                    page = "user"
+                }) { Text(stringResource(R.string.user_preferences_settings)) }
+                MemoryLibraryNavigation(showGraph = !graphless) {
+                    pageProfileId = activeProfileId
+                    page = it
+                }
+            }
+        }
+    }
+}
+
+/** Orbit's skills and learning page, in grouped cards with an icon per row. */
+@Composable
+private fun OrbitLearningNavigation(onOpen: (String) -> Unit) {
+    val cardColor = com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor()
+    fun icon(name: String) = com.ai.assistance.operit.ui.common.dynamicui.CardIcons.get("lucide:$name")
+        ?: androidx.compose.material.icons.Icons.Default.Info
+    // page id, title, subtitle, icon
+    val groups = listOf(
+        Triple(R.string.memory_group_content, "brain", listOf(
+            listOf("notes", R.string.memory_notes_title, R.string.memory_nav_notes, "notebook-pen"),
+            listOf("user", R.string.user_preferences_settings, R.string.orbit_learning_user_desc, "user-pen"),
+        )),
+        Triple(R.string.orbit_learning_skills_group, "sparkles", listOf(
+            listOf("skills", R.string.memory_all_skills, R.string.orbit_learning_all_skills_desc, "folder-open"),
+            listOf("learned", R.string.memory_learned_skills, R.string.memory_nav_learned, "wand-sparkles"),
+            listOf("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs, "scroll-text"),
+        )),
+        Triple(R.string.memory_group_review, "history", listOf(
+            listOf("review", R.string.memory_review_title, R.string.memory_nav_review, "list-checks"),
+            listOf("history", R.string.chat_recall_title, R.string.memory_nav_history, "message-square-text"),
+        )),
+        Triple(R.string.memory_group_settings, "sliders-horizontal", listOf(
+            listOf("automation", R.string.memory_automation_title, R.string.memory_nav_automation, "sliders-horizontal"),
+        )),
+    )
+    Column(
+        Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp)
+            .padding(top = 8.dp, bottom = 24.dp),
+        verticalArrangement = Arrangement.spacedBy(20.dp),
+    ) {
+        groups.forEach { (header, headerIcon, rows) ->
+            Column {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle(
+                    text = stringResource(header), icon = icon(headerIcon))
+                com.ai.assistance.operit.ui.features.settings.components.SettingsCard(backgroundColor = cardColor) {
+                    rows.forEachIndexed { index, row ->
+                        if (index > 0) com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider()
+                        com.ai.assistance.operit.ui.features.settings.components.SettingsNavRow(
+                            title = stringResource(row[1] as Int),
+                            subtitle = stringResource(row[2] as Int),
+                            icon = icon(row[3] as String),
+                            searchable = false,
+                            onClick = { onOpen(row[0] as String) },
+                        )
+                    }
+                }
             }
         }
     }
@@ -831,7 +890,8 @@ private fun MemoryLibraryDestination(page: String, profileId: String, onBack: ()
             val snackbar = remember { androidx.compose.material3.SnackbarHostState() }
             Box(Modifier.fillMaxSize()) {
                 skillRepository?.let { com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
-                    it, snackbar) }
+                    it, snackbar,
+                    groupBySource = com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) }
                 androidx.compose.material3.SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter))
             }
         }

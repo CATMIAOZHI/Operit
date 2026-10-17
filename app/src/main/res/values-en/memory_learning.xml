@@ -148,4 +148,17 @@
     <string name="memory_delete_selected">Delete selected</string>
     <string name="memory_linking_stop">Stop linking</string>
     <string name="memory_box_select_stop">Stop selecting</string>
+    <string name="skill_folder_learned">Learned</string>
+    <string name="skill_folder_learned_desc">Picked up from your chats</string>
+    <string name="skill_folder_user">Added by you</string>
+    <string name="skill_folder_user_desc">Imported or created by you</string>
+    <string name="skill_folder_builtin">Built in</string>
+    <string name="skill_folder_builtin_desc">Skills that ship with Operit</string>
+    <string name="skill_folder_total">Skills: %1$d</string>
+    <string name="orbit_learning_skills_group">Skills</string>
+    <string name="orbit_learning_all_skills_desc">Browse them in folders by origin</string>
+    <string name="orbit_learning_user_desc">What it knows about you; you can edit it</string>
+    <string name="skill_folder_expanded">Expanded</string>
+    <string name="skill_folder_collapsed">Collapsed</string>
+    <string name="skill_visible_to_ai">Visible to AI: %1$s</string>
 </resources>
