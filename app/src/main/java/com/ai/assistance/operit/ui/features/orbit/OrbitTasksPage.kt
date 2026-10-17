@@ -136,7 +136,13 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                             Text(detail.title, style = MaterialTheme.typography.headlineSmall)
                             Text(taskState(detail), color = MaterialTheme.colorScheme.primary)
-                            Text(detail.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) })
+                            val routine = com.ai.assistance.operit.features.orbit.OrbitRoutines.isRoutine(detail)
+                            Text(when {
+                                routine && detail.source == com.ai.assistance.operit.features.orbit.OrbitRoutines.GOALS_SOURCE ->
+                                    stringResource(R.string.orbit_routine_goal_briefing_desc)
+                                routine -> stringResource(R.string.orbit_routine_self_review_desc)
+                                else -> detail.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
+                            })
                             if (detail.source.isNotBlank()) Text(watchLabel(detail),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(stringResource(when (detail.notifyPolicy) {
@@ -166,7 +172,8 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                             lastRun?.decision?.takeIf { it.isNotBlank() && lastRun?.state != "RUNNING" }?.let { decision ->
                                 Text(stringResource(R.string.orbit_task_decision, when (decision) {
                                     com.ai.assistance.operit.data.model.OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
-                                    com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED -> stringResource(R.string.orbit_watch_notifications_starting)
+                                    com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED ->
+                                        com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, detail)
                                     else -> decision
                                 }),
                                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -289,6 +296,10 @@ internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (tas
 /** What a task reads: a web page as is, a WATCH task's source in words. */
 @Composable
 internal fun watchLabel(task: OrbitTaskEntity): String {
+    when (task.source) {
+        com.ai.assistance.operit.features.orbit.OrbitRoutines.CHAT_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
+        com.ai.assistance.operit.features.orbit.OrbitRoutines.GOALS_SOURCE -> return stringResource(R.string.orbit_routine_source_goals)
+    }
     if (task.kind != com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND) return task.source
     val type = task.source.substringBefore(':')
     val arg = task.source.substringAfter(':', "").trim()

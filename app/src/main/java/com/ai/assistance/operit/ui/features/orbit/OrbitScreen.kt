@@ -203,6 +203,15 @@ fun OrbitScreen(
         }
         return
     }
+    // The nightly self-review, like Muse's self-improvement. Made once per Orbit; after that it is an
+    // ordinary task the user keeps, pauses or cancels in the schedule list.
+    LaunchedEffect(orbit.id) {
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureSelfReview(context.applicationContext, orbit) }
+            .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+        // Goals made before the briefing existed get it too.
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureGoalBriefingIfGoals(context.applicationContext, orbit) }
+            .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+    }
     OrbitChatPage(
         orbit = orbit,
         settings = loadedSettings,

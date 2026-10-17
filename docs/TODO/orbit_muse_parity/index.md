@@ -54,16 +54,18 @@ status: in-progress
 | Hook 轻量脚本 / 跨来源推送 | `orbit_task` 的 `kind=WATCH`：盯通知、短信、日历或 `files/hooks/` 里按哈希钉住的只读脚本，内容没变不叫醒 Orbit；缺权限时任务详情有「去打开权限」[DONE batch3a] |
 | 主动消息逐条决定 | 每次后台运行都记下 `decision`（发 / 不发和理由），任务详情显示「为什么」[DONE batch3a] |
 | 待审批 / 等待中的任务 | `orbit_task` 的 `pending`：等用户答复、等核实、失败后停下的任务 [DONE batch3a] |
+| 目标简报和进展记录 | `orbit_goal_note`：log 记进展，后台「目标简报」任务每天早上给每个进行中的目标写一封简报，显示在目标页；没有进行中的目标时自动跳过 [DONE batch3b] |
+| 后台自我提升 | 任务列表里的「夜间自我整理」：有新对话的夜里整理记忆、人物笔记、经验本、对齐总结，检查技能，合适时提点子；对话没变就不唤醒模型 [DONE batch3b] |
+| 媒体库 | 构建页下方的媒体库：按图片、音频、文档筛选，图片有缩略图，长按置顶、分享、删除 [DONE batch3b] |
+| 设备命令族 | `orbit_device`：describe 列出命令和授权情况，invoke 读通讯录、日历、短信、位置；没授权时当场弹框请用户批准 [DONE batch3b] |
+| 数据导出 | 详情页「身份」里的「导出数据」：把 Orbit 文件夹、任务、目标、运行记录和聊天打成一个 zip 交给分享面板 [DONE batch3b] |
 ## 部分有，需要接进 Orbit
 
-- [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）
-- [ ] 深度研究（Muse 的 `browser.deep_research`）
-- [ ] 媒体库（Muse 的 Library 标签页）
-- [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）
+- [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）——暂不做
+- [ ] 深度研究（Muse 的 `browser.deep_research`）——暂不做
+- [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）——暂缓
 - [x] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示（25d778e8c）
-- [ ] 设备命令族：读取通讯录、日历、位置等（Muse 的 `device.invoke`）
-- [ ] 数据导出：一键导出 Orbit 的文件、记忆和记录
-- [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等
+- [ ] 动态 UI 专用卡片：选项卡片（Muse 的 `muse.create_options`）、地图卡片等——不新做卡片框架，用现有动态 UI 包
 - [ ] 表情回应：给用户消息点一个表情（Muse 的 `react_to_user_message`）
 - [ ] 侧聊：Orbit 下开独立话题对话，结果回到对应侧聊
 
@@ -73,13 +75,11 @@ status: in-progress
 - [ ] 记忆溯源：说明一条记忆从哪来、替换了什么（Muse 的 `memory_explain`）
 - [ ] 发送前检查：对外发消息前自动核对隐私和授权
 - [ ] 密码保险箱：安全输入卡片，凭证不进入聊天和记忆（Muse 的 Secure Vault）
-- [ ] 文件分享链接：上传文件生成有效期链接
-- [ ] 目标简报：定期汇总目标进展
+- [ ] 文件分享链接：上传文件生成有效期链接——不做
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
-- [ ] 后台自我提升任务：整理记忆、更新对齐总结、维护技能（Muse 的 self_improvement）
 - [ ] 分享到 Operit：从别的 App 分享内容给 Orbit
-- [ ] Tailscale 等内网设备连接
+- [ ] Tailscale 等内网设备连接——暂缓
 - [ ] 「忘掉」流程：先找出一条信息在记忆、聊天、目标、任务里的所有副本，给用户确认后一起删（Muse 的 `forget.plan` / `forget.confirm`）
 - [ ] 起名卡片：新 Orbit 第一次聊天时用卡片让用户选名字和气质（Muse 的 `onboarding.*`）
 - [ ] 专项技能：购物、订机票、订酒店、出行交通、约时间、替用户发消息、管理邮件（Muse 预装技能，可改写成 Orbit 技能）

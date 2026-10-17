@@ -313,7 +313,14 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Un
 
 /** Open, share or trash a file Orbit made that is not text, such as a picture or a voice message. */
 @Composable
-internal fun OrbitMadeFileActions(files: OrbitFiles, entry: OrbitFiles.Entry, onDismiss: () -> Unit, onDeleted: () -> Unit) {
+internal fun OrbitMadeFileActions(
+    files: OrbitFiles,
+    entry: OrbitFiles.Entry,
+    onDismiss: () -> Unit,
+    onDeleted: () -> Unit,
+    pinned: Boolean? = null,
+    onTogglePin: () -> Unit = {},
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     AlertDialog(
@@ -321,6 +328,11 @@ internal fun OrbitMadeFileActions(files: OrbitFiles, entry: OrbitFiles.Entry, on
         title = { Text(entry.path.substringAfterLast('/'), maxLines = 2, overflow = TextOverflow.Ellipsis) },
         text = {
             Column {
+                if (pinned != null) {
+                    TextButton(onClick = { onDismiss(); onTogglePin() }, modifier = Modifier.fillMaxWidth()) {
+                        Text(stringResource(if (pinned) R.string.orbit_library_unpin else R.string.orbit_library_pin), Modifier.fillMaxWidth())
+                    }
+                }
                 TextButton(onClick = { onDismiss(); openOrbitFile(context) { files.fileFor(entry.path) } }, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.orbit_file_open), Modifier.fillMaxWidth())
                 }

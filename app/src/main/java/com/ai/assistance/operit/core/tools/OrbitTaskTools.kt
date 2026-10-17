@@ -109,7 +109,7 @@ internal object OrbitTaskTools {
                             .put("error", it.error).put("finishedAt", it.finishedAt)
                             .put("decision", when (it.decision) {
                                 OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
-                                OrbitRunEntity.SKIPPED -> context.getString(com.ai.assistance.operit.R.string.orbit_watch_notifications_starting)
+                                OrbitRunEntity.SKIPPED -> com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, task)
                                 else -> it.decision
                             })
                     })

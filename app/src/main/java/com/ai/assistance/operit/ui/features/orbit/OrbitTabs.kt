@@ -7,6 +7,9 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
@@ -539,6 +542,11 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
     val trackingRepository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.TRACKING) }
     val tracking by remember(trackingRepository) { trackingRepository.observe().catch { emit(emptyList()) } }
         .collectAsState(initial = null)
+    val notesRepository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.GOAL_NOTES) }
+    val goalNotes by remember(notesRepository) { notesRepository.observe().catch { emit(emptyList()) } }
+        .collectAsState(initial = null)
+    var loggingGoal by remember { mutableStateOf<String?>(null) }
+    var deletingNote by remember { mutableStateOf<String?>(null) }
     var goalSheet by remember { mutableStateOf<String?>(null) }
     var trackingSheet by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
@@ -595,7 +603,8 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
         val goal = sheetGoal
         ModalBottomSheet(onDismissRequest = { goalSheet = null }) {
             Column(
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
+                    .padding(horizontal = 20.dp).padding(bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(goal.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -624,8 +633,71 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
                         onClick = { goalSheet = null; onOpenTask(task.id) }, showChevron = true,
                     )
                 }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        stringResource(R.string.orbit_goal_notes), style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
+                    )
+                    if (goal.state != "CANCELLED") {
+                        TextButton(onClick = { loggingGoal = goal.id }) { Text(stringResource(R.string.orbit_goal_note_add)) }
+                    }
+                }
+                val notes = goalNotes?.filter { it.extra == goal.id }?.sortedByDescending { it.createdAt }
+                if (notes == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                } else if (notes.isEmpty()) {
+                    Text(
+                        stringResource(R.string.orbit_goal_notes_empty), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                notes.orEmpty().take(20).forEach { note -> GoalNoteCard(note, onDelete = { deletingNote = note.id }) }
+                if (notes.orEmpty().size > 20) {
+                    Text(
+                        stringResource(R.string.orbit_goal_notes_recent), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
+    }
+
+    loggingGoal?.let { goalId ->
+        var text by rememberSaveable(goalId) { mutableStateOf("") }
+        AlertDialog(
+            onDismissRequest = { loggingGoal = null },
+            title = { Text(stringResource(R.string.orbit_goal_note_add)) },
+            text = {
+                OutlinedTextField(
+                    text, { if (it.length <= OrbitBoardRepository.MAX_BODY) text = it }, minLines = 3, maxLines = 6,
+                    placeholder = { Text(stringResource(R.string.orbit_goal_note_hint)) }, modifier = Modifier.fillMaxWidth(),
+                )
+            },
+            confirmButton = {
+                TextButton(enabled = text.isNotBlank(), onClick = {
+                    val body = text.trim()
+                    loggingGoal = null
+                    action {
+                        notesRepository.create(body.lineSequence().first().take(OrbitBoardRepository.MAX_TITLE), body, goalId,
+                            state = "LOG")
+                    }
+                }) { Text(stringResource(R.string.save)) }
+            },
+            dismissButton = { TextButton(onClick = { loggingGoal = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    deletingNote?.let { id ->
+        AlertDialog(
+            onDismissRequest = { deletingNote = null },
+            title = { Text(stringResource(R.string.orbit_goal_note_delete_confirm)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deletingNote = null
+                    action { notesRepository.delete(id) }
+                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingNote = null }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
 
     val sheetItem = trackingSheet?.let { id -> tracking?.firstOrNull { it.id == id } }
@@ -633,7 +705,8 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
         val item = sheetItem
         ModalBottomSheet(onDismissRequest = { trackingSheet = null }) {
             Column(
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
+                    .padding(horizontal = 20.dp).padding(bottom = 20.dp),
                 verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
                 Text(item.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
@@ -702,6 +775,36 @@ private fun goalStateText(state: String) = stringResource(
     }
 )
 
+/** A briefing Orbit wrote in the background, or a progress entry; tap to read it all. */
+@Composable
+private fun GoalNoteCard(note: OrbitBoardRepository.Item, onDelete: () -> Unit) {
+    var expanded by rememberSaveable(note.id) { mutableStateOf(false) }
+    val briefing = note.state == "BRIEF"
+    SoftCard(Modifier.clickable { expanded = !expanded }.animateContentSize()) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(orbitIcon(if (briefing) "mail-open" else "pencil-line"), null, Modifier.size(18.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Spacer(Modifier.width(8.dp))
+            Text(
+                stringResource(if (briefing) R.string.orbit_goal_note_briefing else R.string.orbit_goal_note_progress) +
+                    " · " + shortDate(note.createdAt),
+                style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f),
+            )
+            IconButton(onClick = onDelete, modifier = Modifier.size(44.dp)) {
+                Icon(orbitIcon("trash-2"), stringResource(R.string.delete), Modifier.size(16.dp),
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        if (briefing && note.title.isNotBlank()) {
+            Text(note.title, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+        }
+        val text = note.body
+        if (expanded) SelectionContainer { Text(text, style = MaterialTheme.typography.bodyMedium) }
+        else Text(text, style = MaterialTheme.typography.bodyMedium, maxLines = 4, overflow = TextOverflow.Ellipsis)
+    }
+}
+
 @Composable
 private fun GoalEditor(goal: OrbitGoalEntity?, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
     var title by rememberSaveable { mutableStateOf(goal?.title.orEmpty()) }
@@ -749,7 +852,12 @@ private fun OrbitBuildsPage(
             Result.success(orbitFiles.list().filter { it.path.startsWith("files/") }.sortedByDescending { it.modifiedAt })
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
     }
+    val pins by produceState(emptyList<String>(), orbit.id, filesReload, filesVersion) {
+        value = try { orbitFiles.pins() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
+    }
+    var kindFilter by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var fileActions by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry?>(null) }
+    val action = rememberAction()
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
     if (!history.isNullOrEmpty()) {
@@ -777,9 +885,18 @@ private fun OrbitBuildsPage(
                 }
             }
         }
-        item(key = "files-title") { GroupTitle(stringResource(R.string.orbit_builds_files)) }
         val filesResult = userFiles
         val filesList = filesResult?.getOrNull()
+        item(key = "files-title") { GroupTitle(stringResource(R.string.orbit_library_title)) }
+        if (!filesList.isNullOrEmpty()) item(key = "files-hint") {
+            Text(
+                stringResource(R.string.orbit_library_long_press_hint), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp),
+            )
+        }
+        if (!filesList.isNullOrEmpty()) item(key = "files-kinds") {
+            LibraryKindChips(filesList, kindFilter) { kindFilter = it }
+        }
         when {
             filesResult == null -> item(key = "files-loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             filesList == null -> item(key = "files-failed") {
@@ -789,16 +906,116 @@ private fun OrbitBuildsPage(
                 }
             }
             filesList.isEmpty() -> item(key = "files-empty") { Hint(stringResource(R.string.orbit_builds_files_empty)) }
-            else -> items(filesList, key = { it.path }) { entry ->
-                OrbitMadeFileRow(entry) {
-                    if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(entry.path)) onOpenFile(entry.path)
-                    else fileActions = entry
+            else -> {
+                val shown = filesList
+                    .filter { kindFilter == null || com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(it.path).name == kindFilter }
+                    .sortedBy { pins.indexOf(it.path).let { index -> if (index < 0) Int.MAX_VALUE else index } }
+                if (shown.isEmpty()) item(key = "files-kind-empty") { Hint(stringResource(R.string.orbit_library_kind_empty)) }
+                items(shown, key = { it.path }) { entry ->
+                    LibraryRow(orbitFiles, entry, pinned = entry.path in pins,
+                        onClick = {
+                            if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(entry.path)) onOpenFile(entry.path)
+                            else fileActions = entry
+                        },
+                        onLongClick = { fileActions = entry })
                 }
             }
         }
     }
     fileActions?.let { entry ->
-        OrbitMadeFileActions(orbitFiles, entry, onDismiss = { fileActions = null }, onDeleted = { filesReload++ })
+        val pinned = entry.path in pins
+        OrbitMadeFileActions(orbitFiles, entry, onDismiss = { fileActions = null }, onDeleted = { filesReload++ },
+            pinned = pinned, onTogglePin = { action { orbitFiles.setPinned(entry.path, !pinned); filesReload++ } })
+    }
+}
+
+/** The Library's filter: all files, or only pictures, audio, documents or the rest. */
+@Composable
+private fun LibraryKindChips(
+    files: List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>,
+    selected: String?,
+    onSelect: (String?) -> Unit,
+) {
+    val counts = files.groupingBy { com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(it.path).name }.eachCount()
+    val kinds = listOf(
+        null to R.string.orbit_library_all,
+        "IMAGE" to R.string.orbit_library_images,
+        "AUDIO" to R.string.orbit_library_audio,
+        "DOCUMENT" to R.string.orbit_library_documents,
+        "OTHER" to R.string.orbit_library_other,
+    ).filter { (kind, _) -> kind == null || (counts[kind] ?: 0) > 0 || kind == selected }
+    Row(
+        Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        kinds.forEach { (kind, label) ->
+            FilterChip(
+                selected = selected == kind,
+                onClick = { onSelect(kind) },
+                label = { Text(stringResource(label) + " " + (if (kind == null) files.size else counts[kind] ?: 0)) },
+            )
+        }
+    }
+}
+
+/** One Library file; a picture shows a small preview. Long press for pin, share and delete. */
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun LibraryRow(
+    files: com.ai.assistance.operit.features.orbit.OrbitFiles,
+    entry: com.ai.assistance.operit.features.orbit.OrbitFiles.Entry,
+    pinned: Boolean,
+    onClick: () -> Unit,
+    onLongClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    val name = entry.path.substringAfterLast('/')
+    val image = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(entry.path) ==
+        com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+    Row(
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
+            .combinedClickable(
+                onClick = onClick, onLongClick = onLongClick,
+                onLongClickLabel = stringResource(R.string.orbit_library_more_actions),
+            )
+            .padding(vertical = 10.dp, horizontal = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
+                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
+        ) {
+            // Only pictures need the file; the safety checks touch the disk, so they run off the main thread.
+            val file by androidx.compose.runtime.produceState<java.io.File?>(null, entry.path, entry.modifiedAt, image) {
+                value = if (!image) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                    runCatching { files.fileFor(entry.path) }.getOrNull()
+                }
+            }
+            if (image) {
+                // A picture keeps the plain tile until its file is ready, so no icon flashes first.
+                file?.let {
+                    coil.compose.AsyncImage(
+                        model = it, contentDescription = null,
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                    )
+                }
+            } else {
+                Icon(orbitIcon(orbitFileIcon(name)), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(
+                shortDate(entry.modifiedAt) + " · " + android.text.format.Formatter.formatShortFileSize(context, entry.size),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+            )
+        }
+        if (pinned) {
+            Icon(orbitIcon("pin"), stringResource(R.string.orbit_library_pinned), Modifier.padding(start = 8.dp).size(18.dp),
+                tint = MaterialTheme.colorScheme.primary)
+        }
     }
 }
 

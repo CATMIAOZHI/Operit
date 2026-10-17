@@ -17,6 +17,8 @@ internal object OrbitExtraTools {
         listOf(
             Spec(OrbitFileTools.prompt, true, OrbitFileTools::execute),
             Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute),
+            Spec(OrbitGoalNoteTools.prompt, true, OrbitGoalNoteTools::execute),
+            Spec(OrbitDeviceTools.prompt, true, OrbitDeviceTools::execute),
         )
     }
     val prompts: List<ToolPrompt> get() = specs.map { it.prompt }
