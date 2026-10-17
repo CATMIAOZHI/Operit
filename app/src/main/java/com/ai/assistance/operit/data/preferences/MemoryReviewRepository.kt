@@ -98,6 +98,8 @@ class MemoryReviewRepository internal constructor(
     private val evidence: String = "",
     /** Set for an Orbit, whose record lives in its own memory folder: where older versions kept it. */
     private val legacyRoot: File? = null,
+    /** True when a text holds something the user had this Orbit forget; such changes are refused. */
+    private val forgotten: suspend (String) -> Boolean = { false },
 ) {
     constructor(context: Context, profileId: String, staged: MutableList<MemoryReviewChange>? = null,
         learningGeneration: Long? = null, evidence: String = "") :
@@ -106,7 +108,12 @@ class MemoryReviewRepository internal constructor(
         { MemorySearchSettingsPreferences(context, profileId).shouldAutoApproveChanges() }, staged,
         { com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) },
         learningGeneration, evidence,
-        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) })
+        File(context.filesDir, "memory_reviews").takeIf { MemorySearchSettingsPreferences.isOrbitSpace(profileId) },
+        { text ->
+            MemorySearchSettingsPreferences.isOrbitSpace(profileId) &&
+                com.ai.assistance.operit.features.orbit.OrbitForget.orbitForSpace(context, profileId)
+                    ?.let { com.ai.assistance.operit.features.orbit.OrbitForget.containsForgotten(context, it, text) } == true
+        })
     companion object {
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val skillInstallMutex = Mutex()
@@ -206,6 +213,38 @@ class MemoryReviewRepository internal constructor(
     suspend fun list(): List<MemoryReviewChange> = withContext(Dispatchers.IO) {
         mutex.withLock { readCurrent().sortedByDescending { maxOf(it.createdAt, it.reviewedAt) } }
     }
+
+    private fun texts(d: MemoryReviewChange) = listOf(d.title, d.body, d.description, d.before, d.addition,
+        d.reason, d.audits, d.evidence) + d.files.values
+
+    /** Forget flow, read only: the records whose stored text contains a line [matches] finds. */
+    internal suspend fun idsMatching(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
+        mutex.withLock { read().filter { d -> texts(d).any { t -> t.lines().any(matches) } }.map { it.id } }
+    }
+
+    /**
+     * Forget flow: strips every line [matches] finds from the stored snapshots, and stops undecided
+     * proposals that carry it so they cannot write it back. Returns the ids changed.
+     */
+    internal suspend fun forgetLines(matches: (String) -> Boolean): List<String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            fun clean(text: String) = if (text.lines().none(matches)) text else text.lines().filterNot(matches).joinToString("\n")
+            val changed = mutableListOf<String>()
+            val next = read().map { d ->
+                if (texts(d).none { t -> t.lines().any(matches) }) return@map d
+                changed += d.id
+                val undecided = d.status in setOf("pending", "applying")
+                d.copy(title = clean(d.title).ifBlank { "-" }, body = clean(d.body), description = clean(d.description),
+                    before = clean(d.before), addition = clean(d.addition), reason = if (undecided)
+                        "Removed because the user asked Orbit to forget it" else clean(d.reason),
+                    audits = clean(d.audits), evidence = clean(d.evidence), files = d.files.mapValues { clean(it.value) },
+                    status = if (undecided) "superseded" else d.status,
+                    reviewedAt = if (undecided) System.currentTimeMillis() else d.reviewedAt)
+            }
+            if (changed.isNotEmpty()) write(next)
+            changed
+        }
+    }
     /** Only AI proposal call sites use this; manual edits and old pending items are not swept. */
     suspend fun applyAutomaticDecision(context: Context, change: MemoryReviewChange): MemoryReviewChange {
         if (staged != null) return change.copy(status = "staged")
@@ -213,6 +252,14 @@ class MemoryReviewRepository internal constructor(
         return decide(context, change.id, true, "automatic", "Auto-approval enabled for this memory space")
     }
     suspend fun propose(candidate: MemoryReviewChange, onCreated: () -> Unit = {}): MemoryReviewChange = withContext(Dispatchers.IO) {
+        // What this change would add: the addition, or the lines of the new text that were not there before.
+        val added = candidate.addition.ifBlank {
+            val old = candidate.before.lines().toSet()
+            (candidate.body.lines().filterNot { it in old } + candidate.files.values).joinToString("\n")
+        }
+        require(!forgotten(added) && !forgotten(candidate.title) && !forgotten(candidate.description)) {
+            "This change contains information the user asked Orbit to forget; leave that information out"
+        }
         val change = candidate.copy(origin = if (learningGeneration != null) "learning" else "foreground",
             learningGeneration = learningGeneration ?: boundary()?.snapshot()?.generation ?: 0,
             evidence = evidence)

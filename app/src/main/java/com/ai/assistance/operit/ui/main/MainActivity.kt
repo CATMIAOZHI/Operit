@@ -591,6 +591,18 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         if (intent?.action == com.ai.assistance.operit.pet.PetTasks.ACTION_OPEN_CHAT) {
             val chatId = intent.getStringExtra(com.ai.assistance.operit.pet.PetTasks.EXTRA_CHAT_ID)
             if (!chatId.isNullOrBlank()) {
+                // An Orbit report opens on the Orbit page; its chats never go into the normal chat screen.
+                val orbitOwner = runCatching {
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(this)
+                        .loadedSettingsBlocking().orbitForChat(chatId)
+                }.getOrNull()
+                if (orbitOwner != null) {
+                    com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(chatId)
+                    pendingShortcutNavItem = NavItem.Orbit
+                    pendingShortcutRequestId = System.currentTimeMillis()
+                    currentMainNavItem = NavItem.Orbit
+                    return true
+                }
                 lifecycleScope.launch {
                     val core = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(this@MainActivity)
                         .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)

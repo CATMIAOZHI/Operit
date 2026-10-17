@@ -59,5 +59,21 @@ internal class OrbitSecretFile(
             // Existing download journals had no connector-sized limit; preserve their capacity.
             OrbitSecretFile(File(context.noBackupFilesDir, "browser-downloads-v1.bin"),
                 maxPlainBytes = Int.MAX_VALUE - 29, key = ::androidKey)
+
+        /**
+         * One of an Orbit's private stores (its forget plan, its forgotten list, its vault), kept
+         * encrypted outside backups. [kind] names the store; one file per Orbit and kind.
+         */
+        fun forOrbit(context: Context, orbitId: String, kind: String): OrbitSecretFile {
+            require(orbitId.matches(Regex("[a-zA-Z0-9-]{1,64}")) && kind.matches(Regex("[a-z]{1,20}"))) { "Bad store name" }
+            return OrbitSecretFile(File(context.noBackupFilesDir, "orbit-$kind-$orbitId.bin"), key = ::androidKey)
+        }
+
+        /** Every private store of one Orbit, for when the Orbit is deleted. */
+        fun deleteAllForOrbit(context: Context, orbitId: String) {
+            context.noBackupFilesDir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith("orbit-") && it.name.endsWith("-$orbitId.bin") }
+                ?.forEach { Files.deleteIfExists(it.toPath()) }
+        }
     }
 }

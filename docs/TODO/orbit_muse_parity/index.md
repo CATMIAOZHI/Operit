@@ -63,6 +63,13 @@ status: in-progress
 | 表情回应 | `orbit_react` 给用户最新的消息点一个表情，存在 `orbit/<UUID>/reactions.json`，显示在消息气泡右下角 [DONE batch4] |
 | 侧聊 | 顶部右边的「聊天」按钮里新建、切换、重命名、删除侧聊；`orbit_chat` list / create / read；在侧聊里安排的任务结果回到那个侧聊，侧聊删掉后回到主聊天 [DONE batch4] |
 | 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
+| 密码保险箱 | `orbit_vault`：request_login / request_api_key 弹安全录入卡，值直接加密存进保险箱，Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5] |
+| 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、动态点子、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉；SOUL / IDENTITY / 提示词里的命中只列出请用户自己改；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5] |
+| 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
+| 发送前检查 | `orbit_presend_check`：对外发消息前核对草稿已定稿、没有密码和已忘内容、收件人明确、用户看过并同意 [DONE batch5] |
+| 从别的 AI 导入记忆 | 设置「隐私与数据」→ 复制提示词给别的 AI，粘贴回答后交给 Orbit 整理进记忆 [DONE batch5] |
+| 分享到 Operit | 从别的 App 分享文字或文件时可选「发给 Orbit」，文件存进 `files/shared/`；Orbit 通知点开直接进 Orbit 聊天 [DONE batch5] |
+| 专项技能 | 预装 8 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息），按 Operit 真实工具改写，付款一律交给用户；每个 Orbit 只装一次，删了不装回 [DONE batch5] |
 ## 部分有，需要接进 Orbit
 
 - [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）——暂不做
@@ -72,17 +79,10 @@ status: in-progress
 
 ## 还没做，可以做
 
-- [ ] 从别的 AI 导入记忆和偏好
-- [ ] 记忆溯源：说明一条记忆从哪来、替换了什么（Muse 的 `memory_explain`）
-- [ ] 发送前检查：对外发消息前自动核对隐私和授权
-- [ ] 密码保险箱：安全输入卡片，凭证不进入聊天和记忆（Muse 的 Secure Vault）
 - [ ] 文件分享链接：上传文件生成有效期链接——不做
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
-- [ ] 分享到 Operit：从别的 App 分享内容给 Orbit
 - [ ] Tailscale 等内网设备连接——暂缓
-- [ ] 「忘掉」流程：先找出一条信息在记忆、聊天、目标、任务里的所有副本，给用户确认后一起删（Muse 的 `forget.plan` / `forget.confirm`）
-- [ ] 专项技能：购物、订机票、订酒店、出行交通、约时间、替用户发消息、管理邮件（Muse 预装技能，可改写成 Orbit 技能）
 
 ## 做不了（及原因）
 

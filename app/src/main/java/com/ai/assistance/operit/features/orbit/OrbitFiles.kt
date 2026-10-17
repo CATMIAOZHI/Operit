@@ -207,6 +207,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         Unit
     }
 
+    /** The text of a trashed file, for the forget scan; null for binary or large files. */
+    suspend fun trashText(id: String): String? = io {
+        require(TRASH_ID.matches(id)) { "Bad trash id" }
+        val dir = trashDir(id)
+        val item = trashItem(dir) ?: return@io null
+        val payload = inside(File(dir, PAYLOAD))
+        if (!isText(item.path) || !payload.isFile || payload.length() > MAX_TEXT * 4L) null
+        else runCatching { payload.readText() }.getOrNull()
+    }
+
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
     suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
         var p = normalize(path)
