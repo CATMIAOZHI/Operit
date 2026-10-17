@@ -139,6 +139,8 @@ fun AIChatScreen(
         onNavigateToOnboardingModelConfig: () -> Unit = {},
         onNavigateToModelPrompts: () -> Unit = {},
         onNavigateToPackageManager: () -> Unit = {},
+        /** Opens the Orbit page, after something was shared to Orbit. Without it, sharing to Orbit is not offered. */
+        onNavigateToOrbit: (() -> Unit)? = null,
         onNavigateBack: () -> Unit = {},
         onGestureConsumed: (Boolean) -> Unit = {},
         /** Keeps the screen on this chat, for pages that show one fixed chat such as Orbit. */
@@ -433,7 +435,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         onHandleSharedFiles = actualViewModel::handleSharedFiles,
         onHandleSharedText = actualViewModel::handleSharedText,
         onClearSharedFiles = SharedFileHandler::clearSharedFiles,
-        onClearSharedText = SharedFileHandler::clearSharedText
+        onClearSharedText = SharedFileHandler::clearSharedText,
+        onOpenOrbit = onNavigateToOrbit,
     )
 
     val pendingChatDraft by PendingChatDraftHandler.pendingDraft.collectAsState()

@@ -211,6 +211,12 @@ fun OrbitScreen(
         // Goals made before the briefing existed get it too.
         runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureGoalBriefingIfGoals(context.applicationContext, orbit) }
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+        // Muse's preinstalled skills, copied once into this Orbit's own skill folder.
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitBundledSkills.ensureInstalled(context.applicationContext, orbit.id) }
+            .exceptionOrNull()?.let {
+                if (it is kotlinx.coroutines.CancellationException) throw it
+                AppLogger.w(TAG, "Could not install the bundled Orbit skills: ${it.message}")
+            }
     }
     OrbitChatPage(
         orbit = orbit,
@@ -245,6 +251,8 @@ private fun OrbitChatPage(
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
+    var showVault by remember { mutableStateOf(false) }
+    var showImport by remember { mutableStateOf(false) }
     // Reports that reached a chat the user is not looking at show as a dot until it is opened.
     val unreadChats by com.ai.assistance.operit.features.orbit.OrbitDelivery.unreadChats.collectAsState()
     val reactions by remember(orbit.id, currentChatId) {
@@ -252,6 +260,19 @@ private fun OrbitChatPage(
     }.collectAsState(initial = emptyMap())
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
+    // A tapped report notification or a share opens that chat, over whatever page was showing.
+    val openRequest by com.ai.assistance.operit.features.orbit.OrbitNavigation.pendingChat.collectAsState()
+    LaunchedEffect(openRequest, orbit.talkChatIds) {
+        val id = openRequest ?: return@LaunchedEffect
+        if (id in orbit.talkChatIds) {
+            talkChatId = id
+            tab = OrbitTab.CHAT
+            showProfile = false
+            stackNames = ""
+            showChats = false
+        }
+        com.ai.assistance.operit.features.orbit.OrbitNavigation.consume(id)
+    }
     // A report counts as seen only while its chat is really on screen: chat tab, app in front.
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val chatOnScreen = tab == OrbitTab.CHAT && lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -489,11 +510,36 @@ private fun OrbitChatPage(
                 showSettings = false
                 push(OrbitSubPage.PROMPTS)
             },
+            onOpenVault = {
+                showSettings = false
+                showVault = true
+            },
+            onOpenImport = {
+                showSettings = false
+                showImport = true
+            },
             onPause = {
                 showSettings = false
             },
         )
     }
+    if (showVault) OrbitVaultSheet(orbit = orbit, onDismiss = { showVault = false })
+    if (showImport) {
+        OrbitImportMemorySheet(
+            orbit = orbit,
+            onDismiss = { showImport = false },
+            onSent = {
+                showImport = false
+                talkChatId = orbit.chatId
+                tab = OrbitTab.CHAT
+                showProfile = false
+                stackNames = ""
+            },
+        )
+    }
+    // Orbit asked for a login or a key: the secure entry card, over every page of this Orbit.
+    val vaultRequest by com.ai.assistance.operit.features.orbit.OrbitVault.request.collectAsState()
+    vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
 private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES }
@@ -679,6 +725,8 @@ private fun OrbitSettingsSheet(
     onDismiss: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenPrompts: () -> Unit,
+    onOpenVault: () -> Unit,
+    onOpenImport: () -> Unit,
     onPause: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -853,6 +901,30 @@ private fun OrbitSettingsSheet(
                             modifier = Modifier.weight(1f),
                         )
                     }
+                }
+            }
+
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_privacy),
+                    icon = lucide("shield-check"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_vault_row),
+                        subtitle = stringResource(R.string.orbit_vault_row_desc),
+                        icon = lucide("key-round"),
+                        searchable = false,
+                        onClick = onOpenVault,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_import_row),
+                        subtitle = stringResource(R.string.orbit_import_row_desc),
+                        icon = lucide("download"),
+                        searchable = false,
+                        onClick = onOpenImport,
+                    )
                 }
             }
 

@@ -2264,8 +2264,26 @@ internal fun StandardBrowserSessionTools.typeIntoElementByRef(
     ref: String,
     text: String,
     submit: Boolean,
-    slowly: Boolean
+    slowly: Boolean,
+    requiredSite: String? = null
 ): String {
+    // For vault values the site check runs in the same script as the fill, against the live document,
+    // so a page that is navigating away cannot receive a value meant for another site.
+    val siteGuard = requiredSite?.let { site ->
+        """
+            const siteValue = ${quoteJs(site.lowercase().removePrefix("www."))};
+            const siteOk = function(loc) {
+                if (!loc || loc.protocol !== "https:") return false;
+                const host = String(loc.hostname || "").toLowerCase().replace(/^www\./, "");
+                return host === siteValue || host.endsWith("." + siteValue);
+            };
+            const ownLocation = target.ownerDocument && target.ownerDocument.defaultView
+                ? target.ownerDocument.defaultView.location : null;
+            if (document.readyState === "loading" || !siteOk(location) || !siteOk(ownLocation)) {
+                throw new Error("wrong_site");
+            }
+        """.trimIndent()
+    }.orEmpty()
     val expression =
         """
         (async function() {
@@ -2277,6 +2295,7 @@ internal fun StandardBrowserSessionTools.typeIntoElementByRef(
             if (!target) {
                 throw new Error("ref_not_found");
             }
+            $siteGuard
             const textValue = ${quoteJs(text)};
             const submitValue = ${if (submit) "true" else "false"};
             const slowValue = ${if (slowly) "true" else "false"};
