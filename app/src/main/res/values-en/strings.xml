@@ -9422,4 +9422,25 @@
     <string name="orbit_trash_deleted_at">Deleted %1$s</string>
     <string name="orbit_files_made">Files Orbit made</string>
     <string name="orbit_file_open_in_browser">Open in browser</string>
+    <string name="orbit_task_decision">Why: %1$s</string>
+    <string name="orbit_watch_notifications">Watches notifications on the phone</string>
+    <string name="orbit_watch_notifications_apps">Watches notifications from: %1$s</string>
+    <string name="orbit_watch_sms">Watches received text messages</string>
+    <string name="orbit_watch_sms_from">Watches text messages from %1$s</string>
+    <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
+    <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
+    <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
+    <string name="orbit_decision_watch_failed">Could not read anything this time, so nothing was checked; it tries again at the next check</string>
+    <string name="orbit_watch_needs_notifications">Operit has no notification access, so it cannot read notifications. Turn on notification access for Operit in system settings.</string>
+    <string name="orbit_watch_needs_sms">Operit is not allowed to read text messages. Allow SMS for Operit in the app permissions in system settings.</string>
+    <string name="orbit_watch_needs_calendar">Operit is not allowed to read the calendar. Allow Calendar for Operit in the app permissions in system settings.</string>
+    <string name="orbit_watch_script_changed">The check script %1$s was changed after it was set up, so it is not run for safety. Ask Orbit to update this task with the new script.</string>
+    <string name="orbit_watch_script_timeout">The check script ran longer than %1$d seconds and gave no result this time.</string>
+    <string name="orbit_watch_script_failed">The check script failed: %1$s</string>
+    <string name="orbit_watch_open_settings">Open permission settings</string>
+    <string name="orbit_task_last_result_time">Latest result · %1$s</string>
+    <string name="orbit_watch_notifications_starting">The notification service is still starting, so this check was skipped. It will try again next time.</string>
+    <string name="orbit_watch_open_settings_failed">Could not open system settings. Please turn on the permission for Operit in Settings.</string>
+    <string name="orbit_watch_notifications_stuck">The notification service still isn\'t connected, so notifications can\'t be read. In system settings, turn notification access for Operit off and on again.</string>
+    <string name="orbit_decision_notifications_stuck">The notification service never connected, so this check did not run</string>
 </resources>

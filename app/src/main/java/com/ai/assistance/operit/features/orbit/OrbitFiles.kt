@@ -313,7 +313,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private val DAILY = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")
         private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
         private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
-        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml")
+        private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
         private val locks = ConcurrentHashMap<String, Mutex>()
 
         fun of(context: Context, orbitId: String) =
@@ -333,7 +333,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         fun isIndex(p: String) = PEOPLE.matches(p) && p.endsWith("/$INDEX")
         fun isText(p: String) = p.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
         fun titleOf(text: String, fallback: String) =
-            text.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#") }
+            text.lineSequence().map { it.trim() }.firstOrNull { it.startsWith("#") && !it.startsWith("#!") }
                 ?.trimStart('#')?.trim()?.takeIf { it.isNotEmpty() }?.take(80) ?: fallback
     }
 }

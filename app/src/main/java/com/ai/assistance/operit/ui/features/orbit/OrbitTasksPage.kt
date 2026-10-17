@@ -137,7 +137,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                             Text(detail.title, style = MaterialTheme.typography.headlineSmall)
                             Text(taskState(detail), color = MaterialTheme.colorScheme.primary)
                             Text(detail.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) })
-                            if (detail.source.isNotBlank()) Text(detail.source,
+                            if (detail.source.isNotBlank()) Text(watchLabel(detail),
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                             Text(stringResource(when (detail.notifyPolicy) {
                                 "ALWAYS" -> R.string.orbit_task_report_always
@@ -155,11 +155,30 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                 item {
                     Card(Modifier.fillMaxWidth()) {
                         Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Text(stringResource(R.string.orbit_task_last_result), fontWeight = FontWeight.SemiBold)
+                            val finishedAt = lastRun?.finishedAt?.takeIf { it > 0 && lastRun?.state != "RUNNING" }
+                            Text(if (finishedAt == null) stringResource(R.string.orbit_task_last_result)
+                                else stringResource(R.string.orbit_task_last_result_time, relativeTime(finishedAt)),
+                                fontWeight = FontWeight.SemiBold)
                             Text(if (lastRun?.state == "RUNNING") stringResource(R.string.orbit_task_running)
                                 else lastRun?.error?.takeIf { it.isNotBlank() }
                                 ?: lastRun?.observation?.takeIf { it.isNotBlank() }
                                 ?: stringResource(R.string.orbit_task_no_result))
+                            lastRun?.decision?.takeIf { it.isNotBlank() && lastRun?.state != "RUNNING" }?.let { decision ->
+                                Text(stringResource(R.string.orbit_task_decision, when (decision) {
+                                    com.ai.assistance.operit.data.model.OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
+                                    com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED -> stringResource(R.string.orbit_watch_notifications_starting)
+                                    else -> decision
+                                }),
+                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 4, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
+                            }
+                            // A watch that lost a permission says so; give the user the way to turn it back on.
+                            val permission = lastRun?.error?.let { watchPermissionOf(context, it) }
+                            if (permission != null && lastRun?.state == "FAILED") {
+                                FilledTonalButton(onClick = { openWatchPermission(context, permission) }) {
+                                    Text(stringResource(R.string.orbit_watch_open_settings))
+                                }
+                            }
                             if (lastRun != null) TextButton(enabled = !busy, onClick = { action {
                                 executionRecord = repository.executionRecord(detail.id)
                             } }) { Text(stringResource(R.string.orbit_execution_record)) }
@@ -254,7 +273,8 @@ private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>): S
     if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
         tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId)
     else stringResource(R.string.orbit_task_next, DateFormat.getDateTimeInstance(
-        DateFormat.SHORT, DateFormat.SHORT).format(Date(task.nextRunAt)))
+        DateFormat.SHORT, DateFormat.SHORT).format(Date(task.nextRunAt))) +
+        if (task.scheduleMode == "INTERVAL") " · " + intervalText(task.intervalMinutes) else ""
 
 @Composable
 internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (task.state) {
@@ -265,3 +285,66 @@ internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (tas
     "DONE" -> R.string.orbit_task_done
     else -> R.string.orbit_task_cancelled
 })
+
+/** What a task reads: a web page as is, a WATCH task's source in words. */
+@Composable
+internal fun watchLabel(task: OrbitTaskEntity): String {
+    if (task.kind != com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND) return task.source
+    val type = task.source.substringBefore(':')
+    val arg = task.source.substringAfter(':', "").trim()
+    return when (type) {
+        "notifications" -> if (arg.isEmpty()) stringResource(R.string.orbit_watch_notifications)
+            else stringResource(R.string.orbit_watch_notifications_apps, appNames(arg))
+        "sms" -> if (arg.isEmpty()) stringResource(R.string.orbit_watch_sms) else stringResource(R.string.orbit_watch_sms_from, arg)
+        "calendar" -> stringResource(R.string.orbit_watch_calendar, arg.toIntOrNull() ?: 7)
+        else -> stringResource(R.string.orbit_watch_script,
+            com.ai.assistance.operit.features.orbit.OrbitWatchSources.SCRIPT.matchEntire(task.source)?.groupValues?.get(1)
+                ?.substringAfterLast('/')?.replace(Regex("-[0-9a-f]{8}(?=\\.sh$)"), "") ?: task.source)
+    }
+}
+
+/** Package names shown as app names where the phone knows them. */
+@Composable
+private fun appNames(packages: String): String {
+    val context = LocalContext.current
+    return remember(packages) {
+        packages.split(',').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ") { name ->
+            runCatching {
+                val pm = context.packageManager
+                pm.getApplicationLabel(pm.getApplicationInfo(name, 0)).toString()
+            }.getOrDefault(name)
+        }
+    }
+}
+
+/** " · what it watches" for rows whose main text is a date or a trigger. */
+@Composable
+internal fun watchSuffix(task: OrbitTaskEntity): String =
+    if (task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND) " · " + watchLabel(task) else ""
+
+/** Which permission a WATCH failure is about, from the saved reason. */
+private fun watchPermissionOf(context: android.content.Context, error: String): String? = when (error) {
+    context.getString(R.string.orbit_watch_needs_notifications), context.getString(R.string.orbit_watch_notifications_stuck) -> "notifications"
+    context.getString(R.string.orbit_watch_needs_sms), context.getString(R.string.orbit_watch_needs_calendar) -> "app"
+    else -> null
+}
+
+private fun openWatchPermission(context: android.content.Context, permission: String) {
+    val intent = if (permission == "notifications")
+        android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+    else android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        android.net.Uri.fromParts("package", context.packageName, null))
+    try {
+        context.startActivity(intent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+    } catch (e: Exception) {
+        android.widget.Toast.makeText(context, R.string.orbit_watch_open_settings_failed, android.widget.Toast.LENGTH_SHORT).show()
+    }
+}
+
+/** The list icon for a WATCH task, by what it watches. */
+internal fun watchIcon(task: OrbitTaskEntity): String = when (task.source.substringBefore(':')) {
+    "notifications" -> "bell-ring"
+    "sms" -> "message-square-text"
+    "calendar" -> "calendar-search"
+    else -> "terminal"
+}

@@ -13,8 +13,10 @@ internal object OrbitTaskTools {
         name = NAME,
         description = "安排当前 Orbit 以后继续处理的事情。后台复用现有工具和自动审核快速，可暂停、取消、查询执行记录或根据用户答复继续。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run"),
-            ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型", required = false),
+            ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run/pending（列出在等用户答复、等核实、或最近一次运行失败的任务；waiting_for 是在等什么或失败原因，unverified_actions 是还没核实结果的操作）"),
+            ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型；WATCH：盯通知、短信、日历或小脚本，内容没变就不叫醒你", required = false),
+            ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；script（同时填 script）", required = false),
+            ToolParameterSchema("script", description = "watch=script 时的 shell 脚本全文（最多8000字符），不要同时填别的 watch 来源。以 Operit 当前的 shell 权限运行（开了 root/Shizuku 就是那个身份；只有无障碍权限时不能运行脚本），只能做只读检查：不改文件、不发送数据。每次检查运行它，输出就是要盯的内容，输出变了才叫醒你；运行超过25秒算失败。输出要短，自己截断（如 | head -c 4000）。不要放密码", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
             ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
@@ -38,7 +40,12 @@ internal object OrbitTaskTools {
             "每次运行默认最多5分钟；步骤多或耗时长的任务（多个网页、多个子代理、长时间监控）按需调大 timeout_minutes，最多1440分钟。超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟。" +
             "后台与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
-            "工具过程保存在执行记录，有价值的正式结果才回到主聊天。",
+            "工具过程保存在执行记录，有价值的正式结果才回到主聊天。" +
+            "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
+            "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
+            "现成来源不够时写一个只读的小脚本（比如查一个接口、看一个文件），只输出要比较的内容，不要输出时间戳这类每次都变的东西。" +
+            "读短信、通知必须是用户明确要求的；汇报时只说和任务有关的内容，不要照抄无关的私密消息。" +
+            "用户问“还有什么在等我”时用 pending。",
     )
 
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
@@ -49,15 +56,20 @@ internal object OrbitTaskTools {
         val action = arguments["action"] ?: error("Missing action")
         val payload: Any = when (action) {
             "create" -> {
-                val mode = arguments["schedule_mode"] ?: if (arguments["kind"] != "URL_CHANGE") "ONCE" else "INTERVAL"
+                val kind = arguments["kind"] ?: "ASSIST"
+                val mode = arguments["schedule_mode"] ?: if (kind == "ASSIST") "ONCE" else "INTERVAL"
                 val runAt = arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt)
                 val calendar = mode in OrbitCalendarSchedule.modes
+                val requestId = runtime?.callId ?: java.util.UUID.randomUUID().toString()
+                val source = if (kind == OrbitWatchSources.KIND) {
+                    watchSource(context, orbit.id, arguments, arguments["title"].orEmpty(), requestId)
+                } else arguments["url"].orEmpty()
                 json(repository.create(orbit,
                 arguments["title"] ?: error("Missing title"), arguments["instruction"] ?: error("Missing instruction"),
-                arguments["url"].orEmpty(), arguments["interval_minutes"]?.toInt() ?: 60,
+                source, arguments["interval_minutes"]?.toInt() ?: 60,
                 // A reminder exists to reach the user, so it always reports unless told otherwise.
                 arguments["notify_policy"] ?: if (runAt != null || calendar) "ALWAYS" else "CHANGES",
-                runtime?.callId ?: java.util.UUID.randomUUID().toString(), arguments["kind"] ?: "ASSIST",
+                requestId, kind,
                 mode,
                 arguments["goal_id"].orEmpty(), arguments["trigger_task_id"].orEmpty(), arguments["source_artifact_version_id"].orEmpty(),
                 runAt = runAt,
@@ -67,13 +79,25 @@ internal object OrbitTaskTools {
                 timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0))
             }
             "list" -> JSONArray(repository.dao.tasks(orbit.id).map(::json))
+            "pending" -> JSONArray(repository.dao.tasks(orbit.id).mapNotNull { task ->
+                val last = repository.dao.latestRun(task.id)
+                // Waiting for the user, waiting to be checked, or failing (stopped or still retrying).
+                val waiting = task.state in setOf("WAITING_USER", "VERIFY") ||
+                    (task.state in setOf("PAUSED", "ACTIVE") && last?.state == "FAILED")
+                if (!waiting) null else json(task).put("waiting_for", last?.error.orEmpty())
+                    .put("unverified_actions", JSONArray(repository.dao.unresolvedActions(task.id).map { it.summary }))
+            })
             else -> {
                 val id = arguments["task_id"] ?: error("Missing task_id")
                 val task = repository.dao.task(id)?.takeIf { it.orbitId == orbit.id } ?: error("Task not found")
                 when (action) {
                     "update" -> JSONObject().put("updated", repository.edit(task,
                         arguments["title"] ?: task.title, arguments["instruction"] ?: task.instruction,
-                        arguments["url"] ?: task.source, arguments["interval_minutes"]?.toInt() ?: task.intervalMinutes,
+                        if (task.kind == OrbitWatchSources.KIND &&
+                            (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
+                            watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString())
+                        } else arguments["url"] ?: task.source,
+                        arguments["interval_minutes"]?.toInt() ?: task.intervalMinutes,
                         arguments["notify_policy"] ?: task.notifyPolicy,
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
                         arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute,
@@ -83,6 +107,11 @@ internal object OrbitTaskTools {
                         .put("lastRun", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
                             .put("error", it.error).put("finishedAt", it.finishedAt)
+                            .put("decision", when (it.decision) {
+                                OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
+                                OrbitRunEntity.SKIPPED -> context.getString(com.ai.assistance.operit.R.string.orbit_watch_notifications_starting)
+                                else -> it.decision
+                            })
                     })
                     "resume" -> {
                         if (task.state == "WAITING_USER") {
@@ -119,6 +148,29 @@ internal object OrbitTaskTools {
             ?: error("run_at must look like 2026-12-03 18:30")
         require(millis > System.currentTimeMillis() - 60_000) { "run_at is already in the past" }
         return millis
+    }
+
+    /**
+     * The source of a WATCH task. A script is saved in files/hooks/ and pinned by its hash, so the
+     * script that was reviewed with this call is the only one the background check will run.
+     */
+    private suspend fun watchSource(context: Context, orbitId: String, args: Map<String, String>,
+        title: String, requestId: String): String {
+        val watch = args["watch"]?.trim()?.takeIf { it.isNotEmpty() }
+            ?: if (!args["script"].isNullOrBlank()) "script" else error("WATCH needs watch")
+        // A script is only ever pinned here, from the text given in this call.
+        require(!watch.startsWith("script:")) { "Give the script text in script and set watch=script" }
+        if (watch != "script") {
+            require(args["script"].isNullOrBlank()) { "script only goes with watch=script" }
+            OrbitWatchSources.validate(watch)
+            return watch
+        }
+        val script = args["script"]?.takeIf { it.isNotBlank() } ?: error("watch=script needs the script text in script")
+        require(script.length <= 8000) { "script is longer than 8000 characters" }
+        val slug = title.replace(Regex("[^\\p{L}\\p{N}_-]+"), "-").trim('-').take(40).ifEmpty { "watch" }
+        val path = "files/hooks/$slug-${OrbitWatchSources.hash(requestId).take(8)}.sh"
+        OrbitFiles.of(context, orbitId).write(path, script)
+        return "script:$path@${OrbitWatchSources.hash(script)}"
     }
 
     private fun parseDailyTime(value: String): Int {
