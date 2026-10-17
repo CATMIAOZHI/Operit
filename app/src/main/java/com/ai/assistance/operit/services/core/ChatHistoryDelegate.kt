@@ -590,7 +590,23 @@ class ChatHistoryDelegate(
         when (selectionMode) {
             ChatSelectionMode.FOLLOW_GLOBAL -> {
                 coroutineScope.launch {
+                    var firstRestore = true
                     chatHistoryManager.currentChatIdFlow.collect { chatId ->
+                        // On start, a saved Orbit chat (left when the app closed on the Orbit page) is
+                        // swapped for the latest normal chat before it is ever shown. The Orbit page
+                        // opens its own chat itself.
+                        // Only the very first value is the restored one; later values (even after a
+                        // null start) are the user's own choice, such as opening the Orbit page.
+                        val restoring = firstRestore
+                        firstRestore = false
+                        if (restoring && chatId != null) {
+                            val replacement = normalChatInsteadOfOrbit(chatId)
+                            if (replacement != chatId) {
+                                if (replacement != null) chatHistoryManager.setCurrentChatId(replacement)
+                                else chatHistoryManager.clearCurrentChatId()
+                                return@collect
+                            }
+                        }
                         if (chatId != null && chatId != _currentChatId.value) {
                             if (!chatHistoryManager.chatExists(chatId)) {
                                 AppLogger.w(TAG, "currentChatId不存在于数据库，已清除: $chatId")
@@ -620,15 +636,16 @@ class ChatHistoryDelegate(
                         AppLogger.d(TAG, "本地会话初始化时没有 currentChatId")
                         return@launch
                     }
+                    val startChatId = normalChatInsteadOfOrbit(initialChatId) ?: return@launch
 
-                    if (!chatHistoryManager.chatExists(initialChatId)) {
-                        AppLogger.w(TAG, "初始 currentChatId 不存在，跳过本地会话初始化: $initialChatId")
+                    if (!chatHistoryManager.chatExists(startChatId)) {
+                        AppLogger.w(TAG, "初始 currentChatId 不存在，跳过本地会话初始化: $startChatId")
                         return@launch
                     }
 
-                    AppLogger.d(TAG, "本地会话初始化 currentChatId: $initialChatId")
-                    _currentChatId.value = initialChatId
-                    loadChatMessages(initialChatId)
+                    AppLogger.d(TAG, "本地会话初始化 currentChatId: $startChatId")
+                    _currentChatId.value = startChatId
+                    loadChatMessages(startChatId)
                 }
             }
         }
@@ -641,6 +658,24 @@ class ChatHistoryDelegate(
                     syncOpeningStatementIfNoUserMessage(chatId)
                 }
             }
+        }
+    }
+
+    /** [chatId], or when it belongs to an Orbit, the most recently updated normal chat (null if none). */
+    private suspend fun normalChatInsteadOfOrbit(chatId: String): String? {
+        // A failure here only keeps the saved chat; it must never stop the chat-id collector.
+        return try {
+            val settings = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+            val orbitChats = com.ai.assistance.operit.features.orbit.OrbitChatVisibility.orbitChatIds(settings)
+            if (chatId !in orbitChats) return chatId
+            chatHistoryManager.getVisibleChatHistoriesSnapshot()
+                .filter { it.chatKind != com.ai.assistance.operit.data.model.ChatKind.SUBAGENT.name && it.id !in orbitChats }
+                .maxByOrNull { it.updatedAt }?.id
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not check the restored chat against Orbit: ${e.message}")
+            chatId
         }
     }
 

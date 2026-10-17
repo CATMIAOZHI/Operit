@@ -92,6 +92,8 @@ fun SkillConfigScreen(
     skillOrder: List<String> = emptyList(),
     onSaveSkillOrder: (List<String>) -> Unit = {},
     learnedOnlyProfileId: String? = null,
+    /** Shows the skills in folders by origin (learned, added by the user, built in), for an Orbit. */
+    groupBySource: Boolean = false,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -166,6 +168,22 @@ fun SkillConfigScreen(
         refreshSkills()
     }
 
+    val openSkill: (SkillPackage) -> Unit = { skill ->
+        val targetPath = skill.directory.absolutePath
+        selectedSkill = skill
+        selectedSkillDetail = null
+        isSkillDetailLoading = true
+        scope.launch {
+            val detail = withContext(Dispatchers.IO) {
+                buildSkillDetailDialogData(skill = skill, skillContent = skillRepository.readSkillContent(skill.name).orEmpty())
+            }
+            if (selectedSkill?.directory?.absolutePath == targetPath) {
+                selectedSkillDetail = detail
+                isSkillDetailLoading = false
+            }
+        }
+    }
+
     Box(modifier = Modifier.fillMaxSize()) {
         Column(
             modifier = Modifier
@@ -196,7 +214,6 @@ fun SkillConfigScreen(
                         )
 
                         IconButton(
-                            modifier = Modifier.size(24.dp),
                             onClick = {
                                 scope.launch {
                                     refreshSkills()
@@ -214,7 +231,9 @@ fun SkillConfigScreen(
 
                     Spacer(modifier = Modifier.height(4.dp))
                     Text(
-                        text = skillRepository.getSkillsDirectoryPath(),
+                        // An Orbit's folder path means nothing to the user; the count does.
+                        text = if (groupBySource) stringResource(R.string.skill_folder_total, skills.size)
+                            else skillRepository.getSkillsDirectoryPath(),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 5,
@@ -257,6 +276,21 @@ fun SkillConfigScreen(
                     },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (groupBySource && displayedSkills.isEmpty()) {
+                Text(
+                    text = stringResource(R.string.no_matching_skills_found),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            } else if (groupBySource) {
+                SkillSourceFolders(
+                    skills = displayedSkills,
+                    learnedNames = learnedNames,
+                    builtInNames = remember { com.ai.assistance.operit.features.orbit.OrbitBundledSkills.NAMES.toSet() },
+                    searching = searchQuery.isNotBlank(),
+                    visibility = skillVisibilityPreferences,
+                    onOpen = openSkill,
                 )
             } else {
                 var orderedSkills by remember(displayedSkills) {

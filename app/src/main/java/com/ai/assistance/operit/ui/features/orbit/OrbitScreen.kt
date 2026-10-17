@@ -349,13 +349,21 @@ private fun OrbitChatPage(
                         )
                     }
                 }
-                androidx.compose.animation.AnimatedVisibility(
-                    visible = tab != OrbitTab.CHAT,
-                    enter = fadeIn(tween(OrbitMotion.PUSH_MS / 2)),
-                    exit = fadeOut(tween(OrbitMotion.PUSH_MS / 2)),
-                ) {
-                    Crossfade(targetState = pageTab, animationSpec = tween(OrbitMotion.PUSH_MS / 2), label = "orbitTab") { shown ->
-                        OrbitTabPage(orbit, shown, onOpenChat = { tab = OrbitTab.CHAT },
+                // Tabs switch at once, like an iOS tab bar: a fade would let the chat underneath show
+                // through for a moment. Each page draws the same header in the same place as the
+                // chat, so Orbit's picture stays put on top while the content changes.
+                if (tab != OrbitTab.CHAT) {
+                    val tabHeader: @Composable () -> Unit = remember(orbit) {
+                        {
+                            OrbitHeader(
+                                orbit = orbit, sideTitle = null, hasUnread = false,
+                                onOpenProfile = { showProfile = true }, onOpenChats = {},
+                                showChats = false,
+                            )
+                        }
+                    }
+                    CompositionLocalProvider(LocalOrbitTabHeader provides tabHeader) {
+                        OrbitTabPage(orbit, pageTab, onOpenChat = { tab = OrbitTab.CHAT },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
                 }
@@ -558,12 +566,14 @@ internal object OrbitMotion {
  * scroll up slide softly under the header instead of running into it.
  */
 @Composable
-private fun OrbitHeader(
+internal fun OrbitHeader(
     orbit: OrbitProfile,
     sideTitle: String?,
     hasUnread: Boolean,
     onOpenProfile: () -> Unit,
     onOpenChats: () -> Unit,
+    // Only the chat tab has the button for Orbit's other chats.
+    showChats: Boolean = true,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
     val pageColor = MaterialTheme.colorScheme.background
@@ -586,7 +596,7 @@ private fun OrbitHeader(
             onClick = openDrawer,
             modifier = Modifier.align(Alignment.TopStart),
         )
-        Box(Modifier.align(Alignment.TopEnd)) {
+        if (showChats) Box(Modifier.align(Alignment.TopEnd)) {
             OrbitCircleButton(
                 icon = orbitIcon("messages-square"),
                 contentDescription =

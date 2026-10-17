@@ -23,7 +23,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -146,7 +148,13 @@ internal fun OrbitTabPage(
     }
 }
 
-/** The page frame: menu button, a large title and an optional action on the right. */
+/**
+ * Orbit's header (menu, picture and name) for the tab pages. Every tab shows it fixed on top in
+ * the same place as in the chat, so the picture never moves when the user switches tabs.
+ */
+internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable () -> Unit)?> { null }
+
+/** The page frame: Orbit's fixed header, a large title and an optional action on the right. */
 @Composable
 private fun TabList(
     title: String,
@@ -154,25 +162,45 @@ private fun TabList(
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
-    LazyColumn(
-        modifier = Modifier.fillMaxSize().statusBarsPadding(),
-        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp),
-    ) {
-        item(key = "frame") {
-            Column {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    OrbitCircleButton(orbitIcon("equal"), stringResource(R.string.menu), openDrawer)
-                    Spacer(Modifier.weight(1f))
-                    action?.invoke()
+    val header = LocalOrbitTabHeader.current
+    val density = LocalDensity.current
+    // Measured after the first frame; the guess is the header's usual size so nothing jumps.
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    var headerHeight by remember { mutableStateOf(statusBarTop + 120.dp) }
+    Box(Modifier.fillMaxSize()) {
+        LazyColumn(
+            modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(
+                start = 20.dp, end = 20.dp, bottom = 24.dp,
+                // The header's lower edge fades out, so the title tucks a little under it.
+                top = if (header == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
+            ),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "frame") {
+                Column {
+                    if (header == null) {
+                        OrbitCircleButton(orbitIcon("equal"), stringResource(R.string.menu), openDrawer)
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.padding(top = if (header == null) 16.dp else 0.dp, bottom = 4.dp),
+                    ) {
+                        Text(
+                            title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold,
+                            modifier = Modifier.weight(1f),
+                        )
+                        action?.invoke()
+                    }
                 }
-                Text(
-                    title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold,
-                    modifier = Modifier.padding(top = 16.dp, bottom = 4.dp),
-                )
+            }
+            content()
+        }
+        if (header != null) {
+            Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
+                header()
             }
         }
-        content()
     }
 }
 
