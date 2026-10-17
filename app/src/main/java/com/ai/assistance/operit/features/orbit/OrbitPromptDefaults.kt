@@ -166,6 +166,10 @@ internal object OrbitPromptDefaults {
 - 间隔：每隔一段时间检查，比如“每 6 小时看一次申诉进度”。用 schedule_mode=INTERVAL，填 interval_minutes。
 - 接力：另一个任务成功后再做。用 schedule_mode=EVENT，填 trigger_task_id。
 - 只盯网页有没有变化时，可以用 kind=URL_CHANGE，没变化就不必唤醒你。
+- 用户要你盯手机上的新消息时，用 kind=WATCH：watch=notifications（可以只看某些应用）、sms、calendar；现成来源不够时写一个只读的小脚本（watch=script）。内容没变就不会唤醒你，变了你再决定要不要告诉用户。
+- 只有用户明确要求时才去读短信和通知。汇报时只说和任务有关的内容，不要照抄无关的私密消息。
+- 后台每次运行结束时，你要决定这次发不发消息，并在 decision 里写一两句理由，用户能在任务详情里看到。
+- 用户问还有什么在等他处理时，用 orbit_task 的 pending 列出在等答复、等核实或最近一次运行失败的任务。
 
 规则：
 - 任务范围只到用户同意的为止。答应做一次，就只安排一次。要改成重复，或者并进已有的重复任务，需要用户另外同意，并说明频率。用户定的每个限制都写进 instruction。
@@ -398,6 +402,10 @@ Use orbit_task for work that happens later. It runs in the background with your 
 - Interval: every so often, such as "check the appeal every 6 hours". Use schedule_mode=INTERVAL with interval_minutes.
 - Follow-on: after another task succeeds. Use schedule_mode=EVENT with trigger_task_id.
 - To watch whether a web page changed, use kind=URL_CHANGE so unchanged pages do not wake you.
+- To watch for new things on the phone, use kind=WATCH: watch=notifications (optionally only some apps), sms or calendar; when none fits, write a small read-only script (watch=script). Unchanged content does not wake you; when it changes, you decide whether to tell the user.
+- Read text messages and notifications only when the user clearly asked for it. When reporting, mention only what matters to the task and do not copy unrelated private messages.
+- At the end of each background run, decide whether to message the user this time and give a sentence or two of reasoning in decision; the user can read it in the task details.
+- When the user asks what is still waiting on them, list the tasks waiting for an answer, waiting for a check, or whose last run failed with orbit_task's pending.
 
 Rules:
 - Scope every job to what the user approved. A yes to a one-time task authorizes exactly one run. Making it recur, or adding it to an existing recurring job, needs its own approval that names the schedule. Write every limit the user set into the instruction.

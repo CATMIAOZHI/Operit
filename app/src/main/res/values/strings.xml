@@ -9399,4 +9399,25 @@
     <string name="orbit_trash_deleted_at">删除于 %1$s</string>
     <string name="orbit_files_made">Orbit 生成的文件</string>
     <string name="orbit_file_open_in_browser">用浏览器打开</string>
+    <string name="orbit_task_decision">为什么：%1$s</string>
+    <string name="orbit_watch_notifications">看手机上的通知</string>
+    <string name="orbit_watch_notifications_apps">看这些应用的通知：%1$s</string>
+    <string name="orbit_watch_sms">看收到的短信</string>
+    <string name="orbit_watch_sms_from">看 %1$s 发来的短信</string>
+    <string name="orbit_watch_calendar">看未来 %1$d 天的日程</string>
+    <string name="orbit_watch_script">运行小脚本 %1$s 看结果</string>
+    <string name="orbit_decision_unchanged">和上次一样，就没有打扰你</string>
+    <string name="orbit_decision_watch_failed">这次没读到内容，没有检查；到下次时间会再试</string>
+    <string name="orbit_watch_needs_notifications">Operit 还没有通知使用权，读不到通知。请在系统设置里给 Operit 打开「通知使用权」。</string>
+    <string name="orbit_watch_needs_sms">Operit 还没有读取短信的权限。请在系统设置的应用权限里给 Operit 打开「短信」。</string>
+    <string name="orbit_watch_needs_calendar">Operit 还没有读取日历的权限。请在系统设置的应用权限里给 Operit 打开「日历」。</string>
+    <string name="orbit_watch_script_changed">检查脚本 %1$s 在设好之后被改过，为了安全先不运行了。请让 Orbit 用新脚本更新这个任务。</string>
+    <string name="orbit_watch_script_timeout">检查脚本运行超过 %1$d 秒，这次没有结果。</string>
+    <string name="orbit_watch_script_failed">检查脚本运行出错：%1$s</string>
+    <string name="orbit_watch_open_settings">去打开权限</string>
+    <string name="orbit_task_last_result_time">最近结果 · %1$s</string>
+    <string name="orbit_watch_notifications_starting">通知服务还在启动，这次先不检查，下次会再试。</string>
+    <string name="orbit_watch_open_settings_failed">没能打开系统设置，请手动到设置里给 Operit 打开权限</string>
+    <string name="orbit_watch_notifications_stuck">通知服务一直没连上，读不到通知。请在系统设置里把 Operit 的「通知使用权」关掉再打开一次。</string>
+    <string name="orbit_decision_notifications_stuck">通知服务一直没连上，这次检查没成功</string>
 </resources>

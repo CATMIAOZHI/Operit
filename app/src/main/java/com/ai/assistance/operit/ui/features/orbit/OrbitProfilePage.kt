@@ -590,6 +590,7 @@ private fun LazyListScope.activitySection(rows: List<OrbitActivityRow>?, onOpenT
                         failed -> "circle-alert"
                         run.kind == "DAILY" -> "heart-handshake"
                         run.kind == "URL_CHANGE" -> "eye"
+                        run.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> "radar"
                         else -> "sparkles"
                     }
                 ),
@@ -664,7 +665,7 @@ private fun actionState(state: String): String = stringResource(when (state) {
     else -> R.string.orbit_profile_action_done
 })
 
-private fun relativeTime(time: Long): String =
+internal fun relativeTime(time: Long): String =
     DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
 
 private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpenTask: (String) -> Unit) {
@@ -702,9 +703,11 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
                 task.scheduleMode == "WEEKLY" -> "calendar-range" to calendarScheduleText(task)
                 task.scheduleMode == "MONTHLY" -> "calendar-days" to calendarScheduleText(task)
                 task.scheduleMode == "YEARLY" -> "calendar-heart" to calendarScheduleText(task)
-                task.scheduleMode == "ONCE" -> "bell" to DateFormat.getDateInstance(DateFormat.MEDIUM)
-                    .format(Date(task.nextRunAt))
-                task.scheduleMode == "EVENT" -> "zap" to stringResource(R.string.orbit_task_event_wait, trigger)
+                task.scheduleMode == "ONCE" -> "bell" to (DateFormat.getDateInstance(DateFormat.MEDIUM)
+                    .format(Date(task.nextRunAt)) + watchSuffix(task))
+                task.scheduleMode == "EVENT" -> "zap" to (stringResource(R.string.orbit_task_event_wait, trigger) + watchSuffix(task))
+                task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND ->
+                    watchIcon(task) to (watchLabel(task) + " · " + intervalText(task.intervalMinutes))
                 else -> "timer" to intervalText(task.intervalMinutes)
             }
             OrbitListRow(
@@ -723,7 +726,7 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
 }
 
 @Composable
-private fun intervalText(minutes: Int): String =
+internal fun intervalText(minutes: Int): String =
     if (minutes % 60 == 0) stringResource(R.string.orbit_profile_every_hours, minutes / 60)
     else stringResource(R.string.orbit_profile_every_minutes, minutes)
 

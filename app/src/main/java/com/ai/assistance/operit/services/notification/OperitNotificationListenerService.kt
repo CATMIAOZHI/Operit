@@ -18,6 +18,10 @@ object OperitNotificationStore {
     private val lock = Any()
     private val entries = LinkedHashMap<String, Entry>()
 
+    /** True while the listener is bound; the store is only in memory and empty before that. */
+    @Volatile
+    var connected = false
+
     fun upsert(sbn: StatusBarNotification) {
         val key = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
             sbn.key
@@ -107,12 +111,17 @@ object OperitNotificationStore {
 
 class OperitNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
+        OperitNotificationStore.connected = true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
                 activeNotifications?.forEach { OperitNotificationStore.upsert(it) }
             } catch (_: Exception) {
             }
         }
+    }
+
+    override fun onListenerDisconnected() {
+        OperitNotificationStore.connected = false
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {

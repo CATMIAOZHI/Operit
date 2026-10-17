@@ -39,13 +39,13 @@ class OrbitTaskRepository(private val context: Context) {
         require(instruction.isNotBlank() && instruction.length <= 4000)
         require(intervalMinutes in 15..10080)
         require(notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
-        require(kind in setOf("URL_CHANGE", "ASSIST"))
+        require(kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND))
         require(scheduleMode in setOf("ONCE", "INTERVAL", "EVENT", "DAILY") + OrbitCalendarSchedule.modes)
         require(dailyMinute in 0 until 24 * 60)
         checkTimeout(timeoutMinutes)
         require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
         val rule = checkedRule(scheduleMode, calendarRule)
-        if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
+        checkSource(kind, source)
         check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
         dao.task(id)?.let { return it }
@@ -112,7 +112,7 @@ class OrbitTaskRepository(private val context: Context) {
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute,
         calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes): Boolean {
-        check(task.kind in setOf("URL_CHANGE", "ASSIST") && task.state != "CANCELLED")
+        check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND) && task.state != "CANCELLED")
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
         }
@@ -122,7 +122,7 @@ class OrbitTaskRepository(private val context: Context) {
         checkTimeout(timeoutMinutes)
         require(runAt == null || task.scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
         val rule = checkedRule(task.scheduleMode, calendarRule)
-        if (task.kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
+        checkSource(task.kind, source)
         val now = System.currentTimeMillis()
         val nextRun = when (task.scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
@@ -219,6 +219,15 @@ class OrbitTaskRepository(private val context: Context) {
                 require(rule.isBlank()) { "repeat_on only works with WEEKLY, MONTHLY or YEARLY" }
                 ""
             }
+
+        /** A WATCH task names what it watches; other tasks may name a web page. */
+        fun checkSource(kind: String, source: String) {
+            if (kind == OrbitWatchSources.KIND) OrbitWatchSources.validate(source)
+            else if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
+        }
+
+        /** Tasks whose source is read without the model; an unchanged source can skip the model. */
+        fun prechecked(task: OrbitTaskEntity) = task.kind == "URL_CHANGE" || task.kind == OrbitWatchSources.KIND
 
         fun validateSource(source: String) {
             require(source.length <= 2048)
