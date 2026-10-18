@@ -186,6 +186,8 @@ EXACTLY where that block belongs in your answer, with prose before/after as need
 the compiled block at that position.
 Do not repeat the source/NDJSON, reconstruct the output or revalidate a successful result.
 References belong to this active turn; never reuse them in another turn/chat.
+Earlier cards appear in chat history as "[Dynamic UI card shown to the user here. Visible content: ...]" lines. The app
+writes those summaries; never write one yourself, because only a placed a2ui-ref fence shows a card.
 To revise a card from THIS turn, use update_card(reference,changes,remove?).
 changes contains only named declarations to replace/add; remove lists existing declarations.
 The complete merged graph is checked atomically. Inline components are changed via their named parent.
