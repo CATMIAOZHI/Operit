@@ -66,6 +66,9 @@ val LocalTopBarActions = compositionLocalOf<(@Composable (RowScope.() -> Unit)) 
 /** Opens the side drawer (phone) or toggles the sidebar (tablet), for pages without a top bar. */
 val LocalOpenAppDrawer = compositionLocalOf<() -> Unit> { {} }
 
+/** Leaves the Orbit page for Operit's main chat, the same way picking it in the drawer does. */
+val LocalLeaveOrbit = compositionLocalOf<() -> Unit> { {} }
+
 class TopBarTitleContent(val content: @Composable () -> Unit)
 
 val LocalTopBarTitleContent = compositionLocalOf<(TopBarTitleContent?) -> Unit> { {} }
@@ -468,7 +471,8 @@ fun OperitApp(
             },
             LocalTopBarTitleContent provides { titleContent ->
                 topBarTitleContent = titleContent
-            }
+            },
+            LocalLeaveOrbit provides { navigateTo(Screen.AiChat, fromDrawer = true) },
         ) {
             if (useTabletLayout) {
                 // Tablet layout

@@ -9486,6 +9486,13 @@
     <string name="orbit_chats_long_press">Long press a side chat to rename or delete it</string>
     <string name="orbit_chats_unread">New messages</string>
     <string name="orbit_chats_title_unread">Chats — new messages</string>
+    <string name="orbit_menu_back_to_operit">Back to Operit</string>
+    <string name="orbit_chats_side_section">Side chats</string>
+    <string name="orbit_chats_empty_title">Start a side chat</string>
+    <string name="orbit_chats_search_empty">No matching side chats</string>
+    <string name="orbit_chats_search_label">Search side chats</string>
+    <string name="orbit_chats_empty_hint">Use a side chat for one topic. It shares memory with the main chat.</string>
+    <string name="orbit_work_reaction_title">You reacted %1$s</string>
     <string name="orbit_reaction_label">Orbit reacted with %1$s</string>
     <string name="orbit_user_reaction_label">You reacted with %1$s</string>
     <string name="orbit_react_with">React with %1$s</string>

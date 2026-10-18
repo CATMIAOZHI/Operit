@@ -79,6 +79,7 @@ internal object OrbitWork {
     suspend fun chatTurns(context: Context, chatIds: List<String>): OrbitChatTurns {
         val manager = ChatHistoryManager.getInstance(context)
         val attachmentOnly = context.getString(com.ai.assistance.operit.R.string.orbit_user_sent_attachment)
+        val reactionTitle = context.getString(com.ai.assistance.operit.R.string.orbit_work_reaction_title)
         // Chats with a reply being written right now; that reply has no complete record yet.
         val streaming = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context).let { holder ->
             com.ai.assistance.operit.api.chat.ChatRuntimeSlot.values()
@@ -87,7 +88,7 @@ internal object OrbitWork {
         var failed = false
         val turns = chatIds.distinct().flatMap { chatId ->
             try {
-                turnsOf(manager, chatId, attachmentOnly, writingNow = chatId in streaming)
+                turnsOf(manager, chatId, attachmentOnly, reactionTitle, writingNow = chatId in streaming)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -106,6 +107,7 @@ internal object OrbitWork {
         manager: ChatHistoryManager,
         chatId: String,
         attachmentOnly: String,
+        reactionTitle: String,
         writingNow: Boolean,
     ): List<OrbitChatTurn> {
         val rows = manager.loadChatMessageProcessMetadata(chatId)
@@ -130,6 +132,8 @@ internal object OrbitWork {
             .sortedBy { it.key }
             .takeLast(TURNS_PER_CHAT)
         // The user's message that started each turn: the last one right before its first step.
+        // A tapback the user put on Orbit's message starts a turn too, through a hidden notice.
+        val hiddenBefore = HashMap<Long, Long>()
         val askedBy = turns.associate { turn ->
             val first = turn.members.mapNotNull { indexOf[it] }.minOrNull() ?: -1
             var asked: Long? = null
@@ -142,22 +146,40 @@ internal object OrbitWork {
                     asked = row.timestamp
                     break
                 }
+                if (row.sender == "user" && turn.key !in hiddenBefore &&
+                    row.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER.name) {
+                    hiddenBefore[turn.key] = row.timestamp
+                }
                 i--
             }
             turn.key to asked
         }
-        val wanted = turns.map { it.finalTimestamp } + askedBy.values.filterNotNull()
+        val wanted = turns.map { it.finalTimestamp } + askedBy.values.filterNotNull() + hiddenBefore.values
         val bodies = manager.loadChatMessagesByTimestamps(chatId, wanted).associateBy { it.timestamp }
         // The text search also matches a reply that only quotes markup; keep real work only.
         return turns.filter { turn ->
             !turn.byMarkup || bodies[turn.finalTimestamp]?.let { hasWork(it.content) } == true
+        }.filterNot { turn ->
+            // Orbit chose to stay quiet after a tapback: nothing happened worth listing.
+            bodies[turn.finalTimestamp]?.content?.let { content ->
+                content.contains("name=\"${com.ai.assistance.operit.features.orbit.OrbitReactionNotice.NOTHING_TO_DO}\"") &&
+                    OrbitSpeech.of(content).isBlank()
+            } == true
         }.map { turn ->
-            val asked = askedBy[turn.key]
+            val reaction = hiddenBefore[turn.key]?.let { ts ->
+                bodies[ts]?.content?.let { com.ai.assistance.operit.features.orbit.OrbitReactionNotice.emojiOf(it) }?.let { ts to it }
+            }
+            // The nearest of the two started the turn: a tapback after the user's last message wins.
+            val asked = if (reaction != null && (askedBy[turn.key] ?: Long.MIN_VALUE) < reaction.first) reaction.first
+                else askedBy[turn.key]
+            val title = if (reaction != null && asked == reaction.first) reactionTitle.format(reaction.second)
+                else asked?.let { bodies[it] }?.let { userLine(it.content, attachmentOnly) }.orEmpty()
             OrbitChatTurn(
                 process = OrbitProcess.ChatTurn(
                     chatId = chatId,
-                    timestamps = (listOfNotNull(asked) + turn.members).distinct().sorted(),
-                    title = asked?.let { bodies[it] }?.let { userLine(it.content, attachmentOnly) }.orEmpty(),
+                    // A tapback notice only names the turn; its hidden wording never shows in the details.
+                    timestamps = (listOfNotNull(asked?.takeIf { it != reaction?.first }) + turn.members).distinct().sorted(),
+                    title = title,
                     time = turn.key,
                 ),
                 reply = bodies[turn.finalTimestamp]?.let { firstLine(plain(OrbitSpeech.of(it.content))) }.orEmpty(),
@@ -170,6 +192,7 @@ internal object OrbitWork {
         val manager = ChatHistoryManager.getInstance(context)
         return when (process) {
             is OrbitProcess.ChatTurn -> manager.loadChatMessagesByTimestamps(process.chatId, process.timestamps)
+                .filterNot { it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER }
             // The task's own instructions open the hidden chat; the work starts after them.
             is OrbitProcess.TaskRun -> manager.loadChatMessages(process.chatId).filter { it.sender != "user" }
         }

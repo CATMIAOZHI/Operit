@@ -101,6 +101,9 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -268,9 +271,13 @@ private fun OrbitChatPage(
     val reactionScope = rememberCoroutineScope()
     val userReactions = remember(userReactionMap, currentChatId) {
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { timestamp, emoji ->
+            // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
+            val adding = userReactionMap[timestamp] != emoji
+            val chatId = currentChatId
             reactionScope.launch {
                 try {
-                    userReactionStore.toggle(currentChatId, timestamp, emoji)
+                    userReactionStore.toggle(chatId, timestamp, emoji)
+                    if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, timestamp, emoji)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -296,11 +303,17 @@ private fun OrbitChatPage(
     }
     // A report counts as seen only while its chat is really on screen: chat tab, app in front.
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
-    val chatOnScreen = tab == OrbitTab.CHAT && lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    // Covered by the menu, the profile or a full page over it, the chat is not being read.
+    val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !showProfile &&
+        !showSettings && !showVault && !showImport &&
+        lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
     }
     val hasUnread = unreadChats.any { (it != currentChatId || !chatOnScreen) && it in orbit.talkChatIds }
+    // The tab pages keep one header; it reads the newest unread state from here.
+    val hasUnreadState = rememberUpdatedState(hasUnread)
+    val leaveOrbit = com.ai.assistance.operit.ui.main.LocalLeaveOrbit.current
     var pageTab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.FEED) }
     // A text file from the Builds tab opens full screen, over the bottom tabs, so a stray tap
     // on a tab cannot drop an unsaved edit.
@@ -357,7 +370,12 @@ private fun OrbitChatPage(
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
         BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile) { tab = OrbitTab.CHAT }
-        Column(Modifier.fillMaxSize()) {
+        // While the menu is open, screen readers only see the menu, not the page behind it.
+        Column(
+            Modifier.fillMaxSize().then(
+                if (showChats) Modifier.clearAndSetSemantics { } else Modifier
+            )
+        ) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides true,
@@ -367,7 +385,7 @@ private fun OrbitChatPage(
                     chatContent(currentChatId) {
                         OrbitHeader(
                             orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
-                            onOpenProfile = { showProfile = true }, onOpenChats = { showChats = true },
+                            onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                         )
                     }
                 }
@@ -378,9 +396,8 @@ private fun OrbitChatPage(
                     val tabHeader: @Composable () -> Unit = remember(orbit) {
                         {
                             OrbitHeader(
-                                orbit = orbit, sideTitle = null, hasUnread = false,
-                                onOpenProfile = { showProfile = true }, onOpenChats = {},
-                                showChats = false,
+                                orbit = orbit, sideTitle = null, hasUnread = hasUnreadState.value,
+                                onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                             )
                         }
                     }
@@ -398,18 +415,20 @@ private fun OrbitChatPage(
                 })
             }
         }
+        // Orbit's own menu, opened only by the round button at the top left.
+        OrbitSideMenu(
+            visible = showChats,
+            orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
+            onSelect = {
+                if (it !in orbit.talkChatIds) justCreatedChatId = it
+                talkChatId = it
+                tab = OrbitTab.CHAT
+            },
+            onDismiss = { showChats = false },
+            onOpenSettings = { showSettings = true },
+            onLeaveOrbit = leaveOrbit,
+        )
         // Keeps the last file on screen while the page slides away.
-        if (showChats) {
-            OrbitChatsSheet(
-                orbit = orbit, currentChatId = currentChatId, unread = unreadChats,
-                onSelect = {
-                    if (it !in orbit.talkChatIds) justCreatedChatId = it
-                    talkChatId = it
-                    tab = OrbitTab.CHAT
-                },
-                onDismiss = { showChats = false },
-            )
-        }
         var shownFile by remember(orbit.id) { mutableStateOf(editingFile) }
         LaunchedEffect(editingFile) { editingFile?.let { shownFile = it } }
         AnimatedVisibility(
@@ -608,11 +627,8 @@ internal fun OrbitHeader(
     sideTitle: String?,
     hasUnread: Boolean,
     onOpenProfile: () -> Unit,
-    onOpenChats: () -> Unit,
-    // Only the chat tab has the button for Orbit's other chats.
-    showChats: Boolean = true,
+    onOpenMenu: () -> Unit,
 ) {
-    val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
     val pageColor = MaterialTheme.colorScheme.background
     Box(
         modifier =
@@ -627,19 +643,16 @@ internal fun OrbitHeader(
                 .statusBarsPadding()
                 .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 18.dp)
     ) {
-        OrbitCircleButton(
-            icon = orbitIcon("equal"),
-            contentDescription = stringResource(R.string.menu),
-            onClick = openDrawer,
-            modifier = Modifier.align(Alignment.TopStart),
-        )
-        if (showChats) Box(Modifier.align(Alignment.TopEnd)) {
+        // Orbit's own menu (its chats, settings, back to Operit). Only this button opens it.
+        Box(Modifier.align(Alignment.TopStart)) {
+            val unreadState = stringResource(R.string.orbit_chats_unread)
             OrbitCircleButton(
-                icon = orbitIcon("messages-square"),
-                contentDescription =
-                    if (hasUnread) stringResource(R.string.orbit_chats_title_unread)
-                    else stringResource(R.string.orbit_chats_title),
-                onClick = onOpenChats,
+                icon = orbitIcon("equal"),
+                contentDescription = stringResource(R.string.menu),
+                onClick = onOpenMenu,
+                modifier = Modifier.semantics {
+                    if (hasUnread) stateDescription = unreadState
+                },
             )
             // A new report waits in another of Orbit's chats.
             if (hasUnread) {

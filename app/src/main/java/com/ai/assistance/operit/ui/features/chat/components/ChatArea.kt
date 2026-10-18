@@ -34,6 +34,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
+import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
@@ -725,7 +726,7 @@ private fun MessageItem(
                 )
             }
 
-            if (isActionable && !isHiddenUserMessage && pluginMenuItems.isNotEmpty()) {
+            if (isActionable && !isHiddenUserMessage && !orbitLook && pluginMenuItems.isNotEmpty()) {
                 pluginMenuItems.forEach { pluginMenuItem ->
                     DropdownMenuItem(
                         text = {
@@ -775,7 +776,32 @@ private fun MessageItem(
                 }
             }
 
-            if (allowTranscriptMutation) {
+            // Orbit's chat is one long conversation: nothing here may rewrite what was said
+            // (edit, roll back, regenerate, delete, summarize, branch). Replying still works.
+            if (allowTranscriptMutation && orbitLook && !isHiddenUserMessage) {
+                DropdownMenuItem(
+                    text = {
+                        Text(
+                            stringResource(R.string.reply_message),
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                    },
+                    onClick = {
+                        onReplyToMessage?.invoke(message)
+                        showContextMenu = false
+                    },
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.Reply,
+                            contentDescription = stringResource(R.string.reply_message),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    },
+                    modifier = Modifier.heightIn(min = 44.dp)
+                )
+            }
+            if (allowTranscriptMutation && !orbitLook) {
                 // 根据消息发送者显示不同的操作
                 if (message.sender == "user") {
                 if (!isHiddenUserMessage) {
@@ -1015,7 +1041,7 @@ private fun MessageItem(
                 modifier = Modifier.heightIn(min = 44.dp)
             )
 
-            if (allowTranscriptMutation) {
+            if (allowTranscriptMutation && !orbitLook) {
                 DropdownMenuItem(
                 text = {
                     Text(
