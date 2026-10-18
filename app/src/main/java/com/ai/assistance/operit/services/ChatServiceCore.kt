@@ -302,6 +302,14 @@ class ChatServiceCore(
         messageProcessingDelegate.updateUserMessage(message)
     }
 
+    /** Fills the input box of [chatId] with [text], cursor at the end, without sending. */
+    fun setDraftForChat(chatId: String, text: String) {
+        messageProcessingDelegate.setDraftForChat(
+            chatId, androidx.compose.ui.text.input.TextFieldValue(text, androidx.compose.ui.text.TextRange(text.length)))
+    }
+
+    fun draftForChat(chatId: String): String = messageProcessingDelegate.draftForChat(chatId)
+
     fun getResponseStream(chatId: String): SharedStream<String>? {
         return messageProcessingDelegate.getResponseStream(chatId)
     }

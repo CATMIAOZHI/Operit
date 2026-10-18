@@ -693,6 +693,18 @@ class MessageProcessingDelegate(
         setUserMessageDraft(value)
     }
 
+    /**
+     * Puts [value] in the input box of [chatId] without sending it. If that chat is not the one
+     * shown yet, it waits as that chat's draft and appears when the chat opens.
+     */
+    fun setDraftForChat(chatId: String, value: TextFieldValue) {
+        saveUserMessageDraft(chatId, value)
+        if (activeDraftChatId == chatId) setUserMessageDraft(value)
+    }
+
+    fun draftForChat(chatId: String): String =
+        if (activeDraftChatId == chatId) _userMessage.value.text else userMessageDraftsByChatId[chatId]?.text.orEmpty()
+
     private fun setUserMessageDraft(value: TextFieldValue) {
         if (_userMessage.value != value) draftRevision++
         _userMessage.value = value

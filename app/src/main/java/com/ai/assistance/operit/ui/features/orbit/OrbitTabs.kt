@@ -23,6 +23,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -67,6 +69,17 @@ internal enum class OrbitTab(val icon: String, val label: Int) {
     IDEAS("lightbulb", R.string.orbit_tab_ideas),
     GOALS("square-check-big", R.string.orbit_tab_goals),
     BUILDS("shapes", R.string.orbit_tab_builds),
+}
+
+/**
+ * The tab bar's height shrinks by however much of it the keyboard covers, read in the layout
+ * step each frame of the keyboard's own animation. So the bar leaves and comes back exactly as
+ * fast as the keyboard moves, with no wait for the keyboard to finish, and no recomposition.
+ */
+internal fun Modifier.tuckUnderKeyboard(ime: WindowInsets): Modifier = clipToBounds().layout { measurable, constraints ->
+    val placeable = measurable.measure(constraints.copy(minHeight = 0))
+    val height = (placeable.height - ime.getBottom(this)).coerceAtLeast(0)
+    layout(placeable.width, height) { placeable.place(0, 0) }
 }
 
 /** Muse's floating pill of five icons; the selected one sits on a soft grey pill. */
@@ -122,6 +135,27 @@ internal fun sendToOrbit(context: android.content.Context, orbit: OrbitProfile, 
 }
 
 /**
+ * Per Orbit chat: what the user had typed before a button added its prompt, and the full text
+ * that left in the box. A second tap swaps only the prompt; the user's own words stay.
+ */
+private val lastOrbitDraft = java.util.concurrent.ConcurrentHashMap<String, Pair<String, String>>()
+
+/**
+ * Puts [text] in the input box of Orbit's main chat without sending it; the user finishes it
+ * and decides whether to send. Something the user typed there stays, with the text after it.
+ */
+internal fun draftToOrbit(context: android.content.Context, orbit: OrbitProfile, text: String) {
+    val core = ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
+    val current = core.draftForChat(orbit.chatId)
+    val last = lastOrbitDraft[orbit.chatId]
+    // Untouched since the last tap: keep what the user had typed before it, drop the old prompt.
+    val own = if (last != null && current == last.second) last.first else current.trimEnd()
+    val draft = if (own.isBlank()) text else own + "\n\n" + text
+    lastOrbitDraft[orbit.chatId] = own to draft
+    core.setDraftForChat(orbit.chatId, draft)
+}
+
+/**
  * One of the Feed, Ideas, Goals and Builds pages. It is opaque because the chat stays underneath,
  * so going back to Chat never reloads it.
  */
@@ -129,7 +163,8 @@ internal fun sendToOrbit(context: android.content.Context, orbit: OrbitProfile, 
 internal fun OrbitTabPage(
     orbit: OrbitProfile,
     tab: OrbitTab,
-    onOpenChat: () -> Unit,
+    /** Fills Orbit's main chat input with a prompt and shows the chat; nothing is sent. */
+    onDraft: (String) -> Unit,
     filesVersion: Int = 0,
     onOpenFile: (String) -> Unit = {},
 ) {
@@ -137,9 +172,9 @@ internal fun OrbitTabPage(
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         when (tab) {
             OrbitTab.CHAT -> Unit
-            OrbitTab.FEED -> OrbitFeedPage(orbit, onOpenChat)
-            OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onOpenChat)
-            OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it })
+            OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft)
+            OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
+            OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
             OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile)
         }
         openTaskId?.let { taskId ->
@@ -277,7 +312,7 @@ private fun rememberAction(): (suspend () -> Unit) -> Unit {
 // ---------------------------------------------------------------- Feed
 
 @Composable
-private fun OrbitFeedPage(orbit: OrbitProfile, onOpenChat: () -> Unit) {
+private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val context = LocalContext.current
     val action = rememberAction()
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.FEED) }
@@ -333,11 +368,7 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onOpenChat: () -> Unit) {
                     isLast = post.id == list.last().id,
                     onLike = { action { repository.update(post.id, liked = !post.liked) } },
                     onDiscuss = {
-                        sendToOrbit(
-                            context, orbit,
-                            context.getString(R.string.orbit_feed_discuss_message, post.title, post.body.take(1500)),
-                        )
-                        onOpenChat()
+                        onDraft(context.getString(R.string.orbit_feed_discuss_message, post.title, post.body.take(1500)))
                     },
                     onMove = { up -> action { repository.move(post.id, up) } },
                     onDelete = { action { repository.delete(post.id) } },
@@ -459,16 +490,13 @@ private fun FeedPostCard(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun OrbitIdeasPage(orbit: OrbitProfile, onOpenChat: () -> Unit) {
+private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val context = LocalContext.current
     val action = rememberAction()
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.IDEAS) }
     val ideas by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
     var dismissing by remember { mutableStateOf<OrbitBoardRepository.Item?>(null) }
-    val askIdeas = {
-        sendToOrbit(context, orbit, context.getString(R.string.orbit_ideas_ask_message))
-        onOpenChat()
-    }
+    val askIdeas = { onDraft(context.getString(R.string.orbit_ideas_ask_message)) }
 
     TabList(title = stringResource(R.string.orbit_tab_ideas)) {
         val list = ideas
@@ -513,15 +541,10 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onOpenChat: () -> Unit) {
                                 )
                             }
                             Spacer(Modifier.weight(1f))
+                            // Only fills the chat input. The card stays open until Orbit has
+                            // really done it, so a test tap changes nothing.
                             Button(onClick = {
-                                action {
-                                    repository.update(idea.id, state = "BUILT")
-                                    sendToOrbit(
-                                        context, orbit,
-                                        context.getString(R.string.orbit_idea_build_message, idea.title, idea.extra.ifBlank { idea.body }),
-                                    )
-                                    onOpenChat()
-                                }
+                                onDraft(context.getString(R.string.orbit_idea_build_message, idea.title, idea.extra.ifBlank { idea.body }))
                             }) { Text(stringResource(R.string.orbit_idea_build)) }
                         }
                     }
@@ -561,7 +584,7 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onOpenChat: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
+private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, onDraft: (String) -> Unit) {
     val context = LocalContext.current
     val action = rememberAction()
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -579,11 +602,12 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
     var trackingSheet by remember { mutableStateOf<String?>(null) }
     var confirmDelete by remember { mutableStateOf<String?>(null) }
     var editor by remember { mutableStateOf<OrbitGoalEntity?>(null) }
-    var creating by remember { mutableStateOf(false) }
+    // A new goal starts as a message the user finishes in the chat; Orbit then sets it up.
+    val newGoal = { onDraft(context.getString(R.string.orbit_goal_new_message)) }
 
     TabList(
         title = stringResource(R.string.orbit_tab_goals),
-        action = { OrbitCircleButton(orbitIcon("plus"), stringResource(R.string.orbit_goal_create), { creating = true }) },
+        action = { OrbitCircleButton(orbitIcon("plus"), stringResource(R.string.orbit_goal_create), newGoal) },
     ) {
         val goalList = goals?.filter { it.state != "CANCELLED" }
         when {
@@ -776,19 +800,13 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit) {
         )
     }
 
-    if (creating || editor != null) {
+    editor?.let { goal ->
         GoalEditor(
-            goal = editor,
-            onDismiss = { creating = false; editor = null },
+            goal = goal,
+            onDismiss = { editor = null },
             onSave = { title, plan ->
-                val old = editor
-                creating = false
                 editor = null
-                action {
-                    val repository = OrbitGoalRepository(context)
-                    if (old == null) repository.create(orbit.id, title, plan, UUID.randomUUID().toString())
-                    else repository.update(old, title, plan, old.state)
-                }
+                action { OrbitGoalRepository(context).update(goal, title, plan, goal.state) }
             },
         )
     }
