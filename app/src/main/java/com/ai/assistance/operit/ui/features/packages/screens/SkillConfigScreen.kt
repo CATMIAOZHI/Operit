@@ -94,6 +94,8 @@ fun SkillConfigScreen(
     learnedOnlyProfileId: String? = null,
     /** Shows the skills in folders by origin (learned, added by the user, built in), for an Orbit. */
     groupBySource: Boolean = false,
+    /** False when the page around it already has a title, as Orbit's all-skills page does. */
+    showHeader: Boolean = true,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -102,6 +104,7 @@ fun SkillConfigScreen(
 
     var skills by remember { mutableStateOf<Map<String, SkillPackage>>(emptyMap()) }
     var learnedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var archivedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var isLoading by remember { mutableStateOf(true) }
 
     var selectedSkill by remember { mutableStateOf<SkillPackage?>(null) }
@@ -129,8 +132,13 @@ fun SkillConfigScreen(
                 withContext(Dispatchers.IO) {
                     skillRepository.getAvailableSkillPackagesSnapshot()
                 }
+            val learned = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
+            // Folders are decided by these names, so they land together with the list.
+            val owned = learned.owned(learnedOnlyProfileId)
+            val archived = if (groupBySource) learned.archived() else archivedNames
             skills = loaded.first
-            learnedNames = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId).owned(learnedOnlyProfileId)
+            learnedNames = owned
+            archivedNames = archived
             skillLoadErrors = loaded.second
         } finally {
             isLoading = false
@@ -167,6 +175,24 @@ fun SkillConfigScreen(
     LaunchedEffect(Unit) {
         refreshSkills()
     }
+    // A background sweep may archive skills while this page is in the background; coming back
+    // shows the current folders instead of a stale archive.
+    var resumedOnce by remember { mutableStateOf(false) }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        if (resumedOnce && groupBySource) scope.launch { refreshSkills() }
+        resumedOnce = true
+    }
+    // Switching a learned skill back on for the AI also takes it out of the archive and restarts
+    // its idle clock, wherever the switch is (here or on the learned-skills page).
+    val markShown: (String) -> Unit = { name ->
+        scope.launch {
+            runCatching {
+                com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
+                    .unarchive(name)
+            }
+            archivedNames = archivedNames - name
+        }
+    }
 
     val openSkill: (SkillPackage) -> Unit = { skill ->
         val targetPath = skill.directory.absolutePath
@@ -190,7 +216,7 @@ fun SkillConfigScreen(
                 .fillMaxSize()
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
-            if (learnedOnlyProfileId == null) {
+            if (learnedOnlyProfileId == null && showHeader) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 colors = CardDefaults.cardColors(
@@ -267,10 +293,14 @@ fun SkillConfigScreen(
             // The learned-only view has no import action, so the shared "look in this
             // directory" wording would be a dead end there.
             val learnedEmpty = stringResource(R.string.memory_learned_empty)
-            if (skills.isEmpty()) {
+            if (skills.isEmpty() && isLoading) {
+                // The spinner below covers the first load; an empty-state line under it would flash.
+            } else if (skills.isEmpty()) {
                 Text(
                     text = if (learnedOnlyProfileId != null) {
                         learnedEmpty
+                    } else if (groupBySource) {
+                        stringResource(R.string.orbit_skills_empty)
                     } else {
                         stringResource(R.string.skillmgr_no_skills_found, skillRepository.getSkillsDirectoryPath())
                     },
@@ -287,10 +317,26 @@ fun SkillConfigScreen(
                 SkillSourceFolders(
                     skills = displayedSkills,
                     learnedNames = learnedNames,
+                    archivedNames = archivedNames,
                     builtInNames = remember { com.ai.assistance.operit.features.orbit.OrbitBundledSkills.NAMES.toSet() },
                     searching = searchQuery.isNotBlank(),
                     visibility = skillVisibilityPreferences,
                     onOpen = openSkill,
+                    onRestore = { name ->
+                        scope.launch {
+                            val restored = runCatching {
+                                com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
+                                    .unarchive(name)
+                            }.isSuccess
+                            if (restored) {
+                                skillVisibilityPreferences.setSkillVisibleToAi(name, true)
+                                archivedNames = archivedNames - name
+                            }
+                            snackbarHostState.showSnackbar(context.getString(
+                                if (restored) R.string.skill_restored else R.string.skill_restore_failed, name))
+                        }
+                    },
+                    onShown = markShown,
                 )
             } else {
                 var orderedSkills by remember(displayedSkills) {
@@ -359,6 +405,7 @@ fun SkillConfigScreen(
                                 SkillListItem(
                                     skill = skill,
                                     skillVisibilityPreferences = skillVisibilityPreferences,
+                                    onShown = { markShown(skill.name) },
                                     onClick = {
                                         val targetPath = skill.directory.absolutePath
                                         selectedSkill = skill
@@ -1108,7 +1155,8 @@ private fun SkillListItem(
     skill: SkillPackage,
     skillVisibilityPreferences: SkillVisibilityPreferences,
     onClick: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onShown: () -> Unit = {},
 ) {
     val accentColor = MaterialTheme.colorScheme.primary
     var visibleToAi by remember(skill.name) {
@@ -1171,6 +1219,7 @@ private fun SkillListItem(
                 onCheckedChange = { checked ->
                     visibleToAi = checked
                     skillVisibilityPreferences.setSkillVisibleToAi(skill.name, checked)
+                    if (checked) onShown()
                 }
             )
         }

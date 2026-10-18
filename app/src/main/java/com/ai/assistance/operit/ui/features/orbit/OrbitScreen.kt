@@ -560,9 +560,7 @@ private fun OrbitChatPage(
                         OrbitSubPage.MEMORY_LIBRARY -> {
                             val id = memoryResult?.getOrNull()
                             if (id != null) {
-                                com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage(
-                                    stringResource(R.string.orbit_memory_row), id, back
-                                ) { com.ai.assistance.operit.ui.features.memory.screens.MemoryScreen(fixedMemorySpaceId = id) }
+                                OrbitLearningPage(id, back)
                             } else {
                                 Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                                     Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),

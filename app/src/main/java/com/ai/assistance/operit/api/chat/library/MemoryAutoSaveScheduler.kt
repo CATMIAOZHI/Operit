@@ -41,6 +41,8 @@ class MemoryAutoSaveScheduler(
         private const val MAX_MESSAGES_PER_BATCH = 48
         private const val MAX_CANDIDATES_PER_RUN_PER_CHAT = 20
         private const val MIN_TOTAL_CANDIDATES_TO_EXTRACT = 5
+        /** How often an Orbit's learned skills are checked for long disuse. */
+        private const val SKILL_ARCHIVE_SWEEP_MS = 6 * 60 * 60 * 1000L
 
         @Volatile
         private var instance: MemoryAutoSaveScheduler? = null
@@ -54,6 +56,26 @@ class MemoryAutoSaveScheduler(
     @Volatile private var automaticJob: Job? = null
     fun cancelAutomaticExtraction() { automaticJob?.cancel() }
     private val nextRunAtMsByProfileId = ConcurrentHashMap<String, Long>()
+    private val lastSkillSweepAtByProfileId = ConcurrentHashMap<String, Long>()
+
+    /**
+     * Puts away an Orbit's learned skills that went unused for a long time: they are switched off
+     * for the AI (so the skill index stays short) and kept on disk, ready to be switched back on.
+     */
+    private suspend fun archiveIdleLearnedSkills(profileId: String, nowMs: Long) {
+        if (!profileId.startsWith("orbit_")) return
+        val last = lastSkillSweepAtByProfileId[profileId]
+        if (last != null && nowMs - last < SKILL_ARCHIVE_SWEEP_MS) return
+        lastSkillSweepAtByProfileId[profileId] = nowMs
+        val orbitId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId) ?: return
+        val visibility = com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences.forOrbit(context, orbitId)
+        val archived = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, profileId)
+            .archiveIdle(profileId, nowMs, com.ai.assistance.operit.data.preferences.LearnedSkillRepository.IDLE_ARCHIVE_MS) {
+                visibility.isSkillVisibleToAi(it)
+            }
+        archived.forEach { visibility.setSkillVisibleToAi(it, false) }
+        if (archived.isNotEmpty()) AppLogger.i(TAG, "Archived idle learned skills: profileId=$profileId, count=${archived.size}")
+    }
 
     fun start() {
         if (loopJob?.isActive == true) return
@@ -105,6 +127,13 @@ class MemoryAutoSaveScheduler(
 
         for (profileId in profileIds) {
             try {
+            try {
+                archiveIdleLearnedSkills(profileId, nowMs)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Idle skill archive failed: $profileId", e)
+            }
             MemoryLibrary.withSpaceOperation(profileId) {
             val intervalMs = intervalMsForProfile(profileId)
             val nextRunAtMs = getOrInitNextRunAtMs(profileId, nowMs)

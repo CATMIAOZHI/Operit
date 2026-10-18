@@ -12,7 +12,10 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.preferencesManager
 
-/** Regular in-app destination, without a dialog window or floating surface. */
+/**
+ * Regular in-app destination, without a dialog window or floating surface. An Orbit's pages use
+ * Orbit's own frame (round back button and title) so they match the profile they open from.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MemoryLibraryPage(
@@ -21,6 +24,18 @@ fun MemoryLibraryPage(
     onBack: () -> Unit,
     content: @Composable () -> Unit
 ) {
+    if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+        BackHandler(onBack = onBack)
+        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Column(Modifier.fillMaxSize().statusBarsPadding()) {
+                com.ai.assistance.operit.ui.features.orbit.OrbitPageHeader(
+                    title, onBack, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),
+                )
+                Box(Modifier.fillMaxWidth().weight(1f).navigationBarsPadding().imePadding()) { content() }
+            }
+        }
+        return
+    }
     val profile by remember(profileId) { preferencesManager.getMemorySpaceFlow(profileId) }
         .collectAsState(initial = null)
     val profileName = profile?.name.orEmpty()

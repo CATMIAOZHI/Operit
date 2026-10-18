@@ -159,4 +159,15 @@
     <string name="skill_folder_expanded">Expanded</string>
     <string name="skill_folder_collapsed">Collapsed</string>
     <string name="skill_visible_to_ai">Visible to AI: %1$s</string>
+    <string name="skill_folder_archived">Archived</string>
+    <string name="skill_folder_archived_desc">Unused for 4 weeks, so hidden from the AI. Switch one on to restore it.</string>
+    <plurals name="skill_folder_count">
+        <item quantity="one">%1$d skill</item>
+        <item quantity="other">%1$d skills</item>
+    </plurals>
+    <string name="skill_restore_switch">Restore skill: %1$s</string>
+    <string name="skill_restored">Restored \"%1$s\" to its folder</string>
+    <string name="skill_restore_failed">Couldn\'t restore \"%1$s\". Please try again.</string>
+    <string name="orbit_skills_empty">No skills yet. Skills it learns in chats, and ones you add, will show up here.</string>
+    <string name="orbit_learning_help">The skills it has learned and its learning records live here. Its memory and what it knows about you are on the profile page.</string>
 </resources>
