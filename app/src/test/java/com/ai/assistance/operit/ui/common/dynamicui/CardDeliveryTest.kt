@@ -103,16 +103,13 @@ class CardDeliveryTest {
         assertTrue(CardTranscript.forReview("```a2ui\n$long\n```").endsWith("x…]"))
         assertTrue(CardTranscript.forReview("```a2ui\n$long\n```", Int.MAX_VALUE).endsWith("x".repeat(3000) + "]"))
     }
-    @Test fun copiedSummaryLinesLeaveTheModelHistory() {
-        // An older build let the model copy this line; giving it back would teach the copy again.
-        assertEquals("看这里：\n之后\n", CardTranscript.forModel(
-            "看这里：\n[Dynamic UI card shown to the user here. Visible content: 提醒]\n之后\n"))
+    @Test fun olderChatsGoBackUnchanged() {
+        // Text an older build let the model copy stays as it was; only shown cards change form.
+        val old = "看这里：\n[Dynamic UI card shown to the user here. Visible content: 提醒]\n之后\n"
+        assertSame(old, CardTranscript.forModel(old))
         // The chat summary is read by the user, so a card there reads in their words.
         assertEquals("a\n[卡片：hi]\nb", CardTranscript.forReview(
             "a\n```a2ui\n{\"updateDataModel\":{\"value\":\"hi\"}}\n```\nb", label = { "[卡片：$it]" }))
-        // Older summaries quoted cards with the same line; the model gets a plain note instead.
-        assertEquals("- AI: 好 (card: 提醒) 完", CardTranscript.forSummary(
-            "- AI: 好 [Dynamic UI card shown to the user here. Visible content: 提醒] 完"))
     }
 
     @Test fun ordinaryBracketLinesAreUntouched() {

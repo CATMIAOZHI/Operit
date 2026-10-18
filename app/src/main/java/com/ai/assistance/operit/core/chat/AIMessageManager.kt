@@ -688,9 +688,7 @@ object AIMessageManager {
         chatId: String? = null
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
-        val previousSummary = if (lastSummaryIndex != -1)
-            com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forSummary(messages[lastSummaryIndex].content).trim()
-        else null
+        val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
 
         val messagesToSummarize = when {
             lastSummaryIndex == -1 -> messages.filter { it.sender == "user" || it.sender == "ai" }
@@ -1387,7 +1385,7 @@ object AIMessageManager {
                     "summary" ->
                         PromptTurn(
                             kind = PromptTurnKind.SUMMARY,
-                            content = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forSummary(message.content)
+                            content = message.content
                         )
                     else -> null
                 }

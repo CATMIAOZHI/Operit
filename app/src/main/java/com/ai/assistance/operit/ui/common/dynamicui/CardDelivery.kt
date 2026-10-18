@@ -79,10 +79,6 @@ internal object CardTranscript {
     /** A shown card: "```a2ui" or "```a2ui card-2" (the name the model placed), its document, "```". */
     private val block = Regex("(?m)^```a2ui(?:[ \\t]+(card-\\d{1,2}))?[ \\t]*\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$")
     private const val REVIEW_HEAD = "[Dynamic UI card shown to the user here"
-    /** A summary line an older build let the model copy into its answer; it shows nothing useful. */
-    private val copiedSummary = Regex("(?m)^[ \\t]*\\[Dynamic UI card shown to the user here[^\\n]*(?:\\n|$)")
-    /** The same line inside an older chat summary, where it quoted a card the AI had shown. */
-    private val summaryQuote = Regex("\\[Dynamic UI card shown to the user here(?:\\. Visible content: )?([^\\]\\n]*)\\]")
     private const val MAX_SUMMARY = 1200
     private val structural = setOf(
         "version", "surfaceId", "catalogId", "id", "component", "child", "children", "path", "call",
@@ -95,27 +91,16 @@ internal object CardTranscript {
     /**
      * The answer as the model wrote it: each shown card goes back to its reference. Cards stored
      * before the name was kept are numbered in order, which is how a turn names them.
+     * Any other text, including lines an older build let the model copy, goes back unchanged.
      */
     fun forModel(content: String): String {
-        // Old answers may hold a copied summary line; giving it back would teach the copy again.
-        val cleaned = if (content.contains(REVIEW_HEAD)) content.replace(copiedSummary, "") else content
-        if (!cleaned.contains("```a2ui")) return cleaned
+        if (!content.contains("```a2ui")) return content
         var ordinal = 0
-        return block.replace(cleaned) { match ->
+        return block.replace(content) { match ->
             ordinal++
             "```a2ui-ref\n" + match.groupValues[1].ifEmpty { "card-$ordinal" } + "\n```"
         }
     }
-
-    /**
-     * An older chat summary may quote cards with the app's English line; the model copied that line
-     * from history, so a summary going back to it gets a plain note instead.
-     */
-    fun forSummary(content: String): String =
-        if (!content.contains(REVIEW_HEAD)) content
-        else content.replace(summaryQuote) { match ->
-            match.groupValues[1].trim().let { if (it.isEmpty()) "(card)" else "(card: $it)" }
-        }
 
     /**
      * [maxSummary] bounds summary prompts; memory learning passes a larger bound to keep the whole
