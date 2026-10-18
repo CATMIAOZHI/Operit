@@ -201,9 +201,17 @@ object MemoryLearningCoordinator {
 
     suspend fun prepareReview(context: Context, profileId: String, chatId: String, turnKey: String?,
                               toolIterations: Int = 0) {
-        if (profileId in deletedProfiles || !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
+        if (profileId in deletedProfiles || !reviewEnabled(context, profileId)) return
         if (turnKey != null) prepared[chatId to turnKey]=Prepared(profileId,toolIterations)
     }
+
+    /**
+     * An Orbit reviews every chat it has (main and side chats, into its one memory) whatever the
+     * app-wide switch says; other memory spaces follow that switch.
+     */
+    private suspend fun reviewEnabled(context: Context, profileId: String): Boolean =
+        MemorySearchSettingsPreferences.isOrbitSpace(profileId) ||
+            ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()
 
     /** Called only after the matching foreground turn's final messages have been persisted. */
     suspend fun sourceCommitted(context: Context, chatId: String, turnKey: String, revisedTimestamp: Long? = null) {
@@ -244,7 +252,7 @@ object MemoryLearningCoordinator {
                 delay(settings.learningDelayMinutes() * 60_000L)
                 while (true) {
                     if (profileId in deletedProfiles) return@launch
-                    if (!ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return@launch
+                    if (!reviewEnabled(context, profileId)) return@launch
                     val journal=MemoryLearningJournal(context,profileId,chatId)
                     val notes=journal.pending("notes") && settings.shouldExtractNewMemory()
                     val skills=journal.pending("skills") && settings.shouldExtractSkills()
@@ -293,7 +301,7 @@ object MemoryLearningCoordinator {
             if (manual) error(reason)
             return
         }
-        if (!manual && !ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()) return
+        if (!manual && !reviewEnabled(context, profileId)) return
         val db = AppDatabase.getDatabase(context)
         val chat = db.chatDao().getChatById(chatId)
         if (chat == null) {

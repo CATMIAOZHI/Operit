@@ -119,7 +119,8 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
             )
         }
     }
-    fun shouldExtractNewMemory(): Boolean = searchPrefs.getBoolean("extract_new_memory", true)
+    // Every Orbit conversation goes through memory review; only ordinary spaces can turn it off.
+    fun shouldExtractNewMemory(): Boolean = isOrbitSpace(profileId) || searchPrefs.getBoolean("extract_new_memory", true)
     fun setExtractNewMemory(enabled: Boolean) {
         searchPrefs.edit().putBoolean("extract_new_memory", enabled).apply()
     }

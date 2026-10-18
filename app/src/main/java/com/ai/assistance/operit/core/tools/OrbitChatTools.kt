@@ -19,6 +19,7 @@ import org.json.JSONObject
 internal object OrbitChatTools {
     const val CHAT = "orbit_chat"
     const val REACT = "orbit_react"
+    const val NOTHING_TO_DO = com.ai.assistance.operit.features.orbit.OrbitReactionNotice.NOTHING_TO_DO
 
     val chatPrompt = ToolPrompt(
         name = CHAT,
@@ -31,7 +32,7 @@ internal object OrbitChatTools {
         ),
         details = """
   - 侧聊是和用户的另一段一对一聊天，有自己的标题和记录。用户想为某件事单独开一个聊天时用 create；用户自己也能在页面上开。
-  - 每个聊天的记录是分开的。用户提到在另一个聊天里做过的事，先 list 找到那个聊天，再 read 读原话，不要凭印象回答。
+  - 主聊天和所有侧聊共用你的同一份记忆。找用户以前说过的话，用 search_chat_history，它会一起搜主聊天和全部侧聊。要读某个聊天最近的原话，先 list 找到它，再 read。
   - 在哪个聊天里安排的提醒和定时任务，结果就回到哪个聊天。
 """,
     )
@@ -48,6 +49,21 @@ internal object OrbitChatTools {
   - 有意义才点，不要每条都点。点了表情照样可以回复文字。
 """,
     )
+
+    val nothingToDoPrompt = ToolPrompt(
+        name = NOTHING_TO_DO,
+        description = "这一轮什么都不做、什么都不说，安静结束。用户只是点表情表示满意、喜欢，不需要你回应时调用。",
+        parametersStructured = emptyList(),
+        details = """
+  - 调用后这一轮立刻结束，用户在聊天里看不到任何东西。
+  - 不要先写一段话再调用它；要安静就只调用它。
+  - 用户在等你做事或回答时不要用它。
+""",
+    )
+
+    /** Ends the turn without a word, so a pleased tapback gets no reply. */
+    fun executeNothingToDo(context: Context, tool: AITool): ToolResult =
+        ToolResult(NOTHING_TO_DO, true, StringResultData("Staying quiet."), interruptTurn = true)
 
     fun executeChat(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         try {
@@ -70,7 +86,7 @@ internal object OrbitChatTools {
                     val saved = OrbitPreferences.getInstance(context).current().orbits
                         .firstOrNull { it.id == orbit.id }?.sideChats?.firstOrNull { it.chatId == id }?.title ?: title
                     JSONObject().put("chat_id", id).put("title", saved)
-                        .put("note", "The user opens it from the chats button at the top right of the Orbit page.")
+                        .put("note", "The user opens it from the menu button at the top left of the Orbit page.")
                 }
                 "read" -> {
                     val id = args["chat_id"]?.trim().orEmpty()

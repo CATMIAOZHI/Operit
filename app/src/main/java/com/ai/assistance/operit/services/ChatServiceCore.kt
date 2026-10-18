@@ -481,6 +481,22 @@ class ChatServiceCore(
     val isSummarizing: StateFlow<Boolean>
         get() = messageCoordinationDelegate.isSummarizing
 
+    /** A summary started by a send, which holds that message until it is done. */
+    val isSendTriggeredSummarizing: StateFlow<Boolean>
+        get() = messageCoordinationDelegate.isSendTriggeredSummarizing
+
+    /**
+     * Sends a message to an existing chat and says whether it was taken. A refused send (the chat
+     * is busy or summarizing) returns false and touches nothing else.
+     */
+    fun trySendUserMessageToExistingChat(chatId: String, messageText: String, turnOptions: ChatTurnOptions): Boolean =
+        messageCoordinationDelegate.trySendUserMessageToExistingChat(
+            promptFunctionType = PromptFunctionType.CHAT,
+            chatId = chatId,
+            messageText = messageText,
+            turnOptions = turnOptions,
+        )
+
     // 聊天历史相关
     val chatHistory: StateFlow<List<ChatMessage>>
         get() = chatHistoryDelegate.chatHistory
