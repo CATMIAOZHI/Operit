@@ -1,6 +1,11 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -33,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.OrbitActionEntity
@@ -72,7 +78,9 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     var errorDetail by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
     var confirmCancel by remember { mutableStateOf<OrbitTaskEntity?>(null) }
-    var resolveReceipt by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
+    // The task id is kept with the choice, so the answer lands on that task even if the page
+    // has started going back to the list.
+    var resolveReceipt by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
     var executionRecord by remember { mutableStateOf<String?>(null) }
     // Results of a button press show next to the buttons, where the user is looking.
     var actionError by remember { mutableStateOf<String?>(null) }
@@ -131,10 +139,28 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
         }
     }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        val shown = selected
-        if (shown == null) {
-            TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
-        } else key(shown) {
+        // Opening a task pushes its page in from the right over the list, which slides a little
+        // to the left underneath, like iOS; going back plays it in reverse.
+        val pageColor = MaterialTheme.colorScheme.background
+        AnimatedContent(
+            targetState = selected,
+            transitionSpec = {
+                val spec = tween<IntOffset>(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)
+                val forward = initialState == null && targetState != null
+                if (forward) {
+                    (slideInHorizontally(spec) { it } togetherWith slideOutHorizontally(spec) { -it * 3 / 10 })
+                        .apply { targetContentZIndex = 1f }
+                } else {
+                    (slideInHorizontally(spec) { -it * 3 / 10 } togetherWith slideOutHorizontally(spec) { it })
+                        .apply { targetContentZIndex = -1f }
+                }
+            },
+            label = "orbitTaskPush",
+        ) { shown ->
+          Box(Modifier.fillMaxSize().background(pageColor)) {
+            if (shown == null) {
+                TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+            } else key(shown) {
             TaskDetail(
                 orbitId = orbitId,
                 taskId = shown,
@@ -151,9 +177,11 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                 action = ::action,
                 onNotice = { notice = it },
                 onCancel = { confirmCancel = it },
-                onResolve = { id, completed -> resolveReceipt = id to completed },
+                onResolve = { id, completed -> resolveReceipt = Triple(shown, id, completed) },
                 onRecord = { id -> action { executionRecord = repository.executionRecord(id) } },
             )
+            }
+          }
         }
     }
 
@@ -178,24 +206,63 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
         }
     }
     confirmCancel?.let { task ->
-        AlertDialog(onDismissRequest = { confirmCancel = null },
-            title = { Text(stringResource(R.string.orbit_task_cancel)) },
-            text = { Text(stringResource(R.string.orbit_task_cancel_message, task.title)) },
-            confirmButton = { TextButton(onClick = {
-                confirmCancel = null
-                action { check(repository.changeState(orbitId, task.id, "CANCELLED")) }
-            }) { Text(stringResource(R.string.orbit_task_cancel), color = com.ai.assistance.operit.ui.common.readableErrorColor()) } },
-            dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(stringResource(R.string.cancel)) } })
+        TaskConfirmSheet(
+            icon = "circle-x",
+            title = stringResource(R.string.orbit_task_cancel),
+            message = stringResource(R.string.orbit_task_cancel_message, task.title),
+            confirmText = stringResource(R.string.orbit_task_cancel),
+            dismissText = stringResource(R.string.orbit_task_keep),
+            destructive = true,
+            onDismiss = { confirmCancel = null },
+        ) {
+            confirmCancel = null
+            action { check(repository.changeState(orbitId, task.id, "CANCELLED")) }
+        }
     }
-    resolveReceipt?.let { (id, completed) ->
-        AlertDialog(onDismissRequest = { resolveReceipt = null },
-            title = { Text(stringResource(if (completed) R.string.orbit_action_verified else R.string.orbit_action_retry_allowed)) },
-            text = { Text(stringResource(R.string.orbit_action_verify_confirm)) },
-            confirmButton = { TextButton(onClick = {
-                resolveReceipt = null
-                selected?.let { taskId -> action { repository.resolveAction(orbitId, taskId, id, completed) } }
-            }) { Text(stringResource(android.R.string.ok)) } },
-            dismissButton = { TextButton(onClick = { resolveReceipt = null }) { Text(stringResource(R.string.cancel)) } })
+    resolveReceipt?.let { (taskId, id, completed) ->
+        val label = stringResource(if (completed) R.string.orbit_action_verified else R.string.orbit_action_retry_allowed)
+        TaskConfirmSheet(
+            icon = if (completed) "circle-check" else "rotate-ccw",
+            title = label,
+            message = stringResource(R.string.orbit_action_verify_confirm),
+            confirmText = label,
+            dismissText = stringResource(R.string.cancel),
+            destructive = false,
+            onDismiss = { resolveReceipt = null },
+        ) {
+            resolveReceipt = null
+            action { repository.resolveAction(orbitId, taskId, id, completed) }
+        }
+    }
+}
+
+/** A confirmation as a bottom sheet: a round icon, what will happen, and two full-width pills. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TaskConfirmSheet(
+    icon: String,
+    title: String,
+    message: String,
+    confirmText: String,
+    dismissText: String,
+    destructive: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: () -> Unit,
+) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            TaskIcon(icon, size = 56.dp, iconSize = 26.dp, background = taskCardColor())
+            Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            Text(message, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center, modifier = Modifier.padding(horizontal = 8.dp))
+            Spacer(Modifier.height(4.dp))
+            TaskButton(confirmText, icon, primary = !destructive, destructive = destructive, onClick = onConfirm)
+            TaskButton(dismissText, "x", onClick = onDismiss)
+        }
     }
 }
 
@@ -617,15 +684,17 @@ private fun TaskButton(
     icon: String,
     modifier: Modifier = Modifier,
     primary: Boolean = false,
+    destructive: Boolean = false,
     enabled: Boolean = true,
     onClick: () -> Unit,
 ) {
+    val (red, onRed) = com.ai.assistance.operit.ui.common.destructiveButtonColors()
     Surface(
         onClick = onClick,
         enabled = enabled,
         shape = CircleShape,
-        color = if (primary) MaterialTheme.colorScheme.onSurface else taskCardColor(),
-        contentColor = if (primary) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+        color = when { destructive -> red; primary -> MaterialTheme.colorScheme.onSurface; else -> taskCardColor() },
+        contentColor = when { destructive -> onRed; primary -> MaterialTheme.colorScheme.surface; else -> MaterialTheme.colorScheme.onSurface },
         modifier = modifier.fillMaxWidth().heightIn(min = 52.dp).alpha(if (enabled) 1f else 0.4f),
     ) {
         Row(
