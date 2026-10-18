@@ -36,6 +36,11 @@ data class OrbitTaskEntity(
     @ColumnInfo(defaultValue = "''") val calendarRule: String = "",
     /** Per-run time limit in minutes; 0 uses the default. */
     @ColumnInfo(defaultValue = "0") val timeoutMinutes: Int = 0,
+    /**
+     * False (the default): when due, Orbit is woken in its own chat and handles it there. True: a
+     * background subagent does the work and hands its result to Orbit, which then tells the user.
+     */
+    @ColumnInfo(defaultValue = "0") val useSubagent: Boolean = false,
 )
 
 @Entity(tableName = "orbit_events", indices = [Index("taskId")])
@@ -83,6 +88,9 @@ data class OrbitRunEntity(
 
         /** A check skipped because its source was not ready yet (the notification listener still binding). */
         const val SKIPPED = "@skipped"
+
+        /** Handed to Orbit in its chat; that chat turn is the record, so the run stays off the activity list. */
+        const val IN_CHAT = "@in_chat"
     }
 }
 

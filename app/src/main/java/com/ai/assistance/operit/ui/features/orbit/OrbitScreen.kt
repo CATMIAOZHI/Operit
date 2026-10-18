@@ -57,6 +57,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
+import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Person
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -103,6 +104,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -258,6 +260,10 @@ private fun OrbitChatPage(
     var showChats by remember { mutableStateOf(false) }
     var showVault by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    // Developer option: the same chat drawn as a normal Operit chat (thinking, tools, hidden turns,
+    // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
+    var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
+    val devView = devChatView && settings.developerMode
     // Reports that reached a chat the user is not looking at show as a dot until it is opened.
     val unreadChats by com.ai.assistance.operit.features.orbit.OrbitDelivery.unreadChats.collectAsState()
     val reactions by remember(orbit.id, currentChatId) {
@@ -369,7 +375,8 @@ private fun OrbitChatPage(
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
-        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile) { tab = OrbitTab.CHAT }
+        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView) { tab = OrbitTab.CHAT }
+        BackHandler(enabled = devView && !showProfile && !showChats) { devChatView = false }
         // While the menu is open, screen readers only see the menu, not the page behind it.
         Column(
             Modifier.fillMaxSize().then(
@@ -378,21 +385,30 @@ private fun OrbitChatPage(
         ) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 CompositionLocalProvider(
-                    LocalOrbitChatLook provides true,
+                    LocalOrbitChatLook provides !devView,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
                 ) {
                     chatContent(currentChatId) {
-                        OrbitHeader(
-                            orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
-                            onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
-                        )
+                        if (devView) {
+                            OrbitDevHeader(
+                                orbit = orbit, currentChatId = currentChatId,
+                                onSelectChat = { talkChatId = it },
+                                onExit = { devChatView = false },
+                            )
+                        } else {
+                            OrbitHeader(
+                                orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
+                                onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                            )
+                        }
                     }
                 }
                 // Tabs switch at once, like an iOS tab bar: a fade would let the chat underneath show
                 // through for a moment. Each page draws the same header in the same place as the
                 // chat, so Orbit's picture stays put on top while the content changes.
-                if (tab != OrbitTab.CHAT) {
+                if (tab != OrbitTab.CHAT && !devView) {
                     val tabHeader: @Composable () -> Unit = remember(orbit) {
                         {
                             OrbitHeader(
@@ -408,7 +424,7 @@ private fun OrbitChatPage(
                 }
             }
             // Hidden while typing so the input sits right on the keyboard.
-            if (!imeVisible) {
+            if (!imeVisible && !devView) {
                 OrbitBottomBar(selected = tab, onSelect = {
                     if (it != OrbitTab.CHAT) pageTab = it
                     tab = it
@@ -481,6 +497,14 @@ private fun OrbitChatPage(
                         onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
                         onOpenUser = { push(OrbitSubPage.USER) },
                         onOpenFiles = { push(OrbitSubPage.FILES) },
+                        developerMode = settings.developerMode,
+                        onOpenRawChat = {
+                            // Back on the chat, now drawn as a normal Operit chat.
+                            devChatView = true
+                            tab = OrbitTab.CHAT
+                            stackNames = ""
+                            showProfile = false
+                        },
                     )
                 }
                 AnimatedContent(
@@ -528,7 +552,7 @@ private fun OrbitChatPage(
                                 OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
                                     openTaskId = taskId
                                     push(OrbitSubPage.TASK)
-                                })
+                                }, developer = settings.developerMode)
                             } else {
                                 LaunchedEffect(Unit) { pop() }
                             }
@@ -708,6 +732,105 @@ internal fun OrbitHeader(
     }
 }
 
+/**
+ * Top of the developer view: the same chat drawn as a normal Operit chat. A round button leaves it,
+ * and the pill in the middle names the chat and switches between Orbit's main and side chats.
+ */
+@Composable
+private fun OrbitDevHeader(
+    orbit: OrbitProfile,
+    currentChatId: String,
+    onSelectChat: (String) -> Unit,
+    onExit: () -> Unit,
+) {
+    val pageColor = MaterialTheme.colorScheme.background
+    val mainTitle = stringResource(R.string.orbit_chats_main)
+    val chats = remember(orbit, mainTitle) {
+        listOf(orbit.chatId to mainTitle) + orbit.sideChats.map { it.chatId to it.title }
+    }
+    val currentTitle = chats.firstOrNull { it.first == currentChatId }?.second ?: mainTitle
+    var pickerOpen by remember { mutableStateOf(false) }
+    Box(
+        modifier =
+            Modifier.fillMaxWidth()
+                .background(
+                    Brush.verticalGradient(
+                        0f to pageColor,
+                        0.6f to pageColor.copy(alpha = 0.94f),
+                        1f to pageColor.copy(alpha = 0f),
+                    )
+                )
+                .statusBarsPadding()
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 14.dp)
+    ) {
+        OrbitCircleButton(
+            icon = orbitIcon("chevron-left"),
+            contentDescription = stringResource(R.string.orbit_dev_view_exit),
+            onClick = onExit,
+            modifier = Modifier.align(Alignment.TopStart),
+        )
+        Box(Modifier.align(Alignment.TopCenter).padding(top = 4.dp)) {
+            val switchLabel = stringResource(R.string.orbit_dev_view_switch_chat)
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surface,
+                border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
+                shadowElevation = 3.dp,
+                modifier =
+                    Modifier.widthIn(max = 240.dp)
+                        .clip(RoundedCornerShape(50))
+                        .clickable(enabled = chats.size > 1, onClickLabel = switchLabel,
+                            role = androidx.compose.ui.semantics.Role.DropdownList) { pickerOpen = true },
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.padding(start = 18.dp, end = if (chats.size > 1) 10.dp else 18.dp, top = 6.dp, bottom = 6.dp),
+                ) {
+                    Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(
+                            text = stringResource(R.string.orbit_dev_view_title),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.tertiary,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(
+                            text = "${orbit.name.ifBlank { stringResource(R.string.nav_orbit) }} · $currentTitle",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    if (chats.size > 1) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp).size(20.dp),
+                        )
+                    }
+                }
+            }
+            DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
+                chats.forEach { (id, title) ->
+                    val isCurrent = id == currentChatId
+                    DropdownMenuItem(
+                        text = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                        trailingIcon = if (isCurrent) {
+                            { Icon(orbitIcon("check"), contentDescription = null, modifier = Modifier.size(18.dp)) }
+                        } else null,
+                        modifier = Modifier.semantics { selected = isCurrent },
+                        onClick = {
+                            pickerOpen = false
+                            onSelectChat(id)
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
 /** Orbit's own picture, or a role card's avatar in the picker. */
 @Composable
 internal fun OrbitAvatar(
@@ -805,6 +928,16 @@ private fun OrbitSettingsSheet(
         }
     val showRunning =
         running || runRequestedAt?.let { requestedAt -> settings.lastRunAt < requestedAt } == true
+    // A run that found the chat busy is put off without a record; once the work has started and
+    // stopped, or after a while with nothing happening, the button is free again.
+    var sawRunning by remember { mutableStateOf(false) }
+    LaunchedEffect(running) {
+        if (running) sawRunning = true
+        else if (sawRunning) { sawRunning = false; runRequestedAt = null }
+    }
+    LaunchedEffect(runRequestedAt) {
+        if (runRequestedAt != null) { kotlinx.coroutines.delay(90_000); if (!running) runRequestedAt = null }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -984,6 +1117,22 @@ private fun OrbitSettingsSheet(
                         icon = lucide("download"),
                         searchable = false,
                         onClick = onOpenImport,
+                    )
+                }
+            }
+
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_developer),
+                    icon = lucide("code-xml"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsSwitchRow(
+                        title = stringResource(R.string.orbit_developer_switch),
+                        subtitle = stringResource(R.string.orbit_developer_switch_desc),
+                        checked = settings.developerMode,
+                        searchable = false,
+                        onCheckedChange = { enabled -> scope.launch { preferences.setDeveloperMode(enabled) } },
                     )
                 }
             }

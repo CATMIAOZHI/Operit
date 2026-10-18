@@ -116,7 +116,8 @@ fun BubbleAiMessageComposable(
     val bubbleWideLayoutEnabled = settings.layout.wide
     val showThinkingProcess = settings.layout.thinking
     val showStatusTags = settings.layout.status
-    val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
+    val effectiveShowThinkingProcess = forceShowThinkingProcess || showThinkingProcess ||
+        com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
     val avatarShapePref = settings.identity.shape
     val avatarCornerRadius = settings.identity.radius
     val showModelProvider = settings.identity.provider && !orbitLook

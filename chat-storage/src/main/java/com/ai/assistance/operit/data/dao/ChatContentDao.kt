@@ -111,6 +111,7 @@ abstract class ChatContentDao {
         FROM messages m JOIN chats c ON c.id=m.chatId
         WHERE c.id=:chatId AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
         AND m.sender IN ('user','ai') AND m.messageId>=:fromId AND m.messageId<=:horizon
+        AND m.displayMode!='HIDDEN_PLACEHOLDER'
         ORDER BY m.messageId LIMIT 1
     """)
     abstract suspend fun nextLearningSource(chatId: String, fromId: Long, horizon: Long): ChatRecallPart?
@@ -127,6 +128,21 @@ abstract class ChatContentDao {
         AND m.sender IN ('user','ai')
     """)
     abstract suspend fun readLearningMessageBytes(id: Long, byteOffset: Long): ByteArray?
+
+    /**
+     * Whether a learning source message has no text at all (a reply that was cut off or only ended
+     * quietly); null when the message is gone. SQLite hands an empty text back as no bytes, which
+     * [readLearningMessageBytes] cannot tell apart from a missing message.
+     */
+    @Query("""
+        SELECT COALESCE(LENGTH(COALESCE(v.content,m.content)),0)=0
+        FROM messages m JOIN chats c ON c.id=m.chatId
+        LEFT JOIN message_variants v ON v.chatId=m.chatId AND v.messageTimestamp=m.timestamp
+            AND v.variantIndex=m.selectedVariantIndex
+        WHERE m.messageId=:id AND c.isHidden=0 AND c.chatKind='NORMAL' AND c.parentChatId IS NULL
+        AND m.sender IN ('user','ai')
+    """)
+    abstract suspend fun learningMessageIsEmpty(id: Long): Boolean?
 
     @Query("""
         SELECT c.id AS chatId, c.title, c.updatedAt, c.characterCardName AS profile

@@ -11,7 +11,7 @@ internal object OrbitTaskTools {
     const val NAME = "orbit_task"
     val prompt = ToolPrompt(
         name = NAME,
-        description = "安排当前 Orbit 以后继续处理的事情。后台复用现有工具和自动审核快速，可暂停、取消、查询执行记录或根据用户答复继续。",
+        description = "安排当前 Orbit 以后继续处理的事情。到点时默认在安排它的聊天里叫醒你本人处理；也可以交给后台子代理做完再把结果交回给你。可暂停、取消、查询执行记录或根据用户答复继续。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run/pending（列出在等用户答复、等核实、或最近一次运行失败的任务；waiting_for 是在等什么或失败原因，unverified_actions 是还没核实结果的操作）"),
             ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型；WATCH：盯通知、短信、日历或小脚本，内容没变就不叫醒你", required = false),
@@ -31,16 +31,18 @@ internal object OrbitTaskTools {
             ToolParameterSchema("url", description = "创建时需要检查的 http(s) 网页，不带账号密码；仅执行 GET", required = false),
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
-            ToolParameterSchema("timeout_minutes", "integer", "单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务。超过8分钟的任务会切到前台运行并显示一条通知", false),
+            ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
+            ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务。超过8分钟的任务会切到前台运行并显示一条通知", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
             "“每天几点”用 DAILY+daily_time；“每周几几点”用 WEEKLY+repeat_on+daily_time；“每月几号”用 MONTHLY+repeat_on+daily_time；" +
             "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
             "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
-            "每次运行默认最多5分钟；步骤多或耗时长的任务（多个网页、多个子代理、长时间监控）按需调大 timeout_minutes，最多1440分钟。超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟。" +
-            "后台与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
+            "到点时默认在安排它的聊天里给你一条隐藏的“到点了”消息，你带着完整的聊天上下文自己处理，用户只看到你说的话；提醒就直接用自己的话提醒，不需要额外设置。" +
+            "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多5分钟，按需调大 timeout_minutes，最多1440分钟；超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟），结果交回给你后再由你告诉用户。" +
+            "子代理与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
-            "工具过程保存在执行记录，有价值的正式结果才回到安排它的聊天（主聊天或侧聊）。" +
+            "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
             "现成来源不够时写一个只读的小脚本（比如查一个接口、看一个文件），只输出要比较的内容，不要输出时间戳这类每次都变的东西。" +
@@ -77,6 +79,7 @@ internal object OrbitTaskTools {
                     ?: if (mode == "DAILY" || calendar) error("$mode needs daily_time (HH:mm)") else 0,
                 calendarRule = arguments["repeat_on"].orEmpty(),
                 timeoutMinutes = parseTimeout(arguments["timeout_minutes"]) ?: 0,
+                useSubagent = parseFlag(arguments["use_subagent"]) ?: false,
                 // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
                 // running task: its reports go where that task reports.
                 chatId = reportChatId(context, orbit, runtime?.callerChatId)))
@@ -105,13 +108,15 @@ internal object OrbitTaskTools {
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
                         arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute,
                         arguments["repeat_on"]?.takeIf { it.isNotBlank() } ?: task.calendarRule,
-                        parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes))
+                        parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes,
+                        parseFlag(arguments["use_subagent"]) ?: task.useSubagent))
                     "detail" -> json(task).put("executionRecord", repository.executionRecord(id))
                         .put("lastRun", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
                             .put("error", it.error).put("finishedAt", it.finishedAt)
                             .put("decision", when (it.decision) {
                                 OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
+                                OrbitRunEntity.IN_CHAT -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_in_chat)
                                 OrbitRunEntity.SKIPPED -> com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, task)
                                 else -> it.decision
                             })
@@ -211,8 +216,17 @@ internal object OrbitTaskTools {
         return number.toInt()
     }
 
+    /** Null when the model left it out; anything but true/false is rejected. */
+    private fun parseFlag(value: String?): Boolean? = when (value?.trim()?.lowercase()) {
+        null, "" -> null
+        "true", "1", "yes" -> true
+        "false", "0", "no" -> false
+        else -> error("use_subagent must be true or false")
+    }
+
     private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
         .put("kind", task.kind)
+        .put("use_subagent", task.useSubagent)
         .put("schedule_mode", task.scheduleMode).put("goal_id", task.goalId).put("trigger_task_id", task.triggerTaskId)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)

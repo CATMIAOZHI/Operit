@@ -70,7 +70,8 @@ fun AiMessageComposable(
     val displayPreferencesManager = remember { DisplayPreferencesManager.getInstance(context) }
     val showThinkingProcess by preferencesManager.showThinkingProcess.collectAsState(initial = true)
     val showStatusTags by preferencesManager.showStatusTags.collectAsState(initial = true)
-    val effectiveShowThinkingProcess = if (forceShowThinkingProcess) true else showThinkingProcess
+    val effectiveShowThinkingProcess = forceShowThinkingProcess || showThinkingProcess ||
+        com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
     
     val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val showModelProviderPref by preferencesManager.showModelProvider.collectAsState(initial = true)

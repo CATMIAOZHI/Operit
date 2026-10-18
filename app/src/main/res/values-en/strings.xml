@@ -1916,7 +1916,7 @@
     
     <!-- Manual Memory Update -->
     <string name="manual_memory_update">Organize graph memory now</string>
-    <string name="manual_memory_update_desc">Organize useful content from this conversation into the legacy graph now, regardless of the automatic saving switch. To extract notes and skills, use conversation history in the memory library.</string>
+    <string name="manual_memory_update_desc">Organize useful content from this conversation into the legacy graph now, regardless of the automatic saving switch. Notes and skills come from automatic learning.</string>
     <string name="manual_conversation_summary">Manual Conversation Summary</string>
     <string name="manual_conversation_summary_desc">Immediately trigger a conversation summary to compress context and keep key points from both sides. Useful for long chats or before sending new messages.</string>
     
@@ -3205,7 +3205,7 @@
     <string name="memory_space_name">Memory space name</string>
     <string name="memory_space_delete_warning">Delete “%1$s” and all memories in it? This cannot be undone.</string>
     <string name="memory_auto_update">Auto-save memory (master)</string>
-    <string name="memory_auto_update_desc">Global master switch for automatic learning. Off stops automatic graph, notes and skill extraction. On follows the individual paths in Memory library → Automatic saving. Manual extraction is unaffected.</string>
+    <string name="memory_auto_update_desc">Global master switch for automatic learning. Off stops automatic graph, notes and skill extraction. On follows the individual paths in Memory library → Automatic saving.</string>
     <string name="memory_auto_update_runtime_status">Graph auto-save: %1$d candidate(s) pending, next check in about %2$d minute(s)</string>
     <string name="memory_auto_update_runtime_paused">Graph auto-save is off; %1$d pending candidate(s) are kept and will not run automatically</string>
     <string name="memory_auto_update_runtime_paused_master">The master switch is off, so automatic graph, notes and skill extraction are all paused; %1$d pending candidate(s) are kept</string>
@@ -9429,6 +9429,9 @@
     <string name="orbit_watch_calendar">Watches the calendar for the next %1$d days</string>
     <string name="orbit_watch_script">Runs the script %1$s and watches its output</string>
     <string name="orbit_decision_unchanged">Nothing changed, so Orbit stayed quiet</string>
+    <string name="orbit_decision_in_chat">Orbit was woken in the chat and decided what to tell you</string>
+    <string name="orbit_task_in_chat">When it\'s due, Orbit handles it in the chat; if you\'re in the middle of a conversation, it waits a moment</string>
+    <string name="orbit_run_in_chat">Handed to Orbit in the chat</string>
     <string name="orbit_decision_watch_failed">Could not read anything this time, so nothing was checked; it tries again at the next check</string>
     <string name="orbit_watch_needs_notifications">Operit has no notification access, so it cannot read notifications. Turn on notification access for Operit in system settings.</string>
     <string name="orbit_watch_needs_sms">Operit is not allowed to read text messages. Allow SMS for Operit in the app permissions in system settings.</string>
@@ -9463,8 +9466,11 @@
     <string name="orbit_library_pinned">Pinned</string>
     <string name="orbit_export_row">Export data</string>
     <string name="orbit_export_running">Preparing…</string>
-    <string name="orbit_export_row_desc">Files, memory, task records and chat in one zip</string>
+    <string name="orbit_export_row_desc">Files, memory, task records and chat history in one zip</string>
     <string name="orbit_export_failed">Export failed. Try again later.</string>
+    <string name="orbit_export_confirm_title">Export Orbit data?</string>
+    <string name="orbit_export_confirm_message">Files, memory, task records and chat history will be packed into one zip. It may contain private content, so check before sharing.</string>
+    <string name="orbit_export_confirm">Export</string>
     <string name="orbit_decision_no_active_goals">No active goals, so no briefing this time</string>
     <string name="orbit_routine_source_chat">Reads the recent Orbit conversation</string>
     <string name="orbit_routine_source_goals">Reads your active goals</string>
@@ -9493,6 +9499,7 @@
     <string name="orbit_chats_search_label">Search side chats</string>
     <string name="orbit_chats_empty_hint">Use a side chat for one topic. It shares memory with the main chat.</string>
     <string name="orbit_work_reaction_title">You reacted %1$s</string>
+    <string name="orbit_work_scheduled_title">Scheduled: %1$s</string>
     <string name="orbit_reaction_label">Orbit reacted with %1$s</string>
     <string name="orbit_user_reaction_label">You reacted with %1$s</string>
     <string name="orbit_react_with">React with %1$s</string>
@@ -9525,6 +9532,40 @@
     <string name="orbit_vault_delete_title">Delete this sign-in or key?</string>
     <string name="orbit_vault_delete_confirm">This item for %1$s will be deleted for good.</string>
     <string name="orbit_section_privacy">Privacy and data</string>
+    <string name="orbit_section_developer">Developer</string>
+    <string name="orbit_developer_switch">Developer mode</string>
+    <string name="orbit_developer_switch_desc">Shows \"Raw conversation\" at the top of the task list: Orbit\'s chat opened in the normal chat screen, with all thinking and tool calls, and messages hidden in the chat (such as tapback notices and quiet endings) labeled. Background task details also show their full instructions.</string>
+    <string name="orbit_dev_raw_row">Raw conversation</string>
+    <string name="orbit_dev_raw_row_desc">Developer: open it in the normal chat screen, with thinking, tools and hidden messages</string>
+    <string name="orbit_dev_raw_user">User</string>
+    <string name="orbit_dev_raw_ai">AI</string>
+    <string name="orbit_dev_raw_hidden">Hidden in chat · %1$s</string>
+    <string name="orbit_dev_mode_placeholder">System notice</string>
+    <string name="orbit_dev_mode_intermediate">Intermediate reply</string>
+    <string name="orbit_dev_mode_delivered">Delivered by a tool</string>
+    <string name="orbit_dev_mode_subagent">Subagent event</string>
+    <string name="orbit_dev_mode_other">Other</string>
+    <string name="orbit_dev_raw_usage">%1$s · in %2$d (cached %3$d) · out %4$d</string>
+    <string name="orbit_dev_view_title">Developer view</string>
+    <string name="orbit_dev_view_exit">Leave developer view</string>
+    <string name="orbit_dev_view_switch_chat">Switch chat</string>
+    <string name="orbit_dev_hidden_badge">Hidden in chat</string>
+    <string name="orbit_emoji_more">More emoji</string>
+    <string name="orbit_emoji_search">Search emoji</string>
+    <string name="orbit_emoji_frequent">Frequently used</string>
+    <string name="orbit_emoji_no_result">No emoji found</string>
+    <string name="orbit_emoji_group_smileys">Smileys and emotions</string>
+    <string name="orbit_emoji_load_failed">Couldn\'t load the emoji list</string>
+    <string name="orbit_sent_card">Sent a card</string>
+    <string name="ai_message_quoted_card">Card</string>
+    <string name="orbit_emoji_group_people">People and body</string>
+    <string name="orbit_emoji_group_animals">Animals and nature</string>
+    <string name="orbit_emoji_group_food">Food and drink</string>
+    <string name="orbit_emoji_group_travel">Travel and places</string>
+    <string name="orbit_emoji_group_activities">Activities</string>
+    <string name="orbit_emoji_group_objects">Objects</string>
+    <string name="orbit_emoji_group_symbols">Symbols</string>
+    <string name="orbit_emoji_group_flags">Flags</string>
     <string name="orbit_vault_row">Password vault</string>
     <string name="orbit_vault_row_desc">See and delete saved passwords and keys</string>
     <string name="orbit_import_row">Import memory from another AI</string>

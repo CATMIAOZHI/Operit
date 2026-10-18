@@ -505,6 +505,13 @@ private fun MessageItem(
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
     val orbitLook = LocalOrbitChatLook.current
     val orbitUserReactions = LocalOrbitUserReactions.current
+    // Developer view of an Orbit chat: label the rows the Orbit chat would hide.
+    val showHiddenRows = LocalShowHiddenChatRows.current
+    val quietOrbitReply = showHiddenRows && message.sender == "ai" && message.contentStream == null &&
+        !message.displayMode.isCollaborationEvent &&
+        com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false &&
+        OrbitSpeech.of(message.content).isBlank()
+    var showEmojiPicker by remember { mutableStateOf(false) }
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
@@ -589,7 +596,12 @@ private fun MessageItem(
             rightAligned = message.sender == "user",
         ) {
         Column {
-            when (chatStyle) {
+            if (quietOrbitReply) {
+                OrbitHiddenInChatBadge(Modifier.padding(start = 12.dp, top = 4.dp, bottom = 2.dp))
+            }
+            if (showHiddenRows && isHiddenUserMessage) {
+                OrbitHiddenUserRow(message.content)
+            } else when (chatStyle) {
                 ChatStyle.CURSOR -> {
                     CursorStyleChatMessage(
                         message = message,
@@ -668,10 +680,20 @@ private fun MessageItem(
             )
         ) {
             if (orbitLook && message.sender == "ai" && orbitUserReactions != null) {
-                OrbitTapbackRow(selected = orbitUserReactions.byMessage[message.timestamp]) { emoji ->
-                    orbitUserReactions.toggle(message.timestamp, emoji)
-                    showContextMenu = false
-                }
+                val current = orbitUserReactions.byMessage[message.timestamp]
+                OrbitTapbackRow(
+                    selected = current,
+                    onPick = { emoji ->
+                        // Taking a reaction off does not count as using that emoji.
+                        if (emoji != current) OrbitEmojiUsage.record(context, emoji)
+                        orbitUserReactions.toggle(message.timestamp, emoji)
+                        showContextMenu = false
+                    },
+                    onMore = {
+                        showContextMenu = false
+                        showEmojiPicker = true
+                    },
+                )
                 HorizontalDivider(
                     modifier = Modifier.padding(vertical = 4.dp),
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
@@ -1064,6 +1086,19 @@ private fun MessageItem(
                 modifier = Modifier.heightIn(min = 44.dp)
                 )
             }
+        }
+
+        if (showEmojiPicker && orbitUserReactions != null) {
+            val current = orbitUserReactions.byMessage[message.timestamp]
+            OrbitEmojiPickerSheet(
+                selected = current,
+                onPick = { emoji ->
+                    if (emoji != current) OrbitEmojiUsage.record(context, emoji)
+                    orbitUserReactions.toggle(message.timestamp, emoji)
+                    showEmojiPicker = false
+                },
+                onDismiss = { showEmojiPicker = false },
+            )
         }
 
         if (enableDialogs && isHiddenUserMessage && showHiddenUserMessageDialog) {

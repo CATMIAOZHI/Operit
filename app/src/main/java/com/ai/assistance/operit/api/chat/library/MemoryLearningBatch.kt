@@ -247,6 +247,12 @@ internal class MemoryLearningSource(
                 position = LearningCursor(row.messageId + 1, thinking = thinking)
                 continue
             }
+            // An empty message has nothing to learn from; skip it instead of reading it, since an
+            // empty text reads back like a message that no longer exists.
+            if (files[row.messageId] == null && dao.learningMessageIsEmpty(row.messageId) == true) {
+                position = LearningCursor(row.messageId + 1, thinking = thinking)
+                continue
+            }
             val prepared = files[row.messageId] ?: run {
                 val file = File.createTempFile("learning-source-", ".txt", context.cacheDir)
                 try {

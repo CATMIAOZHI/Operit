@@ -53,15 +53,20 @@ private data class ProcessRecord(val messages: List<ChatMessage>, val failed: Bo
  * called and what they returned. Read only; the chat itself shows only what was said.
  */
 @Composable
-internal fun OrbitProcessPage(process: OrbitProcess, onBack: () -> Unit, onOpenTask: ((String) -> Unit)?) {
+internal fun OrbitProcessPage(
+    process: OrbitProcess,
+    onBack: () -> Unit,
+    onOpenTask: ((String) -> Unit)?,
+    developer: Boolean = false,
+) {
     val context = LocalContext.current
     BackHandler(onBack = onBack)
     // A background run still working is read again every few seconds until it ends.
-    val record by produceState<ProcessRecord?>(null, process) {
+    val record by produceState<ProcessRecord?>(null, process, developer) {
         var running = (process as? OrbitProcess.TaskRun)?.running == true
         while (true) {
             value = try {
-                ProcessRecord(OrbitWork.messages(context, process), failed = false, running = running)
+                ProcessRecord(OrbitWork.messages(context, process, raw = developer), failed = false, running = running)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -130,14 +135,14 @@ internal fun OrbitProcessPage(process: OrbitProcess, onBack: () -> Unit, onOpenT
                             textAlign = TextAlign.Center,
                         )
                     }
-                else -> ProcessMessages(current.messages)
+                else -> ProcessMessages(current.messages, developer)
             }
         }
     }
 }
 
 @Composable
-private fun ProcessMessages(messages: List<ChatMessage>) {
+private fun ProcessMessages(messages: List<ChatMessage>, developer: Boolean) {
     val colors = MaterialTheme.colorScheme
     // The record always shows every step, whatever the chat's own display settings are.
     CompositionLocalProvider(LocalOrbitChatLook provides false) {
@@ -149,9 +154,18 @@ private fun ProcessMessages(messages: List<ChatMessage>) {
             ) {
                 // A restored chat can hold two rows with one time; the position keeps keys unique.
                 itemsIndexed(messages, key = { index, message -> "${message.timestamp}:$index" }) { _, message ->
-                    if (message.sender == "user") {
+                    if (developer && message.sender == "user") {
+                        // Developers see the whole prompt the run was given, not just the request.
+                        OrbitRawMessage(message)
+                    } else if (message.sender == "user") {
                         YouSaid(OrbitWork.userText(message.content, stringResource(R.string.orbit_user_sent_attachment)))
                     } else {
+                        // Developers see which of Orbit's rows the chat does not show, and why.
+                        androidx.compose.foundation.layout.Column {
+                        if (developer && message.displayMode != com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL) {
+                            // Lined up with the message text, which is inset 16dp.
+                            OrbitHiddenBadge(message.displayMode, Modifier.padding(start = 16.dp, bottom = 4.dp))
+                        }
                         CursorStyleChatMessage(
                             message = message,
                             userMessageColor = colors.surfaceContainerHigh,
@@ -167,6 +181,7 @@ private fun ProcessMessages(messages: List<ChatMessage>) {
                             enableDialogs = true,
                             showAssistantHeader = false,
                         )
+                        }
                     }
                 }
             }

@@ -182,7 +182,7 @@ fun UserMessageComposable(
                     Spacer(modifier = Modifier.width(4.dp))
 
                     Text(
-                        text = "${reply.sender}: ${reply.content}",
+                        text = if (reply.sender.isBlank()) reply.content else "${reply.sender}: ${reply.content}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,

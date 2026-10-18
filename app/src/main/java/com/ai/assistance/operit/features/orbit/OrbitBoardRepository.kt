@@ -269,8 +269,9 @@ internal object OrbitFeedGenerator {
         val brief = OrbitBoardRepository.readBrief(context, orbitId)
         val orbit = orbit(context, orbitId) ?: return false
         if (brief.isBlank()) return false
+        // A post is written by a background subagent; nothing is said in chat.
         OrbitTaskRepository(context).create(orbit, "Feed post", instruction(brief), "", 60, "CHANGES",
-            "feed-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "ONCE")
+            "feed-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "ONCE", useSubagent = true)
         return true
     }
 
@@ -292,9 +293,10 @@ internal object OrbitFeedGenerator {
         val daily = dailyTasks.firstOrNull()
         if (daily == null) {
             repository.create(orbit, DAILY_TITLE, instruction(next), "", 60, "CHANGES",
-                "$DAILY_REQUEST-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "DAILY", dailyMinute = DAILY_MINUTE)
+                "$DAILY_REQUEST-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "DAILY", dailyMinute = DAILY_MINUTE,
+                useSubagent = true)
         } else {
-            repository.edit(daily, daily.title, instruction(next), "", daily.intervalMinutes, "CHANGES")
+            repository.edit(daily, daily.title, instruction(next), "", daily.intervalMinutes, "CHANGES", useSubagent = true)
         }
         writeOne(context, orbitId)
     }

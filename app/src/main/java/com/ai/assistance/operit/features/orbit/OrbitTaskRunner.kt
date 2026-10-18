@@ -28,6 +28,12 @@ import okhttp3.Request
 object OrbitTaskRunner {
     const val FINISH = "orbit_submit_monitor_result"
     private const val LEASE_MS = 120_000L
+    /** A due task whose chat is busy is tried again after this long. */
+    private const val BUSY_RETRY_MS = 60_000L
+    /** How long a due task waits in one go for Orbit's chat to be quiet. */
+    private const val WAKE_IDLE_WAIT_MS = 60_000L
+    /** What a normal background worker may use before handing over leftover reports stops. */
+    private const val WORKER_BUDGET_MS = 9 * 60_000L
     private val runningState = MutableStateFlow(false)
     val running = runningState.asStateFlow()
     private data class ActiveRun(
@@ -41,10 +47,10 @@ object OrbitTaskRunner {
 
     val finishPrompt = ToolPrompt(
         name = FINISH,
-        description = "Save this Orbit turn's result and finish. Only userMessage is delivered; tool activity stays in the execution record.",
+        description = "Save this Orbit turn's result and finish. Only userMessage is handed to Orbit in the chat, which tells the user in its own words; tool activity stays in the execution record.",
         parametersStructured = listOf(
             ToolParameterSchema("observation", "string", "A concise durable checkpoint, at most 4000 characters", true),
-            ToolParameterSchema("userMessage", "string", "A useful message for the user, or empty to stay quiet; at most 8000 characters", true),
+            ToolParameterSchema("userMessage", "string", "What Orbit should tell the user (results, a question, a problem), or empty to stay quiet; at most 8000 characters", true),
             ToolParameterSchema("decision", "string", "One or two sentences on why you messaged the user or stayed quiet; the user can read it in the task details. At most 500 characters", true),
         ),
     )
@@ -83,23 +89,39 @@ object OrbitTaskRunner {
         promote: suspend (OrbitTaskEntity) -> Boolean = { false },
     ) = coroutineScope {
         val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope
+        val workerStart = SystemClock.elapsedRealtime()
         val repository = OrbitTaskRepository(context)
         val dao = repository.dao
-        OrbitDelivery.sendPending(context, orbit.id)
         val tasks = dao.tasks(orbit.id)
             .filter { it.state == "ACTIVE" && OrbitTaskRepository.isLongRun(it) == longLane }
             .sortedBy { it.nextRunAt }
         val now = System.currentTimeMillis()
         val boot = bootId(context)
-        // A live lease for one task must not starve the other due tasks.
+        // A live lease for one task must not starve the other due tasks. A due task goes before
+        // handing over reports, so a reminder is never late because a report waits for a chat.
         val token = tasks.firstNotNullOfOrNull {
-            val event = dao.enqueueDue(it.id, now) ?: return@firstNotNullOfOrNull null
+            // An event put back for a busy chat or a quiet time waits until its new time.
+            val event = dao.enqueueDue(it.id, now)?.takeIf { e -> e.dueAt <= now } ?: return@firstNotNullOfOrNull null
+            if (!it.useSubagent && dao.eventRun(event.id) == null) {
+                // Waking Orbit makes it talk, so it follows the notification settings like a report.
+                val allowed = OrbitDelivery.wakeAllowedAt(context, it, event, now)
+                if (allowed > now) {
+                    dao.setEventDue(event.id, allowed)
+                    return@firstNotNullOfOrNull null
+                }
+            }
             dao.claim(event, UUID.randomUUID().toString(), boot, now, SystemClock.elapsedRealtime(), LEASE_MS,
                 context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
-        } ?: return@coroutineScope
+        } ?: run {
+            OrbitDelivery.sendPending(context, orbit.id)
+            return@coroutineScope
+        }
         val task = dao.task(token.taskId) ?: return@coroutineScope
-        val requestedMinutes = OrbitTaskRepository.timeoutMinutes(task)
+        // Woken in the chat, Orbit's own turn needs no long lane; the limit only bounds the wait.
+        val requestedMinutes = if (task.useSubagent) OrbitTaskRepository.timeoutMinutes(task)
+            else OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES
         var heldToBackground = false
+        var deferred = false
         var timeoutMinutes = requestedMinutes
         // A stale model turn must never submit through a successor's execution token.
         val chatId = "orbit-task-" + UUID.nameUUIDFromBytes("${token.id}:${token.generation}".toByteArray())
@@ -113,9 +135,15 @@ object OrbitTaskRunner {
                 val settings = OrbitPreferences.getInstance(context).current()
                 if (settings.activeOrbitId != orbit.id || settings.active?.deleting != false ||
                     !dao.renew(token, boot, System.currentTimeMillis(), SystemClock.elapsedRealtime(), LEASE_MS)) {
-                    // A run that already finished just stops renewing; only a lost lease ends the work.
+                    // A run that already finished just stops renewing; a lost lease, or a run
+                    // cancelled by a pause or an edit, ends the work.
+                    val run = dao.run(token.id)
+                    // Finished by this worker itself; a run taken over, cancelled, or marked
+                    // unknown/interrupted elsewhere is not ours to go on with.
+                    val finishedHere = run == null || (run.owner == token.owner && run.generation == token.generation &&
+                        run.state in setOf("COMPLETED", "WAITING_USER", "FAILED"))
                     if (settings.activeOrbitId == orbit.id && settings.active?.deleting == false &&
-                        dao.run(token.id)?.state != "RUNNING") break
+                        finishedHere) break
                     job.cancel(CancellationException("Orbit task execution ownership ended"))
                     break
                 }
@@ -130,6 +158,7 @@ object OrbitTaskRunner {
                 }
                 if (heldToBackground) timeoutMinutes = OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES
             }
+            val runStart = SystemClock.elapsedRealtime()
             withTimeout(timeoutMinutes * 60_000L) {
                 check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
                 var checkpoint = checkNotNull(dao.run(token.id))
@@ -181,6 +210,14 @@ object OrbitTaskRunner {
                 if (OrbitTaskRepository.prechecked(task) && checkpoint.fingerprint == task.lastFingerprint &&
                     task.notifyPolicy == "CHANGES") {
                     complete(context, state, task.lastObservation, "", "", OrbitRunEntity.UNCHANGED)
+                } else if (!task.useSubagent) {
+                    val left = timeoutMinutes * 60_000L - (SystemClock.elapsedRealtime() - runStart)
+                    if (wakeOrbit(context, orbit, state, task, checkpoint, left) == OrbitWake.Told.BUSY) {
+                        // The user is talking with Orbit; it hears about the task once the chat is quiet.
+                        dao.defer(token, System.currentTimeMillis() + BUSY_RETRY_MS, boot,
+                            System.currentTimeMillis(), SystemClock.elapsedRealtime())
+                        deferred = true
+                    }
                 } else {
                     val db = AppDatabase.getDatabase(context)
                     if (db.chatDao().getChatById(chatId) == null) {
@@ -224,7 +261,12 @@ object OrbitTaskRunner {
                 runningState.value = active.isNotEmpty()
             }
         }
-        OrbitDelivery.sendPending(context, orbit.id)
+        // Put off for a busy chat: end now so the retry is scheduled on time; reports wait for it.
+        if (deferred) return@coroutineScope
+        // A background worker has about ten minutes; reports left over go on the next wake-up.
+        val left = WORKER_BUDGET_MS - (SystemClock.elapsedRealtime() - workerStart)
+        if (longLane || left > 0) OrbitDelivery.sendPending(context, orbit.id,
+            if (longLane) 4 * 60_000L else minOf(4 * 60_000L, left))
     }
 
     internal suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
@@ -252,6 +294,49 @@ object OrbitTaskRunner {
 
     private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    /**
+     * The default for a due task: Orbit is woken in the chat the task belongs to with a hidden
+     * notice and handles it there itself, with the whole conversation in mind. The run is done once
+     * Orbit takes the notice; Orbit's chat turn is the record. A busy chat sends nothing and is
+     * reported as [OrbitWake.Told.BUSY], so the caller can try again later.
+     */
+    private suspend fun wakeOrbit(context: Context, orbit: com.ai.assistance.operit.data.preferences.OrbitProfile,
+        state: ActiveRun, task: OrbitTaskEntity, run: OrbitRunEntity, leftMs: Long): OrbitWake.Told {
+        val chatId = task.chatId.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
+        val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
+        val checkIn = task.kind in setOf("DAILY", "ONCE")
+        // Orbit wakes inside the conversation, so an excerpt of it would only repeat what it sees.
+        val fromChat = checkIn || (task.kind == "ASSIST" && task.source != OrbitRoutines.GOALS_SOURCE)
+        val notice = OrbitWake.dueNotice(english,
+            if (checkIn) task.copy(instruction = checkInInstruction(english, task.instruction)) else task,
+            if (fromChat) "" else run.sourceText)
+        val observation = context.getString(com.ai.assistance.operit.R.string.orbit_run_in_chat)
+        val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+        // Ends a little before the run's own time limit, so the outcome is still recorded.
+        val told = OrbitWake.tell(context, orbit, chatId, notice, idleWaitMs = WAKE_IDLE_WAIT_MS,
+            totalWaitMs = (leftMs - 20_000).coerceAtLeast(5_000),
+            // Paused, cancelled or replaced while the chat was busy: say nothing.
+            ready = { dao.currentLease(state.token, state.boot, System.currentTimeMillis(), SystemClock.elapsedRealtime()) != null },
+            onSent = {
+                check(complete(context, state, observation, "", "", OrbitRunEntity.IN_CHAT)) { "Task was paused, cancelled or replaced" }
+            })
+        if (told.sent) {
+            if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, System.currentTimeMillis())
+            logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
+        }
+        return told
+    }
+
+    /** What the daily check-in asks of Orbit; [focus] is what the user wants it to keep an eye on. */
+    private fun checkInInstruction(english: Boolean, focus: String): String = if (english) {
+        "Your daily check-in. Think about what you talked about lately and how the user is doing; if there is something truly worth " +
+            "bringing up on your own (care, a follow-up, a reminder, an idea), say a sentence or two naturally." +
+            focus.takeIf { it.isNotBlank() }?.let { " The user asked you to keep an eye on: $it" }.orEmpty()
+    } else {
+        "这是你每天主动找用户聊聊的时间。想想最近聊过的事和用户的近况，真有值得主动说的（关心、跟进、提醒、建议）就自然地说一两句。" +
+            focus.takeIf { it.isNotBlank() }?.let { "用户希望你留意：$it" }.orEmpty()
+    }
 
     private suspend fun runModel(context: Context, chatId: String, task: OrbitTaskEntity, run: OrbitRunEntity,
         timeoutMinutes: Int) {
@@ -318,8 +403,9 @@ object OrbitTaskRunner {
                     "${it.state}: ${it.summary}"
                 }}
                 Compare with the previous observation. Do not claim actions you did not perform.
-                Decide on its own merits whether this result is worth a message now: new, useful to the user, and fitting
-                the reporting policy and their preferences. Say why in decision, whether you message them or stay quiet.
+                You are working in the background for Orbit. userMessage is handed to Orbit in the chat, which tells the user
+                in its own words. Decide on its own merits whether this result is worth telling now: new, useful to the user,
+                and fitting the reporting policy and their preferences. Say why in decision, whether you report or stay quiet.
                 Call $FINISH with an observation, the final userMessage (empty for silence) and the decision.
             """.trimIndent()
             val result = ChatTurnDispatcher().dispatch(core, ChatTurnDispatchRequest(
@@ -383,28 +469,35 @@ object OrbitTaskRunner {
         val result = AppDatabase.getDatabase(context).orbitTaskDao().complete(state.token, observation,
             deliveredMessage, error, OrbitTaskRepository.nextAt(state.task, now), state.boot, now, SystemClock.elapsedRealtime(),
             decision)
-        if (result && state.task.kind in setOf("DAILY", "ONCE")) {
+        // Handed to Orbit in the chat: that turn is the record, and Orbit decides there whether it speaks.
+        // The wake records the outcome once Orbit has answered (see [wakeOrbit]).
+        if (decision == OrbitRunEntity.IN_CHAT) return result
+        if (result) logRun(context, state, observation, error, message)
+        return result
+    }
+
+    /** The run's outcome for the check-in status and the daily log; a non-empty [message] means Orbit spoke. */
+    private suspend fun logRun(context: Context, state: ActiveRun, observation: String, error: String, message: String) {
+        val now = System.currentTimeMillis()
+        if (state.task.kind in setOf("DAILY", "ONCE")) {
             OrbitPreferences.getInstance(context).recordRun(
                 if (error.isNotEmpty()) OrbitRunOutcome.FAILED
                 else if (message.isEmpty()) OrbitRunOutcome.SILENT else OrbitRunOutcome.SPOKE, error, state.orbitId)
         }
-        if (result) {
-            // The daily log keeps what each background run did, apart from long-term memory.
-            val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
-            val outcome = when {
-                error.isNotEmpty() -> if (english) "failed" else "失败"
-                message.isEmpty() -> if (english) "stayed quiet" else "没有打扰用户"
-                else -> if (english) "told the user" else "告诉了用户"
-            }
-            try {
-                OrbitFiles.of(context, state.orbitId).appendDaily(
-                    "${state.task.title} — $outcome: ${(observation.ifBlank { error }).take(300)}", now)
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Daily log not written: ${e.message}")
-            }
+        // The daily log keeps what each background run did, apart from long-term memory.
+        val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
+        val outcome = when {
+            error.isNotEmpty() -> if (english) "failed" else "失败"
+            message.isEmpty() -> if (english) "stayed quiet" else "没有打扰用户"
+            else -> if (english) "told the user" else "告诉了用户"
         }
-        return result
+        try {
+            OrbitFiles.of(context, state.orbitId).appendDaily(
+                "${state.task.title} — $outcome: ${(observation.ifBlank { error }).take(300)}", now)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Daily log not written: ${e.message}")
+        }
     }
 }
