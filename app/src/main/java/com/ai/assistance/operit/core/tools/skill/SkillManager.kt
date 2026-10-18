@@ -283,7 +283,8 @@ class SkillManager private constructor(private val context: Context, private val
                     skill.directory.deleteRecursively()
                 }
             if (ok) {
-                availableSkills = availableSkills - skillName
+                // Same lock as a scan, so a scan finishing now cannot put the deleted skill back.
+                synchronized(refreshLock) { availableSkills = availableSkills - skillName }
                 if (clearLearningOwnership)
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
             }

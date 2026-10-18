@@ -84,12 +84,13 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
         } finally { tmp.delete() }
         syncDirectory(file.parentFile!!)
     }
-    suspend fun owned(profileId: String? = null): Set<String> = withContext(Dispatchers.IO) {
+    /** [installed] is a list the caller just scanned; without it this scans once for the whole list. */
+    suspend fun owned(profileId: String? = null, installed: Map<String, com.ai.assistance.operit.core.tools.skill.SkillPackage>? = null): Set<String> = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val manager = manager()
+            val installed = installed ?: manager().getAvailableSkills()
             val data = registry()
             data.keys().asSequence().filter { (profileId == null || data.getJSONObject(it).getString("profile")==profileId)
-                && manager.getAvailableSkills()[it]?.directory?.canonicalPath ==
+                && installed[it]?.directory?.canonicalPath ==
                     data.getJSONObject(it).optString("directory") }.toSet()
         }
     }

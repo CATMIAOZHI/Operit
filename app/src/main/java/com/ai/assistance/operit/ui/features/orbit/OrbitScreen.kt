@@ -487,6 +487,10 @@ private fun OrbitChatPage(
                             openTaskId = it
                             push(OrbitSubPage.TASK)
                         },
+                        onOpenAllTasks = {
+                            openTaskId = null
+                            push(OrbitSubPage.TASK)
+                        },
                         onOpenProcess = {
                             openProcess = it
                             push(OrbitSubPage.PROCESS)
@@ -542,10 +546,8 @@ private fun OrbitChatPage(
                         )
                         OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                         OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
-                        OrbitSubPage.TASK ->
-                            openTaskId?.let { taskId ->
-                                OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
-                            }
+                        // No id opens the grouped list of every task.
+                        OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId)
                         OrbitSubPage.PROCESS -> {
                             val process = openProcess
                             if (process != null) {
