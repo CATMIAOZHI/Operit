@@ -1515,6 +1515,8 @@ class EnhancedAIService private constructor(
                     val revisionTracker = TextStreamRevisionTracker()
                     val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                         { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(execContext.dynamicUiRunId, it) },
+                        { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.nextUnplaced(execContext.dynamicUiRunId) },
+                        { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.unplace(execContext.dynamicUiRunId, it) },
                     )
                     val replayRoundStart = execContext.emittedReplayCharCount.get()
                     var processedRevisionEventCount = 0
@@ -2808,6 +2810,8 @@ class EnhancedAIService private constructor(
                 val revisionTracker = TextStreamRevisionTracker()
                 val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                     { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(context.dynamicUiRunId, it) },
+                    { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.nextUnplaced(context.dynamicUiRunId) },
+                    { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.unplace(context.dynamicUiRunId, it) },
                 )
                 val replayRoundStart = context.emittedReplayCharCount.get()
                 var processedRevisionEventCount = 0

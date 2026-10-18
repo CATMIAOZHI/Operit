@@ -86,4 +86,59 @@ class CardDeliveryTest {
         assertTrue(CardTranscript.forModel("```a2ui\n$long\n```").endsWith("x…]"))
         assertTrue(CardTranscript.forModel("```a2ui\n$long\n```", Int.MAX_VALUE).endsWith("x".repeat(3000) + "]"))
     }
+    @Test fun copiedHistorySummaryShowsTheCardPreparedThisTurn() {
+        CardDelivery.begin("copy")
+        try {
+            assertEquals("card-1", CardDelivery.register("copy", "first"))
+            // A revision replaces its base, so the base no longer waits for a place.
+            assertEquals("card-2", CardDelivery.register("copy", "revised", revises = "card-1"))
+            assertEquals("card-3", CardDelivery.register("copy", "other"))
+            val copied = "[Dynamic UI card shown to the user here. Visible content: 临时提醒；提醒什么（输入框）]"
+            val input = "给你一张：\n\n$copied\n\n拖动滑块\n$copied"
+            for (size in listOf(1, 3, input.length)) {
+                CardDelivery.end("copy"); CardDelivery.begin("copy")
+                CardDelivery.register("copy", "first")
+                CardDelivery.register("copy", "revised", revises = "card-1")
+                CardDelivery.register("copy", "other")
+                val decoder = CardReferenceExpander({ CardDelivery.resolve("copy", it) }, { CardDelivery.nextUnplaced("copy") })
+                val output = input.chunked(size).joinToString("") { decoder.push(it) } + decoder.finish()
+                assertEquals("size=$size", "给你一张：\n\n```a2ui\nrevised\n```\n\n拖动滑块\n```a2ui\nother\n```", output)
+            }
+            // Every card already has its place: the user sees the "card unavailable" notice.
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("copy", it) }, { CardDelivery.nextUnplaced("copy") })
+            assertEquals("```a2ui-ref\nunavailable\n```\n", decoder.push("$copied\n"))
+            // The short forms a model may copy from the tool's description are the summary too.
+            for (short in listOf("here…]", "here...]")) {
+                assertEquals("```a2ui-ref\nunavailable\n```\n", decoder.push("[Dynamic UI card shown to the user $short\n"))
+            }
+            // Words that only start like the summary are prose.
+            val prose = "[Dynamic UI card shown to the user here is what history calls it]\n"
+            assertEquals(prose, decoder.push(prose))
+        } finally { CardDelivery.end("copy") }
+    }
+    @Test fun rollingBackGivesThePlacedCardBack() {
+        CardDelivery.begin("back")
+        try {
+            CardDelivery.register("back", "doc")
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("back", it) },
+                { CardDelivery.nextUnplaced("back") }, { CardDelivery.unplace("back", it) })
+            decoder.savepoint("p")
+            assertEquals("```a2ui\ndoc\n```\n", decoder.push("```a2ui-ref\ncard-1\n```\n"))
+            assertNull(CardDelivery.nextUnplaced("back"))
+            decoder.rollback("p")
+            assertEquals("card-1", CardDelivery.nextUnplaced("back"))
+            assertEquals("```a2ui\ndoc\n```", decoder.push("[Dynamic UI card shown to the user here]") + decoder.finish())
+        } finally { CardDelivery.end("back") }
+    }
+    @Test fun ordinaryBracketLinesAndPlacedCardsAreUntouched() {
+        CardDelivery.begin("plain")
+        try {
+            CardDelivery.register("plain", "doc")
+            val decoder = CardReferenceExpander({ CardDelivery.resolve("plain", it) }, { CardDelivery.nextUnplaced("plain") })
+            val text = "[link](https://a.b)\n[Dynamic UI cards are nice]\n<think>\n[Dynamic UI card shown to the user here]\n</think>\n"
+            assertEquals(text, text.chunked(2).joinToString("") { decoder.push(it) } + decoder.finish())
+            assertEquals("```a2ui\ndoc\n```\n", decoder.push("```a2ui-ref\ncard-1\n```\n"))
+            assertNull(CardDelivery.nextUnplaced("plain"))
+        } finally { CardDelivery.end("plain") }
+    }
 }

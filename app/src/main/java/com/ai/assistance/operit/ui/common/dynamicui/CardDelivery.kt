@@ -11,8 +11,14 @@ import kotlinx.serialization.json.*
  * The UUID stays internal because live surfaces and state files are keyed by it across turns.
  */
 internal object CardDelivery {
-    private data class Revision(val document: String, val source: String) {
+    private class Revision(val document: String, val source: String) {
         val size get() = document.length + source.length
+        /** Shown in the answer (undone when the stream rolls back past it). */
+        var placed = false
+        /** Replaced by a later revision. */
+        var superseded = false
+        /** No longer waiting for a place in the answer. */
+        val settled get() = placed || superseded
     }
     private val runs = mutableMapOf<String, MutableMap<String, Revision>>()
     @Synchronized fun begin(run: String) {
@@ -20,7 +26,7 @@ internal object CardDelivery {
     }
     @Synchronized fun end(run: String) { runs.remove(run); CardLiveStore.end(run) }
     @Synchronized fun register(run: String, document: String, source: String = "",
-        liveChat: String? = null, liveDirectory: java.io.File? = null): String {
+        liveChat: String? = null, liveDirectory: java.io.File? = null, revises: String? = null): String {
         val cards = runs[run] ?: error("Card generation is unavailable outside an active chat turn.")
         val id = UUID.randomUUID().toString()
         val stored = if (liveChat == null) document else document.lines().filter(String::isNotBlank).joinToString("\n") { line ->
@@ -37,6 +43,7 @@ internal object CardDelivery {
             "Card generation is busy. Try again after other tasks finish."
         }
         if (liveChat != null) CardLiveStore.register(run, id, liveChat, requireNotNull(liveDirectory), source, stored)
+        revises?.let { canonical(run, it) }?.let { cards[it]?.superseded = true }
         cards[id] = revision
         return "card-${cards.size}"
     }
@@ -50,9 +57,23 @@ internal object CardDelivery {
     }
     @Synchronized fun resolve(run: String, reference: String): String? {
         val id = canonical(run, reference) ?: return null
-        val document = runs[run]?.get(id)?.document ?: return null
+        val revision = runs[run]?.get(id) ?: return null
         if (!CardLiveStore.publish(run, id)) return null
-        return document
+        revision.placed = true
+        return revision.document
+    }
+    /** The stream rolled back past the place of [reference]; it waits for a place again. */
+    @Synchronized fun unplace(run: String, reference: String) {
+        canonical(run, reference)?.let { runs[run]?.get(it)?.placed = false }
+    }
+    /**
+     * The model-facing name of the first card prepared in this turn that is still waiting for its
+     * place. Used when the model writes the app's history summary line instead of the reference.
+     */
+    @Synchronized fun nextUnplaced(run: String): String? {
+        val cards = runs[run] ?: return null
+        val index = cards.values.indexOfFirst { !it.settled }
+        return if (index < 0) null else "card-${index + 1}"
     }
     @Synchronized fun source(run: String, reference: String): String? =
         canonical(run, reference)?.let { runs[run]?.get(it)?.source?.takeIf(String::isNotEmpty) }
@@ -68,6 +89,9 @@ internal object CardDelivery {
  */
 internal object CardTranscript {
     private val block = Regex("(?m)^```a2ui\\r?\\n([\\s\\S]*?)\\r?\\n```[ \\t]*$")
+    const val PLACEHOLDER_HEAD = "[Dynamic UI card shown to the user here"
+    /** A whole line in the history summary form; models sometimes copy it instead of a reference. */
+    val PLACEHOLDER_LINE = Regex("\\[Dynamic UI card shown to the user here(?:\\. Visible content: [^\\n]*|…|\\.\\.\\.)?\\][ \\t]*")
     private const val MAX_SUMMARY = 1200
     private val structural = setOf(
         "version", "surfaceId", "catalogId", "id", "component", "child", "children", "path", "call",
@@ -81,7 +105,7 @@ internal object CardTranscript {
     fun forModel(content: String, maxSummary: Int = MAX_SUMMARY): String {
         if (!content.contains("```a2ui")) return content
         return block.replace(content) { match ->
-            "[Dynamic UI card shown to the user here" + summary(match.groupValues[1], maxSummary) + "]"
+            PLACEHOLDER_HEAD + summary(match.groupValues[1], maxSummary) + "]"
         }
     }
 
@@ -117,16 +141,26 @@ internal object CardTranscript {
  * possible fence header / short reference is buffered. It runs before ALL transcript sinks.
  * An unresolved reference stays as its a2ui-ref fence; the renderer shows a short notice and the
  * model later sees exactly what it wrote.
+ * History shows earlier cards to the model as a "[Dynamic UI card shown …]" line, and a model may
+ * copy that line instead of placing the reference it just prepared. Such a whole line takes the
+ * first card of this turn that has no place yet ([nextUnplaced]); without one it becomes an
+ * unresolved reference, so the user sees the usual "card unavailable" notice instead of the line.
  */
 internal class CardReferenceExpander(
     private val resolve: (String) -> String?,
+    private val nextUnplaced: () -> String? = { null },
+    private val unplace: (String) -> Unit = {},
 ) {
     private data class Snapshot(
         val pending: String, val reference: String?, val start: Boolean,
         val fence: Char?, val fenceLength: Int, val tag: String, val hidden: Int, val expanded: Int,
+        val summary: String?, val placed: Int,
     )
     private var pending = ""
     private var reference: String? = null
+    private var summary: String? = null
+    /** References this stream has placed, in order, so a rollback can give them back. */
+    private val placed = mutableListOf<String>()
     private var start = true
     private var fence: Char? = null
     private var fenceLength = 0
@@ -135,12 +169,15 @@ internal class CardReferenceExpander(
     private var expanded = 0
     private val snapshots = mutableMapOf<String, Snapshot>()
     fun savepoint(id: String) {
-        snapshots[id] = Snapshot(pending, reference, start, fence, fenceLength, tag, hidden, expanded)
+        snapshots[id] = Snapshot(pending, reference, start, fence, fenceLength, tag, hidden, expanded, summary, placed.size)
     }
     fun rollback(id: String) {
         val s = snapshots[id] ?: return
         pending = s.pending; reference = s.reference; start = s.start
         fence = s.fence; fenceLength = s.fenceLength; tag = s.tag; hidden = s.hidden; expanded = s.expanded
+        summary = s.summary
+        // A card placed twice keeps its place while the earlier placement is still in the text.
+        while (placed.size > s.placed) placed.removeAt(placed.lastIndex).let { if (it !in placed) unplace(it) }
     }
     fun push(chunk: String): String = buildString {
         for (c in chunk) {
@@ -150,6 +187,18 @@ internal class CardReferenceExpander(
                 else if (pending.length > 128) {
                     append("```a2ui-ref\n").append(reference).append(pending)
                     reference = null; pending = ""; fence = '`'; fenceLength = 3; start = false
+                }
+                continue
+            }
+            summary?.let { buffered ->
+                val line = buffered + c
+                summary = line
+                if (c == '\n') append(summaryLine())
+                else if (line.length <= HEAD.length && !HEAD.startsWith(line) || line.length > 4096) {
+                    // Ordinary prose that only starts with "[": give it back unchanged.
+                    summary = null; start = false
+                    append(line)
+                    if (fence == null) line.forEach(::trackMarkup)
                 }
                 continue
             }
@@ -164,10 +213,31 @@ internal class CardReferenceExpander(
                 }
                 continue
             }
+            if (start && c == '[' && fence == null && hidden == 0) {
+                summary = "["
+                continue
+            }
             append(c)
             if (fence == null) trackMarkup(c)
             start = c == '\n'
         }
+    }
+    private fun summaryLine(): String {
+        val raw = summary!!
+        summary = null; start = raw.endsWith('\n')
+        if (CardTranscript.PLACEHOLDER_LINE.matches(raw.trimEnd('\r', '\n'))) {
+            val name = nextUnplaced()
+            val source = name?.let(resolve)
+            if (source != null && expanded + source.length <= 524_288) {
+                expanded += source.length
+                placed += name
+                return "```a2ui\n$source\n```" + if (start) "\n" else ""
+            }
+            // Nothing to show here: the renderer's notice beats an English line the app wrote.
+            return "```a2ui-ref\nunavailable\n```" + if (start) "\n" else ""
+        }
+        if (fence == null) raw.forEach(::trackMarkup)
+        return raw
     }
     private fun trackMarkup(c: Char) {
         if (c == '<') tag = "<"
@@ -212,6 +282,7 @@ internal class CardReferenceExpander(
             val source = if (id.matches(CardDelivery.REFERENCE)) resolve(id) else null
             if (source == null || expanded + source.length > 524_288) return "```a2ui-ref\n$id\n$raw"
             expanded += source.length
+            placed += id
             return "```a2ui\n$source\n```" + if (start) "\n" else ""
         }
         reference += raw
@@ -224,6 +295,7 @@ internal class CardReferenceExpander(
     }
     /** Incomplete references stay plain code on cancellation; only a complete closing line expands. */
     fun finish(): String {
+        if (summary != null) return summaryLine()
         if (reference != null) {
             if (pending == "```") return referenceLine()
             val tail = "```a2ui-ref\n" + reference + pending
@@ -234,5 +306,8 @@ internal class CardReferenceExpander(
             if (reference != null) { reference = null; "```a2ui-ref" } else it
         }
         return ""
+    }
+    private companion object {
+        const val HEAD = CardTranscript.PLACEHOLDER_HEAD
     }
 }
