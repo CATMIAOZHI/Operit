@@ -224,6 +224,13 @@ class MessageCoordinationDelegate(
         chatId: String?,
         roleCardId: String?
     ): String? {
+        // An Orbit chat always sends under the default card, so its estimate must build the same prompt.
+        if (!chatId.isNullOrBlank() &&
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+                .loadedSettingsBlocking().ownerForChat(chatId) != null
+        ) {
+            return com.ai.assistance.operit.data.preferences.CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
+        }
         return roleCardId
             ?: resolveBoundRoleCardId(chatId)
             ?: runCatching { activePromptManager.resolveActiveCardIdForSend() }.getOrNull()

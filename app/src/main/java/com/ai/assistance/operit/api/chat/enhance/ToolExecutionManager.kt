@@ -608,6 +608,24 @@ object ToolExecutionManager {
         )
     }
 
+    /** The package a call loads or runs a tool from, or null for a built-in tool. */
+    private fun packageSourceOf(invocation: ToolInvocation): String? {
+        val toolName = invocation.tool.name.trim()
+        fun sourceOf(tool: AITool): String? {
+            val name = tool.name.trim()
+            return when {
+                name == "use_package" -> getParameterValue(tool, "package_name")
+                name.contains(':') -> name.substringBefore(':')
+                else -> null
+            }
+        }
+        val source = when (toolName) {
+            PACKAGE_PROXY_TOOL_NAME, CliToolModeSupport.PROXY_TOOL_NAME -> sourceOf(resolveToolTarget(invocation.tool).tool)
+            else -> sourceOf(invocation.tool)
+        }
+        return source?.trim()?.takeIf { it.isNotEmpty() }
+    }
+
     private fun isEnglishLanguage(context: Context): Boolean {
         return LocaleUtils.usesEnglishPrompt(context)
     }
@@ -1112,7 +1130,17 @@ object ToolExecutionManager {
         }
 
         val roleCardToolAccess = if (callerCardId.isNullOrBlank()) {
-            null
+            // No role card: only the chat's package list applies (an Orbit has its own). A batch of
+            // built-in tools touches no package, so it skips the lookup.
+            if (boundInvocations.none { packageSourceOf(it) != null }) {
+                null
+            } else {
+                runCatching {
+                    CharacterCardToolAccessResolver.getInstance(context).resolvePackageScope(packageManager, callerChatId)
+                }.onFailure { error ->
+                    AppLogger.e(TAG, "包范围解析失败: callerChatId=$callerChatId", error)
+                }.getOrNull()
+            }
         } else {
             runCatching {
                 CharacterCardToolAccessResolver
@@ -1184,7 +1212,19 @@ object ToolExecutionManager {
         val roleCardPermittedInvocations = mutableListOf<ToolInvocation>()
         val roleCardDeniedResults = mutableListOf<ToolResult>()
         for (invocation in toolExposurePermittedInvocations) {
-            val deniedResult = if (roleCardToolAccess?.customEnabled == true &&
+            // A package switched off for this chat (an Orbit has its own list) is refused for any
+            // role card; the rest of the role card rules apply only to custom role cards.
+            val packageOff = roleCardToolAccess?.let { access ->
+                packageSourceOf(invocation)?.takeIf { !access.isPackageInScope(it) }
+            }
+            val deniedResult = if (packageOff != null) {
+                ToolResult(
+                    toolName = resolveDisplayToolName(invocation.tool),
+                    success = false,
+                    result = StringResultData(""),
+                    error = context.getString(R.string.tool_package_off_in_chat, packageOff)
+                )
+            } else if (roleCardToolAccess?.customEnabled == true &&
                 !isInvocationAllowedForRoleCard(invocation, roleCardToolAccess)
             ) {
                 buildRoleCardDeniedResult(context, invocation)

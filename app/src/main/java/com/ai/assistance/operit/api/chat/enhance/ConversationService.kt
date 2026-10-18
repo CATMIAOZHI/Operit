@@ -551,11 +551,6 @@ class ConversationService(
                     UserProfileDocumentRepository.forMemorySpace(context, it)
                 } ?: userProfileDocumentRepository
                 val userRevisionKey = privateOwner?.let { "orbit-user:$it" } ?: "user"
-                // An Orbit can leave its user profile out of the prompt from its prompt layers page.
-                val orbitUserLayerOn = privateOwner?.let {
-                    com.ai.assistance.operit.features.orbit.OrbitPromptFiles.layers(context, it)[
-                        com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.USER] != false
-                } ?: true
                 val learningSnapshot = chatId?.takeIf { it.isNotBlank() && !isSubTask }?.let {
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository(context,it)
                 }
@@ -740,8 +735,8 @@ class ConversationService(
                     }
                     if (
                         allowPersonalContext &&
-                            orbitUserLayerOn &&
-                            !disableUserPreferenceDescription &&
+                            // An Orbit always reads its own user.md; the app-wide switch is for other chats.
+                            (privateOwner != null || !disableUserPreferenceDescription) &&
                             userProfileMarkdown.isNotEmpty()
                     ) {
                         append("\n\n<user_profile source=\"user.md\">\n")
@@ -756,11 +751,20 @@ class ConversationService(
                     finalSystemPrompt,
                     aiName
                 )
+                // An Orbit's prompt layers page shows what the app itself wrote into this prompt.
+                val promptSections = if (privateOwner != null && orbitPrompt.isNotEmpty()) mapOf(
+                    "runtime" to replacePromptPlaceholders(
+                        com.ai.assistance.operit.core.tools.OrbitTools.runtimeOnly(orbitPrompt), aiName),
+                    "tools" to replacePromptPlaceholders(
+                        (if (introPrompt.isNotBlank()) systemPrompt.replaceFirst(introPrompt, "") else systemPrompt).trim(),
+                        aiName),
+                ) else emptyMap()
                 val savedSystem = try {
                     learningSnapshot?.bindSystem(finalSystemPromptWithReplacements, promptRevisions,
                         "$useToolCallApi:${toolExposureMode.name}",
                         listOf(roleCardId.orEmpty(), proxyCard?.id.orEmpty(), promptFunctionType.name,
-                            enableGroupOrchestrationHint.toString()).joinToString("|"))
+                            enableGroupOrchestrationHint.toString()).joinToString("|"),
+                        sections = promptSections)
                         ?: finalSystemPromptWithReplacements
                 } catch (_: com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.IncompatiblePrefixException) {
                     throw IllegalStateException(context.getString(R.string.system_prefix_protocol_changed))

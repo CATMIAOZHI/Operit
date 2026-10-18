@@ -9255,7 +9255,7 @@
     <string name="orbit_section_prompts">提示词</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
-    <string name="orbit_prompt_layers_help">按顺序放进 Orbit 的系统提示词，改动对之后的回复生效。</string>
+    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，全部始终包含。点开可以查看或编辑。</string>
     <string name="orbit_layer_base">基础指令</string>
     <string name="orbit_layer_base_desc">主动、提醒、记忆、说话方式和安全</string>
     <string name="orbit_layer_custom">已修改</string>
@@ -9266,10 +9266,9 @@
     <string name="orbit_layer_user">用户资料</string>
     <string name="orbit_layer_user_desc">Orbit 记下的关于你的事</string>
     <string name="orbit_layer_runtime">运行信息</string>
-    <string name="orbit_layer_runtime_desc">名字、记忆范围和后台任务状态，由应用生成</string>
+    <string name="orbit_layer_runtime_desc">名字、记忆范围和后台任务状态，由应用生成。点开看注入的内容</string>
     <string name="orbit_layer_tools">工具</string>
-    <string name="orbit_layer_tools_desc">Operit 现有工具，按自动审核快速执行</string>
-    <string name="orbit_layer_always">始终包含</string>
+    <string name="orbit_layer_tools_desc">工具用法和能用的工具包，按自动审核快速执行。点开看注入的内容</string>
     <string name="orbit_goal_create">新建目标</string>
     <string name="orbit_goal_progress">已完成 %1$d / %2$d 项任务</string>
     <string name="orbit_goal_edit">编辑目标</string>

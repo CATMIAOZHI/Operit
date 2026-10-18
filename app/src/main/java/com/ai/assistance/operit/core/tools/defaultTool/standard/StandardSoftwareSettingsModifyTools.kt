@@ -180,7 +180,13 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
     fun listSandboxPackages(tool: AITool, packageManager: PackageManager): ToolResult {
         return try {
             val availablePackages = packageManager.getAvailablePackages(forceRefresh = true)
-            val enabledSet = packageManager.getEnabledPackageNames().toSet()
+            // Called from an Orbit chat, "enabled" means the Orbit's own switches.
+            val orbit = callerOrbit()
+            val enabledSet = orbit?.let {
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    com.ai.assistance.operit.features.orbit.OrbitPackages.enabled(context, it.id, packageManager)
+                }
+            } ?: packageManager.getEnabledPackageNames().toSet()
             val disabledSet = packageManager.getDisabledPackages().toSet()
             val externalPackagesPath = packageManager.getExternalPackagesPath()
             val packageLoadErrors = packageManager.getPackageLoadErrors()
@@ -239,6 +245,17 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                 error = e.message ?: "Failed to list sandbox packages"
             )
         }
+    }
+
+    /** The Orbit whose chat called the current tool, or null in any other chat. */
+    private fun callerOrbit(): com.ai.assistance.operit.data.preferences.OrbitProfile? {
+        val caller = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+            ?: return null
+        return runCatching {
+            kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, caller)
+            }
+        }.getOrNull()
     }
 
     fun getSkillsDirectory(tool: AITool): ToolResult {
@@ -312,6 +329,39 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         message = ""
                     ),
                 error = "Sandbox package not found: $packageName"
+            )
+        }
+
+        // An Orbit switches packages on its own list; the main app's switches stay as they are.
+        callerOrbit()?.let { orbit ->
+            val packages = com.ai.assistance.operit.features.orbit.OrbitPackages
+            if (packageManager.isToolPkgContainer(packageName)) {
+                return ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
+                    error = "'$packageName' is a ToolPkg container; turn it on or off in the main app.",
+                )
+            }
+            val before = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                val previous = packageName in packages.enabled(context, orbit.id, packageManager)
+                packages.setEnabled(context, orbit.id, packageManager, packageName, enabled)
+                previous
+            }
+            // Orbit is mid-reply here, so its prompt is rebuilt once this reply ends.
+            packages.refreshPromptWhenIdle(context, orbit)
+            val needs = packages.missingContainer(packageManager, packageName)
+            return ToolResult(
+                toolName = tool.name,
+                success = true,
+                result = SandboxPackageUpdateResultData(
+                    packageName = packageName,
+                    requestedEnabled = enabled,
+                    previousEnabled = before,
+                    currentEnabled = enabled,
+                    message = "Switched ${if (enabled) "on" else "off"} for this Orbit only; the main app is unchanged." +
+                        (needs?.takeIf { enabled }?.let { " It needs the ToolPkg container '$it' turned on in the main app before it can be used." } ?: ""),
+                ),
             )
         }
 

@@ -35,41 +35,40 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
         // An Orbit reviews all of its chats into its one memory; the app-wide switch does not apply.
         val orbitSpace = MemorySearchSettingsPreferences.isOrbitSpace(profileId)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
-            if (!orbitSpace) {
+            if (orbitSpace) {
+                // Orbit always learns this way, so its page keeps only the timing and says so once.
+                Text(stringResource(R.string.memory_orbit_learning_fixed),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))
+            } else {
                 AutomationSwitch(stringResource(R.string.memory_auto_update),
                     stringResource(R.string.memory_auto_update_desc), master) {
                     scope.launch { api.saveEnableMemoryAutoUpdate(it) }
                 }
                 HorizontalDivider(Modifier.padding(vertical = 12.dp))
-            }
-            AutomationSwitch(stringResource(R.string.memory_include_thinking),
-                stringResource(R.string.memory_include_thinking_desc), includeThinking) {
-                prefs.setIncludeThinking(it); includeThinking = it
-            }
-            AutomationSwitch(stringResource(R.string.memory_auto_approve),
-                stringResource(
-                    if (prefs.isAutoApprovalLocked) R.string.memory_auto_approve_orbit_locked
-                    else R.string.memory_auto_approve_desc
-                ), autoApprove, enabled = !prefs.isAutoApprovalLocked) {
-                prefs.setAutoApproveChanges(it); autoApprove = it
-            }
-            if (!master && !orbitSpace) Text(stringResource(R.string.memory_auto_master_off),
-                Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
-            // An Orbit has no memory graph, so the graph extraction switch does not apply to it.
-            if (!MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+                AutomationSwitch(stringResource(R.string.memory_include_thinking),
+                    stringResource(R.string.memory_include_thinking_desc), includeThinking) {
+                    prefs.setIncludeThinking(it); includeThinking = it
+                }
+                AutomationSwitch(stringResource(R.string.memory_auto_approve),
+                    stringResource(R.string.memory_auto_approve_desc), autoApprove) {
+                    prefs.setAutoApproveChanges(it); autoApprove = it
+                }
+                if (!master) Text(stringResource(R.string.memory_auto_master_off),
+                    Modifier.padding(bottom = 12.dp), style = MaterialTheme.typography.bodyMedium)
                 AutomationSwitch(stringResource(R.string.memory_extract_old),
                     stringResource(R.string.memory_graph_path_desc), graph) {
                     scope.launch { api.saveEnableLegacyMemoryExtraction(it) }
                 }
-            }
-            AutomationSwitch(stringResource(R.string.memory_extract_new),
-                stringResource(if (orbitSpace) R.string.memory_extract_new_orbit_locked else R.string.memory_notes_path_desc),
-                notes, enabled = !orbitSpace) {
-                prefs.setExtractNewMemory(it); notes = it
-            }
-            AutomationSwitch(stringResource(R.string.memory_extract_skills),
-                stringResource(R.string.memory_skills_path_desc), skills) {
-                prefs.setExtractSkills(it); skills = it
+                AutomationSwitch(stringResource(R.string.memory_extract_new),
+                    stringResource(R.string.memory_notes_path_desc), notes) {
+                    prefs.setExtractNewMemory(it); notes = it
+                }
+                AutomationSwitch(stringResource(R.string.memory_extract_skills),
+                    stringResource(R.string.memory_skills_path_desc), skills) {
+                    prefs.setExtractSkills(it); skills = it
+                }
             }
             LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval,
                 stringResource(R.string.memory_interval_unit_turns)) {
@@ -101,9 +100,11 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
                     }
                 }
             )
-            AutomationSwitch(stringResource(R.string.memory_learned_revise),
-                stringResource(R.string.memory_learned_hint), revise) {
-                prefs.setReviseLearnedSkills(it); revise = it
+            if (!orbitSpace) {
+                AutomationSwitch(stringResource(R.string.memory_learned_revise),
+                    stringResource(R.string.memory_learned_hint), revise) {
+                    prefs.setReviseLearnedSkills(it); revise = it
+                }
             }
         }
     }

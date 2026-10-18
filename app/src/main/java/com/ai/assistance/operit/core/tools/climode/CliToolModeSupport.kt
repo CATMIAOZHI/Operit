@@ -244,8 +244,9 @@ object CliToolModeSupport {
             }
         }
 
+        // The chat's own package list: the main app's, or an Orbit's in its chats.
         val enabledPackages =
-            packageManager.getEnabledPackageNames()
+            roleCardToolAccess.scopePackageNames
                 .asSequence()
                 .map { it.trim() }
                 .filter { it.isNotEmpty() }

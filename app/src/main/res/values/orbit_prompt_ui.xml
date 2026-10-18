@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_layer_memory">长期记忆</string>
+    <string name="orbit_layer_memory_desc">Orbit 整理的长期笔记</string>
+    <string name="orbit_prompt_view_full">完整提示词</string>
+    <string name="orbit_prompt_view_full_desc">主聊天正在使用的系统提示词，共 %1$s</string>
+    <string name="orbit_prompt_not_built">还没有生成。和 Orbit 说一句话后就能看到。</string>
+    <string name="orbit_prompt_section_missing">这一部分还没有单独记下来。点“刷新提示词”，Orbit 下次回复后就能看到。</string>
+    <string name="orbit_prompt_view_note">这是主聊天正在使用的提示词，每次回复都会原样发给模型。</string>
+    <string name="orbit_prompt_tools_note">这是写在提示词里的部分。每个工具的详细说明会随每次请求另外发送。</string>
+    <string name="orbit_prompt_refresh">刷新提示词</string>
+    <string name="orbit_prompt_refresh_desc">一段对话里，记忆、资料和工具会先固定下来。刷新后 Orbit 下次回复时重新读取。</string>
+    <string name="orbit_prompt_refresh_busy">Orbit 正在回复，等它说完再刷新。</string>
+    <string name="orbit_prompt_refreshed">已刷新，下次回复时生效</string>
+    <string name="orbit_prompt_refresh_failed">刷新失败，请稍后再试</string>
+    <string name="orbit_prompt_copied">已复制</string>
+    <string name="orbit_packages_title">工具包</string>
+    <string name="orbit_packages_row_desc">Orbit 自己的开关，和主应用分开</string>
+    <string name="orbit_packages_help">这里的开关只管 Orbit。在这里关掉不影响主应用，主应用关掉也不影响这里。</string>
+    <string name="orbit_packages_import">从主应用导入</string>
+    <string name="orbit_packages_import_desc">换成和主应用现在一样的开关（主应用开了 %1$d 个）</string>
+    <string name="orbit_packages_import_title">从主应用导入？</string>
+    <string name="orbit_packages_import_message">Orbit 的工具包开关会换成和主应用现在一样。你在这里单独改过的开关会被覆盖。</string>
+    <string name="orbit_packages_import_confirm">导入</string>
+    <string name="orbit_packages_search">搜索工具包</string>
+    <string name="orbit_packages_count">已开启 %1$d / %2$d</string>
+    <string name="orbit_packages_empty">没有找到工具包</string>
+    <string name="orbit_packages_needs_container">需要先在主应用开启「%1$s」才能用</string>
+    <string name="orbit_packages_save_failed">没能保存这个开关，已恢复原样</string>
+    <string name="orbit_packages_imported">已导入主应用的开关</string>
+    <string name="orbit_packages_import_failed">导入失败，请稍后再试</string>
+    <string name="orbit_load_failed">没能读取，请重试</string>
+    <string name="orbit_retry">重试</string>
+    <string name="tool_package_off_in_chat">工具包「%1$s」在当前对话没有开启，不能使用。</string>
+</resources>

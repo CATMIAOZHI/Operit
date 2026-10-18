@@ -3127,7 +3127,13 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         ) {
             return "ToolPkg container '${subpackageRuntime.containerPackageName}' is not enabled. Package '$normalizedPackageName' is inactive."
         }
-        if (enabledPackageNames.contains(normalizedPackageName)) {
+        // An Orbit chat uses the Orbit's own package list; any other caller uses the main app's.
+        val orbitPackages = orbitPackagesFor(callerChatId)
+        if (orbitPackages != null && availablePackages.containsKey(normalizedPackageName) &&
+            normalizedPackageName !in orbitPackages) {
+            return "Package '$normalizedPackageName' is switched off for this Orbit."
+        }
+        if (orbitPackages?.contains(normalizedPackageName) ?: enabledPackageNames.contains(normalizedPackageName)) {
             // Load the full package data for a standard package
             val toolPackage =
                 getPackageTools(normalizedPackageName)
@@ -3356,7 +3362,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             if (isPhoneControlPackage) {
                                 // Native execution retains the host's turn identity; the legacy
                                 // JavaScript bridge cannot securely supply it.
-                                if (!isPackageEnabled(toolPackage.name)) {
+                                // An Orbit chat follows its own package list, any other chat the main app's.
+                                val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+                                    .currentToolRuntimeContext()?.callerChatId
+                                if (!isPackageOnForChat(toolPackage.name, callerChatId)) {
                                     return ToolResult(toolName = tool.name, success = false,
                                         result = StringResultData(""), error = "Phone control package is disabled.")
                                 }
@@ -3728,6 +3737,13 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
     internal fun unregisterPackageTools(packageName: String) {
         if (packageName == com.ai.assistance.operit.core.tools.phone.PhoneControlTools.PACKAGE_NAME) {
+            // An Orbit keeps its own switch: switching the package off in the main app must not cut
+            // into an Orbit that is controlling the phone and still has the package on.
+            val owner = com.ai.assistance.operit.core.tools.phone.PhoneControlTools.activeSessionChatId()
+            if (owner != null && orbitPackagesFor(owner)?.contains(packageName) == true) {
+                AppLogger.d(TAG, "Keeping phone_control for the Orbit chat that is using it")
+                return
+            }
             com.ai.assistance.operit.core.tools.phone.PhoneControlTools.setPackageAvailable(false)
         }
         val activeTools = activePackageToolNames.remove(packageName).orEmpty()
@@ -3754,6 +3770,18 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val toolPackage = availablePackages[normalizedPackageName] ?: return null
         return selectToolPackageState(toolPackage)
     }
+
+    /** The Orbit's own package list when [chatId] belongs to an Orbit, otherwise null. */
+    private fun orbitPackagesFor(chatId: String?): Set<String>? {
+        if (chatId.isNullOrBlank()) return null
+        return kotlinx.coroutines.runBlocking {
+            com.ai.assistance.operit.features.orbit.OrbitPackages.scopeFor(context, this@PackageManager, chatId)
+        }
+    }
+
+    /** Whether a package is on in [chatId]: an Orbit chat's own list, any other chat the main app's. */
+    private fun isPackageOnForChat(packageName: String, chatId: String?): Boolean =
+        orbitPackagesFor(chatId)?.contains(normalizePackageName(packageName)) ?: isPackageEnabled(packageName)
 
     /** Checks if a package is enabled */
     fun isPackageEnabled(packageName: String): Boolean {

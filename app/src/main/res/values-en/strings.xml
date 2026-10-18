@@ -9278,7 +9278,7 @@
     <string name="orbit_section_prompts">Prompts</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
-    <string name="orbit_prompt_layers_help">These go into Orbit\'s system prompt in this order. Changes apply to the next replies.</string>
+    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order, always. Tap one to see or edit it.</string>
     <string name="orbit_layer_base">Base instructions</string>
     <string name="orbit_layer_base_desc">Initiative, reminders, memory, tone and safety</string>
     <string name="orbit_layer_custom">Edited</string>
@@ -9289,10 +9289,9 @@
     <string name="orbit_layer_user">About you</string>
     <string name="orbit_layer_user_desc">What Orbit has learned about you</string>
     <string name="orbit_layer_runtime">Runtime</string>
-    <string name="orbit_layer_runtime_desc">Name, memory scope and background task state, written by the app</string>
+    <string name="orbit_layer_runtime_desc">Name, memory scope and background task state, written by the app. Tap to see what was sent</string>
     <string name="orbit_layer_tools">Tools</string>
-    <string name="orbit_layer_tools_desc">Operit\'s existing tools, under fast auto review</string>
-    <string name="orbit_layer_always">Always on</string>
+    <string name="orbit_layer_tools_desc">How to use tools and which packages are available, under fast auto review. Tap to see what was sent</string>
     <string name="orbit_goal_create">New goal</string>
     <string name="orbit_goal_progress">%1$d of %2$d tasks completed</string>
     <string name="orbit_goal_edit">Edit goal</string>

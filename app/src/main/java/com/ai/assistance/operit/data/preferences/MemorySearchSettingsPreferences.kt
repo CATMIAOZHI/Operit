@@ -28,7 +28,12 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         return config.normalized()
     }
 
-    fun shouldInjectNotes(): Boolean = searchPrefs.getBoolean("inject_memory_notes", true)
+    /**
+     * An Orbit's own space always injects memory.md, extracts and revises skills, reads thinking and
+     * applies changes; these switches exist only for ordinary spaces.
+     */
+    val isOrbitLocked: Boolean get() = isOrbitSpace(profileId)
+    fun shouldInjectNotes(): Boolean = isOrbitLocked || searchPrefs.getBoolean("inject_memory_notes", true)
     fun observeInjectNotes(): kotlinx.coroutines.flow.Flow<Boolean> = kotlinx.coroutines.flow.callbackFlow {
         val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
             if (key == "inject_memory_notes") trySend(shouldInjectNotes())
@@ -38,12 +43,14 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         awaitClose { searchPrefs.unregisterOnSharedPreferenceChangeListener(listener) }
     }
     fun setInjectNotes(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("inject_memory_notes", enabled).apply()
         LearningPromptSnapshotRepository.markChanged(context, "notes-policy:$profileId")
     }
-    fun shouldExtractSkills(): Boolean = searchPrefs.getBoolean("extract_skill_drafts", true)
-    fun shouldIncludeThinking(): Boolean = searchPrefs.getBoolean("extract_include_thinking", true)
+    fun shouldExtractSkills(): Boolean = isOrbitLocked || searchPrefs.getBoolean("extract_skill_drafts", true)
+    fun shouldIncludeThinking(): Boolean = isOrbitLocked || searchPrefs.getBoolean("extract_include_thinking", true)
     fun setIncludeThinking(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("extract_include_thinking", enabled).apply()
     }
     fun learningDelayMinutes(): Int = searchPrefs.getInt("learning_delay_minutes", 5).coerceIn(1, 60)
@@ -86,8 +93,9 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         editor.apply()
         notes to skills
     }
-    fun mayReviseLearnedSkills(): Boolean = searchPrefs.getBoolean("revise_learned_skills", true)
+    fun mayReviseLearnedSkills(): Boolean = isOrbitLocked || searchPrefs.getBoolean("revise_learned_skills", true)
     fun setReviseLearnedSkills(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("revise_learned_skills",enabled).apply()
     }
     fun mayAiReviewChanges(): Boolean = searchPrefs.getBoolean("allow_ai_memory_decisions", false)
@@ -125,6 +133,7 @@ class MemorySearchSettingsPreferences(private val context: Context, profileId: S
         searchPrefs.edit().putBoolean("extract_new_memory", enabled).apply()
     }
     fun setExtractSkills(enabled: Boolean) {
+        if (isOrbitLocked) return
         searchPrefs.edit().putBoolean("extract_skill_drafts", enabled).apply()
     }
 

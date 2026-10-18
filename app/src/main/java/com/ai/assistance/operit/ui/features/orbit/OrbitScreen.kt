@@ -548,8 +548,10 @@ private fun OrbitChatPage(
                             onOpenPrompt = { push(OrbitSubPage.PROMPT) },
                             onOpenSoul = { push(OrbitSubPage.SOUL) },
                             onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                            onOpenMemory = { push(OrbitSubPage.MEMORY) },
                             onOpenUser = { push(OrbitSubPage.USER) },
                         )
+                        OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
                         OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                         OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
                         // No id opens the grouped list of every task.
@@ -604,6 +606,10 @@ private fun OrbitChatPage(
                 showSettings = false
                 push(OrbitSubPage.PROMPTS)
             },
+            onOpenPackages = {
+                showSettings = false
+                push(OrbitSubPage.PACKAGES)
+            },
             onOpenVault = {
                 showSettings = false
                 showVault = true
@@ -636,7 +642,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES }
+private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -914,6 +920,7 @@ private fun OrbitSettingsSheet(
     onDismiss: () -> Unit,
     onOpenNotifications: () -> Unit,
     onOpenPrompts: () -> Unit,
+    onOpenPackages: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
     onPause: () -> Unit,
@@ -1036,6 +1043,14 @@ private fun OrbitSettingsSheet(
                         icon = lucide("layers"),
                         searchable = false,
                         onClick = onOpenPrompts,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_packages_title),
+                        subtitle = stringResource(R.string.orbit_packages_row_desc),
+                        icon = lucide("package"),
+                        searchable = false,
+                        onClick = onOpenPackages,
                     )
                 }
             }
