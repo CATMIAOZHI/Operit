@@ -104,6 +104,8 @@ internal fun OrbitProfilePage(
     onClose: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenTask: (String) -> Unit,
+    /** Opens every task in groups, including finished and cancelled ones. */
+    onOpenAllTasks: () -> Unit,
     onOpenProcess: (OrbitProcess) -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
@@ -197,7 +199,7 @@ internal fun OrbitProfilePage(
                 activitySection(activity, chatTurns, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, actions, onOpenTask)
-            OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask)
+            OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask, onOpenAllTasks)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
                 IdentitySection(
                     orbit = orbit,
@@ -743,8 +745,23 @@ private fun actionState(state: String): String = stringResource(when (state) {
 internal fun relativeTime(time: Long): String =
     DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
 
-private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpenTask: (String) -> Unit) {
+private fun LazyListScope.schedulesSection(
+    tasks: List<OrbitTaskEntity>?,
+    onOpenTask: (String) -> Unit,
+    onOpenAll: () -> Unit,
+) {
     if (tasks == null) return loading()
+    // Finished, cancelled and one-off tasks are not schedules, but the user can still find them here.
+    if (tasks.isNotEmpty()) item(key = "all-tasks") {
+        OrbitListRow(
+            icon = orbitIcon("list-checks"),
+            title = stringResource(R.string.orbit_tasks_all),
+            detail = stringResource(R.string.orbit_tasks_all_desc, tasks.size),
+            meta = null,
+            showChevron = true,
+            onClick = onOpenAll,
+        )
+    }
     val live = tasks.filter { it.state != "CANCELLED" && it.state != "DONE" && it.kind != "ONCE" }
     if (live.isEmpty()) {
         item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_schedules_empty)) }
@@ -769,22 +786,7 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
         item(key = "schedule-title-$label") { SectionTitle(stringResource(label)) }
         items(group, key = { "schedule-${it.id}" }) { task ->
             val paused = task.state != "ACTIVE"
-            val trigger = tasks.firstOrNull { it.id == task.triggerTaskId }?.title.orEmpty()
-            val (icon, detail) = when {
-                task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock" to stringResource(
-                    R.string.orbit_profile_schedule_daily_at,
-                    String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60),
-                )
-                task.scheduleMode == "WEEKLY" -> "calendar-range" to calendarScheduleText(task)
-                task.scheduleMode == "MONTHLY" -> "calendar-days" to calendarScheduleText(task)
-                task.scheduleMode == "YEARLY" -> "calendar-heart" to calendarScheduleText(task)
-                task.scheduleMode == "ONCE" -> "bell" to (DateFormat.getDateInstance(DateFormat.MEDIUM)
-                    .format(Date(task.nextRunAt)) + watchSuffix(task))
-                task.scheduleMode == "EVENT" -> "zap" to (stringResource(R.string.orbit_task_event_wait, trigger) + watchSuffix(task))
-                task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND ->
-                    watchIcon(task) to (watchLabel(task) + " · " + intervalText(task.intervalMinutes))
-                else -> "timer" to intervalText(task.intervalMinutes)
-            }
+            val (icon, detail) = taskIconAndSchedule(task, tasks)
             OrbitListRow(
                 icon = orbitIcon(icon),
                 title = task.title,
@@ -797,6 +799,39 @@ private fun LazyListScope.schedulesSection(tasks: List<OrbitTaskEntity>?, onOpen
                 onClick = { onOpenTask(task.id) },
             )
         }
+    }
+}
+
+/** The icon for a task's schedule; cheap, for rows that do not show the time text. */
+internal fun taskScheduleIcon(task: OrbitTaskEntity): String = when {
+    task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock"
+    task.scheduleMode == "WEEKLY" -> "calendar-range"
+    task.scheduleMode == "MONTHLY" -> "calendar-days"
+    task.scheduleMode == "YEARLY" -> "calendar-heart"
+    task.scheduleMode == "ONCE" -> "bell"
+    task.scheduleMode == "EVENT" -> "zap"
+    task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> watchIcon(task)
+    else -> "timer"
+}
+
+/** The icon and the "when" line of a task, the same in the schedule list and the task page. */
+@Composable
+internal fun taskIconAndSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>): Pair<String, String> {
+    val trigger = tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId
+    return when {
+        task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock" to stringResource(
+            R.string.orbit_profile_schedule_daily_at,
+            String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60),
+        )
+        task.scheduleMode == "WEEKLY" -> "calendar-range" to calendarScheduleText(task)
+        task.scheduleMode == "MONTHLY" -> "calendar-days" to calendarScheduleText(task)
+        task.scheduleMode == "YEARLY" -> "calendar-heart" to calendarScheduleText(task)
+        task.scheduleMode == "ONCE" -> "bell" to (DateFormat.getDateInstance(DateFormat.MEDIUM)
+            .format(Date(task.nextRunAt)) + watchSuffix(task))
+        task.scheduleMode == "EVENT" -> "zap" to (stringResource(R.string.orbit_task_event_wait, trigger) + watchSuffix(task))
+        task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND ->
+            watchIcon(task) to (watchLabel(task) + " · " + intervalText(task.intervalMinutes))
+        else -> "timer" to intervalText(task.intervalMinutes)
     }
 }
 

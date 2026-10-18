@@ -50,7 +50,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.skill.SkillPackage
-import com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences
 import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
 
@@ -86,7 +85,9 @@ internal fun SkillSourceFolders(
     archivedNames: Set<String>,
     builtInNames: Set<String>,
     searching: Boolean,
-    visibility: SkillVisibilityPreferences,
+    /** Each skill's saved switch, read off the main thread by the caller. */
+    visibleToAi: Map<String, Boolean>,
+    onVisibleChange: (String, Boolean) -> Unit,
     onOpen: (SkillPackage) -> Unit,
     onRestore: (String) -> Unit,
     /** A skill was switched back on for the AI; its idle clock should start fresh. */
@@ -134,7 +135,7 @@ internal fun SkillSourceFolders(
                             .padding(start = 8.dp, end = 8.dp, bottom = if (last) 6.dp else 0.dp),
                     ) {
                         SettingsRowDivider()
-                        SkillRow(skill, source, visibility, onRestore = { onRestore(skill.name) },
+                        SkillRow(skill, source, visibleToAi[skill.name] ?: true, { onVisibleChange(skill.name, it) }, onRestore = { onRestore(skill.name) },
                             onShown = { onShown(skill.name) }) { onOpen(skill) }
                     }
                 }
@@ -193,7 +194,8 @@ private fun FolderHeader(
 private fun SkillRow(
     skill: SkillPackage,
     source: SkillSource,
-    visibility: SkillVisibilityPreferences,
+    visible: Boolean,
+    onVisibleChange: (Boolean) -> Unit,
     onRestore: () -> Unit,
     onShown: () -> Unit,
     onClick: () -> Unit,
@@ -201,9 +203,8 @@ private fun SkillRow(
     val archived = source == SkillSource.ARCHIVED
     // An archived skill is off for the AI by definition; switching it on asks for a restore, and
     // the row moves to its folder once that is saved.
-    var visibleToAi by remember(skill.name, source) {
-        mutableStateOf(!archived && visibility.isSkillVisibleToAi(skill.name))
-    }
+    val visibleToAi = !archived && visible
+
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).clickable(onClick = onClick)
             .padding(horizontal = 8.dp, vertical = 10.dp),
@@ -234,8 +235,7 @@ private fun SkillRow(
                 if (archived) {
                     if (checked) onRestore()
                 } else {
-                    visibleToAi = checked
-                    visibility.setSkillVisibleToAi(skill.name, checked)
+                    onVisibleChange(checked)
                     if (checked) onShown()
                 }
             },

@@ -1,31 +1,64 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
-import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.selection.SelectionContainer
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.model.OrbitActionEntity
+import com.ai.assistance.operit.data.model.OrbitRunEntity
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
+import com.ai.assistance.operit.data.model.OrbitTaskInputEntity
+import com.ai.assistance.operit.features.orbit.OrbitRoutines
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskScheduler
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import java.text.DateFormat
 import java.util.Date
+
+/*
+ * An Orbit task in the profile's look: a round back button instead of a top bar, quiet gray
+ * cards, round icons, and one dark button for the main action. Opened from the schedule list or
+ * a goal it shows one task; with no task given it lists them all in groups.
+ */
+
+private val TaskCardShape = RoundedCornerShape(20.dp)
+private val TaskCardTop = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+private val TaskCardBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+
+@Composable
+private fun taskCardColor(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -37,11 +70,13 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
     var errorDetail by remember { mutableStateOf<String?>(null) }
-    var userNote by rememberSaveable(selected) { mutableStateOf("") }
     var retry by remember { mutableIntStateOf(0) }
     var confirmCancel by remember { mutableStateOf<OrbitTaskEntity?>(null) }
     var resolveReceipt by remember { mutableStateOf<Pair<String, Boolean>?>(null) }
     var executionRecord by remember { mutableStateOf<String?>(null) }
+    // Results of a button press show next to the buttons, where the user is looking.
+    var actionError by remember { mutableStateOf<String?>(null) }
+    var notice by remember { mutableStateOf<String?>(null) }
     val tasks by produceState<List<OrbitTaskEntity>?>(null, orbitId, retry) {
         value = null
         try { repository.dao.observeTasks(orbitId).collect { value = it } }
@@ -57,210 +92,88 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     fun action(block: suspend () -> Unit) {
         if (busy) return
         busy = true
-        error = false
+        actionError = null
+        notice = null
         scope.launch {
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { error = true; errorDetail = e.message }
+            catch (e: Exception) { actionError = e.message.orEmpty() }
             finally { busy = false }
         }
     }
-    fun back() { if (selected != null && initialTaskId == null) selected = null else onBack() }
+    // A message from one task's buttons does not follow the user to another task.
+    fun clearFeedback() { actionError = null; notice = null }
+    fun back() { clearFeedback(); if (selected != null && initialTaskId == null) selected = null else onBack() }
     BackHandler { back() }
-    executionRecord?.let { record ->
-        AlertDialog(onDismissRequest = { executionRecord = null },
-            title = { Text(stringResource(R.string.orbit_execution_record)) },
-            text = { SelectionContainer {
-                Text(record.ifBlank { stringResource(R.string.orbit_task_no_result) },
-                    modifier = Modifier.heightIn(max = 420.dp).verticalScroll(rememberScrollState()))
-            } },
-            confirmButton = { TextButton(onClick = { executionRecord = null }) { Text(stringResource(android.R.string.ok)) } })
-    }
-    val detail = tasks?.firstOrNull { it.id == selected }
+
     val listState = rememberLazyListState()
-    val detailState = key(selected) { rememberLazyListState() }
-    val lastRun by produceState<com.ai.assistance.operit.data.model.OrbitRunEntity?>(
-        null, detail?.id, retry) {
-        value = null
-        try { detail?.let { repository.dao.observeLatestRun(it.id).collect { run -> value = run } } }
-        catch (e: CancellationException) { throw e }
-        catch (e: Exception) { error = true }
+    val errorBanner: LazyListScope.() -> Unit = {
+        if (error) item(key = "error") {
+            TaskErrorCard(errorDetail) { error = false; errorDetail = null; retry++ }
+        }
     }
-    val receipts by produceState(emptyList<com.ai.assistance.operit.data.model.OrbitActionEntity>(), detail?.id) {
-        value = emptyList()
-        try { detail?.let { repository.dao.observeActions(it.id).collect { rows -> value = rows } } }
-        catch (e: CancellationException) { throw e }
-        catch (e: Exception) { error = true }
-    }
-    val input by produceState<com.ai.assistance.operit.data.model.OrbitTaskInputEntity?>(
-        null, detail?.id, detail?.version, detail?.state, busy) {
-        value = detail?.let { repository.dao.input(it.id) }
-    }
-    Scaffold(
-        topBar = { TopAppBar(
-            title = { Text(stringResource(R.string.orbit_tasks_title)) },
-            navigationIcon = { IconButton(onClick = ::back) {
-                Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
-            } },
-        ) },
-    ) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding),
-            state = if (detail == null) listState else detailState,
-            contentPadding = PaddingValues(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (error) item {
-                Card {
-                    Column(Modifier.padding(16.dp)) {
-                        Text(stringResource(R.string.orbit_task_action_failed))
-                        errorDetail?.let { Text(it, style = MaterialTheme.typography.bodySmall) }
-                        TextButton(onClick = { error = false; retry++ }) {
-                            Text(stringResource(R.string.orbit_memory_retry))
-                        }
+    val feedback: LazyListScope.() -> Unit = {
+        actionError?.let { detail ->
+            item(key = "action-error") {
+                TaskErrorCard(detail, stringResource(R.string.orbit_task_dismiss)) { actionError = null }
+            }
+        }
+        notice?.let { text ->
+            item(key = "notice") {
+                TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(orbitIcon("circle-check"), null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(text, style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
                     }
                 }
             }
-            if (tasks == null && !error) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            if (detail == null) {
-                item { Text(stringResource(R.string.orbit_tasks_help),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                if (tasks?.isEmpty() == true) item { Text(stringResource(R.string.orbit_tasks_empty)) }
-                items(tasks.orEmpty(), key = { it.id }) { task ->
-                    Card(onClick = { selected = task.id }, modifier = Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            Text(task.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                            Text(taskState(task), color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                style = MaterialTheme.typography.bodySmall)
-                            if (task.state == "ACTIVE") Text(
-                                taskSchedule(task, tasks.orEmpty(), dues[task.id]),
-                                style = MaterialTheme.typography.bodySmall)
-                        }
+        }
+    }
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+        val shown = selected
+        if (shown == null) {
+            TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+        } else key(shown) {
+            TaskDetail(
+                orbitId = orbitId,
+                taskId = shown,
+                tasks = tasks,
+                dueAt = dues[shown],
+                repository = repository,
+                busy = busy,
+                retry = retry,
+                onError = { error = true },
+                onBack = ::back,
+                errorBanner = errorBanner,
+                loadFailed = error,
+                feedback = feedback,
+                action = ::action,
+                onNotice = { notice = it },
+                onCancel = { confirmCancel = it },
+                onResolve = { id, completed -> resolveReceipt = id to completed },
+                onRecord = { id -> action { executionRecord = repository.executionRecord(id) } },
+            )
+        }
+    }
+
+    executionRecord?.let { record ->
+        ModalBottomSheet(onDismissRequest = { executionRecord = null }) {
+            Column(
+                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+                verticalArrangement = Arrangement.spacedBy(12.dp),
+            ) {
+                Text(stringResource(R.string.orbit_execution_record),
+                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+                Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
+                    SelectionContainer {
+                        Text(
+                            record.ifBlank { stringResource(R.string.orbit_task_no_result) },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(16.dp),
+                        )
                     }
                 }
-            } else {
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            Text(detail.title, style = MaterialTheme.typography.headlineSmall)
-                            Text(taskState(detail), color = MaterialTheme.colorScheme.primary)
-                            val routine = com.ai.assistance.operit.features.orbit.OrbitRoutines.isRoutine(detail)
-                            Text(when {
-                                routine && detail.source == com.ai.assistance.operit.features.orbit.OrbitRoutines.GOALS_SOURCE ->
-                                    stringResource(R.string.orbit_routine_goal_briefing_desc)
-                                routine -> stringResource(R.string.orbit_routine_self_review_desc)
-                                else -> detail.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
-                            })
-                            if (detail.source.isNotBlank()) Text(watchLabel(detail),
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            Text(stringResource(when (detail.notifyPolicy) {
-                                "ALWAYS" -> R.string.orbit_task_report_always
-                                "DIGEST" -> R.string.orbit_report_digest
-                                else -> R.string.orbit_task_report_changes
-                            }))
-                            // Only a subagent's background run has a time limit; Orbit's own chat turn has none.
-                            val limit = com.ai.assistance.operit.features.orbit.OrbitTaskRepository.timeoutMinutes(detail)
-                            Text(when {
-                                !detail.useSubagent -> stringResource(R.string.orbit_task_in_chat)
-                                limit >= 120 && limit % 60 == 0 -> stringResource(R.string.orbit_task_timeout_hours, limit / 60)
-                                else -> stringResource(R.string.orbit_task_timeout, limit)
-                            },
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (detail.state == "ACTIVE") Text(taskSchedule(detail, tasks.orEmpty(), dues[detail.id]))
-                        }
-                    }
-                }
-                item {
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            val finishedAt = lastRun?.finishedAt?.takeIf { it > 0 && lastRun?.state != "RUNNING" }
-                            Text(if (finishedAt == null) stringResource(R.string.orbit_task_last_result)
-                                else stringResource(R.string.orbit_task_last_result_time, relativeTime(finishedAt)),
-                                fontWeight = FontWeight.SemiBold)
-                            Text(if (lastRun?.state == "RUNNING") stringResource(R.string.orbit_task_running)
-                                else lastRun?.error?.takeIf { it.isNotBlank() }
-                                ?: lastRun?.observation?.takeIf { it.isNotBlank() }
-                                ?: stringResource(R.string.orbit_task_no_result))
-                            lastRun?.decision?.takeIf { it.isNotBlank() && lastRun?.state != "RUNNING" }?.let { decision ->
-                                Text(stringResource(R.string.orbit_task_decision, when (decision) {
-                                    com.ai.assistance.operit.data.model.OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
-                                    com.ai.assistance.operit.data.model.OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat)
-                                    com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED ->
-                                        com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, detail)
-                                    else -> decision
-                                }),
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    maxLines = 4, overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis)
-                            }
-                            // A watch that lost a permission says so; give the user the way to turn it back on.
-                            val permission = lastRun?.error?.let { watchPermissionOf(context, it) }
-                            if (permission != null && lastRun?.state == "FAILED") {
-                                FilledTonalButton(onClick = { openWatchPermission(context, permission) }) {
-                                    Text(stringResource(R.string.orbit_watch_open_settings))
-                                }
-                            }
-                            if (lastRun != null) TextButton(enabled = !busy, onClick = { action {
-                                executionRecord = repository.executionRecord(detail.id)
-                            } }) { Text(stringResource(R.string.orbit_execution_record)) }
-                        }
-                    }
-                }
-                if (detail.state !in setOf("CANCELLED", "DONE")) item {
-                    Column(Modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                        if (detail.state == "WAITING_USER") {
-                            if (!input?.requestedUrl.isNullOrBlank()) {
-                                OutlinedButton(enabled = !busy, onClick = { action {
-                                    com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.open(context, detail)
-                                } }) { Text(stringResource(R.string.orbit_browser_open)) }
-                                Text(stringResource(R.string.orbit_browser_handoff_help),
-                                    style = MaterialTheme.typography.bodySmall)
-                            }
-                            OutlinedTextField(value = userNote, onValueChange = { if (it.length <= 4000) userNote = it },
-                                modifier = Modifier.fillMaxWidth(), enabled = !busy,
-                                label = { Text(stringResource(R.string.orbit_task_user_note)) })
-                            FilledTonalButton(enabled = !busy, onClick = { action {
-                                com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.resume(context, detail, userNote)
-                                userNote = ""
-                            } }) { Text(stringResource(R.string.orbit_task_continue)) }
-                        }
-                        if (detail.state != "WAITING_USER")
-                        FilledTonalButton(modifier = Modifier.fillMaxWidth(),
-                            enabled = !busy && (detail.state == "ACTIVE" ||
-                                receipts.none { it.state in setOf("STARTED", "UNKNOWN") }), onClick = {
-                            action { check(repository.changeState(orbitId, detail.id,
-                                if (detail.state == "ACTIVE") "PAUSED" else "ACTIVE")) }
-                        }) { Text(stringResource(if (detail.state == "ACTIVE") R.string.orbit_pause else R.string.orbit_resume)) }
-                        if (detail.state == "ACTIVE") OutlinedButton(
-                            modifier = Modifier.fillMaxWidth(), enabled = !busy, onClick = {
-                                action {
-                                    repository.dao.enqueueManual(detail.id, java.util.UUID.randomUUID().toString(),
-                                        System.currentTimeMillis())
-                                    OrbitTaskScheduler.reschedule(context)
-                                }
-                            }) { Text(stringResource(R.string.orbit_run_now)) }
-                        if (detail.kind != "DAILY") TextButton(enabled = !busy,
-                            onClick = { confirmCancel = detail }) {
-                            Text(stringResource(R.string.orbit_task_cancel), color = MaterialTheme.colorScheme.error)
-                        }
-                    }
-                }
-                items(receipts, key = { "receipt-${it.id}" }) { receipt ->
-                    Card(Modifier.fillMaxWidth()) {
-                        Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                            Text(stringResource(if (receipt.state == "UNKNOWN") R.string.orbit_action_verify
-                                else R.string.orbit_action_receipt), fontWeight = FontWeight.SemiBold)
-                            Text(receipt.summary, style = MaterialTheme.typography.bodyMedium)
-                            if (receipt.state == "UNKNOWN") {
-                                Text(stringResource(R.string.orbit_action_verify_help))
-                                TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to true }) {
-                                    Text(stringResource(R.string.orbit_action_verified))
-                                }
-                                TextButton(enabled = !busy, onClick = { resolveReceipt = receipt.id to false }) {
-                                    Text(stringResource(R.string.orbit_action_retry_allowed))
-                                }
-                            }
-                        }
-                    }
-                }
-                if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             }
         }
     }
@@ -271,7 +184,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
             confirmButton = { TextButton(onClick = {
                 confirmCancel = null
                 action { check(repository.changeState(orbitId, task.id, "CANCELLED")) }
-            }) { Text(stringResource(R.string.orbit_task_cancel)) } },
+            }) { Text(stringResource(R.string.orbit_task_cancel), color = com.ai.assistance.operit.ui.common.readableErrorColor()) } },
             dismissButton = { TextButton(onClick = { confirmCancel = null }) { Text(stringResource(R.string.cancel)) } })
     }
     resolveReceipt?.let { (id, completed) ->
@@ -280,12 +193,483 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
             text = { Text(stringResource(R.string.orbit_action_verify_confirm)) },
             confirmButton = { TextButton(onClick = {
                 resolveReceipt = null
-                detail?.let { task -> action { repository.resolveAction(orbitId, task.id, id, completed) } }
+                selected?.let { taskId -> action { repository.resolveAction(orbitId, taskId, id, completed) } }
             }) { Text(stringResource(android.R.string.ok)) } },
             dismissButton = { TextButton(onClick = { resolveReceipt = null }) { Text(stringResource(R.string.cancel)) } })
     }
 }
 
+@Composable
+private fun TaskList(
+    tasks: List<OrbitTaskEntity>?,
+    dues: Map<String, Long>,
+    listState: LazyListState,
+    onBack: () -> Unit,
+    errorBanner: LazyListScope.() -> Unit,
+    loadFailed: Boolean,
+    onOpen: (String) -> Unit,
+) {
+    val groups = remember(tasks) {
+        val all = tasks.orEmpty()
+        listOf(
+            R.string.orbit_tasks_group_attention to all.filter { it.state == "WAITING_USER" || it.state == "VERIFY" },
+            R.string.orbit_tasks_group_active to all.filter { it.state == "ACTIVE" },
+            R.string.orbit_tasks_group_paused to all.filter { it.state == "PAUSED" },
+            R.string.orbit_tasks_group_finished to all.filter { it.state == "DONE" || it.state == "CANCELLED" },
+        ).filter { it.second.isNotEmpty() }
+    }
+    val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    LazyColumn(
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
+        state = listState,
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
+    ) {
+        item(key = "header") {
+            OrbitPageHeader(stringResource(R.string.orbit_tasks_title), onBack)
+            Text(stringResource(R.string.orbit_tasks_help), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
+        }
+        errorBanner()
+        if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
+        else if (tasks != null && tasks.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty)) }
+        groups.forEach { (title, group) ->
+            item(key = "group-$title") { SectionTitle(stringResource(title)) }
+            itemsIndexed(group, key = { _, task -> task.id }, contentType = { _, _ -> "task" }) { index, task ->
+                val shape: Shape = when {
+                    group.size == 1 -> TaskCardShape
+                    index == 0 -> TaskCardTop
+                    index == group.lastIndex -> TaskCardBottom
+                    else -> RectangleShape
+                }
+                Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 0.dp)
+                    .background(taskCardColor(), shape)) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(start = 70.dp, end = 16.dp), color = divider)
+                    TaskListRow(task, tasks.orEmpty(), dues[task.id], shape) { onOpen(task.id) }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskListRow(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?, shape: Shape, onClick: () -> Unit) {
+    val icon = taskScheduleIcon(task)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).clickable(role = Role.Button, onClick = onClick)
+            .padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        TaskIcon(taskIconName(task, icon))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(task.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(if (task.state == "ACTIVE") taskSchedule(task, tasks, dueAt) else taskState(task),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(orbitIcon("chevron-right"), null, Modifier.padding(start = 8.dp).size(20.dp),
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+    }
+}
+
+@Composable
+private fun TaskDetail(
+    orbitId: String,
+    taskId: String,
+    tasks: List<OrbitTaskEntity>?,
+    dueAt: Long?,
+    repository: OrbitTaskRepository,
+    busy: Boolean,
+    retry: Int,
+    onError: () -> Unit,
+    onBack: () -> Unit,
+    errorBanner: LazyListScope.() -> Unit,
+    loadFailed: Boolean,
+    feedback: LazyListScope.() -> Unit,
+    action: (suspend () -> Unit) -> Unit,
+    onNotice: (String) -> Unit,
+    onCancel: (OrbitTaskEntity) -> Unit,
+    onResolve: (String, Boolean) -> Unit,
+    onRecord: (String) -> Unit,
+) {
+    val context = LocalContext.current
+    val task = tasks?.firstOrNull { it.id == taskId }
+    var userNote by rememberSaveable(taskId) { mutableStateOf("") }
+    val lastRun by produceState<OrbitRunEntity?>(null, taskId, retry) {
+        try { repository.dao.observeLatestRun(taskId).collect { run -> value = run } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { onError() }
+    }
+    val receipts by produceState(emptyList<OrbitActionEntity>(), taskId) {
+        try { repository.dao.observeActions(taskId).collect { rows -> value = rows } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { onError() }
+    }
+    val input by produceState<OrbitTaskInputEntity?>(null, taskId, task?.version, task?.state) {
+        value = if (task == null) null else repository.dao.input(taskId)
+    }
+    val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+    LazyColumn(
+        Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding().imePadding(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        item(key = "header") { OrbitPageHeader(stringResource(R.string.orbit_task_detail_title), onBack) }
+        errorBanner()
+        if (task == null) {
+            item(key = "missing") {
+                if (tasks != null) EmptyHint(stringResource(R.string.orbit_task_missing)) else if (!loadFailed) TaskLoading()
+            }
+            return@LazyColumn
+        }
+        item(key = "hero") { TaskHero(task) }
+        item(key = "about") {
+            val routine = OrbitRoutines.isRoutine(task)
+            TaskCard {
+                Text(
+                    when {
+                        routine && task.source == OrbitRoutines.GOALS_SOURCE -> stringResource(R.string.orbit_routine_goal_briefing_desc)
+                        routine -> stringResource(R.string.orbit_routine_self_review_desc)
+                        else -> task.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
+                    },
+                    style = MaterialTheme.typography.bodyLarge,
+                )
+            }
+        }
+        item(key = "plan") {
+            CardLabel(stringResource(R.string.orbit_task_section_plan))
+            TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), spacing = 0.dp) {
+                val (icon, whenText) = taskIconAndSchedule(task, tasks)
+                InfoRow(taskIconName(task, icon), stringResource(R.string.orbit_task_row_when), whenText, divider, first = true)
+                if (task.state == "ACTIVE" && task.scheduleMode != "EVENT") {
+                    val next = dueAt ?: task.nextRunAt
+                    InfoRow("clock", stringResource(R.string.orbit_task_row_next),
+                        DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(next)) +
+                            " · " + relativeTime(next), divider)
+                }
+                if (task.source.isNotBlank()) InfoRow("eye", stringResource(R.string.orbit_task_row_watch), watchLabel(task), divider)
+                InfoRow("message-circle", stringResource(R.string.orbit_task_row_report), stringResource(when (task.notifyPolicy) {
+                    "ALWAYS" -> R.string.orbit_task_report_always
+                    "DIGEST" -> R.string.orbit_report_digest
+                    else -> R.string.orbit_task_report_changes
+                }), divider)
+                // Only a subagent's background run has a time limit; Orbit's own chat turn has none.
+                val limit = OrbitTaskRepository.timeoutMinutes(task)
+                InfoRow(if (task.useSubagent) "hourglass" else "messages-square", stringResource(R.string.orbit_task_row_run), when {
+                    !task.useSubagent -> stringResource(R.string.orbit_task_in_chat)
+                    limit >= 120 && limit % 60 == 0 -> stringResource(R.string.orbit_task_timeout_hours, limit / 60)
+                    else -> stringResource(R.string.orbit_task_timeout, limit)
+                }, divider)
+            }
+        }
+        item(key = "result") {
+            val run = lastRun
+            val running = run?.state == "RUNNING"
+            CardLabel(stringResource(R.string.orbit_task_last_result))
+            TaskCard {
+                if (running) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                        Text(stringResource(R.string.orbit_task_running), style = MaterialTheme.typography.bodyLarge)
+                    }
+                } else {
+                    val failed = run?.state == "FAILED" && !run?.error.isNullOrBlank()
+                    Text(
+                        run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
+                            ?: stringResource(R.string.orbit_task_no_result),
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (failed) com.ai.assistance.operit.ui.common.readableErrorColor() else MaterialTheme.colorScheme.onSurface,
+                        maxLines = 12, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                run?.decision?.takeIf { it.isNotBlank() && !running }?.let { decision ->
+                    Text(stringResource(R.string.orbit_task_decision, when (decision) {
+                        OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
+                        OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat)
+                        OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
+                        else -> decision
+                    }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+                run?.finishedAt?.takeIf { it > 0 && !running }?.let {
+                    Text(relativeTime(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                // A watch that lost a permission says so; give the user the way to turn it back on.
+                val permission = run?.error?.let { watchPermissionOf(context, it) }
+                if (permission != null && run?.state == "FAILED") {
+                    TaskButton(stringResource(R.string.orbit_watch_open_settings), "settings", primary = true) {
+                        openWatchPermission(context, permission)
+                    }
+                }
+                if (run != null) {
+                    HorizontalDivider(color = divider)
+                    Row(
+                        Modifier.fillMaxWidth().heightIn(min = 48.dp).clip(RoundedCornerShape(12.dp))
+                            .clickable(enabled = !busy, role = Role.Button) { onRecord(task.id) }
+                            .padding(vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(orbitIcon("scroll-text"), null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(stringResource(R.string.orbit_execution_record), style = MaterialTheme.typography.bodyLarge,
+                            modifier = Modifier.weight(1f))
+                        Icon(orbitIcon("chevron-right"), null, Modifier.size(20.dp),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
+                    }
+                }
+            }
+        }
+        if (task.state == "WAITING_USER") item(key = "waiting") {
+            CardLabel(stringResource(R.string.orbit_tasks_group_attention))
+            TaskCard {
+                if (!input?.requestedUrl.isNullOrBlank()) {
+                    Text(stringResource(R.string.orbit_browser_handoff_help), style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TaskButton(stringResource(R.string.orbit_browser_open), "globe", enabled = !busy) {
+                        action { com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.open(context, task) }
+                    }
+                }
+                OutlinedTextField(
+                    value = userNote, onValueChange = { if (it.length <= 4000) userNote = it },
+                    modifier = Modifier.fillMaxWidth(), enabled = !busy, shape = RoundedCornerShape(14.dp),
+                    label = { Text(stringResource(R.string.orbit_task_user_note)) },
+                )
+                TaskButton(stringResource(R.string.orbit_task_continue), "check", primary = true, enabled = !busy) {
+                    action {
+                        com.ai.assistance.operit.features.orbit.OrbitBrowserHandoff.resume(context, task, userNote)
+                        userNote = ""
+                    }
+                }
+            }
+        }
+        // Receipts to check come before the buttons: resuming waits on them.
+        items(receipts, key = { "receipt-${it.id}" }, contentType = { "receipt" }) { receipt ->
+            val unknown = receipt.state == "UNKNOWN"
+            TaskCard {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    TaskIcon(if (unknown) "shield-alert" else "receipt", size = 36.dp, iconSize = 18.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Text(stringResource(if (unknown) R.string.orbit_action_verify else R.string.orbit_action_receipt),
+                        style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                }
+                Text(receipt.summary, style = MaterialTheme.typography.bodyMedium)
+                if (unknown) {
+                    Text(stringResource(R.string.orbit_action_verify_help), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TaskButton(stringResource(R.string.orbit_action_verified), "check", primary = true,
+                        enabled = !busy) { onResolve(receipt.id, true) }
+                    TaskButton(stringResource(R.string.orbit_action_retry_allowed), "rotate-ccw",
+                        enabled = !busy) { onResolve(receipt.id, false) }
+                }
+            }
+        }
+        if (task.state !in setOf("CANCELLED", "DONE")) item(key = "actions") {
+            Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (task.state != "WAITING_USER") {
+                    val active = task.state == "ACTIVE"
+                    val blocked = !active && receipts.any { it.state in setOf("STARTED", "UNKNOWN") }
+                    val runQueued = stringResource(R.string.orbit_task_run_queued)
+                    val alreadyQueued = stringResource(R.string.orbit_task_run_already_queued)
+                    val pauseOrResume: @Composable (Modifier) -> Unit = { modifier ->
+                        TaskButton(
+                            stringResource(if (active) R.string.orbit_task_pause else R.string.orbit_task_resume),
+                            if (active) "pause" else "play",
+                            primary = !active,
+                            enabled = !busy && !blocked,
+                            modifier = modifier,
+                        ) {
+                            action { check(repository.changeState(orbitId, task.id, if (active) "PAUSED" else "ACTIVE")) }
+                        }
+                    }
+                    val runNow: @Composable (Modifier) -> Unit = { modifier ->
+                        TaskButton(stringResource(R.string.orbit_run_now), "zap", primary = true,
+                            enabled = !busy, modifier = modifier) {
+                            action {
+                                val queued = repository.dao.enqueueManual(task.id, java.util.UUID.randomUUID().toString(),
+                                    System.currentTimeMillis())
+                                if (queued) OrbitTaskScheduler.reschedule(context)
+                                onNotice(if (queued) runQueued else alreadyQueued)
+                            }
+                        }
+                    }
+                    // Two pills side by side; with large text or a narrow screen they stack so
+                    // neither label is cut off.
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val stack = LocalDensity.current.fontScale > 1.15f || maxWidth < 340.dp
+                        if (!active || !stack) {
+                            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                                pauseOrResume(Modifier.weight(1f))
+                                if (active) runNow(Modifier.weight(1f))
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                                runNow(Modifier)
+                                pauseOrResume(Modifier)
+                            }
+                        }
+                    }
+                    if (blocked) Text(stringResource(R.string.orbit_task_resume_blocked), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
+                }
+                if (task.kind != "DAILY") TextButton(
+                    enabled = !busy, onClick = { onCancel(task) },
+                    modifier = Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp),
+                ) { Text(stringResource(R.string.orbit_task_cancel), color = com.ai.assistance.operit.ui.common.readableErrorColor()) }
+            }
+        }
+        feedback()
+        if (busy) item(key = "busy") { LinearProgressIndicator(Modifier.fillMaxWidth().clip(CircleShape)) }
+    }
+}
+
+/** Big round icon, the title and a state pill, centered like the profile's top. */
+@Composable
+private fun TaskHero(task: OrbitTaskEntity) {
+    val icon = taskScheduleIcon(task)
+    Column(
+        Modifier.fillMaxWidth().padding(top = 4.dp, bottom = 4.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        TaskIcon(taskIconName(task, icon), size = 76.dp, iconSize = 34.dp, background = taskCardColor())
+        Text(task.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold,
+            textAlign = TextAlign.Center, maxLines = 3, overflow = TextOverflow.Ellipsis)
+        StatePill(task)
+    }
+}
+
+/** A colored dot and the state in words: green runs, orange waits for the user, gray is stopped. */
+@Composable
+private fun StatePill(task: OrbitTaskEntity) {
+    val dot = when (task.state) {
+        "ACTIVE" -> Color(0xFF34C759)
+        "WAITING_USER", "VERIFY" -> Color(0xFFFF9500)
+        else -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+    }
+    Row(
+        Modifier.clip(CircleShape).background(taskCardColor()).padding(horizontal = 12.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(Modifier.size(8.dp).clip(CircleShape).background(dot))
+        Spacer(Modifier.width(8.dp))
+        Text(taskState(task), style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurface)
+    }
+}
+
+/** Routines get their own picture; everything else uses the icon of its schedule. */
+private fun taskIconName(task: OrbitTaskEntity, scheduleIcon: String): String = when {
+    OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.GOALS_SOURCE -> "target"
+    OrbitRoutines.isRoutine(task) -> "moon-star"
+    task.kind == "DAILY" -> "heart-handshake"
+    else -> scheduleIcon
+}
+
+@Composable
+private fun TaskIcon(
+    name: String,
+    size: Dp = 40.dp,
+    iconSize: Dp = 20.dp,
+    background: Color = MaterialTheme.colorScheme.surface,
+) {
+    Box(Modifier.size(size).clip(CircleShape).background(background), contentAlignment = Alignment.Center) {
+        Icon(orbitIcon(name), contentDescription = null, modifier = Modifier.size(iconSize))
+    }
+}
+
+@Composable
+private fun TaskCard(
+    contentPadding: PaddingValues = PaddingValues(16.dp),
+    spacing: Dp = 10.dp,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    Surface(shape = TaskCardShape, color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
+        Column(Modifier.padding(contentPadding), verticalArrangement = Arrangement.spacedBy(spacing), content = content)
+    }
+}
+
+@Composable
+private fun CardLabel(text: String) {
+    Text(text, style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold,
+        color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(start = 4.dp, top = 6.dp, bottom = 8.dp))
+}
+
+/** One fact about the task: round icon, a small label and its value. */
+@Composable
+private fun InfoRow(icon: String, label: String, value: String, divider: Color, first: Boolean = false) {
+    if (!first) HorizontalDivider(Modifier.padding(start = 50.dp), color = divider)
+    Row(Modifier.fillMaxWidth().padding(vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+        TaskIcon(icon, size = 36.dp, iconSize = 18.dp)
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(label, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(value, style = MaterialTheme.typography.bodyLarge)
+        }
+    }
+}
+
+/** A round pill button; the main action is dark like Orbit's send button, the other is gray. */
+@Composable
+private fun TaskButton(
+    text: String,
+    icon: String,
+    modifier: Modifier = Modifier,
+    primary: Boolean = false,
+    enabled: Boolean = true,
+    onClick: () -> Unit,
+) {
+    Surface(
+        onClick = onClick,
+        enabled = enabled,
+        shape = CircleShape,
+        color = if (primary) MaterialTheme.colorScheme.onSurface else taskCardColor(),
+        contentColor = if (primary) MaterialTheme.colorScheme.surface else MaterialTheme.colorScheme.onSurface,
+        modifier = modifier.fillMaxWidth().heightIn(min = 52.dp).alpha(if (enabled) 1f else 0.4f),
+    ) {
+        Row(
+            Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(orbitIcon(icon), null, Modifier.size(18.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+@Composable
+private fun TaskErrorCard(detail: String?, actionLabel: String? = null, onRetry: () -> Unit) {
+    Surface(shape = TaskCardShape, color = MaterialTheme.colorScheme.errorContainer,
+        contentColor = MaterialTheme.colorScheme.onErrorContainer,
+        modifier = Modifier.fillMaxWidth()) {
+        Row(Modifier.padding(start = 16.dp, end = 8.dp, top = 12.dp, bottom = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(orbitIcon("circle-alert"), null, Modifier.size(20.dp))
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.orbit_task_action_failed), style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.Medium)
+                detail?.takeIf { it.isNotBlank() }?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            TextButton(onClick = onRetry) {
+                Text(actionLabel ?: stringResource(R.string.orbit_memory_retry), color = MaterialTheme.colorScheme.onErrorContainer)
+            }
+        }
+    }
+}
+
+@Composable
+private fun TaskLoading() {
+    Box(Modifier.fillMaxWidth().padding(vertical = 48.dp), contentAlignment = Alignment.Center) {
+        CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp)
+    }
+}
 @Composable
 private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?): String =
     if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
@@ -321,9 +705,11 @@ internal fun watchLabel(task: OrbitTaskEntity): String {
         "calendar" -> stringResource(R.string.orbit_watch_calendar, arg.toIntOrNull() ?: 7)
         else -> stringResource(R.string.orbit_watch_script,
             com.ai.assistance.operit.features.orbit.OrbitWatchSources.SCRIPT.matchEntire(task.source)?.groupValues?.get(1)
-                ?.substringAfterLast('/')?.replace(Regex("-[0-9a-f]{8}(?=\\.sh$)"), "") ?: task.source)
+                ?.substringAfterLast('/')?.replace(SCRIPT_SUFFIX, "") ?: task.source)
     }
 }
+
+private val SCRIPT_SUFFIX = Regex("-[0-9a-f]{8}(?=\\.sh$)")
 
 /** Package names shown as app names where the phone knows them. */
 @Composable

@@ -20,6 +20,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.background
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.rememberScrollState
@@ -62,10 +64,15 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
+import androidx.compose.ui.graphics.RectangleShape
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -73,7 +80,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.skill.SkillPackage
-import com.ai.assistance.operit.data.preferences.SkillVisibilityPreferences
 import com.ai.assistance.operit.data.skill.SkillRepository
 import com.ai.assistance.operit.ui.common.displays.MarkdownTextComposable
 import java.io.File
@@ -124,24 +130,53 @@ fun SkillConfigScreen(
     var manualSkillContent by remember { mutableStateOf("") }
     var manualAttachments by remember { mutableStateOf<List<ManualImportAttachment>>(emptyList()) }
     var isImporting by remember { mutableStateOf(false) }
+    // Shown inside the import sheet; a snackbar would sit behind it.
+    var importError by remember { mutableStateOf<String?>(null) }
+    var skillDetailError by remember { mutableStateOf<String?>(null) }
+    var deletingSkill by remember { mutableStateOf(false) }
+    // Each skill's "visible to the AI" switch, read once off the main thread for the whole list.
+    var visibleToAi by remember { mutableStateOf<Map<String, Boolean>>(emptyMap()) }
+    // Only the newest scan lands; a switch flipped during a scan keeps the user's choice.
+    val refreshGen = remember { java.util.concurrent.atomic.AtomicInteger() }
+    val toggleGen = remember { java.util.concurrent.atomic.AtomicInteger() }
+    val setVisible: (String, Boolean) -> Unit = { name, visible ->
+        toggleGen.incrementAndGet()
+        visibleToAi = visibleToAi + (name to visible)
+        skillVisibilityPreferences.setSkillVisibleToAi(name, visible)
+    }
+    val learnedRepository = remember(skillRepository.memorySpaceId) {
+        com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
+    }
+    suspend fun readSwitches(names: Collection<String>) = withContext(Dispatchers.IO) {
+        names.associateWith { skillVisibilityPreferences.isSkillVisibleToAi(it) }
+    }
 
-    val refreshSkills: suspend () -> Unit = {
-        isLoading = true
+    /** [quiet] re-reads in the background without the loading spinner, for coming back to the page. */
+    suspend fun refreshSkills(quiet: Boolean = false) {
+        val gen = refreshGen.incrementAndGet()
+        val toggles = toggleGen.get()
+        if (!quiet) isLoading = true
         try {
             val loaded =
                 withContext(Dispatchers.IO) {
                     skillRepository.getAvailableSkillPackagesSnapshot()
                 }
-            val learned = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
-            // Folders are decided by these names, so they land together with the list.
-            val owned = learned.owned(learnedOnlyProfileId)
-            val archived = if (groupBySource) learned.archived() else archivedNames
+            // Folders are decided by these names, so they land together with the list. Only the
+            // learned-only view and Orbit's folders use them, and they reuse the scan just made.
+            val owned = if (learnedOnlyProfileId != null || groupBySource)
+                learnedRepository.owned(learnedOnlyProfileId, loaded.first) else emptySet()
+            val archived = if (groupBySource) learnedRepository.archived() else archivedNames
+            val switches = readSwitches(loaded.first.keys)
+            if (gen != refreshGen.get()) return
             skills = loaded.first
             learnedNames = owned
             archivedNames = archived
+            visibleToAi = if (toggles == toggleGen.get()) switches
+                else switches + visibleToAi.filterKeys { it in switches }
             skillLoadErrors = loaded.second
         } finally {
-            isLoading = false
+            // The newest scan ends the spinner, even when a quiet one replaced a loud one.
+            if (gen == refreshGen.get()) isLoading = false
         }
     }
 
@@ -175,11 +210,22 @@ fun SkillConfigScreen(
     LaunchedEffect(Unit) {
         refreshSkills()
     }
-    // A background sweep may archive skills while this page is in the background; coming back
-    // shows the current folders instead of a stale archive.
+    // While the page is in the background, Orbit may learn or drop skills, and a sweep may archive
+    // them. Coming back re-reads an Orbit's list quietly. The plain skill page only re-reads the
+    // switches, since nothing changes its folders behind its back.
     var resumedOnce by remember { mutableStateOf(false) }
     androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
-        if (resumedOnce && groupBySource) scope.launch { refreshSkills() }
+        if (resumedOnce && (groupBySource || learnedOnlyProfileId != null)) scope.launch {
+            runCatching { refreshSkills(quiet = true) }
+        } else if (resumedOnce && skills.isNotEmpty()) scope.launch {
+            val names = skills.keys
+            val archived = if (groupBySource) runCatching { learnedRepository.archived() }.getOrDefault(archivedNames) else archivedNames
+            val switches = readSwitches(names)
+            if (skills.keys == names) {
+                archivedNames = archived
+                visibleToAi = switches
+            }
+        }
         resumedOnce = true
     }
     // Switching a learned skill back on for the AI also takes it out of the archive and restarts
@@ -198,10 +244,21 @@ fun SkillConfigScreen(
         val targetPath = skill.directory.absolutePath
         selectedSkill = skill
         selectedSkillDetail = null
+        skillDetailError = null
         isSkillDetailLoading = true
         scope.launch {
-            val detail = withContext(Dispatchers.IO) {
-                buildSkillDetailDialogData(skill = skill, skillContent = skillRepository.readSkillContent(skill.name).orEmpty())
+            val detail = try {
+                withContext(Dispatchers.IO) {
+                    buildSkillDetailDialogData(skill = skill, skillContent = skillRepository.readSkillContent(skill.name).orEmpty())
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (selectedSkill?.directory?.absolutePath == targetPath) {
+                    skillDetailError = context.getString(R.string.skill_detail_load_failed, e.message ?: e.javaClass.simpleName)
+                    isSkillDetailLoading = false
+                }
+                return@launch
             }
             if (selectedSkill?.directory?.absolutePath == targetPath) {
                 selectedSkillDetail = detail
@@ -217,58 +274,39 @@ fun SkillConfigScreen(
                 .padding(horizontal = 8.dp, vertical = 8.dp)
         ) {
             if (learnedOnlyProfileId == null && showHeader) {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(
-                    containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)
-                )
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(16.dp)
+            // Gray card with a round icon, like the settings pages.
+            Surface(shape = SkillCard, color = skillCardColor(), modifier = Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(start = 14.dp, end = 4.dp, top = 12.dp, bottom = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
+                    SkillRoundIcon("puzzle", size = 44.dp, iconSize = 22.dp)
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text(stringResource(R.string.skills), style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
                         Text(
-                            text = stringResource(R.string.skills),
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Medium,
-                            modifier = Modifier.weight(1f)
+                            // An Orbit's folder path means nothing to the user; the count does.
+                            text = if (groupBySource) stringResource(R.string.skill_folder_total, skills.size)
+                                else skillRepository.getSkillsDirectoryPath(),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
                         )
-
-                        IconButton(
-                            onClick = {
-                                scope.launch {
-                                    refreshSkills()
-                                    snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_refreshed))
-                                }
-                            }
-                        ) {
-                            Icon(
-                                imageVector = Icons.Filled.Refresh,
-                                contentDescription = stringResource(R.string.refresh),
-                                modifier = Modifier.size(18.dp)
-                            )
-                        }
                     }
-
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(
-                        // An Orbit's folder path means nothing to the user; the count does.
-                        text = if (groupBySource) stringResource(R.string.skill_folder_total, skills.size)
-                            else skillRepository.getSkillsDirectoryPath(),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 5,
-                        overflow = TextOverflow.Ellipsis
-                    )
+                    IconButton(onClick = {
+                        scope.launch {
+                            refreshSkills()
+                            snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_refreshed))
+                        }
+                    }) {
+                        Icon(skillIcon("refresh-cw"), stringResource(R.string.refresh), Modifier.size(20.dp))
+                    }
                 }
             }
 
-            Spacer(modifier = Modifier.height(8.dp))
+            Spacer(modifier = Modifier.height(12.dp))
             }
 
             val displayedSkills =
@@ -296,23 +334,17 @@ fun SkillConfigScreen(
             if (skills.isEmpty() && isLoading) {
                 // The spinner below covers the first load; an empty-state line under it would flash.
             } else if (skills.isEmpty()) {
-                Text(
+                SkillEmptyHint(
                     text = if (learnedOnlyProfileId != null) {
                         learnedEmpty
                     } else if (groupBySource) {
                         stringResource(R.string.orbit_skills_empty)
                     } else {
                         stringResource(R.string.skillmgr_no_skills_found, skillRepository.getSkillsDirectoryPath())
-                    },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    }
                 )
             } else if (groupBySource && displayedSkills.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.no_matching_skills_found),
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
+                SkillEmptyHint(stringResource(R.string.no_matching_skills_found), icon = "search-x")
             } else if (groupBySource) {
                 SkillSourceFolders(
                     skills = displayedSkills,
@@ -320,7 +352,8 @@ fun SkillConfigScreen(
                     archivedNames = archivedNames,
                     builtInNames = remember { com.ai.assistance.operit.features.orbit.OrbitBundledSkills.NAMES.toSet() },
                     searching = searchQuery.isNotBlank(),
-                    visibility = skillVisibilityPreferences,
+                    visibleToAi = visibleToAi,
+                    onVisibleChange = setVisible,
                     onOpen = openSkill,
                     onRestore = { name ->
                         scope.launch {
@@ -329,7 +362,7 @@ fun SkillConfigScreen(
                                     .unarchive(name)
                             }.isSuccess
                             if (restored) {
-                                skillVisibilityPreferences.setSkillVisibleToAi(name, true)
+                                setVisible(name, true)
                                 archivedNames = archivedNames - name
                             }
                             snackbarHostState.showSnackbar(context.getString(
@@ -354,26 +387,26 @@ fun SkillConfigScreen(
                 LazyColumn(
                     state = lazyListState,
                     modifier = Modifier.fillMaxSize(),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    // One gray card: rows touch, with thin inset lines between them.
                     contentPadding = PaddingValues(bottom = 120.dp)
                 ) {
                     if (orderedSkills.isEmpty()) {
                         item(key = "empty_skill_search_state") {
-                            Text(
+                            SkillEmptyHint(
                                 text = if (learnedOnlyProfileId != null && searchQuery.isBlank()) {
                                     learnedEmpty
                                 } else {
                                     stringResource(R.string.no_matching_skills_found)
                                 },
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                                icon = if (learnedOnlyProfileId != null && searchQuery.isBlank()) "puzzle" else "search-x",
                             )
                         }
                     }
 
                     itemsIndexed(
                         items = orderedSkills,
-                        key = { _, skill -> skill.name }
+                        key = { _, skill -> skill.name },
+                        contentType = { _, _ -> "skill" }
                     ) { index, skill ->
                         ReorderableItem(
                             reorderableState,
@@ -384,55 +417,36 @@ fun SkillConfigScreen(
                             fadeOutSpec = spring(stiffness = androidx.compose.animation.core.Spring.StiffnessMediumLow)
                         )
                         ) { isDragging ->
-                            val elevation = if (isDragging) 8.dp else 0.dp
+                            val last = orderedSkills.lastIndex
+                            val shape = when {
+                                isDragging || last == 0 -> SkillCard
+                                index == 0 -> SkillCardTop
+                                index == last -> SkillCardBottom
+                                else -> RectangleShape
+                            }
                             Surface(
                                 modifier = Modifier
                                     .fillMaxWidth()
-                                    .then(
-                                        if (isDragging) {
-                                            Modifier.shadow(elevation, RoundedCornerShape(14.dp))
-                                        } else {
-                                            Modifier
-                                        }
-                                    ),
-                                color = if (isDragging) {
-                                    MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-                                } else {
-                                    MaterialTheme.colorScheme.surface
-                                },
-                                shape = RoundedCornerShape(14.dp)
+                                    .then(if (isDragging) Modifier.shadow(8.dp, SkillCard) else Modifier),
+                                color = if (isDragging) MaterialTheme.colorScheme.surface else skillCardColor(),
+                                shape = shape
                             ) {
-                                SkillListItem(
-                                    skill = skill,
-                                    skillVisibilityPreferences = skillVisibilityPreferences,
-                                    onShown = { markShown(skill.name) },
-                                    onClick = {
-                                        val targetPath = skill.directory.absolutePath
-                                        selectedSkill = skill
-                                        selectedSkillDetail = null
-                                        isSkillDetailLoading = true
-                                        scope.launch {
-                                            val detail =
-                                                withContext(Dispatchers.IO) {
-                                                    buildSkillDetailDialogData(
-                                                        skill = skill,
-                                                        skillContent = skillRepository.readSkillContent(skill.name).orEmpty()
-                                                    )
-                                                }
-                                            if (selectedSkill?.directory?.absolutePath == targetPath) {
-                                                selectedSkillDetail = detail
-                                                isSkillDetailLoading = false
-                                            }
-                                        }
-                                    },
-                                    modifier = Modifier.longPressDraggableHandle()
-                                )
-                            }
-                            if (index < orderedSkills.lastIndex) {
-                                HorizontalDivider(
-                                    thickness = 0.5.dp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.2f),
-                                )
+                                Column {
+                                    SkillListItem(
+                                        skill = skill,
+                                        visibleToAi = visibleToAi[skill.name] ?: true,
+                                        onVisibleChange = { setVisible(skill.name, it) },
+                                        onShown = { markShown(skill.name) },
+                                        onClick = { openSkill(skill) },
+                                        modifier = Modifier.longPressDraggableHandle()
+                                    )
+                                    if (index < last && !isDragging) {
+                                        HorizontalDivider(
+                                            Modifier.padding(start = 60.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                                        )
+                                    }
+                                }
                             }
                         }
                     }
@@ -447,27 +461,22 @@ fun SkillConfigScreen(
             verticalArrangement = Arrangement.spacedBy(12.dp),
             horizontalAlignment = Alignment.End
         ) {
+            // Round pills: a soft red one when some skills failed to load, a dark one to add.
             if (skillLoadErrors.isNotEmpty()) {
-                SmallFloatingActionButton(
-                    onClick = { showSkillLoadErrorsDialog = true },
-                    containerColor = MaterialTheme.colorScheme.errorContainer,
-                    contentColor = MaterialTheme.colorScheme.onErrorContainer
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.Error,
-                        contentDescription = stringResource(R.string.error_occurred_simple)
-                    )
-                }
+                SkillPill(
+                    text = stringResource(R.string.error_occurred_simple),
+                    icon = "circle-alert",
+                    color = MaterialTheme.colorScheme.errorContainer,
+                    contentColor = MaterialTheme.colorScheme.onErrorContainer,
+                ) { showSkillLoadErrorsDialog = true }
             }
 
-            if (learnedOnlyProfileId == null) FloatingActionButton(
-                onClick = { showImportDialog = true }
-            ) {
-                Icon(
-                    imageVector = Icons.Rounded.Add,
-                    contentDescription = stringResource(R.string.import_action)
-                )
-            }
+            if (learnedOnlyProfileId == null) SkillPill(
+                text = stringResource(R.string.skill_import_title),
+                icon = "plus",
+                color = MaterialTheme.colorScheme.onSurface,
+                contentColor = MaterialTheme.colorScheme.surface,
+            ) { showImportDialog = true }
         }
 
         if (skills.isEmpty() && (isLoading || isImporting)) {
@@ -475,335 +484,120 @@ fun SkillConfigScreen(
                 modifier = Modifier.fillMaxSize(),
                 contentAlignment = Alignment.Center
             ) {
-                CircularProgressIndicator()
+                CircularProgressIndicator(Modifier.size(28.dp), strokeWidth = 2.5.dp)
+            }
+        }
+    }
+
+    // Problems stay inside the sheet; on success it closes and the result shows below.
+    val runImport: () -> Unit = {
+        scope.launch {
+            val tab = importTabIndex
+            importError = null
+            try {
+                val result = when (tab) {
+                    0 -> {
+                        val url = repoUrlInput.trim()
+                        if (url.isBlank()) {
+                            importError = context.getString(R.string.enter_repo_info)
+                            return@launch
+                        }
+                        isImporting = true
+                        skillRepository.importSkillFromGitHubRepo(url)
+                    }
+                    1 -> {
+                        val uri = zipUri
+                        if (uri == null) {
+                            importError = context.getString(R.string.select_zip_file)
+                            return@launch
+                        }
+                        // The picker's display name may hold a path; keep only the file name.
+                        val nameToUse = zipFileName.substringAfterLast('/').substringAfterLast('\\').ifBlank { "skill.zip" }
+                        if (!nameToUse.endsWith(".zip", ignoreCase = true)) {
+                            importError = context.getString(R.string.skillmgr_only_zip_files)
+                            return@launch
+                        }
+                        isImporting = true
+                        withContext(Dispatchers.IO) {
+                            val tempFile = File(context.cacheDir, nameToUse)
+                            try {
+                                context.contentResolver.openInputStream(uri)?.use { input ->
+                                    tempFile.outputStream().use { output -> input.copyTo(output) }
+                                } ?: throw IllegalStateException(context.getString(R.string.skillmgr_cannot_read_file))
+                                skillRepository.importSkillFromZip(tempFile)
+                            } finally {
+                                runCatching { tempFile.delete() }
+                            }
+                        }
+                    }
+                    else -> {
+                        val skillId = manualSkillId.trim()
+                        val skillContent = manualSkillContent.trim()
+                        val problem = when {
+                            skillId.isBlank() -> R.string.skillmgr_direct_skill_id_required
+                            !isValidSkillId(skillId) -> R.string.skillmgr_direct_skill_id_invalid
+                            skillContent.isBlank() -> R.string.skillmgr_direct_content_required
+                            else -> null
+                        }
+                        if (problem != null) {
+                            importError = context.getString(problem)
+                            return@launch
+                        }
+                        isImporting = true
+                        skillRepository.importSkillFromDirectInput(
+                            skillId = skillId,
+                            description = manualSkillDescription.trim(),
+                            content = skillContent,
+                            attachmentUris = manualAttachments.map { it.uri }
+                        )
+                    }
+                }
+                refreshSkills()
+                showImportDialog = false
+                when (tab) {
+                    0 -> repoUrlInput = ""
+                    1 -> { zipUri = null; zipFileName = "" }
+                    else -> {
+                        manualSkillId = ""
+                        manualSkillDescription = ""
+                        manualSkillContent = ""
+                        manualAttachments = emptyList()
+                    }
+                }
+                isImporting = false
+                snackbarHostState.showSnackbar(result)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                isImporting = false
+                importError = context.getString(R.string.skillmgr_import_failed, e.message ?: "")
+            } finally {
+                isImporting = false
             }
         }
     }
 
     if (showImportDialog) {
-        AlertDialog(
-            onDismissRequest = { if (!isImporting) showImportDialog = false },
-            title = { Text(stringResource(R.string.import_or_install_skill)) },
-            text = {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    ScrollableTabRow(
-                        selectedTabIndex = importTabIndex,
-                        edgePadding = 8.dp,
-                        divider = {},
-                        indicator = { tabPositions ->
-                            if (importTabIndex < tabPositions.size) {
-                                TabRowDefaults.SecondaryIndicator(
-                                    with(TabRowDefaults) { Modifier.tabIndicatorOffset(tabPositions[importTabIndex]) }
-                                )
-                            }
-                        }
-                    ) {
-                        Tab(
-                            selected = importTabIndex == 0,
-                            onClick = { importTabIndex = 0 },
-                            text = { Text(stringResource(R.string.import_from_repo), maxLines = 1) }
-                        )
-                        Tab(
-                            selected = importTabIndex == 1,
-                            onClick = { importTabIndex = 1 },
-                            text = { Text(stringResource(R.string.import_from_zip), maxLines = 1) }
-                        )
-                        Tab(
-                            selected = importTabIndex == 2,
-                            onClick = { importTabIndex = 2 },
-                            text = { Text(stringResource(R.string.import_from_direct), maxLines = 1) }
-                        )
-                    }
-
-                    when (importTabIndex) {
-                        0 -> {
-                            Text(
-                                text = stringResource(R.string.enter_repo_info),
-                                modifier = Modifier.fillMaxWidth()
-                            )
-
-                            OutlinedTextField(
-                                value = repoUrlInput,
-                                onValueChange = { repoUrlInput = it },
-                                label = { Text(stringResource(R.string.repo_link)) },
-                                placeholder = { Text("https://github.com/username/repo") },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                                enabled = !isImporting
-                            )
-                        }
-
-                        1 -> {
-                            Text(
-                                text = stringResource(R.string.select_skill_plugin_zip),
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                OutlinedTextField(
-                                    value = zipFileName,
-                                    onValueChange = { },
-                                    label = { Text(stringResource(R.string.skill_zip_package)) },
-                                    placeholder = { Text(stringResource(R.string.select_zip_file)) },
-                                    modifier = Modifier.weight(1f),
-                                    singleLine = true,
-                                    readOnly = true,
-                                    enabled = !isImporting
-                                )
-
-                                IconButton(
-                                    enabled = !isImporting,
-                                    onClick = { zipPicker.launch("application/zip") }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.Folder,
-                                        contentDescription = stringResource(R.string.select_file)
-                                    )
-                                }
-                            }
-                        }
-
-                        2 -> {
-                            OutlinedTextField(
-                                value = manualSkillId,
-                                onValueChange = { manualSkillId = it },
-                                label = { Text(stringResource(R.string.skillmgr_direct_skill_id)) },
-                                placeholder = { Text(stringResource(R.string.skillmgr_direct_skill_id_hint)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                enabled = !isImporting
-                            )
-
-                            OutlinedTextField(
-                                value = manualSkillDescription,
-                                onValueChange = { manualSkillDescription = it },
-                                label = { Text(stringResource(R.string.skillmgr_direct_description)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                singleLine = true,
-                                enabled = !isImporting
-                            )
-
-                            OutlinedTextField(
-                                value = manualSkillContent,
-                                onValueChange = { manualSkillContent = it },
-                                label = { Text(stringResource(R.string.skillmgr_direct_content)) },
-                                placeholder = { Text(stringResource(R.string.skillmgr_direct_content_hint)) },
-                                modifier = Modifier.fillMaxWidth(),
-                                minLines = 6,
-                                maxLines = 10,
-                                enabled = !isImporting
-                            )
-
-                            Row(
-                                modifier = Modifier.fillMaxWidth(),
-                                verticalAlignment = Alignment.CenterVertically
-                            ) {
-                                Text(
-                                    text = stringResource(R.string.attachments_count, manualAttachments.size),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.weight(1f)
-                                )
-
-                                TextButton(
-                                    enabled = !isImporting,
-                                    onClick = { attachmentPicker.launch(arrayOf("*/*")) }
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Filled.AttachFile,
-                                        contentDescription = null,
-                                        modifier = Modifier.size(16.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(4.dp))
-                                    Text(text = stringResource(R.string.add_attachment))
-                                }
-                            }
-
-                            if (manualAttachments.isNotEmpty()) {
-                                Column(
-                                    modifier = Modifier
-                                        .fillMaxWidth()
-                                        .heightIn(max = 140.dp)
-                                        .verticalScroll(rememberScrollState()),
-                                    verticalArrangement = Arrangement.spacedBy(4.dp)
-                                ) {
-                                    manualAttachments.forEach { attachment ->
-                                        Row(
-                                            modifier = Modifier.fillMaxWidth(),
-                                            verticalAlignment = Alignment.CenterVertically
-                                        ) {
-                                            Text(
-                                                text = attachment.displayName,
-                                                style = MaterialTheme.typography.bodySmall,
-                                                modifier = Modifier.weight(1f),
-                                                maxLines = 1,
-                                                overflow = TextOverflow.Ellipsis
-                                            )
-
-                                            IconButton(
-                                                enabled = !isImporting,
-                                                onClick = {
-                                                    manualAttachments = manualAttachments.filterNot { it.uri == attachment.uri }
-                                                }
-                                            ) {
-                                                Icon(
-                                                    imageVector = Icons.Filled.Close,
-                                                    contentDescription = stringResource(R.string.remove_attachment),
-                                                    modifier = Modifier.size(18.dp)
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-
-                            Text(
-                                text = stringResource(R.string.skillmgr_direct_files_saved_hint),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    if (isImporting) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(18.dp),
-                                strokeWidth = 2.dp
-                            )
-                            Spacer(modifier = Modifier.width(8.dp))
-                            Text(text = stringResource(R.string.processing))
-                        }
-                    }
-                }
-            },
-            confirmButton = {
-                TextButton(
-                    enabled = !isImporting,
-                    onClick = {
-                        scope.launch {
-                            when (importTabIndex) {
-                                0 -> {
-                                    val url = repoUrlInput.trim()
-                                    if (url.isBlank()) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.enter_repo_info))
-                                        return@launch
-                                    }
-                                    isImporting = true
-                                    try {
-                                        val result = skillRepository.importSkillFromGitHubRepo(url)
-                                        refreshSkills()
-                                        snackbarHostState.showSnackbar(result)
-                                        showImportDialog = false
-                                    } finally {
-                                        isImporting = false
-                                    }
-                                }
-
-                                1 -> {
-                                    val uri = zipUri
-                                    if (uri == null) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.select_zip_file))
-                                        return@launch
-                                    }
-                                    isImporting = true
-                                    try {
-                                        val nameToUse = zipFileName.ifBlank { "skill.zip" }
-                                        if (!nameToUse.endsWith(".zip", ignoreCase = true)) {
-                                            snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_only_zip_files))
-                                            return@launch
-                                        }
-
-                                        val result = withContext(Dispatchers.IO) {
-                                            val tempFile = File(context.cacheDir, nameToUse)
-                                            try {
-                                                context.contentResolver.openInputStream(uri)?.use { input ->
-                                                    tempFile.outputStream().use { output ->
-                                                        input.copyTo(output)
-                                                    }
-                                                } ?: throw IllegalStateException(context.getString(R.string.skillmgr_cannot_read_file))
-
-                                                skillRepository.importSkillFromZip(tempFile)
-                                            } finally {
-                                                try {
-                                                    tempFile.delete()
-                                                } catch (_: Exception) {
-                                                }
-                                            }
-                                        }
-
-                                        refreshSkills()
-                                        snackbarHostState.showSnackbar(result)
-                                        showImportDialog = false
-                                    } catch (e: Exception) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_import_failed, e.message ?: ""))
-                                    } finally {
-                                        isImporting = false
-                                    }
-                                }
-
-                                2 -> {
-                                    val skillId = manualSkillId.trim()
-                                    val skillContent = manualSkillContent.trim()
-                                    if (skillId.isBlank()) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_direct_skill_id_required))
-                                        return@launch
-                                    }
-                                    if (!isValidSkillId(skillId)) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_direct_skill_id_invalid))
-                                        return@launch
-                                    }
-                                    if (skillContent.isBlank()) {
-                                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_direct_content_required))
-                                        return@launch
-                                    }
-
-                                    isImporting = true
-                                    try {
-                                        val result = skillRepository.importSkillFromDirectInput(
-                                            skillId = skillId,
-                                            description = manualSkillDescription.trim(),
-                                            content = skillContent,
-                                            attachmentUris = manualAttachments.map { it.uri }
-                                        )
-                                        refreshSkills()
-                                        snackbarHostState.showSnackbar(result)
-                                        showImportDialog = false
-                                        manualSkillId = ""
-                                        manualSkillDescription = ""
-                                        manualSkillContent = ""
-                                        manualAttachments = emptyList()
-                                    } finally {
-                                        isImporting = false
-                                    }
-                                }
-                            }
-                        }
-                    }
-                ) {
-                    Text(stringResource(R.string.import_action))
-                }
-            },
-            dismissButton = {
-                TextButton(
-                    enabled = !isImporting,
-                    onClick = { showImportDialog = false }
-                ) {
-                    Text(stringResource(R.string.cancel))
-                }
-            }
+        SkillImportSheet(
+            tabIndex = importTabIndex,
+            onTabChange = { importTabIndex = it; importError = null },
+            repoUrl = repoUrlInput,
+            onRepoUrlChange = { repoUrlInput = it },
+            zipFileName = zipFileName,
+            onPickZip = { zipPicker.launch("application/zip") },
+            skillId = manualSkillId,
+            onSkillIdChange = { manualSkillId = it },
+            description = manualSkillDescription,
+            onDescriptionChange = { manualSkillDescription = it },
+            content = manualSkillContent,
+            onContentChange = { manualSkillContent = it },
+            attachments = manualAttachments.map { it.displayName },
+            onAddAttachment = { attachmentPicker.launch(arrayOf("*/*")) },
+            onRemoveAttachment = { index -> manualAttachments = manualAttachments.filterIndexed { i, _ -> i != index } },
+            importing = isImporting,
+            error = importError,
+            onImport = runImport,
+            onDismiss = { if (!isImporting) { showImportDialog = false; importError = null } },
         )
     }
 
@@ -815,10 +609,16 @@ fun SkillConfigScreen(
     }
 
     selectedSkill?.let { skill ->
-        SkillDetailDialog(
+        SkillDetailSheet(
             skill = skill,
             detail = selectedSkillDetail,
             isLoading = isSkillDetailLoading,
+            // An Orbit's folders mean nothing to the user, wherever its skills are listed.
+            showLocation = !groupBySource && skillRepository.memorySpaceId?.let {
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
+            } != true,
+            loadError = skillDetailError,
+            deleting = deletingSkill,
             onHistory = if (skillRepository.memorySpaceId != null) ({
                 historySkill = skill.name
                 selectedSkill = null
@@ -826,22 +626,31 @@ fun SkillConfigScreen(
             onDismiss = {
                 selectedSkill = null
                 selectedSkillDetail = null
+                skillDetailError = null
                 isSkillDetailLoading = false
             },
             onDelete = {
                 val skillName = skill.name
+                if (deletingSkill) return@SkillDetailSheet
+                deletingSkill = true
                 scope.launch {
-                    val ok = skillRepository.deleteSkill(skillName)
-                    if (ok) {
-                        refreshSkills()
-                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_deleted, skillName))
-                    } else {
-                        snackbarHostState.showSnackbar(context.getString(R.string.skillmgr_delete_failed, skillName))
+                    val ok = try {
+                        withContext(Dispatchers.IO) { skillRepository.deleteSkill(skillName) }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        false
+                    } finally {
+                        deletingSkill = false
                     }
+                    // The sheet stays up while the files go, then closes with the result below it.
+                    selectedSkill = null
+                    selectedSkillDetail = null
+                    isSkillDetailLoading = false
+                    if (ok) runCatching { refreshSkills() }
+                    snackbarHostState.showSnackbar(context.getString(
+                        if (ok) R.string.skillmgr_deleted else R.string.skillmgr_delete_failed, skillName))
                 }
-                selectedSkill = null
-                selectedSkillDetail = null
-                isSkillDetailLoading = false
             }
         )
     }
@@ -858,7 +667,7 @@ private data class ManualImportAttachment(
     val displayName: String
 )
 
-private data class SkillDetailDialogData(
+internal data class SkillDetailDialogData(
     val skillContent: String,
     val directoryPath: String,
     val skillFilePath: String,
@@ -952,164 +761,6 @@ private fun buildSkillDetailDialogData(
 }
 
 @Composable
-private fun SkillDetailDialog(
-    skill: SkillPackage,
-    detail: SkillDetailDialogData?,
-    isLoading: Boolean,
-    onHistory: (() -> Unit)? = null,
-    onDismiss: () -> Unit,
-    onDelete: () -> Unit
-) {
-    var showSkillMarkdown by remember(skill.directory.absolutePath) { mutableStateOf(false) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = skill.name) },
-        text = {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(max = 460.dp)
-                    .verticalScroll(rememberScrollState()),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                onHistory?.let {
-                    TextButton(onClick = it) { Text(stringResource(R.string.orbit_skill_history)) }
-                }
-                if (isLoading || detail == null) {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        CircularProgressIndicator(
-                            modifier = Modifier.size(18.dp),
-                            strokeWidth = 2.dp
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = stringResource(R.string.skillmgr_detail_loading),
-                            style = MaterialTheme.typography.bodySmall
-                        )
-                    }
-                } else {
-                    if (skill.description.isNotBlank()) {
-                        SkillDetailSection(title = stringResource(R.string.skillmgr_direct_description)) {
-                            Text(
-                                text = skill.description,
-                                style = MaterialTheme.typography.bodyMedium
-                            )
-                        }
-                    }
-
-                    SkillDetailSection(title = stringResource(R.string.skillmgr_detail_directory)) {
-                        Text(
-                            text = detail.directoryPath,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    SkillDetailSection(title = stringResource(R.string.skillmgr_detail_entry_file)) {
-                        Text(
-                            text = detail.skillFilePath,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    SkillDetailSection(title = stringResource(R.string.skillmgr_detail_imported_contents)) {
-                        Text(
-                            text = stringResource(
-                                R.string.skillmgr_detail_counts,
-                                detail.fileCount,
-                                detail.folderCount
-                            ),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-                        Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
-                        ) {
-                            Text(
-                                text = detail.directoryPreview,
-                                style = MaterialTheme.typography.bodySmall,
-                                fontFamily = FontFamily.Monospace,
-                                modifier = Modifier.padding(12.dp)
-                            )
-                        }
-                        if (detail.hiddenEntryCount > 0) {
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text(
-                                text = stringResource(
-                                    R.string.skillmgr_detail_more_items,
-                                    detail.hiddenEntryCount
-                                ),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-
-                    TextButton(
-                        onClick = { showSkillMarkdown = !showSkillMarkdown }
-                    ) {
-                        Text(
-                            text = if (showSkillMarkdown) {
-                                stringResource(R.string.skillmgr_detail_hide_skill_md)
-                            } else {
-                                stringResource(R.string.skillmgr_detail_show_skill_md)
-                            }
-                        )
-                    }
-
-                    if (showSkillMarkdown) {
-                        SkillDetailSection(title = stringResource(R.string.skillmgr_detail_skill_md)) {
-                            MarkdownTextComposable(
-                                text = detail.skillContent,
-                                textColor = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.fillMaxWidth()
-                            )
-                        }
-                    }
-                }
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDelete) {
-                Text(text = stringResource(R.string.skillmgr_delete))
-            }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(text = stringResource(R.string.skillmgr_close))
-            }
-        }
-    )
-}
-
-@Composable
-private fun SkillDetailSection(
-    title: String,
-    content: @Composable () -> Unit
-) {
-    Column(
-        modifier = Modifier.fillMaxWidth(),
-        verticalArrangement = Arrangement.spacedBy(6.dp)
-    ) {
-        Text(
-            text = title,
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.primary,
-            fontWeight = FontWeight.Medium
-        )
-        content()
-    }
-}
-
-@Composable
 private fun SkillLoadErrorsDialog(
     errors: Map<String, String>,
     onDismiss: () -> Unit
@@ -1130,7 +781,7 @@ private fun SkillLoadErrorsDialog(
                     Text(
                         text = skillFolderName,
                         style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.error
+                        color = com.ai.assistance.operit.ui.common.readableErrorColor()
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
@@ -1153,56 +804,28 @@ private fun SkillLoadErrorsDialog(
 @Composable
 private fun SkillListItem(
     skill: SkillPackage,
-    skillVisibilityPreferences: SkillVisibilityPreferences,
+    visibleToAi: Boolean,
+    onVisibleChange: (Boolean) -> Unit,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onShown: () -> Unit = {},
 ) {
-    val accentColor = MaterialTheme.colorScheme.primary
-    var visibleToAi by remember(skill.name) {
-        mutableStateOf(skillVisibilityPreferences.isSkillVisibleToAi(skill.name))
-    }
-
-    Surface(
-        onClick = onClick,
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
-        tonalElevation = 1.dp
-    ) {
+    Surface(onClick = onClick, modifier = modifier.fillMaxWidth(), color = androidx.compose.ui.graphics.Color.Transparent) {
         Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 16.dp, vertical = 12.dp),
+            modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Surface(
-                modifier = Modifier
-                    .width(3.dp)
-                    .height(22.dp),
-                color = accentColor,
-                shape = RoundedCornerShape(2.dp)
-            ) {}
-            Spacer(modifier = Modifier.width(10.dp))
-
-            Icon(
-                imageVector = Icons.Filled.Build,
-                contentDescription = null,
-                modifier = Modifier.size(20.dp),
-                tint = accentColor
-            )
+            SkillRoundIcon("puzzle")
             Spacer(modifier = Modifier.width(12.dp))
-
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                 Text(
                     text = skill.name,
-                    style = MaterialTheme.typography.bodyMedium,
+                    style = MaterialTheme.typography.bodyLarge,
                     fontWeight = FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis
                 )
                 if (skill.description.isNotBlank()) {
-                    Spacer(modifier = Modifier.height(2.dp))
                     Text(
                         text = skill.description,
                         style = MaterialTheme.typography.bodySmall,
@@ -1212,16 +835,64 @@ private fun SkillListItem(
                     )
                 }
             }
-
+            Spacer(Modifier.width(8.dp))
+            val switchLabel = stringResource(R.string.skill_visible_to_ai, skill.name)
             Switch(
-                modifier = Modifier.scale(0.8f),
+                modifier = Modifier.semantics { contentDescription = switchLabel },
                 checked = visibleToAi,
                 onCheckedChange = { checked ->
-                    visibleToAi = checked
-                    skillVisibilityPreferences.setSkillVisibleToAi(skill.name, checked)
+                    onVisibleChange(checked)
                     if (checked) onShown()
                 }
             )
+        }
+    }
+}
+
+private val SkillCard = RoundedCornerShape(20.dp)
+private val SkillCardTop = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
+private val SkillCardBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
+
+@Composable
+private fun skillCardColor() = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
+
+private fun skillIcon(name: String): ImageVector =
+    com.ai.assistance.operit.ui.common.dynamicui.CardIcons.get("lucide:$name") ?: Icons.Filled.Build
+
+@Composable
+private fun SkillRoundIcon(icon: String, size: androidx.compose.ui.unit.Dp = 36.dp, iconSize: androidx.compose.ui.unit.Dp = 18.dp) {
+    Box(Modifier.size(size).clip(CircleShape).background(MaterialTheme.colorScheme.surface), contentAlignment = Alignment.Center) {
+        Icon(skillIcon(icon), null, Modifier.size(iconSize), tint = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+private fun SkillEmptyHint(text: String, icon: String = "puzzle") {
+    Column(
+        Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        SkillRoundIcon(icon, size = 56.dp, iconSize = 26.dp)
+        Text(text, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    }
+}
+
+@Composable
+private fun SkillPill(
+    text: String,
+    icon: String,
+    color: androidx.compose.ui.graphics.Color,
+    contentColor: androidx.compose.ui.graphics.Color,
+    onClick: () -> Unit,
+) {
+    Surface(onClick = onClick, shape = CircleShape, color = color, contentColor = contentColor, shadowElevation = 6.dp,
+        modifier = Modifier.heightIn(min = 52.dp)) {
+        Row(Modifier.padding(horizontal = 20.dp, vertical = 14.dp), verticalAlignment = Alignment.CenterVertically) {
+            Icon(skillIcon(icon), null, Modifier.size(20.dp))
+            Spacer(Modifier.width(8.dp))
+            Text(text, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium, maxLines = 1)
         }
     }
 }

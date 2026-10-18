@@ -36,8 +36,10 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
             return "skill_visible_${hex.take(16)}"
         }
 
+        private val UNSAFE = Regex("[^a-zA-Z0-9_]")
+
         private fun legacyKeyForSkillName(skillName: String): String {
-            val safe = skillName.trim().replace("[^a-zA-Z0-9_]".toRegex(), "_")
+            val safe = skillName.trim().replace(UNSAFE, "_")
             return "skill_visible_$safe"
         }
     }
