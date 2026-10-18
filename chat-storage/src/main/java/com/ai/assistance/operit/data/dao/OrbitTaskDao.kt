@@ -22,6 +22,7 @@ data class OrbitActivityRow(
     val error: String,
     val startedAt: Long,
     val finishedAt: Long,
+    val generation: Long,
 )
 
 /** One recorded outward action of an Orbit task, for the profile's approval list. */
@@ -37,7 +38,7 @@ data class OrbitActionRow(
 
 @Dao
 interface OrbitTaskDao {
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "') ORDER BY r.startedAt DESC LIMIT 200")
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "') ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
     @Query("SELECT a.id AS id, a.taskId AS taskId, t.title AS taskTitle, a.toolName AS toolName, a.state AS state, a.summary AS summary, a.updatedAt AS updatedAt FROM orbit_actions a INNER JOIN orbit_tasks t ON t.id = a.taskId WHERE t.orbitId = :orbitId ORDER BY a.updatedAt DESC LIMIT 200")
     fun observeOrbitActions(orbitId: String): Flow<List<OrbitActionRow>>

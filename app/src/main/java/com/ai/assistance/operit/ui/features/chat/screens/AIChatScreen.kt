@@ -201,7 +201,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     )
     val chatHeaderPipIconColor by preferencesManager.chatHeaderPipIconColor.collectAsState(initial = null)
     val chatHeaderOverlayMode by preferencesManager.chatHeaderOverlayMode.collectAsState(initial = false)
-    val showInputProcessingStatus by preferencesManager.showInputProcessingStatus.collectAsState(initial = true)
+    val showInputProcessingStatusPreference by preferencesManager.showInputProcessingStatus.collectAsState(initial = true)
     val enableEnterToSend by displayPreferencesManager.enableEnterToSend.collectAsState(initial = false)
     val showChatFloatingDotsAnimation by
         preferencesManager.showChatFloatingDotsAnimation.collectAsState(initial = true)
@@ -209,7 +209,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val effectiveHasBackgroundImage = hasBackgroundImage || hasBackgroundImageFromPrefs
 
     val chatAppearance = rememberChatAppearance()
-    val chatStyle = chatAppearance.chatStyle
+    // An Orbit chat always reads as message bubbles, whatever style regular chats use.
+    val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    // Orbit shows that it is working with its typing bubble; the status line would name its tools.
+    val showInputProcessingStatus = showInputProcessingStatusPreference && !orbitLook
+    val chatStyle = if (orbitLook) ChatStyle.BUBBLE else chatAppearance.chatStyle
     val inputStyle = chatAppearance.inputStyle
     val cursorUserBubbleLiquidGlass = chatAppearance.cursorUserBubbleLiquidGlass
     val cursorUserBubbleWaterGlass = chatAppearance.cursorUserBubbleWaterGlass
@@ -217,8 +221,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val bubbleUserBubbleWaterGlass = chatAppearance.bubbleUserBubbleWaterGlass
     val bubbleAiBubbleLiquidGlass = chatAppearance.bubbleAiBubbleLiquidGlass
     val bubbleAiBubbleWaterGlass = chatAppearance.bubbleAiBubbleWaterGlass
-    val bubbleUserRoundedCornersEnabled = chatAppearance.bubbleUserRoundedCornersEnabled
-    val bubbleAiRoundedCornersEnabled = chatAppearance.bubbleAiRoundedCornersEnabled
+    // Orbit's bubbles are always round, like a messaging app's.
+    val bubbleUserRoundedCornersEnabled = orbitLook || chatAppearance.bubbleUserRoundedCornersEnabled
+    val bubbleAiRoundedCornersEnabled = orbitLook || chatAppearance.bubbleAiRoundedCornersEnabled
     val userMessageColor = chatAppearance.userMessageColor
     val aiMessageColor = chatAppearance.aiMessageColor
     val userTextColor = chatAppearance.userTextColor
@@ -570,6 +575,24 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                 }
             }
         }
+    // In an Orbit chat only what was said shows, as it is said; the work behind it opens from
+    // Orbit's profile.
+    val orbitStreaming = if (orbitLook) {
+        // The reply being written, even when the user spoke again or a card landed below it.
+        displayedChatHistory.lastOrNull { it.sender == "ai" && it.contentStream != null && !it.displayMode.isCollaborationEvent }
+    } else null
+    val orbitLiveSpeech by com.ai.assistance.operit.ui.features.chat.components.rememberOrbitLiveSpeech(orbitStreaming)
+    val orbitSpokenHistory = remember(displayedChatHistory, orbitLook) {
+        if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(displayedChatHistory)
+        else displayedChatHistory
+    }
+    val orbitSpeechHistory = remember(displayedChatHistory, orbitSpokenHistory, orbitLook, orbitLiveSpeech) {
+        if (orbitLook) {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.withLive(
+                displayedChatHistory, orbitSpokenHistory, orbitLiveSpeech,
+            )
+        } else displayedChatHistory
+    }
     val displayedChatHistories = remember(
         chatHistories,
         activePrompt,
@@ -968,7 +991,14 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                  enableMessageDialogs = !isFloatingMode,
                                  readOnlyTranscript = isReadOnlyTranscript,
                                  showChatHistorySelector = showChatHistorySelector,
-                                chatHistory = displayedChatHistory,
+                                // Leaving the Orbit page, the normal chat page can appear a moment
+                                // before Orbit hands the chat back; never show Orbit's messages here.
+                                chatHistory =
+                                    if (chatIdOverride == null && !isFloatingMode && !embedded &&
+                                        currentChatId?.let { it in orbitChatIds } == true
+                                    ) emptyList()
+                                    else if (orbitLook) orbitSpeechHistory
+                                    else displayedChatHistory,
                                 isLoading = isLoading,
                                 userMessageColor = userMessageColor,
                                 aiMessageColor = aiMessageColor,
@@ -1602,6 +1632,7 @@ private fun ChatInputBottomBar(
 ) {
     val todos by actualViewModel.currentTodos.collectAsState()
     val context = LocalContext.current
+    val orbitChat = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val focusManager = LocalFocusManager.current
     val coroutineScope = rememberCoroutineScope()
     val waifuPreferences = remember(context) { WaifuPreferences.getInstance(context) }
@@ -1988,11 +2019,12 @@ private fun ChatInputBottomBar(
     Column(modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp)) {
         ChatTodoDock(
             chatId = currentChatId,
-            todos = todos,
+            // Orbit's to-do list is part of its work, which the chat does not show.
+            todos = if (orbitChat) emptyList() else todos,
             modifier = Modifier.onGloballyPositioned { onDockHeightChange(it.size.height) },
             onRowCenterOffsetPx = onDockRowCenterChange,
         ) {
-            SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
+            if (!orbitChat) SystemPromptRebuildNotice(chatId = currentChatId, busy = isQueueBlocked)
         }
 
         if (inputStyle == UserPreferencesManager.INPUT_STYLE_AGENT) {

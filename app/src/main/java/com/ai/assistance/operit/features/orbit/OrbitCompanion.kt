@@ -194,6 +194,7 @@ object OrbitCompanion {
         preferences.removeSideChat(orbitId, chatId)
         OrbitDelivery.markSeen(chatId)
         runCatching { OrbitReactions.of(appContext, orbitId).removeChat(chatId) }
+        runCatching { OrbitReactions.ofUser(appContext, orbitId).removeChat(chatId) }
     }
 
     /** The running Orbit with a chat that exists, or null while every Orbit is paused. */

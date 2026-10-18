@@ -46,10 +46,16 @@ import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.ui.semantics.LiveRegionMode
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
@@ -252,8 +258,10 @@ fun ChatArea(
         preferencesManager.showMessageTimingStats.collectAsState(initial = true)
     val showMessageTimestamp by
         preferencesManager.showMessageTimestamp.collectAsState(initial = true)
+    // An Orbit chat draws every message on its own: there is no process to fold.
+    val orbitLook = LocalOrbitChatLook.current
     val responseProcessState =
-        rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode, processMetadata, onLoadProcess)
+        rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode && !orbitLook, processMetadata, onLoadProcess)
     val lastMessage = chatHistory.lastOrNull()
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
@@ -323,8 +331,10 @@ fun ChatArea(
         loadingPage = isLoadingDisplayWindow,
         onOlder = onLoadOlderDisplayWindow,
         onNewer = onLoadNewerDisplayWindow,
-        splitMarkdown = chatStyle == ChatStyle.CURSOR ||
-            (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass),
+        // An Orbit message stays one piece, so it swipes and carries its reaction as a whole.
+        splitMarkdown = !orbitLook && (chatStyle == ChatStyle.CURSOR ||
+            (bubbleAiImageStyle == null && !bubbleAiBubbleLiquidGlass && !bubbleAiBubbleWaterGlass)),
+        skipMessage = if (orbitLook) OrbitSpeech::hidden else null,
         onLatest = onShowLatestDisplayWindow,
         loadLocator = loadMessageLocatorEntries,
         reveal = onRevealMessageForLocator,
@@ -368,9 +378,9 @@ fun ChatArea(
                             onInsertSummary = onInsertSummary,
                             onMentionRoleFromAvatar = onMentionRoleFromAvatar,
                             chatStyle = chatStyle,
-                            showMessageTokenStats = showMessageTokenStats,
-                            showMessageTimingStats = showMessageTimingStats,
-                            showMessageTimestamp = showMessageTimestamp,
+                            showMessageTokenStats = showMessageTokenStats && !orbitLook,
+                            showMessageTimingStats = showMessageTimingStats && !orbitLook,
+                            showMessageTimestamp = showMessageTimestamp && !orbitLook,
                             cursorUserBubbleLiquidGlass = cursorUserBubbleLiquidGlass,
                             cursorUserBubbleWaterGlass = cursorUserBubbleWaterGlass,
                             bubbleUserBubbleLiquidGlass = bubbleUserBubbleLiquidGlass,
@@ -394,10 +404,25 @@ fun ChatArea(
                         )
         },
         footer = {
-            if (showLoadingIndicator && showChatFloatingDotsAnimation) {
+            if (orbitLook) {
+                // Orbit is typing for as long as it works on a reply, like a person would be.
+                if (isLoading && !hasNewerDisplayHistory) {
+                    val typing = stringResource(R.string.orbit_typing)
+                    Surface(
+                        shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
+                        color = aiMessageColor,
+                        modifier = Modifier.padding(start = 8.dp, top = 4.dp).heightIn(min = 44.dp).semantics {
+                            contentDescription = typing
+                            liveRegion = LiveRegionMode.Polite
+                        },
+                    ) {
+                        Box(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) { LoadingDotsIndicator(aiTextColor) }
+                    }
+                }
+            } else if (showLoadingIndicator && showChatFloatingDotsAnimation) {
                 Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
             }
-            if (isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
+            if (!orbitLook && isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
                 LiveResponseTimer(activeRunStartedAt)
             }
         },
@@ -477,6 +502,8 @@ private fun MessageItem(
     val isActionable = !message.displayMode.isCollaborationEvent &&
         (message.sender == "user" || message.sender == "ai")
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
+    val orbitLook = LocalOrbitChatLook.current
+    val orbitUserReactions = LocalOrbitUserReactions.current
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
@@ -497,7 +524,8 @@ private fun MessageItem(
         if (message.sender == "ai" &&
             com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false &&
             LocalResponseMessageSection.current != ResponseMessageSection.HEADER &&
-            (message.variantCount > 1 ||
+            // A chat with Orbit reads like messages between people: no version switcher under them.
+            ((message.variantCount > 1 && !orbitLook) ||
                 (closesCard &&
                     ((showMessageTokenStats && hasDisplayableTokenStats(message)) ||
                         (showMessageTimingStats && hasDisplayableTimingStats(message)) ||
@@ -553,6 +581,12 @@ private fun MessageItem(
                 },
             ),
     ) {
+        OrbitSwipeToReply(
+            enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
+                allowTranscriptMutation && onReplyToMessage != null,
+            onReply = { onReplyToMessage?.invoke(message) },
+            rightAligned = message.sender == "user",
+        ) {
         Column {
             when (chatStyle) {
                 ChatStyle.CURSOR -> {
@@ -618,6 +652,7 @@ private fun MessageItem(
 
             footer()
         }
+        }
 
         DropdownMenu(
             expanded = showContextMenu,
@@ -631,6 +666,16 @@ private fun MessageItem(
                 dismissOnClickOutside = true
             )
         ) {
+            if (orbitLook && message.sender == "ai" && orbitUserReactions != null) {
+                OrbitTapbackRow(selected = orbitUserReactions.byMessage[message.timestamp]) { emoji ->
+                    orbitUserReactions.toggle(message.timestamp, emoji)
+                    showContextMenu = false
+                }
+                HorizontalDivider(
+                    modifier = Modifier.padding(vertical = 4.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                )
+            }
             if (!isHiddenUserMessage) {
                 DropdownMenuItem(
                     text = {
@@ -875,7 +920,7 @@ private fun MessageItem(
             )
 
                 // 回复选项
-                if (message.sender == "ai") {
+                if (message.sender == "ai" || (orbitLook && !isHiddenUserMessage)) {
                 DropdownMenuItem(
                 text = {
                         Text(
@@ -947,8 +992,8 @@ private fun MessageItem(
                 )
             }
 
-            // 信息
-            DropdownMenuItem(
+            // 信息 (an Orbit chat keeps model and token details out of sight)
+            if (!orbitLook) DropdownMenuItem(
                 text = {
                     Text(
                         stringResource(id = R.string.info),

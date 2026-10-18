@@ -2908,11 +2908,14 @@ private fun AgentToolsPermissionGroupItem(
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            AgentPermissionStopSlider(
-                enableTools = enableTools,
-                permissionStop = permissionStop,
-                onSelectPermissionStop = onSelectPermissionStop,
-            )
+            // Orbit's permission is fixed; there is nothing to pick.
+            if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+                AgentPermissionStopSlider(
+                    enableTools = enableTools,
+                    permissionStop = permissionStop,
+                    onSelectPermissionStop = onSelectPermissionStop,
+                )
+            }
             toolSlotToggles.forEach { toggle ->
                 AgentInputMenuToggleSettingItem(
                     toggle = toggle,
