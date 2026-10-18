@@ -926,15 +926,16 @@ fun ClassicChatInputSection(
                     )
                 }
 
-                        Spacer(modifier = Modifier.width(6.dp))
-                        ComposerPermissionControl(
-                            enableTools = enableTools,
-                            permissionStop = permissionStop,
-                            onSetPermissionStop = onSetPermissionStop,
-                            onToggleTools = onToggleTools,
-                            lockedStop =
-                                if (isOrbitChat) ToolPermissionStop.AUTO_REVIEW_FAST else null,
-                        )
+                        // Orbit's permission is fixed, so its chat has nothing to choose here.
+                        if (!isOrbitChat) {
+                            Spacer(modifier = Modifier.width(6.dp))
+                            ComposerPermissionControl(
+                                enableTools = enableTools,
+                                permissionStop = permissionStop,
+                                onSetPermissionStop = onSetPermissionStop,
+                                onToggleTools = onToggleTools,
+                            )
+                        }
 
                         Spacer(modifier = Modifier.weight(1f))
 

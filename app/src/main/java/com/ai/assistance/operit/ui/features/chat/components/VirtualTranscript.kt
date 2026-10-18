@@ -79,6 +79,7 @@ internal fun VirtualTranscript(
     renderMessage: @Composable (Int) -> Unit,
     footer: @Composable () -> Unit,
     splitMarkdown: Boolean = true,
+    skipMessage: ((ChatMessage) -> Boolean)? = null,
 ) {
     if (!process.ready) {
         Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
@@ -114,7 +115,14 @@ internal fun VirtualTranscript(
     val collapse = collapseValue!!
     val grouper = remember(toolMode, showThinking) { ThinkToolsXmlNodeGrouper(showThinking, toolCollapseMode = toolMode) }
     val documents = remember(chatId, grouper) { mutableStateMapOf<Long, TranscriptDocumentEntry>() }
-    val baseRows = transcriptRows(messages, process)
+    // Skipped rows are dropped before cards are formed, and each remaining row is a card of its own,
+    // so a hidden step never squares off or merges the bubbles around it.
+    val baseRows = transcriptRows(messages, process).let { all ->
+        if (skipMessage == null) all
+        // Rows without a message (a page's "more" link) are part of the hidden steps too.
+        else all.filter { row -> messages.getOrNull(row.messageIndex)?.let { !skipMessage(it) } == true }
+            .map { it.copy(cardKey = it.key) }
+    }
     val expandedIds = TranscriptExpansionState.expandedIds(chatId)
     val expandedProcesses = process.groups.values.filter { process.isExpanded(it.key) }.mapTo(hashSetOf()) { it.key }
     val currentFollowingChange by rememberUpdatedState(onFollowingChange)
@@ -474,6 +482,8 @@ internal fun VirtualTranscript(
             item("footer") { footer() }
         }
         Column(Modifier.align(Alignment.CenterEnd)) {
+            // Orbit's chat reads like messages; jumping by raw records would show the hidden steps.
+            if (skipMessage == null) {
             TranscriptPositionIndicator(
                 progress = {
                     val layout = listState.layoutInfo
@@ -505,6 +515,7 @@ internal fun VirtualTranscript(
                     showLocator = true
                 },
             )
+            }
             if (!following || hasNewer) {
                 IconButton(onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() }) {
                     Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.history_scroll_to_bottom))

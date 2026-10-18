@@ -24,6 +24,18 @@ interface MessageDao {
     """)
     suspend fun getProcessMetadata(chatId: String): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata>
 
+    /**
+     * Replies in which the assistant called tools or thought first; both are stored as markup
+     * (`<tool…>`, `<think…>`). A text search also finds quoted markup, so callers check the body.
+     */
+    @Query("""
+        SELECT timestamp FROM messages
+        WHERE chatId = :chatId AND sender = 'ai' AND displayMode = 'NORMAL'
+            AND (instr(content, '<tool') > 0 OR instr(content, '<think') > 0)
+        ORDER BY timestamp ASC
+    """)
+    suspend fun getWorkReplyTimestamps(chatId: String): List<Long>
+
     /** Repair repeated persistence of sealed AI segments; differing content or metadata survives. */
     @Query("""
         DELETE FROM messages

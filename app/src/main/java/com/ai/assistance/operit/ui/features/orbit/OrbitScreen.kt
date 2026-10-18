@@ -243,6 +243,8 @@ private fun OrbitChatPage(
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // Not saved across process death; the page then just closes back to the profile.
+    var openProcess by remember(orbit.id) { mutableStateOf<OrbitProcess?>(null) }
     // Which of Orbit's chats is shown: the main chat or a side chat. A deleted side chat falls back to main.
     var talkChatId by rememberSaveable(orbit.id) { mutableStateOf(orbit.chatId) }
     // A side chat made a moment ago may not be in the settings yet; keep showing it meanwhile.
@@ -258,6 +260,25 @@ private fun OrbitChatPage(
     val reactions by remember(orbit.id, currentChatId) {
         com.ai.assistance.operit.features.orbit.OrbitReactions.of(context, orbit.id).observe(currentChatId)
     }.collectAsState(initial = emptyMap())
+    // The user's own tapbacks on Orbit's messages, set from the long-press menu.
+    val userReactionStore = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitReactions.ofUser(context, orbit.id) }
+    val userReactionMap by remember(userReactionStore, currentChatId) {
+        userReactionStore.observe(currentChatId)
+    }.collectAsState(initial = emptyMap())
+    val reactionScope = rememberCoroutineScope()
+    val userReactions = remember(userReactionMap, currentChatId) {
+        com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { timestamp, emoji ->
+            reactionScope.launch {
+                try {
+                    userReactionStore.toggle(currentChatId, timestamp, emoji)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    com.ai.assistance.operit.util.AppLogger.w(TAG, "Could not save a reaction: ${e.message}")
+                }
+            }
+        }
+    }
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
     // A tapped report notification or a share opens that chat, over whatever page was showing.
@@ -341,6 +362,7 @@ private fun OrbitChatPage(
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides true,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
                 ) {
                     chatContent(currentChatId) {
                         OrbitHeader(
@@ -430,6 +452,10 @@ private fun OrbitChatPage(
                             openTaskId = it
                             push(OrbitSubPage.TASK)
                         },
+                        onOpenProcess = {
+                            openProcess = it
+                            push(OrbitSubPage.PROCESS)
+                        },
                         onOpenSoul = { push(OrbitSubPage.SOUL) },
                         onOpenMemory = { push(OrbitSubPage.MEMORY) },
                         onOpenMemoryLibrary = { push(OrbitSubPage.MEMORY_LIBRARY) },
@@ -477,6 +503,17 @@ private fun OrbitChatPage(
                             openTaskId?.let { taskId ->
                                 OrbitTasksPage(orbit.id, onBack = back, initialTaskId = taskId)
                             }
+                        OrbitSubPage.PROCESS -> {
+                            val process = openProcess
+                            if (process != null) {
+                                OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
+                                    openTaskId = taskId
+                                    push(OrbitSubPage.TASK)
+                                })
+                            } else {
+                                LaunchedEffect(Unit) { pop() }
+                            }
+                        }
                         OrbitSubPage.MEMORY_LIBRARY -> {
                             val id = memoryResult?.getOrNull()
                             if (id != null) {
@@ -550,7 +587,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { TASK, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES }
+private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

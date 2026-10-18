@@ -37,6 +37,15 @@ internal class OrbitReactions private constructor(private val file: File) {
         write(all)
     }
 
+    /** Sets [emoji] on a message, or takes it off when it is already the one there, like a tapback. */
+    suspend fun toggle(chatId: String, timestamp: Long, emoji: String) = mutex.withLock {
+        val all = read().toMutableMap()
+        val chat = all[chatId].orEmpty().toMutableMap()
+        if (chat[timestamp] == emoji) chat.remove(timestamp) else chat[timestamp] = emoji
+        all[chatId] = chat.entries.sortedByDescending { it.key }.take(MAX_PER_CHAT).associate { it.key to it.value }
+        write(all)
+    }
+
     /** Forgets every reaction in a chat that was deleted. */
     suspend fun removeChat(chatId: String) = mutex.withLock {
         val all = read()
@@ -78,13 +87,20 @@ internal class OrbitReactions private constructor(private val file: File) {
         const val MAX_EMOJI_LENGTH = 16
         private val instances = ConcurrentHashMap<String, OrbitReactions>()
 
+        /** Orbit's reactions on the user's messages. */
         fun of(context: Context, orbitId: String): OrbitReactions = instances.computeIfAbsent(orbitId) {
             OrbitReactions(File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "reactions.json"))
+        }
+
+        /** The user's reactions on Orbit's messages, kept apart from Orbit's own. */
+        fun ofUser(context: Context, orbitId: String): OrbitReactions = instances.computeIfAbsent("$orbitId:user") {
+            OrbitReactions(File(OrbitPreferences.getInstance(context).orbitDir(orbitId), "user_reactions.json"))
         }
 
         /** Forgets the cached copy after the Orbit folder is deleted. */
         fun drop(orbitId: String) {
             instances.remove(orbitId)
+            instances.remove("$orbitId:user")
         }
 
         /** One emoji (a short sequence like a flag or a skin tone is fine), never words. */

@@ -4393,6 +4393,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
     ): List<com.ai.assistance.operit.data.model.ChatMessageProcessMetadata> =
         withContext(Dispatchers.IO) { messageDao.getProcessMetadata(chatId) }
 
+    /** Replies of a chat that may hold tool calls or thinking, by message time. */
+    suspend fun loadWorkReplyTimestamps(chatId: String): List<Long> =
+        withContext(Dispatchers.IO) { messageDao.getWorkReplyTimestamps(chatId) }
+
     suspend fun loadChatMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<ChatMessage> =
         withContext(Dispatchers.IO) {
             timestamps.distinct().chunked(400).flatMap { chunk ->

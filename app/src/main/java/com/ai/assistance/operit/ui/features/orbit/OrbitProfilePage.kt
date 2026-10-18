@@ -104,6 +104,7 @@ internal fun OrbitProfilePage(
     onClose: () -> Unit,
     onOpenSettings: () -> Unit,
     onOpenTask: (String) -> Unit,
+    onOpenProcess: (OrbitProcess) -> Unit,
     onOpenSoul: () -> Unit,
     onOpenMemory: () -> Unit,
     onOpenMemoryLibrary: () -> Unit,
@@ -123,6 +124,16 @@ internal fun OrbitProfilePage(
         .collectAsState(initial = null)
     val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
+    // Work done while chatting. Read when the profile comes into view, then now and then while open.
+    val showingActivity = visible && tab == OrbitProfileTab.ACTIVITY
+    val chatTurns by produceState<OrbitChatTurns?>(null, orbit.talkChatIds, showingActivity) {
+        while (showingActivity) {
+            value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                OrbitWork.chatTurns(context, orbit.talkChatIds)
+            }
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
     BackHandler(enabled = visible, onBack = onClose)
 
     LazyColumn(
@@ -168,7 +179,7 @@ internal fun OrbitProfilePage(
             }
         }
         when (tab) {
-            OrbitProfileTab.ACTIVITY -> activitySection(activity, onOpenTask)
+            OrbitProfileTab.ACTIVITY -> activitySection(activity, chatTurns, onOpenProcess)
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, actions, onOpenTask)
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
@@ -573,33 +584,81 @@ private fun startOfDay(time: Long): Long {
     return calendar.timeInMillis
 }
 
-private fun LazyListScope.activitySection(rows: List<OrbitActivityRow>?, onOpenTask: (String) -> Unit) {
-    if (rows == null) return loading()
-    if (rows.isEmpty()) {
+/** One row of the activity list: a background run or a chat turn Orbit worked on. */
+private sealed interface OrbitWorkRow {
+    val key: String
+    val time: Long
+    data class Run(val run: OrbitActivityRow) : OrbitWorkRow {
+        override val key get() = "run-${run.id}"
+        override val time get() = run.startedAt
+    }
+    data class Turn(val turn: OrbitChatTurn) : OrbitWorkRow {
+        override val key get() = "turn-${turn.process.chatId}-${turn.process.timestamps.lastOrNull()}"
+        override val time get() = turn.process.time
+    }
+}
+
+private fun LazyListScope.activitySection(
+    runs: List<OrbitActivityRow>?,
+    chat: OrbitChatTurns?,
+    onOpenProcess: (OrbitProcess) -> Unit,
+) {
+    if (runs == null) return loading()
+    // Background runs show at once; the chat turns, read from every chat, join them when ready.
+    if (chat == null) loading()
+    if (chat?.failed == true) {
+        item(key = "turns-failed") { EmptyHint(stringResource(R.string.orbit_activity_load_failed)) }
+    }
+    val rows = (runs.map { OrbitWorkRow.Run(it) } + chat?.turns.orEmpty().map { OrbitWorkRow.Turn(it) })
+        .distinctBy { it.key }
+        .sortedByDescending { it.time }
+        .take(200)
+    if (chat == null && rows.isEmpty()) return
+    if (rows.isEmpty() && chat?.failed != true) {
         item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
         return
     }
-    rows.groupBy { startOfDay(it.startedAt) }.forEach { (day, dayRows) ->
+    rows.groupBy { startOfDay(it.time) }.forEach { (day, dayRows) ->
         item(key = "day-$day") { SectionTitle(dayLabel(day)) }
-        items(dayRows, key = { it.id }) { run ->
-            val failed = run.state == "FAILED" || run.state == "INTERRUPTED"
-            OrbitListRow(
-                icon = orbitIcon(
-                    when {
-                        run.state == "RUNNING" -> "loader"
-                        failed -> "circle-alert"
-                        run.kind == "DAILY" -> "heart-handshake"
-                        run.kind == "URL_CHANGE" -> "eye"
-                        run.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> "radar"
-                        else -> "sparkles"
-                    }
-                ),
-                title = run.title,
-                detail = runDetail(run),
-                meta = clockTime(run.startedAt),
-                iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = { onOpenTask(run.taskId) },
-            )
+        items(dayRows, key = { it.key }) { row ->
+            when (row) {
+                is OrbitWorkRow.Run -> {
+                    val run = row.run
+                    val failed = run.state == "FAILED" || run.state == "INTERRUPTED"
+                    OrbitListRow(
+                        icon = orbitIcon(
+                            when {
+                                run.state == "RUNNING" -> "loader"
+                                failed -> "circle-alert"
+                                run.kind == "DAILY" -> "heart-handshake"
+                                run.kind == "URL_CHANGE" -> "eye"
+                                run.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND -> "radar"
+                                else -> "sparkles"
+                            }
+                        ),
+                        title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled) },
+                        detail = runDetail(run),
+                        meta = clockTime(run.startedAt),
+                        iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                        showChevron = true,
+                        onClick = {
+                            onOpenProcess(OrbitProcess.TaskRun(run.id, run.generation, run.taskId, OrbitWork.listLine(run.title),
+                                run.startedAt, running = run.state == "RUNNING"))
+                        },
+                    )
+                }
+                is OrbitWorkRow.Turn -> {
+                    val turn = row.turn
+                    OrbitListRow(
+                        icon = orbitIcon("message-circle"),
+                        title = turn.process.title.ifBlank { stringResource(R.string.orbit_turn_untitled) },
+                        detail = turn.reply.ifBlank { stringResource(R.string.orbit_turn_no_reply) },
+                        meta = clockTime(turn.process.time),
+                        showChevron = true,
+                        onClick = { onOpenProcess(turn.process) },
+                    )
+                }
+            }
         }
     }
 }
@@ -611,7 +670,7 @@ private fun runDetail(run: OrbitActivityRow): String = when (run.state) {
     "INTERRUPTED" -> stringResource(R.string.orbit_profile_run_interrupted)
     "FAILED" -> run.error.ifBlank { stringResource(R.string.orbit_run_failed_unknown) }
     else -> run.observation.ifBlank { stringResource(R.string.orbit_task_no_result) }
-}.lineSequence().firstOrNull { it.isNotBlank() }.orEmpty().trim()
+}.let(OrbitWork::listLine)
 
 private fun LazyListScope.approvalsSection(
     tasks: List<OrbitTaskEntity>?,

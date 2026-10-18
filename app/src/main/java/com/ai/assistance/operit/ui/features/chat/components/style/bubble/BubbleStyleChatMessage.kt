@@ -73,6 +73,7 @@ fun BubbleStyleChatMessage(
             val backdrop = if (aiBubbleImageStyle == null && !aiMessageLiquidGlassEnabled && !aiMessageWaterGlassEnabled &&
                 aiMessageColor.alpha >= .95f) aiMessageColor.copy(alpha = 1f) else Color.Unspecified
             CompositionLocalProvider(LocalDynamicUiBackdrop provides backdrop) {
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
             BubbleAiMessageComposable(
                 message = message,
                 showHeader = showAssistantHeader && !message.displayMode.isCollaborationEvent,
@@ -97,6 +98,7 @@ fun BubbleStyleChatMessage(
                 enableToolDetailDialogs = enableToolDetailDialogs,
                 onAvatarLongPressMention = onRoleAvatarLongPress,
             )
+            }
             }
         }
         "summary" -> {

@@ -224,18 +224,28 @@ fun ChatScreenContent(
     }
     // 打开编辑器的那一刻才去读这一轮的协作消息，所以回调本身可以一直复用，不受转录刷新影响。
     val latestChatHistory by rememberUpdatedState(chatHistory)
+    val orbitLookForEdit by rememberUpdatedState(LocalOrbitChatLook.current)
     val onSelectMessageToEditCallback = remember(
         editingMessageIndex,
         editingMessageContent,
         editingMemoryFragments,
     ) {
         { index: Int, message: ChatMessage, senderType: String ->
+            // An Orbit chat shows messages without their thinking and tool calls; the editor must
+            // still get the whole stored message, or saving would drop them.
+            // Other chats already show the stored messages and are left as they are.
+            val storedByTime =
+                if (orbitLookForEdit) actualViewModel.chatHistory.value.associateBy { it.timestamp } else emptyMap()
+            val stored = storedByTime[message.timestamp]
+            val source =
+                if (orbitLookForEdit) latestChatHistory.map { shown -> storedByTime[shown.timestamp] ?: shown }
+                else latestChatHistory
             editingMessageIndex.value = index
-            editingMessageContent.value = message.content
+            editingMessageContent.value = (stored ?: message).content
             editingMessageType = senderType
             editingMemoryFragments.value =
                 if (senderType == "ai") {
-                    collaborationMemoryFragments(latestChatHistory, index, includeAssistant = true)
+                    collaborationMemoryFragments(source, index, includeAssistant = true)
                 } else {
                     emptyList()
                 }
