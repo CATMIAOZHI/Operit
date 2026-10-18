@@ -159,4 +159,14 @@
     <string name="skill_folder_expanded">已展开</string>
     <string name="skill_folder_collapsed">已收起</string>
     <string name="skill_visible_to_ai">对 AI 可见：%1$s</string>
+    <string name="skill_folder_archived">已归档</string>
+    <string name="skill_folder_archived_desc">4 周没用过，已对 AI 关闭；打开开关即可恢复</string>
+    <plurals name="skill_folder_count">
+        <item quantity="other">%1$d 个技能</item>
+    </plurals>
+    <string name="skill_restore_switch">恢复技能：%1$s</string>
+    <string name="skill_restored">已恢复「%1$s」，移回原来的文件夹</string>
+    <string name="skill_restore_failed">「%1$s」恢复失败，请再试一次</string>
+    <string name="orbit_skills_empty">还没有技能。它在对话中学会的技能，或者你添加的技能，会出现在这里。</string>
+    <string name="orbit_learning_help">它学会的技能和学习记录都在这里。记忆和关于你的资料在档案页查看。</string>
 </resources>

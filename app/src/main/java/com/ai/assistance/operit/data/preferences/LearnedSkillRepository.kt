@@ -7,6 +7,7 @@ import java.nio.file.Files
 import java.nio.file.StandardCopyOption
 import java.security.MessageDigest
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -16,6 +17,37 @@ import org.json.JSONObject
 class LearnedSkillRepository(private val context: Context, private val memorySpaceId: String? = null) {
     companion object {
         private val mutex = Mutex()
+        private const val LAST_USED = "lastUsed"
+        private const val ARCHIVED_AT = "archivedAt"
+        /** A learned skill nobody loaded for this long is archived: hidden from the AI, kept on disk. */
+        const val IDLE_ARCHIVE_MS = 28L * 24 * 60 * 60 * 1000
+        /** Archiving counts in weeks, so a use only needs writing down a few times a day. */
+        private const val TOUCH_EVERY_MS = 6L * 60 * 60 * 1000
+        private val lastTouchAt = java.util.concurrent.ConcurrentHashMap<String, Long>()
+        private val touchScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
+        /**
+         * Records that [name] was loaded, without making the load wait for the disk. Skills that are
+         * not learned in [memorySpaceId] are left alone by [touch].
+         */
+        fun touchLater(context: Context, memorySpaceId: String, name: String) {
+            val key = "$memorySpaceId/$name"
+            val now = System.currentTimeMillis()
+            val last = lastTouchAt[key]
+            if (last != null && now - last < TOUCH_EVERY_MS) return
+            lastTouchAt[key] = now
+            val appContext = context.applicationContext
+            touchScope.launch {
+                try {
+                    LearnedSkillRepository(appContext, memorySpaceId).touch(name)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    lastTouchAt.remove(key)
+                    com.ai.assistance.operit.util.AppLogger.w("LearnedSkillRepository", "Could not record skill use: $name", e)
+                }
+            }
+        }
         /** Creation bounds for a new skill: short enough to stay scannable and cheap to read. */
         const val MIN_SKILL_BODY_CHARS = 50
         const val MAX_SKILL_BODY_CHARS = 6_000
@@ -69,10 +101,83 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
             val skill = manager.getAvailableSkills()[name] ?: error("Skill not installed")
             require(skill.directory.canonicalFile.parentFile == File(manager.getSkillsDirectoryPath()).canonicalFile)
             require(!data.has(name) || data.getJSONObject(name).getString("profile")==profileId)
-            data.put(name,JSONObject().put("profile",profileId).put("directory",skill.directory.canonicalPath))
+            data.put(name,JSONObject().put("profile",profileId).put("directory",skill.directory.canonicalPath)
+                .put(LAST_USED,System.currentTimeMillis()))
             atomic(registry,data.toString())
         }
     }
+
+    /**
+     * A learned skill was loaded: its idle clock starts again. Other skills are not tracked. An
+     * archived skill stays archived (only [unarchive] brings it back), so a load racing the sweep
+     * cannot leave a skill hidden from the AI yet missing from the archive folder.
+     */
+    suspend fun touch(name: String) = mark(name, unarchive = false)
+
+    private suspend fun mark(name: String, unarchive: Boolean) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock
+            entry.put(LAST_USED, System.currentTimeMillis())
+            if (unarchive) entry.remove(ARCHIVED_AT)
+            atomic(registry, data.toString())
+        }
+    }
+
+    /** Learned skills that were put away for not being used. */
+    suspend fun archived(): Set<String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().filter { data.optJSONObject(it)?.has(ARCHIVED_AT) == true }.toSet()
+        }
+    }
+
+    /** The user switched an archived skill back on: it counts as just used. */
+    suspend fun unarchive(name: String) = mark(name, unarchive = true)
+
+    /**
+     * Marks the learned skills of [profileId] that went [idleMs] without being loaded as archived
+     * and returns them; the caller hides them from the AI. The clock only runs while a skill is
+     * shown to the AI: one the user hid starts again when shown, and an archived one the user
+     * switched back on counts as used. Entries from before the clock existed start it now.
+     */
+    suspend fun archiveIdle(profileId: String, now: Long, idleMs: Long, isVisible: (String) -> Boolean): List<String> =
+        withContext(Dispatchers.IO) {
+            mutex.withLock {
+                val manager = manager()
+                val registry = registryFile()
+                val data = registry()
+                val installed = manager.getAvailableSkills()
+                val archived = mutableListOf<String>()
+                var changed = false
+                data.keys().asSequence().toList().forEach { name ->
+                    val entry = data.optJSONObject(name) ?: return@forEach
+                    if (entry.optString("profile") != profileId ||
+                        installed[name]?.directory?.canonicalPath != entry.optString("directory")) return@forEach
+                    val visible = isVisible(name)
+                    // A load whose write is still on its way counts as use, so it is never archived.
+                    val pendingUse = memorySpaceId?.let { lastTouchAt["$it/$name"] }
+                        ?.takeIf { it > entry.optLong(LAST_USED, 0L) }
+                    when {
+                        entry.has(ARCHIVED_AT) -> if (visible) {
+                            entry.remove(ARCHIVED_AT); entry.put(LAST_USED, now); changed = true
+                        }
+                        !visible || entry.optLong(LAST_USED, 0L) <= 0L -> {
+                            entry.put(LAST_USED, now); changed = true
+                        }
+                        pendingUse != null -> {
+                            entry.put(LAST_USED, pendingUse); changed = true
+                        }
+                        now - entry.getLong(LAST_USED) >= idleMs -> {
+                            entry.put(ARCHIVED_AT, now); archived += name; changed = true
+                        }
+                    }
+                }
+                if (changed) atomic(registry, data.toString())
+                archived
+            }
+        }
     suspend fun forget(name: String) = withContext(Dispatchers.IO) {
         mutex.withLock {
             val registry = registryFile()
