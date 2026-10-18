@@ -239,7 +239,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
 /** A confirmation as a bottom sheet: a round icon, what will happen, and two full-width pills. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun TaskConfirmSheet(
+internal fun TaskConfirmSheet(
     icon: String,
     title: String,
     message: String,

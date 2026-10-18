@@ -314,7 +314,10 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
           hookMetadata: Map<String, Any?> = emptyMap(),
           dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
   ): String {
-    val enabledPackages = packageManager.getEnabledPackageNames()
+    // An Orbit chat lists the Orbit's own packages instead of the main app's.
+    val enabledPackages = com.ai.assistance.operit.features.orbit.OrbitPackages
+        .scopeFor(context, packageManager, chatId)?.toList()
+        ?: packageManager.getEnabledPackageNames()
     val packageSystemVisible =
         toolExposureMode == ToolExposureMode.FULL && enableTools && (toolVisibility["use_package"] ?: true)
     val mcpServers = packageManager.getAvailableServerPackages().filterKeys { serverName ->

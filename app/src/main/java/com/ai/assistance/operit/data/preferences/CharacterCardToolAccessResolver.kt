@@ -14,7 +14,11 @@ data class ResolvedCharacterCardToolAccess(
     val allowedSkillNames: Set<String>,
     val allowedMcpServerNames: Set<String>,
     val canUsePackageSystem: Boolean,
-    val hasAnyAllowedExternalSource: Boolean
+    val hasAnyAllowedExternalSource: Boolean,
+    /** Packages switched on for this chat: the main app's list, or an Orbit's own list in its chats. */
+    val scopePackageNames: Set<String> = allowedPackageNames,
+    /** Every package that exists, so a name outside [scopePackageNames] is known to be a package. */
+    val knownPackageNames: Set<String> = emptySet(),
 ) {
     fun isBuiltinToolAllowed(toolName: String): Boolean {
         if (com.ai.assistance.operit.features.orbit.OrbitTaskExecution.isTaskCapability(toolName)) return true
@@ -40,11 +44,19 @@ data class ResolvedCharacterCardToolAccess(
     }
 
     fun isExternalSourceAllowed(sourceName: String): Boolean {
+        // A package switched off for this chat stays off even if another chat loaded its tools.
+        if (!isPackageInScope(sourceName)) return false
         if (!customEnabled) return true
         if (!canUsePackageSystem) return false
         return allowedPackageNames.contains(sourceName) ||
             allowedSkillNames.contains(sourceName) ||
             allowedMcpServerNames.contains(sourceName)
+    }
+
+    /** False only for a known package that is switched off for this chat. */
+    fun isPackageInScope(sourceName: String): Boolean {
+        val name = sourceName.trim()
+        return name !in knownPackageNames || name in scopePackageNames
     }
 }
 
@@ -75,7 +87,12 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
         val effectiveGlobalToolVisibility = globalToolVisibility
             ?: runCatching { apiPreferences.toolPromptVisibilityFlow.first() }.getOrElse { emptyMap() }
 
-        val globalPackageNames = buildGlobalPackageNames(packageManager)
+        // In an Orbit chat the package list is the Orbit's own, apart from the main app's.
+        val globalPackageNames = com.ai.assistance.operit.features.orbit.OrbitPackages
+            .scopeFor(context, packageManager, chatId)?.let { LinkedHashSet(it) }
+            ?: buildGlobalPackageNames(packageManager)
+        val knownPackageNames = packageManager.getAvailablePackages().keys
+            .filterTo(LinkedHashSet()) { !packageManager.isToolPkgContainer(it) }
         val globalSkillNames = LinkedHashSet(SkillRepository.forChat(context, chatId).getAiVisibleSkillPackages().keys)
         val globalMcpServerNames = LinkedHashSet(packageManager.getAvailableServerPackages().keys)
 
@@ -98,7 +115,9 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
                 allowedSkillNames = globalSkillNames,
                 allowedMcpServerNames = globalMcpServerNames,
                 canUsePackageSystem = true,
-                hasAnyAllowedExternalSource = hasAnyGlobalExternalSource
+                hasAnyAllowedExternalSource = hasAnyGlobalExternalSource,
+                scopePackageNames = globalPackageNames,
+                knownPackageNames = knownPackageNames,
             )
         }
 
@@ -143,7 +162,9 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
             allowedSkillNames = allowedSkillNames,
             allowedMcpServerNames = allowedMcpServerNames,
             canUsePackageSystem = canUsePackageSystem,
-            hasAnyAllowedExternalSource = hasAnyAllowedExternalSource
+            hasAnyAllowedExternalSource = hasAnyAllowedExternalSource,
+            scopePackageNames = globalPackageNames,
+            knownPackageNames = knownPackageNames,
         )
     }
 
@@ -157,5 +178,27 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
                     !packageManager.isToolPkgContainer(packageName)
             }
             .toCollection(LinkedHashSet())
+    }
+
+    /**
+     * Only which packages this chat may use, for a chat with no role card: the main app's list, or
+     * an Orbit's own list in its chats. Skips the skill scan [resolve] does.
+     */
+    suspend fun resolvePackageScope(packageManager: PackageManager, chatId: String?): ResolvedCharacterCardToolAccess {
+        val scope = com.ai.assistance.operit.features.orbit.OrbitPackages
+            .scopeFor(context, packageManager, chatId)?.let { LinkedHashSet(it) }
+            ?: buildGlobalPackageNames(packageManager)
+        return ResolvedCharacterCardToolAccess(
+            customEnabled = false,
+            effectiveBuiltinToolVisibility = emptyMap(),
+            allowedPackageNames = scope,
+            allowedSkillNames = emptySet(),
+            allowedMcpServerNames = emptySet(),
+            canUsePackageSystem = true,
+            hasAnyAllowedExternalSource = scope.isNotEmpty(),
+            scopePackageNames = scope,
+            knownPackageNames = packageManager.getAvailablePackages().keys
+                .filterTo(LinkedHashSet()) { !packageManager.isToolPkgContainer(it) },
+        )
     }
 }

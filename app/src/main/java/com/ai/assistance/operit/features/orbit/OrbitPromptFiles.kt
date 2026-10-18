@@ -12,7 +12,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import org.json.JSONObject
 
 /**
  * An Orbit's own system files, kept in its folder next to Soul.md:
@@ -20,18 +19,14 @@ import org.json.JSONObject
  * - PROMPT.md: how Orbit works. Missing means the built-in default in the app's language, so app
  *   updates still reach it until the user edits it.
  * - IDENTITY.md: Orbit's name, character, vibe and signature emoji, written by Orbit and the user.
- * - prompt-layers.json: which optional layers go into the system prompt.
  *
+ * Every layer always goes into the system prompt; none of them can be left out.
  * Work files, chats and the memory library stay where they are; only these describe who Orbit is.
  */
 object OrbitPromptFiles {
     const val PROMPT_FILE = "PROMPT.md"
     const val IDENTITY_FILE = "IDENTITY.md"
-    private const val LAYERS_FILE = "prompt-layers.json"
     const val MAX_CHARS = 24_000
-
-    /** Layers the user can turn off. Soul.md and Orbit's runtime facts are always included. */
-    enum class Layer(val key: String) { BASE("base"), IDENTITY("identity"), USER("user") }
 
     private val locks = ConcurrentHashMap<String, Mutex>()
 
@@ -121,29 +116,7 @@ object OrbitPromptFiles {
         }
     }
 
-    suspend fun layers(context: Context, orbitId: String): Map<Layer, Boolean> {
-        val json = read(File(dir(context, orbitId), LAYERS_FILE))?.let { runCatching { JSONObject(it) }.getOrNull() }
-        return Layer.entries.associateWith { json?.optBoolean(it.key, true) ?: true }
-    }
-
-    suspend fun setLayer(context: Context, orbitId: String, layer: Layer, enabled: Boolean) {
-        val file = File(dir(context, orbitId), LAYERS_FILE)
-        withContext(Dispatchers.IO) {
-            lock(file).withLock {
-                val json = file.takeIf { it.isFile }?.let { runCatching { JSONObject(it.readText()) }.getOrNull() } ?: JSONObject()
-                atomic(file, json.put(layer.key, enabled).toString())
-            }
-        }
-    }
-
     /** Changes whenever what these files put into the system prompt changes. */
-    suspend fun revision(context: Context, orbitId: String): String {
-        val layers = layers(context, orbitId)
-        val parts = buildList {
-            add(layers.entries.joinToString(",") { "${it.key.key}=${it.value}" })
-            if (layers[Layer.BASE] == true) add(prompt(context, orbitId))
-            if (layers[Layer.IDENTITY] == true) add(identity(context, orbitId))
-        }
-        return LearnedSkillRepository.version(parts.joinToString("\u0000")).take(16)
-    }
+    suspend fun revision(context: Context, orbitId: String): String =
+        LearnedSkillRepository.version(prompt(context, orbitId) + "\u0000" + identity(context, orbitId)).take(16)
 }

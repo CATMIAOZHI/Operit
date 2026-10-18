@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_layer_memory">Long-term memory</string>
+    <string name="orbit_layer_memory_desc">The notes Orbit keeps for the long run</string>
+    <string name="orbit_prompt_view_full">Full prompt</string>
+    <string name="orbit_prompt_view_full_desc">The system prompt the main chat is using, %1$s in all</string>
+    <string name="orbit_prompt_not_built">Not built yet. Say something to Orbit and it will show here.</string>
+    <string name="orbit_prompt_section_missing">This part was not kept on its own yet. Tap Refresh prompt and it shows after Orbit\'s next reply.</string>
+    <string name="orbit_prompt_view_note">This is the prompt the main chat is using. Each reply sends it to the model as is.</string>
+    <string name="orbit_prompt_tools_note">This is the part written into the prompt. Each tool\'s full description is sent separately with every request.</string>
+    <string name="orbit_prompt_refresh">Refresh prompt</string>
+    <string name="orbit_prompt_refresh_desc">Within a conversation, memory, profile and tools are fixed at the start. After a refresh, Orbit reads them again on its next reply.</string>
+    <string name="orbit_prompt_refresh_busy">Orbit is replying. Refresh once it is done.</string>
+    <string name="orbit_prompt_refreshed">Refreshed. It applies to the next reply</string>
+    <string name="orbit_prompt_refresh_failed">Could not refresh. Try again later</string>
+    <string name="orbit_prompt_copied">Copied</string>
+    <string name="orbit_packages_title">Packages</string>
+    <string name="orbit_packages_row_desc">Orbit\'s own switches, apart from the main app</string>
+    <string name="orbit_packages_help">These switches are only for Orbit. Turning one off here leaves the main app alone, and the other way round.</string>
+    <string name="orbit_packages_import">Import from main app</string>
+    <string name="orbit_packages_import_desc">Match the main app\'s switches as they are now (%1$d on there)</string>
+    <string name="orbit_packages_import_title">Import from the main app?</string>
+    <string name="orbit_packages_import_message">Orbit\'s package switches will match the main app\'s. Any switch you changed only here will be replaced.</string>
+    <string name="orbit_packages_import_confirm">Import</string>
+    <string name="orbit_packages_search">Search packages</string>
+    <string name="orbit_packages_count">%1$d of %2$d on</string>
+    <string name="orbit_packages_empty">No packages found</string>
+    <string name="orbit_packages_needs_container">Needs “%1$s” turned on in the main app first</string>
+    <string name="orbit_packages_save_failed">Could not save that switch. It is back as it was</string>
+    <string name="orbit_packages_imported">Imported the main app\'s switches</string>
+    <string name="orbit_packages_import_failed">Could not import. Try again later</string>
+    <string name="orbit_load_failed">Could not load. Try again</string>
+    <string name="orbit_retry">Retry</string>
+    <string name="tool_package_off_in_chat">Package “%1$s” is switched off for this chat and cannot be used.</string>
+</resources>

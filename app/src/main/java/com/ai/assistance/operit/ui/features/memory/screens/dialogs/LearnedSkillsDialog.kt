@@ -28,6 +28,8 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
         value = SkillRepository.forMemorySpace(context, profileId)
     }
     val prefs = remember(profileId) { MemorySearchSettingsPreferences(context,profileId) }
+    // An Orbit always extracts and revises its skills, so it has no switches here.
+    val orbitSpace = prefs.isOrbitLocked
     var extract by remember { mutableStateOf(prefs.shouldExtractSkills()) }
     var revise by remember { mutableStateOf(prefs.mayReviseLearnedSkills()) }
     val snackbar = remember { SnackbarHostState() }
@@ -52,9 +54,10 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
                     Modifier.heightIn(max = controlsMaxHeight).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(stringResource(R.string.memory_learned_hint), style = MaterialTheme.typography.bodyMedium,
+                    Text(stringResource(if (orbitSpace) R.string.memory_learned_hint_orbit else R.string.memory_learned_hint),
+                        style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
-                    if (!masterEnabled) Surface(
+                    if (!masterEnabled && !orbitSpace) Surface(
                         shape = RoundedCornerShape(16.dp),
                         color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.6f),
                         modifier = Modifier.fillMaxWidth(),
@@ -63,7 +66,7 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
                             modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp))
                     }
                     // One gray card of switches, in the look of the settings and Orbit pages.
-                    Surface(
+                    if (!orbitSpace) Surface(
                         shape = RoundedCornerShape(20.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
                         modifier = Modifier.fillMaxWidth(),

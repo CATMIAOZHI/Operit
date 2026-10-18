@@ -328,7 +328,16 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
 
         if (isStandardPackage) {
-            packageManager.enablePackage(packageName)
+            // In an Orbit chat the package goes on the Orbit's own list, not the main app's.
+            val orbit = runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId)
+            }.getOrNull()
+            if (orbit != null) {
+                com.ai.assistance.operit.features.orbit.OrbitPackages
+                    .setEnabled(context, orbit.id, packageManager, packageName, true)
+            } else {
+                packageManager.enablePackage(packageName)
+            }
         }
 
         val packageContent = packageManager.usePackage(packageName, chatId)

@@ -131,17 +131,12 @@ internal object OrbitTools {
             }
         val controls = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.additionalPrompts(context, chatId)
         val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
-        val layers = files.layers(context, orbit.id)
         // File text is data inside our tags, so escape it the way memory notes are escaped.
         fun escape(text: String) = text.trim().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        val proactive = if (layers[com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.BASE] == true) {
-            "\n<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
-        } else ""
-        val identity = if (layers[com.ai.assistance.operit.features.orbit.OrbitPromptFiles.Layer.IDENTITY] == true) {
-            "\n<orbit_identity source=\"IDENTITY.md\">\n" +
-                escape(files.identity(context, orbit.id)) +
-                "\n</orbit_identity>"
-        } else ""
+        val proactive = "\n<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
+        val identity = "\n<orbit_identity source=\"IDENTITY.md\">\n" +
+            escape(files.identity(context, orbit.id)) +
+            "\n</orbit_identity>"
         // A side chat is its own thread; work started here reports back here.
         val side = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id }
             ?.sideChats?.firstOrNull { it.chatId == chatId }
@@ -155,6 +150,16 @@ internal object OrbitTools {
             ?.let { "\n$it" }.orEmpty()
         return "<orbit>\n$body$sideNote$proactive$identity$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
     }
+
+    /**
+     * The part of [systemPromptBlock] the app writes itself: everything but PROMPT.md and
+     * IDENTITY.md, which have their own layers. Their text is escaped, so no tag sits inside them.
+     */
+    fun runtimeOnly(block: String): String =
+        block.replace(Regex("""\n?<orbit_handbook source="PROMPT\.md">.*?</orbit_handbook>""", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("""\n?<orbit_identity source="IDENTITY\.md">.*?</orbit_identity>""", RegexOption.DOT_MATCHES_ALL), "")
+            .replace(Regex("\n{3,}"), "\n\n")
+            .trim()
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {
         val chatId = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
