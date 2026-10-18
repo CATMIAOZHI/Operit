@@ -43,10 +43,11 @@ internal object OrbitBoardTools {
         ),
         ToolPrompt(
             name = IDEA,
-            description = "在用户「点子」标签页提出你可以为他做的事或做的东西。用户点「就这么办」后，" +
-                "卡片里的 plan 会作为一条消息发给你，由你去做。create 新建；list 查看。你不能替用户关掉卡片。",
+            description = "在用户「点子」标签页提出你可以为他做的事或做的东西。用户点「就这么办」只会把 plan 放进他的输入框，" +
+                "他发出来你才收到，由你去做。create 新建；list 查看；done 在你真的做完后把卡片标成已做。你不能替用户关掉卡片。",
             parametersStructured = listOf(
-                ToolParameterSchema("action", description = "create/list", required = true),
+                ToolParameterSchema("action", description = "create/list/done", required = true),
+                ToolParameterSchema("idea_id", description = "done：要标成已做的卡片编号（先 list 查）", required = false),
                 ToolParameterSchema("title", description = "create：卡片标题，最多80字符", required = false),
                 ToolParameterSchema("description", description = "create：给用户看的说明：做什么、对他有什么用，最多6000字符", required = false),
                 ToolParameterSchema("plan", description = "create：用户选中后你要做的具体事，写给你自己看，最多2000字符", required = false),
@@ -113,6 +114,7 @@ internal object OrbitBoardTools {
                                 System.currentTimeMillis() + days * 24L * 60 * 60 * 1000), Board.IDEAS)
                         }
                         "list" -> JSONArray(ideas.list().map { json(it, Board.IDEAS, brief = true) })
+                        "done" -> json(ideas.update(arg("idea_id"), state = "BUILT"), Board.IDEAS)
                         else -> error("Unknown action")
                     }
                 }

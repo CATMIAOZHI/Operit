@@ -325,7 +325,6 @@ private fun OrbitChatPage(
     // on a tab cannot drop an unsaved edit.
     var editingFile by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var filesVersion by remember(orbit.id) { mutableStateOf(0) }
-    val imeVisible = androidx.compose.foundation.layout.WindowInsets.ime.getBottom(LocalDensity.current) > 0
     var memoryRetry by remember(orbit.id) { mutableStateOf(0) }
     val memoryResult by produceState<Result<String>?>(null, orbit.id, memoryRetry) {
         value = null
@@ -418,17 +417,24 @@ private fun OrbitChatPage(
                         }
                     }
                     CompositionLocalProvider(LocalOrbitTabHeader provides tabHeader) {
-                        OrbitTabPage(orbit, pageTab, onOpenChat = { tab = OrbitTab.CHAT },
+                        OrbitTabPage(orbit, pageTab,
+                            onDraft = { text ->
+                                // The prompt waits in the main chat's input box for the user to finish.
+                                draftToOrbit(context, orbit, text)
+                                talkChatId = orbit.chatId
+                                tab = OrbitTab.CHAT
+                            },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
                     }
                 }
             }
-            // Hidden while typing so the input sits right on the keyboard.
-            if (!imeVisible && !devView) {
+            // The keyboard slides over the tabs: as it rises the tab bar shrinks under it, and as it
+            // goes down the bar comes back with it, frame by frame, so the input never jumps.
+            if (!devView) {
                 OrbitBottomBar(selected = tab, onSelect = {
                     if (it != OrbitTab.CHAT) pageTab = it
                     tab = it
-                })
+                }, modifier = Modifier.tuckUnderKeyboard(androidx.compose.foundation.layout.WindowInsets.ime))
             }
         }
         // Orbit's own menu, opened only by the round button at the top left.
