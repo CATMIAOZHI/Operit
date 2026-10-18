@@ -112,7 +112,7 @@ val LocalOrbitUserReactions = compositionLocalOf<OrbitUserReactions?> { null }
 object OrbitSpeech {
     private val blank = Regex("\n{3,}")
     private val cardFence = Regex("```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?(?:```|$)")
-    private val shownCard = Regex("```a2ui[ \\t]*\\n")
+    private val shownCard = Regex("```a2ui(?:[ \\t]+card-\\d{1,2})?[ \\t]*\\n")
     // The chat is re-shown as a reply streams in; each stored text is cleaned only once.
     private val cleaned = java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, String>())
     // Stored instead of a text that needed no cleaning: a value pointing at its own key would keep

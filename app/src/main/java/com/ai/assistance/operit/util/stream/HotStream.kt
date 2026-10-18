@@ -25,6 +25,10 @@ interface SharedStream<T> : Stream<T> {
     val replayCache: List<T>
 }
 
+/** Replay entries after the first [count]; avoids copying the whole log on every streamed chunk. */
+fun <T> SharedStream<T>.replayAfter(count: Int): List<T> =
+    (this as? MutableSharedStreamImpl<T>)?.replayFrom(count) ?: replayCache.drop(count)
+
 /** 可变共享Stream接口，类似于MutableSharedFlow */
 interface MutableSharedStream<T> : SharedStream<T> {
     /** 发射一个值到Stream */

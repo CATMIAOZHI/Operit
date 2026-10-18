@@ -48,6 +48,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.nativeCanvas
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
@@ -238,6 +240,17 @@ fun OrbitEmojiPickerSheet(selected: String?, onPick: (String) -> Unit, onDismiss
     androidx.compose.runtime.LaunchedEffect(query) { if (gridState.firstVisibleItemIndex > 0) gridState.scrollToItem(0) }
     val scope = rememberCoroutineScope()
     val frequentTitle = stringResource(R.string.orbit_emoji_frequent)
+    // One paint and one set of words for every cell: each cell only draws, it measures no text.
+    val density = androidx.compose.ui.platform.LocalDensity.current
+    val emojiPaint = remember(density) {
+        val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply {
+            textSize = with(density) { 28.sp.toPx() }
+            textAlign = android.graphics.Paint.Align.CENTER
+        }
+        EmojiInk(paint, -(paint.fontMetrics.ascent + paint.fontMetrics.descent) / 2f)
+    }
+    val resources = context.resources
+    val selectedHighlight = MaterialTheme.colorScheme.primary.copy(alpha = 0.16f)
     val titles = groups.orEmpty().associate { it.id to groupTitle(it.id) }
     val rows: List<PickerRow> = remember(groups, ranked, query, titles) {
         val all = groups.orEmpty()
@@ -341,7 +354,9 @@ fun OrbitEmojiPickerSheet(selected: String?, onPick: (String) -> Unit, onDismiss
                                 modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 14.dp, bottom = 6.dp)
                                     .semantics { heading() },
                             )
-                            is PickerRow.Cell -> EmojiCell(row.emoji, row.emoji == selected) { onPick(row.emoji) }
+                            is PickerRow.Cell -> EmojiCell(row.emoji, row.emoji == selected, emojiPaint, selectedHighlight, resources) {
+                                onPick(row.emoji)
+                            }
                         }
                     }
                 }
@@ -350,23 +365,35 @@ fun OrbitEmojiPickerSheet(selected: String?, onPick: (String) -> Unit, onDismiss
     }
 }
 
+/** The paint every emoji cell draws with, and how far to move the baseline to center a glyph. */
+private class EmojiInk(val paint: android.graphics.Paint, val centerShift: Float)
+
+/**
+ * One emoji, drawn straight onto the cell with the system's text drawing. A Text per cell laid
+ * out a paragraph for every emoji that scrolled into view, which dropped frames in a list of a
+ * few thousand. The words for screen readers are only built when one asks for them.
+ */
 @Composable
-private fun EmojiCell(emoji: String, isSelected: Boolean, onClick: () -> Unit) {
-    val label = stringResource(R.string.orbit_react_with, emoji)
-    val state = if (isSelected) stringResource(R.string.orbit_reaction_selected) else ""
+private fun EmojiCell(
+    emoji: String,
+    isSelected: Boolean,
+    ink: EmojiInk,
+    highlight: Color,
+    resources: android.content.res.Resources,
+    onClick: () -> Unit,
+) {
     Box(
-        contentAlignment = Alignment.Center,
         // The whole cell takes the tap; the highlight is a slightly smaller circle inside it.
         modifier = Modifier.aspectRatio(1f).clip(CircleShape)
             .clickable(role = Role.Button, onClick = onClick)
-            .padding(2.dp).clip(CircleShape)
-            .background(if (isSelected) MaterialTheme.colorScheme.primary.copy(alpha = 0.16f) else Color.Transparent)
             .semantics {
-                contentDescription = label
-                if (isSelected) stateDescription = state
+                contentDescription = resources.getString(R.string.orbit_react_with, emoji)
+                if (isSelected) stateDescription = resources.getString(R.string.orbit_reaction_selected)
                 this.selected = isSelected
+            }
+            .drawBehind {
+                if (isSelected) drawCircle(highlight, radius = size.minDimension / 2f - 2.dp.toPx())
+                drawContext.canvas.nativeCanvas.drawText(emoji, size.width / 2f, size.height / 2f + ink.centerShift, ink.paint)
             },
-    ) {
-        Text(emoji, fontSize = 28.sp)
-    }
+    )
 }

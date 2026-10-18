@@ -163,10 +163,10 @@ fun Stream<String>.shareRevisable(
         var emittedTextCharCount = 0
 
         suspend fun drainEvents() {
-            val events = carrier.eventChannel.replayCache
-            while (processedEventCount < events.size) {
+            for (event in carrier.eventChannel.replayAfter(processedEventCount)) {
+                processedEventCount++
                 sharedEventStream.emit(
-                    events[processedEventCount++].copy(
+                    event.copy(
                         replayCharCount = emittedTextCharCount,
                     )
                 )

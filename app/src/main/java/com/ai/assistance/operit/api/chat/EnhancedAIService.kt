@@ -60,6 +60,7 @@ import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
+import com.ai.assistance.operit.util.stream.replayAfter
 import com.ai.assistance.operit.util.stream.stream
 import com.ai.assistance.operit.util.stream.withEventChannel
 import com.ai.assistance.operit.R
@@ -1515,16 +1516,15 @@ class EnhancedAIService private constructor(
                     val revisionTracker = TextStreamRevisionTracker()
                     val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                         { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(execContext.dynamicUiRunId, it) },
-                        { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.nextUnplaced(execContext.dynamicUiRunId) },
-                        { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.unplace(execContext.dynamicUiRunId, it) },
                     )
                     val replayRoundStart = execContext.emittedReplayCharCount.get()
                     var processedRevisionEventCount = 0
 
                     suspend fun drainRevisionEvents() {
-                        val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                        while (processedRevisionEventCount < events.size) {
-                            val event = events[processedRevisionEventCount++]
+                        val events = revisableStream?.eventChannel
+                            ?.replayAfter(processedRevisionEventCount).orEmpty()
+                        for (event in events) {
+                            processedRevisionEventCount++
                             execContext.eventChannel.emit(event)
                             when (event.eventType) {
                                 TextStreamEventType.SAVEPOINT -> {
@@ -2810,16 +2810,15 @@ class EnhancedAIService private constructor(
                 val revisionTracker = TextStreamRevisionTracker()
                 val cardReferences = com.ai.assistance.operit.ui.common.dynamicui.CardReferenceExpander(
                     { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(context.dynamicUiRunId, it) },
-                    { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.nextUnplaced(context.dynamicUiRunId) },
-                    { com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.unplace(context.dynamicUiRunId, it) },
                 )
                 val replayRoundStart = context.emittedReplayCharCount.get()
                 var processedRevisionEventCount = 0
 
                 suspend fun drainRevisionEvents() {
-                    val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                    while (processedRevisionEventCount < events.size) {
-                        val event = events[processedRevisionEventCount++]
+                    val events = revisableStream?.eventChannel
+                        ?.replayAfter(processedRevisionEventCount).orEmpty()
+                    for (event in events) {
+                        processedRevisionEventCount++
                         context.eventChannel.emit(event)
                         when (event.eventType) {
                             TextStreamEventType.SAVEPOINT -> {

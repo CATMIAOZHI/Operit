@@ -130,7 +130,7 @@ fun parseMessageContentForEditor(content: String): List<ParsedMessagePart> {
         if (fence.isNotEmpty()) {
             val end = Regex("(?m)^ {0,3}${Regex.escape(fence.first().toString())}{${fence.length},}[ \\t]*(?:\\r?\\n|$)")
                 .find(content, matchResult.range.last + 1)?.range?.last?.plus(1) ?: content.length
-            val type = if (matchResult.groupValues[2].trim() in setOf("a2ui", "a2ui-ref"))
+            val type = if (matchResult.groupValues[2].trim().substringBefore(' ') in setOf("a2ui", "a2ui-ref"))
                 PartType.DYNAMIC_UI else PartType.TEXT
             parts.add(ParsedMessagePart(type, content.substring(startIndex, end)))
             lastIndex = end
