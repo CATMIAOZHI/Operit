@@ -35,8 +35,11 @@ class SkillManager private constructor(private val context: Context, private val
         }
     }
 
-    private val availableSkills = mutableMapOf<String, SkillPackage>()
-    private val skillLoadErrors = mutableMapOf<String, String>()
+    // Each scan builds fresh maps and publishes them at once, so a page, a skill load and the
+    // archive sweep scanning together never read a half-cleared list.
+    @Volatile private var availableSkills: Map<String, SkillPackage> = emptyMap()
+    @Volatile private var skillLoadErrors: Map<String, String> = emptyMap()
+    private val refreshLock = Any()
 
     private val paths = OperitManagedPaths(context)
     private val legacyPrefs = LegacyStoragePreferences.getInstance(context)
@@ -63,10 +66,18 @@ class SkillManager private constructor(private val context: Context, private val
         return getInternalSkillsRootDir().absolutePath
     }
 
-    fun refreshAvailableSkills() {
-        availableSkills.clear()
-        skillLoadErrors.clear()
+    fun refreshAvailableSkills() = synchronized(refreshLock) {
+        val skills = linkedMapOf<String, SkillPackage>()
+        val errors = linkedMapOf<String, String>()
+        try {
+            scanAll(skills, errors)
+        } finally {
+            availableSkills = skills
+            skillLoadErrors = errors
+        }
+    }
 
+    private fun scanAll(availableSkills: MutableMap<String, SkillPackage>, skillLoadErrors: MutableMap<String, String>) {
         val internalSkillsDir = try {
             getInternalSkillsRootDir()
         } catch (e: Exception) {
@@ -83,7 +94,7 @@ class SkillManager private constructor(private val context: Context, private val
         val seenNames = mutableSetOf<String>()
 
         // 1. Scan the internal primary store first (internal wins on name conflict).
-        scanSkillDirectory(internalSkillsDir, seenNames, StorageSource.INTERNAL)
+        scanSkillDirectory(internalSkillsDir, seenNames, StorageSource.INTERNAL, availableSkills, skillLoadErrors)
 
         // 2. Scan the legacy Download store only if the read switch is on; probing must never
         // create the legacy tree, so require it to already be a directory.
@@ -94,6 +105,8 @@ class SkillManager private constructor(private val context: Context, private val
                 legacySkillsDir,
                 seenNames,
                 StorageSource.LEGACY_DOWNLOAD,
+                availableSkills,
+                skillLoadErrors,
                 skipPaths = hiddenPaths
             )
         }
@@ -103,6 +116,8 @@ class SkillManager private constructor(private val context: Context, private val
         dir: File,
         seenNames: MutableSet<String>,
         source: StorageSource,
+        availableSkills: MutableMap<String, SkillPackage>,
+        skillLoadErrors: MutableMap<String, String>,
         skipPaths: Set<String> = emptySet()
     ) {
         val children = dir.listFiles() ?: emptyArray()
@@ -268,7 +283,7 @@ class SkillManager private constructor(private val context: Context, private val
                     skill.directory.deleteRecursively()
                 }
             if (ok) {
-                availableSkills.remove(skillName)
+                availableSkills = availableSkills - skillName
                 if (clearLearningOwnership)
                     com.ai.assistance.operit.data.preferences.LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
             }
@@ -279,8 +294,9 @@ class SkillManager private constructor(private val context: Context, private val
         }
     }
 
-    fun getSkillSystemPrompt(skillName: String): String? {
-        refreshAvailableSkills()
+    /** [refresh] false reuses the list a caller just scanned, so one skill load scans once. */
+    fun getSkillSystemPrompt(skillName: String, refresh: Boolean = true): String? {
+        if (refresh) refreshAvailableSkills()
         val skill = availableSkills[skillName] ?: return null
         val content = try {
             skill.skillFile.readText()

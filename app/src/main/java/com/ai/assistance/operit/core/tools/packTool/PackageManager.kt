@@ -3218,14 +3218,18 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val scopedSkills = kotlinx.coroutines.runBlocking {
             com.ai.assistance.operit.data.skill.SkillRepository.forChat(context, callerChatId)
         }
-        if (scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName) &&
-            !scopedSkills.getAiVisibleSkillPackages().containsKey(normalizedPackageName)
-        ) {
+        // One directory scan serves the visibility check and the prompt.
+        val isSkill = scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName)
+        if (isSkill && !scopedSkills.skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName)) {
             return "Skill '$normalizedPackageName' is set to not show to AI"
         }
 
-        val skillPrompt = scopedSkills.getSkillSystemPrompt(normalizedPackageName)
+        val skillPrompt = if (isSkill) scopedSkills.getSkillSystemPrompt(normalizedPackageName, refresh = false) else null
         if (skillPrompt != null) {
+            // A learned Orbit skill that gets loaded is in use: its idle-archive clock restarts.
+            scopedSkills.memorySpaceId?.let { space ->
+                com.ai.assistance.operit.data.preferences.LearnedSkillRepository.touchLater(context, space, normalizedPackageName)
+            }
             return skillPrompt
         }
 
@@ -3271,8 +3275,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             com.ai.assistance.operit.data.skill.SkillRepository.forChat(context,
                 com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.currentToolRuntimeContext()?.callerChatId)
         }
-        if (scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName) &&
-            !scopedSkills.getAiVisibleSkillPackages().containsKey(normalizedPackageName)
+        if (!scopedSkills.skillVisibilityPreferences.isSkillVisibleToAi(normalizedPackageName) &&
+            scopedSkills.getAvailableSkillPackages().containsKey(normalizedPackageName)
         ) {
             return ToolResult(
                 toolName = toolName,

@@ -1645,7 +1645,7 @@ class JsEngine(private val context: Context) {
                     report["repaired"]?.let { put("repaired", it) }
                     report["repair"]?.let { put("repair", it) }
                     put("message", kotlinx.serialization.json.JsonPrimitive(
-                        "UI block compiled and checked. Place exactly this reference where the block belongs in your answer, with prose around it as needed; do not repeat the source or call validation again. Write the fence itself, never a \"[Dynamic UI card shown…]\" summary line:\n```a2ui-ref\n$id\n```"
+                        "UI block compiled and checked. Place exactly this reference where the block belongs in your answer, with prose around it as needed; do not repeat the source or call validation again:\n```a2ui-ref\n$id\n```"
                     ))
                 }.toString()
             } catch (e: IllegalArgumentException) {
@@ -1700,7 +1700,7 @@ class JsEngine(private val context: Context) {
                     it.jsonPrimitive.content
                 }
                 val prepared = com.ai.assistance.operit.ui.common.dynamicui.CardExpress.prepareRevision(source, changes, remove)
-                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(run, prepared.document, prepared.source, revises = reference)
+                val id = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.register(run, prepared.document, prepared.source)
                 kotlinx.serialization.json.buildJsonObject {
                     put("valid", kotlinx.serialization.json.JsonPrimitive(true))
                     put("reference", kotlinx.serialization.json.JsonPrimitive(id))

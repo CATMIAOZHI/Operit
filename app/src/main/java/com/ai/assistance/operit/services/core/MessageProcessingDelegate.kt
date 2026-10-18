@@ -23,6 +23,7 @@ import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
 import com.ai.assistance.operit.util.stream.TextStreamEventType
 import com.ai.assistance.operit.util.stream.TextStreamRevisionTracker
+import com.ai.assistance.operit.util.stream.replayAfter
 import com.ai.assistance.operit.util.TtsSegmenter
 import com.ai.assistance.operit.util.WaifuMessageProcessor
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -1504,9 +1505,9 @@ class MessageProcessingDelegate(
                             }
 
                             suspend fun drainRevisionEvents() {
-                                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                                while (processedRevisionEventCount < events.size) {
-                                    val event = events[processedRevisionEventCount]
+                                val events = revisableStream?.eventChannel
+                                    ?.replayAfter(processedRevisionEventCount).orEmpty()
+                                for (event in events) {
                                     if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
                                         break
                                     }
@@ -2068,9 +2069,9 @@ class MessageProcessingDelegate(
             var processedReplayCharCount = 0
 
             fun drainRevisionEvents() {
-                val events = revisableStream?.eventChannel?.replayCache.orEmpty()
-                while (processedRevisionEventCount < events.size) {
-                    val event = events[processedRevisionEventCount]
+                val events = revisableStream?.eventChannel
+                    ?.replayAfter(processedRevisionEventCount).orEmpty()
+                for (event in events) {
                     if (event.replayCharCount?.let { it > processedReplayCharCount } == true) {
                         break
                     }

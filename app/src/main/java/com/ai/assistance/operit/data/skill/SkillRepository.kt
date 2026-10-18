@@ -85,7 +85,8 @@ class SkillRepository private constructor(private val context: Context, private 
     }
 
     fun readSkillContent(skillName: String): String? = skillManager.readSkillContent(skillName)
-    fun getSkillSystemPrompt(skillName: String): String? = skillManager.getSkillSystemPrompt(skillName)
+    fun getSkillSystemPrompt(skillName: String, refresh: Boolean = true): String? =
+        skillManager.getSkillSystemPrompt(skillName, refresh)
 
     suspend fun deleteSkill(skillName: String): Boolean {
         val space = memorySpaceId ?: return skillManager.deleteSkill(skillName)

@@ -8,6 +8,7 @@ import com.ai.assistance.operit.util.stream.Stream
 import com.ai.assistance.operit.util.stream.MutableSharedStream
 import com.ai.assistance.operit.util.stream.TextStreamEvent
 import com.ai.assistance.operit.util.stream.TextStreamEventCarrier
+import com.ai.assistance.operit.util.stream.replayAfter
 import com.ai.assistance.operit.util.stream.withEventChannel
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
@@ -55,8 +56,11 @@ class RateLimitedAIService(
             )
             var copiedEvents = 0
             suspend fun drainEvents() {
-                val source = (response as? TextStreamEventCarrier)?.eventChannel?.replayCache.orEmpty()
-                while (copiedEvents < source.size) events.emit(source[copiedEvents++])
+                val source = (response as? TextStreamEventCarrier)?.eventChannel?.replayAfter(copiedEvents).orEmpty()
+                for (event in source) {
+                    copiedEvents++
+                    events.emit(event)
+                }
             }
             try {
                 response.collect { chunk ->

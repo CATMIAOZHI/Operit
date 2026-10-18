@@ -688,7 +688,9 @@ object AIMessageManager {
         chatId: String? = null
     ): ChatMessage? {
         val lastSummaryIndex = messages.indexOfLast { it.sender == "summary" }
-        val previousSummary = if (lastSummaryIndex != -1) messages[lastSummaryIndex].content.trim() else null
+        val previousSummary = if (lastSummaryIndex != -1)
+            com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forSummary(messages[lastSummaryIndex].content).trim()
+        else null
 
         val messagesToSummarize = when {
             lastSummaryIndex == -1 -> messages.filter { it.sender == "user" || it.sender == "ai" }
@@ -703,6 +705,11 @@ object AIMessageManager {
 
         val memoryTagRegex = Regex("<memory>.*?</memory>", RegexOption.DOT_MATCHES_ALL)
         val conversationReviewEntries = mutableListOf<Pair<String, String>>()
+        // The summary is shown in the chat, so a card in it reads in the user's language.
+        val cardReviewLabel: (String) -> String = { text ->
+            if (text.isEmpty()) context.getString(R.string.dynamic_ui_card_review_empty)
+            else context.getString(R.string.dynamic_ui_card_review, text)
+        }
         fun normalizeForReview(text: String): String {
             return text
                 .replace("\r\n", "\n")
@@ -990,7 +997,8 @@ object AIMessageManager {
                         )
                     } else {
                         // AI 消息需要先移除 thinking 内容，再移除媒体链接
-                        val withoutThinking = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(ChatUtils.removeThinkingContent(message.content))
+                        val withoutThinking = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(
+                            ChatUtils.removeThinkingContent(message.content), label = cardReviewLabel)
                         stripMediaLinksForAssistant(withoutThinking)
                     }
 
@@ -1024,7 +1032,8 @@ object AIMessageManager {
                         message.content.replace(memoryTagRegex, "").trim()
                     )
                 } else {
-                    stripMediaLinksForAssistant(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(message.content))
+                    stripMediaLinksForAssistant(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(
+                        message.content, label = cardReviewLabel))
                 }
                 if (cleanedContent.isNotBlank()) {
                     val displayContent =
@@ -1378,7 +1387,7 @@ object AIMessageManager {
                     "summary" ->
                         PromptTurn(
                             kind = PromptTurnKind.SUMMARY,
-                            content = message.content
+                            content = com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forSummary(message.content)
                         )
                     else -> null
                 }
@@ -1427,7 +1436,7 @@ object AIMessageManager {
         } else {
             // 其他角色的消息：转换为 user 消息，添加角色标签
             val roleLabel = if (messageRoleName.isNotBlank()) messageRoleName else "unknown"
-            val bridgedContent = removeStatusTags(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forModel(cleanedContent))
+            val bridgedContent = removeStatusTags(com.ai.assistance.operit.ui.common.dynamicui.CardTranscript.forReview(cleanedContent))
             if (bridgedContent.isBlank()) {
                 null
             } else {

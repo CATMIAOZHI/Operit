@@ -264,7 +264,7 @@ internal class MemoryLearningSource(
                     val page = RecallEvidenceReader.read({ dao.readLearningMessageBytes(row.messageId,it) },
                         row.sender=="ai",thinking,limit=1,onEvidence={ evidence.append(it) })
                         ?: error("Source message disappeared during review")
-                    file.writeText(CardTranscript.forModel(evidence.toString(), Int.MAX_VALUE), Charsets.UTF_8)
+                    file.writeText(CardTranscript.forReview(evidence.toString(), Int.MAX_VALUE), Charsets.UTF_8)
                     Prepared(file,"$TEXT_VERSION:${page.revision}").also { files[row.messageId]=it }
                 } catch (e: Exception) { file.delete(); throw e }
             }

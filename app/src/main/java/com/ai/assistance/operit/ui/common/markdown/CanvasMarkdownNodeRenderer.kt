@@ -666,6 +666,8 @@ private fun renderNodeContent(
             val language = if (firstLine.startsWith("```")) {
                 firstLine.removePrefix("```").trim()
             } else ""
+            // A shown card keeps the name the model placed after the tag: "```a2ui card-2".
+            val fenceTag = language.substringBefore(' ')
             
             val codeContent = codeLines
                 .dropWhile { it.startsWith("```") }
@@ -674,7 +676,7 @@ private fun renderNodeContent(
             
             // 不使用 key()，让 Compose 根据位置自然识别组件
             // 这样可以保留内部状态（如"已复制"提示、Mermaid 渲染状态）
-            if (language == "a2ui") {
+            if (fenceTag == "a2ui") {
                 com.ai.assistance.operit.ui.common.dynamicui.DynamicUiCard(
                     source = codeLines.drop(1).let {
                         if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it
