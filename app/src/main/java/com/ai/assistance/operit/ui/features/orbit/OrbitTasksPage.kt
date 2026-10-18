@@ -48,6 +48,12 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = true }
     }
+    // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
+    val dues by produceState(emptyMap<String, Long>(), orbitId, retry) {
+        try { repository.dao.observeTaskDues(orbitId).collect { rows -> value = rows.associate { it.taskId to it.dueAt } } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { }
+    }
     fun action(block: suspend () -> Unit) {
         if (busy) return
         busy = true
@@ -125,7 +131,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                             Text(taskState(task), color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 style = MaterialTheme.typography.bodySmall)
                             if (task.state == "ACTIVE") Text(
-                                taskSchedule(task, tasks.orEmpty()),
+                                taskSchedule(task, tasks.orEmpty(), dues[task.id]),
                                 style = MaterialTheme.typography.bodySmall)
                         }
                     }
@@ -150,11 +156,15 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                                 "DIGEST" -> R.string.orbit_report_digest
                                 else -> R.string.orbit_task_report_changes
                             }))
+                            // Only a subagent's background run has a time limit; Orbit's own chat turn has none.
                             val limit = com.ai.assistance.operit.features.orbit.OrbitTaskRepository.timeoutMinutes(detail)
-                            Text(if (limit >= 120 && limit % 60 == 0) stringResource(R.string.orbit_task_timeout_hours, limit / 60)
-                                else stringResource(R.string.orbit_task_timeout, limit),
+                            Text(when {
+                                !detail.useSubagent -> stringResource(R.string.orbit_task_in_chat)
+                                limit >= 120 && limit % 60 == 0 -> stringResource(R.string.orbit_task_timeout_hours, limit / 60)
+                                else -> stringResource(R.string.orbit_task_timeout, limit)
+                            },
                                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                            if (detail.state == "ACTIVE") Text(taskSchedule(detail, tasks.orEmpty()))
+                            if (detail.state == "ACTIVE") Text(taskSchedule(detail, tasks.orEmpty(), dues[detail.id]))
                         }
                     }
                 }
@@ -172,6 +182,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                             lastRun?.decision?.takeIf { it.isNotBlank() && lastRun?.state != "RUNNING" }?.let { decision ->
                                 Text(stringResource(R.string.orbit_task_decision, when (decision) {
                                     com.ai.assistance.operit.data.model.OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
+                                    com.ai.assistance.operit.data.model.OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat)
                                     com.ai.assistance.operit.data.model.OrbitRunEntity.SKIPPED ->
                                         com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, detail)
                                     else -> decision
@@ -276,11 +287,11 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
 }
 
 @Composable
-private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>): String =
+private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?): String =
     if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
         tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId)
     else stringResource(R.string.orbit_task_next, DateFormat.getDateTimeInstance(
-        DateFormat.SHORT, DateFormat.SHORT).format(Date(task.nextRunAt))) +
+        DateFormat.SHORT, DateFormat.SHORT).format(Date(dueAt ?: task.nextRunAt))) +
         if (task.scheduleMode == "INTERVAL") " · " + intervalText(task.intervalMinutes) else ""
 
 @Composable

@@ -70,11 +70,22 @@ internal object OrbitRoutines {
         instruction: (english: Boolean) -> String,
     ) {
         val repository = OrbitTaskRepository(context)
-        if (repository.dao.task(taskId(orbit.id, request)) != null) return
+        // The nightly self-review tidies memory quietly: a background subagent does it, so Orbit's
+        // chat is never woken at night. The goal briefing is Orbit's own morning message.
+        val background = request == SELF_REVIEW
+        repository.dao.task(taskId(orbit.id, request))?.let { old ->
+            // Switching lanes replaces the definition, which would cancel a run in progress; it
+            // waits for the run to end, checked in the same transaction as the switch.
+            if (old.useSubagent != background && old.state != "CANCELLED") OrbitExecutionGate.serialized {
+                repository.dao.replaceDefinitionIfIdle(old.copy(useSubagent = background), old.version)
+            }
+            return
+        }
         try {
             val english = LocaleUtils.usesEnglishPrompt(context)
             repository.create(orbit, context.getString(title), instruction(english), source, 1440, "CHANGES", request,
-                kind = "ASSIST", scheduleMode = "DAILY", dailyMinute = minute, timeoutMinutes = TIMEOUT_MINUTES)
+                kind = "ASSIST", scheduleMode = "DAILY", dailyMinute = minute, timeoutMinutes = TIMEOUT_MINUTES,
+                useSubagent = background)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {

@@ -17,7 +17,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -52,17 +54,65 @@ val LocalOrbitChatLook = compositionLocalOf { false }
 /** Emoji reactions Orbit put on the user's messages in this chat, by message time. */
 val LocalOrbitReactions = compositionLocalOf<Map<Long, String>> { emptyMap() }
 
+/**
+ * True in Orbit's developer view: rows the Orbit chat never shows (tapback notices, replies that
+ * only stayed quiet) are drawn with a "hidden in chat" label so they can be audited.
+ */
+val LocalShowHiddenChatRows = compositionLocalOf { false }
+
+/** The small "hidden in chat" label used in the developer view. */
+@Composable
+fun OrbitHiddenInChatBadge(modifier: Modifier = Modifier) {
+    Surface(
+        shape = RoundedCornerShape(50),
+        color = MaterialTheme.colorScheme.tertiaryContainer,
+        modifier = modifier,
+    ) {
+        Text(
+            stringResource(R.string.orbit_dev_hidden_badge),
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onTertiaryContainer,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+        )
+    }
+}
+
+/**
+ * A user row the chat hides (such as a tapback notice), as the developer view draws it: the label
+ * and the first lines of what was sent. A tap shows all of it; a long press opens the menu.
+ */
+@Composable
+fun OrbitHiddenUserRow(content: String) {
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MaterialTheme.colorScheme.tertiaryContainer.copy(alpha = 0.35f),
+        border = BorderStroke(1.dp, MaterialTheme.colorScheme.tertiary.copy(alpha = 0.25f)),
+        modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        Column(Modifier.padding(horizontal = 12.dp, vertical = 10.dp)) {
+            OrbitHiddenInChatBadge()
+            Text(
+                content.trim().ifEmpty { "∅" },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 8,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = 6.dp),
+            )
+        }
+    }
+}
+
 /** The user's own reactions on Orbit's messages and how to change them; null outside Orbit. */
 class OrbitUserReactions(val byMessage: Map<Long, String>, val toggle: (timestamp: Long, emoji: String) -> Unit)
 
 val LocalOrbitUserReactions = compositionLocalOf<OrbitUserReactions?> { null }
 
-/** The tapbacks offered when the user long-presses one of Orbit's messages. */
-val OrbitTapbacks = listOf("❤️", "👍", "😂", "😮", "😢", "🙏")
-
 /** What Orbit said in a message, without its thinking, tool calls, tool results or status lines. */
 object OrbitSpeech {
     private val blank = Regex("\n{3,}")
+    private val cardFence = Regex("```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+    private val shownCard = Regex("```a2ui[ \\t]*\\n")
     // The chat is re-shown as a reply streams in; each stored text is cleaned only once.
     private val cleaned = java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, String>())
     // Stored instead of a text that needed no cleaning: a value pointing at its own key would keep
@@ -79,6 +129,18 @@ object OrbitSpeech {
         val result = clean(content)
         cleaned[content] = if (result === content) unchanged else result
         return result
+    }
+
+    /**
+     * What Orbit said in words, for a notification or a list row that cannot draw a card. A reply
+     * that is only a card gives [cardOnly]; a reply with nothing to say, or only a card that could
+     * not be shown, gives an empty string.
+     */
+    fun words(content: String, cardOnly: String): String {
+        val said = of(content)
+        if (said.isEmpty()) return ""
+        return said.replace(cardFence, "").replace(blank, "\n\n").trim()
+            .ifEmpty { if (shownCard.containsMatchIn(said)) cardOnly else "" }
     }
 
     private fun clean(content: String): String {
@@ -245,14 +307,25 @@ fun OrbitReactedUserMessage(timestamp: Long, content: @Composable () -> Unit) {
     }
 }
 
-/** The row of tapbacks at the top of the long-press menu on one of Orbit's messages. */
+/**
+ * The row of tapbacks at the top of the long-press menu on one of Orbit's messages: the user's
+ * most used emoji, then a "+" that opens every emoji ([onMore]).
+ */
 @Composable
-fun OrbitTapbackRow(selected: String?, onPick: (String) -> Unit) {
-    // 6 x 44dp + 8dp stays inside a menu's 280dp, so the last emoji is never clipped.
+fun OrbitTapbackRow(selected: String?, onPick: (String) -> Unit, onMore: () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val ranked by androidx.compose.runtime.remember { OrbitEmojiUsage.observe(context) }.collectAsState()
+    // The reaction already on the message stays in the row, so it can be taken off from here.
+    val quick = androidx.compose.runtime.remember(ranked, selected) {
+        val top = OrbitEmojiUsage.quick(ranked, 5)
+        if (selected == null || selected in top) top else top.take(4) + selected
+    }
+    // 5 x 44dp + a 48dp "+" + padding stays inside a menu's 280dp.
     androidx.compose.foundation.layout.Row(
         Modifier.padding(horizontal = 4.dp, vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
     ) {
-        OrbitTapbacks.forEach { emoji ->
+        quick.forEach { emoji ->
             val isSelected = emoji == selected
             val label = stringResource(R.string.orbit_react_with, emoji)
             val state = if (isSelected) stringResource(R.string.orbit_reaction_selected) else ""
@@ -267,9 +340,10 @@ fun OrbitTapbackRow(selected: String?, onPick: (String) -> Unit) {
                         this.selected = isSelected
                     },
             ) {
-                Text(emoji, fontSize = 22.sp)
+                Text(emoji, fontSize = 24.sp)
             }
         }
+        OrbitMoreTapbacksButton(onMore)
     }
 }
 

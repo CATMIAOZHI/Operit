@@ -33,6 +33,7 @@ import com.ai.assistance.operit.util.MediaPoolManager
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.LocaleUtils
+import com.ai.assistance.operit.util.QuoteExcerpt
 import com.ai.assistance.operit.util.stream.SharedStream
 import com.ai.assistance.operit.util.stream.share
 import com.ai.assistance.operit.util.stream.shareRevisable
@@ -110,6 +111,31 @@ object AIMessageManager {
         apiPreferences = ApiPreferences.getInstance(context)
     }
 
+    // What is quoted when the user replies to a message: only the words said, without thinking,
+    // tool calls or an earlier quote, and a long message cut down to its start and end.
+    private val replyQuoteBlocks = listOf(
+        ChatMarkupRegex.replyToTag,
+        ChatMarkupRegex.toolOrToolResultBlock,
+        ChatMarkupRegex.toolSelfClosingTag,
+        ChatMarkupRegex.toolResultSelfClosingTag,
+        ChatMarkupRegex.statusTag,
+        ChatMarkupRegex.statusSelfClosingTag,
+        ChatMarkupRegex.emotionTag,
+    )
+    private val anyTag = Regex("<[^>]*>")
+    private val cardFence = Regex("```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+
+    private fun replyQuote(message: ChatMessage): String {
+        var text = ChatUtils.removeThinkingContent(message.content)
+        text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
+        text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
+        replyQuoteBlocks.forEach { text = text.replace(it, "") }
+        // A card shows as a word in the quote, never as its code.
+        text = text.replace(cardFence, "[" + context.getString(R.string.ai_message_quoted_card) + "]")
+        // The chat reads the quote back out of the reply tag, which ends at the first '<'.
+        return QuoteExcerpt.of(text.replace(anyTag, "")).replace('<', '＜')
+    }
+
     /**
      * 构建用户消息的完整内容，包括附件和记忆标签。
      *
@@ -166,12 +192,12 @@ object AIMessageManager {
         // 1. 构建回复标签（如果有回复消息）
         val replyTagStartTime = messageTimingNow()
         val replyTag = replyToMessage?.let { message ->
-            val cleanContent = message.content
-                .replace(Regex("<[^>]*>"), "") // 移除XML标签
-                .trim()
-                .let { if (it.length > 100) it.take(100) + "..." else it }
+            val cleanContent = replyQuote(message)
 
-            val roleName = message.roleName ?: if (message.sender == "ai") "AI" else context.getString(R.string.ai_message_user)
+            // Messages Orbit posts on its own may carry no name; an empty sender would not be read back.
+            val roleName = (message.roleName?.takeIf { it.isNotBlank() }
+                ?: if (message.sender == "ai") "AI" else context.getString(R.string.ai_message_user))
+                .replace("\"", "'")
             val instruction = context.getString(R.string.ai_message_replying_to_previous)
             "<reply_to sender=\"${roleName}\" timestamp=\"${message.timestamp}\">${instruction}\"${cleanContent}\"</reply_to>"
         } ?: ""

@@ -81,6 +81,8 @@ data class OrbitSettings(
     val lastRunDetail: String = "",
     /** Retained after Orbit deletion so its archived chats never become global recall sources. */
     val chatOwners: Map<String, String> = emptyMap(),
+    /** Developer option: shows the raw conversations, hidden turns and all, for auditing. */
+    val developerMode: Boolean = false,
 ) {
     val active: OrbitProfile?
         get() = activeOrbitId?.let { id -> orbits.firstOrNull { it.id == id } }
@@ -132,6 +134,7 @@ class OrbitPreferences private constructor(context: Context) {
                 val json = JSONObject(raw)
                 json.keys().asSequence().associateWith { json.getString(it) }
             }.orEmpty(),
+            developerMode = preferences[DEVELOPER_MODE] ?: false,
         )
     }
 
@@ -167,6 +170,10 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun setProactiveEnabled(enabled: Boolean, orbitId: String? = null) {
         editDaily(orbitId) { it.put("enabled", enabled) }
+    }
+
+    suspend fun setDeveloperMode(enabled: Boolean) {
+        dataStore.edit { it[DEVELOPER_MODE] = enabled }
     }
 
     suspend fun setCheckInMinuteOfDay(minuteOfDay: Int) {
@@ -418,6 +425,7 @@ class OrbitPreferences private constructor(context: Context) {
         private val LAST_RUN_AT = longPreferencesKey("last_run_at")
         private val LAST_RUN_OUTCOME = stringPreferencesKey("last_run_outcome")
         private val LAST_RUN_DETAIL = stringPreferencesKey("last_run_detail")
+        private val DEVELOPER_MODE = booleanPreferencesKey("orbit_developer_mode")
 
         private fun decodeOrbits(raw: String?): List<OrbitProfile> {
             if (raw.isNullOrBlank()) return emptyList()

@@ -11,6 +11,9 @@ import kotlinx.coroutines.flow.Flow
 
 data class OrbitSourceMessage(val sender: String, val content: String)
 
+/** When a task's next run will really happen: its waiting event, which may have been put off. */
+data class OrbitTaskDue(val taskId: String, val dueAt: Long)
+
 /** One run of an Orbit task, with its task title, for the profile's activity list. */
 data class OrbitActivityRow(
     val id: String,
@@ -38,7 +41,7 @@ data class OrbitActionRow(
 
 @Dao
 interface OrbitTaskDao {
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "') ORDER BY r.startedAt DESC LIMIT 200")
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
     @Query("SELECT a.id AS id, a.taskId AS taskId, t.title AS taskTitle, a.toolName AS toolName, a.state AS state, a.summary AS summary, a.updatedAt AS updatedAt FROM orbit_actions a INNER JOIN orbit_tasks t ON t.id = a.taskId WHERE t.orbitId = :orbitId ORDER BY a.updatedAt DESC LIMIT 200")
     fun observeOrbitActions(orbitId: String): Flow<List<OrbitActionRow>>
@@ -51,14 +54,9 @@ interface OrbitTaskDao {
 
     /** One message for the selected due results; every member keeps its own Feed content. */
     @Transaction
-    suspend fun appendDeliveryBatch(ids: List<String>, now: Long, chats: ChatDao, messages: MessageDao): List<OrbitDeliveryEntity> {
-        val members = ids.distinct().mapNotNull { delivery(it) }.filter {
-            val task = task(it.taskId)
-            val valid = task != null && task.version == it.taskVersion &&
-                task.state in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY", "PAUSED")
-            if (!valid && it.state == "PENDING") updateDelivery(it.copy(state = "CANCELLED"))
-            valid && it.state == "PENDING"
-        }
+    suspend fun appendDeliveryBatch(ids: List<String>, now: Long, chats: ChatDao, messages: MessageDao,
+        roleName: String = ""): List<OrbitDeliveryEntity> {
+        val members = validPending(ids)
         if (members.isEmpty()) return emptyList()
         val first = members.first()
         require(members.all { it.chatId == first.chatId && it.orbitId == first.orbitId })
@@ -67,7 +65,8 @@ interface OrbitTaskDao {
         val chat = chats.getChatById(first.chatId) ?: return emptyList()
         val timestamp = maxOf(now, (chat.lastMessageAt ?: 0) + 1)
         val body = if (members.size == 1) first.body else members.joinToString("\n\n---\n\n") { "${it.title}\n\n${it.body}" }
-        val id = messages.insertMessage(MessageEntity(chatId = first.chatId, sender = "ai", content = body,
+        // Signed with Orbit's name like its other messages, so replying to it quotes a real sender.
+        val id = messages.insertMessage(MessageEntity(chatId = first.chatId, sender = "ai", content = body, roleName = roleName,
             timestamp = timestamp, orderIndex = messages.getMaxOrderIndex(first.chatId)?.plus(1) ?: 0))
         chats.advanceLastMessageAt(first.chatId, timestamp)
         chats.updateChatMetadata(chat.id, chat.title, timestamp, chat.inputTokens, chat.outputTokens, chat.currentWindowSize)
@@ -75,6 +74,17 @@ interface OrbitTaskDao {
         saveNotificationPolicy(policy.copy(lastDeliveredAt = now))
         return members.map { it.copy(messageId = id, messageTimestamp = timestamp).also { row -> updateDelivery(row) } }
     }
+
+    /** The reports of [ids] still worth telling; a report of a replaced or cancelled task is dropped. */
+    @Transaction
+    suspend fun validPending(ids: List<String>): List<OrbitDeliveryEntity> =
+        ids.distinct().mapNotNull { delivery(it) }.filter {
+            val task = task(it.taskId)
+            val valid = task != null && task.version == it.taskVersion &&
+                task.state in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY", "PAUSED")
+            if (!valid && it.state == "PENDING") updateDelivery(it.copy(state = "CANCELLED"))
+            valid && it.state == "PENDING"
+        }
     @Query("SELECT * FROM orbit_goals WHERE orbitId=:orbitId ORDER BY updatedAt DESC")
     fun observeGoals(orbitId: String): Flow<List<OrbitGoalEntity>>
     @Query("SELECT * FROM orbit_goals WHERE orbitId=:orbitId ORDER BY updatedAt DESC")
@@ -315,6 +325,13 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version ORDER BY dueAt LIMIT 1")
     suspend fun pendingEvent(taskId: String, version: Long): OrbitEventEntity?
 
+    @Query("SELECT COUNT(*) FROM orbit_events WHERE taskId = :taskId AND taskVersion = :version AND id LIKE '%:manual:%'")
+    suspend fun pendingManualCount(taskId: String, version: Long): Int
+
+    @Query("SELECT e.taskId AS taskId, MIN(e.dueAt) AS dueAt FROM orbit_events e JOIN orbit_tasks t " +
+        "ON t.id = e.taskId AND t.version = e.taskVersion WHERE t.orbitId = :orbitId GROUP BY e.taskId")
+    fun observeTaskDues(orbitId: String): Flow<List<OrbitTaskDue>>
+
     @Query("SELECT * FROM orbit_runs WHERE eventId = :eventId")
     suspend fun eventRun(eventId: String): OrbitRunEntity?
 
@@ -326,6 +343,43 @@ interface OrbitTaskDao {
 
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId ORDER BY startedAt DESC LIMIT 1")
     suspend fun latestRun(taskId: String): OrbitRunEntity?
+
+    @Query("SELECT COUNT(*) FROM orbit_runs WHERE taskId = :taskId AND state = 'RUNNING'")
+    suspend fun runningCount(taskId: String): Int
+
+    @Query("UPDATE orbit_events SET dueAt = :dueAt WHERE id = :id")
+    suspend fun setEventDue(id: String, dueAt: Long)
+
+    @Query("DELETE FROM orbit_runs WHERE id = :id")
+    suspend fun deleteRun(id: String)
+
+    /**
+     * Puts a claimed run back before anything happened (Orbit's chat was busy, or a quiet time
+     * holds the wake): the run is forgotten and its event waits until [retryAt]. The task stays
+     * active, so a busy chat never pauses it.
+     */
+    @Transaction
+    suspend fun defer(token: OrbitRunEntity, retryAt: Long, bootId: String, now: Long, elapsed: Long): Boolean {
+        val current = currentLease(token, bootId, now, elapsed) ?: return false
+        if (bindings(current.id, current.generation).isNotEmpty()) return false
+        deleteRun(current.id)
+        setEventDue(current.eventId, retryAt)
+        return true
+    }
+
+    /** Orbit spoke on its own; the notification interval counts from now. */
+    @Transaction
+    suspend fun touchDelivered(orbitId: String, now: Long) {
+        val policy = notificationPolicy(orbitId) ?: OrbitNotificationEntity(orbitId)
+        saveNotificationPolicy(policy.copy(lastDeliveredAt = now))
+    }
+
+    @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId AND sender = 'ai'")
+    suspend fun latestAiTimestamp(chatId: String): Long?
+
+    /** Orbit's newest message in [chatId] written after [after], or null when it has not answered. */
+    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp DESC LIMIT 1")
+    suspend fun aiSaidAfter(chatId: String, after: Long): String?
 
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
     suspend fun lastFinishedRun(taskId: String): OrbitRunEntity?
@@ -368,6 +422,10 @@ interface OrbitTaskDao {
 
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE orbitId=:orbitId AND messageId=:messageId AND state='PENDING'")
     suspend fun markBatchDelivered(orbitId: String, messageId: Long)
+
+    /** Reports Orbit was told about in its chat; Orbit's own reply is the message. */
+    @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE id IN (:ids) AND state='PENDING'")
+    suspend fun markHandedToOrbit(ids: List<String>)
 
     /** The application supplies DAOs from the same database and holds its chat lock. */
     @Transaction
@@ -450,6 +508,13 @@ interface OrbitTaskDao {
         return true
     }
 
+    /** [replaceDefinition], but only while no run of the task is in progress. */
+    @Transaction
+    suspend fun replaceDefinitionIfIdle(updated: OrbitTaskEntity, expectedVersion: Long): Boolean {
+        if (runningCount(updated.id) > 0) return false
+        return replaceDefinition(updated, expectedVersion)
+    }
+
     /** A WorkManager wake-up is only a hint. The durable task/event decides whether work is due. */
     @Transaction
     suspend fun enqueueDue(taskId: String, now: Long): OrbitEventEntity? {
@@ -466,6 +531,8 @@ interface OrbitTaskDao {
     @Transaction
     suspend fun enqueueManual(taskId: String, requestId: String, now: Long): Boolean {
         val current = task(taskId)?.takeIf { it.state == "ACTIVE" } ?: return false
+        // A "run now" still waiting is enough; pressing again does not queue a second one.
+        if (pendingManualCount(current.id, current.version) > 0) return false
         val eventId = "${current.id}:${current.version}:manual:$requestId"
         // The completed run retains this key after the pending event is removed.
         if (eventRun(eventId) != null) return false
@@ -580,7 +647,8 @@ interface OrbitTaskDao {
                 task.scheduleMode == "ONCE" -> if (error.isEmpty()) "DONE" else "PAUSED"
                 else -> task.state
             },
-            lastObservation = if (error.isEmpty()) observation else task.lastObservation,
+            // Handed to Orbit in the chat, the run notes only that; what Orbit last noted stays.
+            lastObservation = if (error.isEmpty() && decision != OrbitRunEntity.IN_CHAT) observation else task.lastObservation,
             // A run that never read its source (a skipped check) keeps the last known fingerprint.
             lastFingerprint = if (error.isEmpty() && current.hasSource) current.fingerprint else task.lastFingerprint))
         if (message.isNotBlank() && (!repeatFailure || task.notifyPolicy == "ALWAYS")) insertDelivery(OrbitDeliveryEntity(

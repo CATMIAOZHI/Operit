@@ -106,7 +106,10 @@ internal class OrbitReactions private constructor(private val file: File) {
         /** One emoji (a short sequence like a flag or a skin tone is fine), never words. */
         fun isEmoji(text: String): Boolean {
             if (text.isEmpty() || text.length > MAX_EMOJI_LENGTH) return false
-            if (text.any { it.isLetterOrDigit() }) return false
+            // Keycaps such as 1️⃣ start with a digit; any other letter or digit means words.
+            val keycap = text.contains('\u20E3')
+            if (!keycap && text.any { it.isLetterOrDigit() }) return false
+            if (keycap) return text.length <= 3 && text.first().let { it.isDigit() || it == '#' || it == '*' }
             val breaker = java.text.BreakIterator.getCharacterInstance()
             breaker.setText(text)
             var count = 0

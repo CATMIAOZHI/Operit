@@ -44,7 +44,8 @@ object OrbitTaskScheduler {
             val run = event?.let { repo.dao.eventRun(it.id) }
             val retryAt = when {
                 event == null -> task.nextRunAt
-                run == null -> now
+                // An event put back (busy chat, quiet time) carries its new time.
+                run == null -> maxOf(now, event.dueAt)
                 run.bootId != OrbitTaskRunner.bootId(context) -> now
                 else -> minOf(run.leaseUntilWall, now + 120_000)
             }
@@ -96,6 +97,12 @@ object OrbitTaskScheduler {
         val daily = repository.syncDaily() ?: return
         // Manual check-in is one event; it does not turn automatic check-ins on.
         val now = System.currentTimeMillis()
+        // A manual check-in still waiting (a busy chat put it off) is the one the user asked for.
+        val waiting = repository.dao.tasks(daily.orbitId).any {
+            (it.id == daily.id || it.id.startsWith("manual-${daily.orbitId}-")) && it.state == "ACTIVE" &&
+                repository.dao.pendingManualCount(it.id, it.version) > 0
+        }
+        if (waiting) { reschedule(context); return }
         val task = if (daily.state == "ACTIVE") daily else {
             val oneShot = daily.copy(id = "manual-${daily.orbitId}-${java.util.UUID.randomUUID()}",
                 state = "ACTIVE", nextRunAt = now, intervalMinutes = 0, kind = "ONCE")

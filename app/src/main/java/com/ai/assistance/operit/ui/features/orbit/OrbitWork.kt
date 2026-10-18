@@ -80,6 +80,8 @@ internal object OrbitWork {
         val manager = ChatHistoryManager.getInstance(context)
         val attachmentOnly = context.getString(com.ai.assistance.operit.R.string.orbit_user_sent_attachment)
         val reactionTitle = context.getString(com.ai.assistance.operit.R.string.orbit_work_reaction_title)
+        val scheduledTitle = context.getString(com.ai.assistance.operit.R.string.orbit_work_scheduled_title)
+        val cardOnly = context.getString(com.ai.assistance.operit.R.string.orbit_sent_card)
         // Chats with a reply being written right now; that reply has no complete record yet.
         val streaming = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context).let { holder ->
             com.ai.assistance.operit.api.chat.ChatRuntimeSlot.values()
@@ -88,7 +90,7 @@ internal object OrbitWork {
         var failed = false
         val turns = chatIds.distinct().flatMap { chatId ->
             try {
-                turnsOf(manager, chatId, attachmentOnly, reactionTitle, writingNow = chatId in streaming)
+                turnsOf(manager, chatId, attachmentOnly, reactionTitle, scheduledTitle, cardOnly, writingNow = chatId in streaming)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -108,6 +110,8 @@ internal object OrbitWork {
         chatId: String,
         attachmentOnly: String,
         reactionTitle: String,
+        scheduledTitle: String,
+        cardOnly: String,
         writingNow: Boolean,
     ): List<OrbitChatTurn> {
         val rows = manager.loadChatMessageProcessMetadata(chatId)
@@ -132,7 +136,8 @@ internal object OrbitWork {
             .sortedBy { it.key }
             .takeLast(TURNS_PER_CHAT)
         // The user's message that started each turn: the last one right before its first step.
-        // A tapback the user put on Orbit's message starts a turn too, through a hidden notice.
+        // A tapback the user put on Orbit's message, or a task coming due, starts a turn too,
+        // through a hidden notice.
         val hiddenBefore = HashMap<Long, Long>()
         val askedBy = turns.associate { turn ->
             val first = turn.members.mapNotNull { indexOf[it] }.minOrNull() ?: -1
@@ -166,35 +171,46 @@ internal object OrbitWork {
                     OrbitSpeech.of(content).isBlank()
             } == true
         }.map { turn ->
+            // The hidden notice that started it, named for the list: "you reacted 👍" or "scheduled: …".
             val reaction = hiddenBefore[turn.key]?.let { ts ->
-                bodies[ts]?.content?.let { com.ai.assistance.operit.features.orbit.OrbitReactionNotice.emojiOf(it) }?.let { ts to it }
+                bodies[ts]?.content?.let { content ->
+                    com.ai.assistance.operit.features.orbit.OrbitReactionNotice.emojiOf(content)?.let { reactionTitle.format(it) }
+                        ?: com.ai.assistance.operit.features.orbit.OrbitWake.titleOf(content)?.let { scheduledTitle.format(it) }
+                }?.let { ts to it }
             }
             // The nearest of the two started the turn: a tapback after the user's last message wins.
             val asked = if (reaction != null && (askedBy[turn.key] ?: Long.MIN_VALUE) < reaction.first) reaction.first
                 else askedBy[turn.key]
-            val title = if (reaction != null && asked == reaction.first) reactionTitle.format(reaction.second)
+            val title = if (reaction != null && asked == reaction.first) reaction.second
                 else asked?.let { bodies[it] }?.let { userLine(it.content, attachmentOnly) }.orEmpty()
             OrbitChatTurn(
                 process = OrbitProcess.ChatTurn(
                     chatId = chatId,
-                    // A tapback notice only names the turn; its hidden wording never shows in the details.
-                    timestamps = (listOfNotNull(asked?.takeIf { it != reaction?.first }) + turn.members).distinct().sorted(),
+                    // A hidden notice (a tapback, a task coming due) names the turn; its wording
+                    // shows in the details only for developers (see [messages]).
+                    timestamps = (listOfNotNull(asked, hiddenBefore[turn.key]) + turn.members).distinct().sorted(),
                     title = title,
                     time = turn.key,
                 ),
-                reply = bodies[turn.finalTimestamp]?.let { firstLine(plain(OrbitSpeech.of(it.content))) }.orEmpty(),
+                reply = bodies[turn.finalTimestamp]?.let {
+                    firstLine(plain(OrbitSpeech.words(it.content, cardOnly)))
+                }.orEmpty(),
             )
         }
     }
 
-    /** The messages of one piece of work, oldest first, as they were stored. */
-    suspend fun messages(context: Context, process: OrbitProcess): List<ChatMessage> {
+    /**
+     * The messages of one piece of work, oldest first, as they were stored. [raw] (developer
+     * option) keeps a background task's own instructions, which the normal view leaves out.
+     */
+    suspend fun messages(context: Context, process: OrbitProcess, raw: Boolean = false): List<ChatMessage> {
         val manager = ChatHistoryManager.getInstance(context)
         return when (process) {
             is OrbitProcess.ChatTurn -> manager.loadChatMessagesByTimestamps(process.chatId, process.timestamps)
-                .filterNot { it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER }
+                // Developers also see the hidden notice ("it is time", a tapback) that started the turn.
+                .filter { raw || it.displayMode != com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER }
             // The task's own instructions open the hidden chat; the work starts after them.
-            is OrbitProcess.TaskRun -> manager.loadChatMessages(process.chatId).filter { it.sender != "user" }
+            is OrbitProcess.TaskRun -> manager.loadChatMessages(process.chatId).filter { raw || it.sender != "user" }
         }
     }
 

@@ -33,7 +33,7 @@ class OrbitTaskRepository(private val context: Context) {
         scheduleMode: String = if (kind == "ASSIST") "ONCE" else "INTERVAL",
         goalId: String = "", triggerTaskId: String = "", sourceArtifactVersionId: String = "",
         runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
-        timeoutMinutes: Int = 0, chatId: String? = null,
+        timeoutMinutes: Int = 0, chatId: String? = null, useSubagent: Boolean = false,
     ): OrbitTaskEntity {
         require(title.isNotBlank() && title.length <= 80)
         require(instruction.isNotBlank() && instruction.length <= 4000)
@@ -61,7 +61,8 @@ class OrbitTaskRepository(private val context: Context) {
         }
         val task = OrbitTaskEntity(id, orbit.id, reportChatId, title.trim(), instruction.trim(),
             kind, source, intervalMinutes, dailyMinute, notifyPolicy, "ACTIVE", 1, firstRun,
-            "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes)
+            "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes,
+            useSubagent = useSubagent)
         OrbitExecutionGate.serialized {
             check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
             if (dao.task(id) != null) return@serialized
@@ -114,7 +115,8 @@ class OrbitTaskRepository(private val context: Context) {
 
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute,
-        calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes): Boolean {
+        calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes,
+        useSubagent: Boolean = task.useSubagent): Boolean {
         check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND) && task.state != "CANCELLED")
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
@@ -137,6 +139,7 @@ class OrbitTaskRepository(private val context: Context) {
             dao.replaceDefinition(task.copy(title = title, instruction = instruction, source = source,
                 intervalMinutes = intervalMinutes, notifyPolicy = notifyPolicy, nextRunAt = nextRun,
                 dailyMinute = dailyMinute, calendarRule = rule, timeoutMinutes = timeoutMinutes,
+                useSubagent = useSubagent,
                 lastFingerprint = if (source == task.source) task.lastFingerprint else "",
                 lastObservation = if (source == task.source) task.lastObservation else "",
                 updatedAt = now), task.version)
@@ -177,7 +180,7 @@ class OrbitTaskRepository(private val context: Context) {
             "DAILY", "", 1440, settings.checkInMinuteOfDay, "CHANGES", state,
             old?.version ?: 1, now + OrbitCompanion.delayUntilNextCheckIn(now, settings.checkInMinuteOfDay),
             old?.lastObservation.orEmpty(), "", old?.createdAt ?: now, now,
-            timeoutMinutes = old?.timeoutMinutes ?: 0)
+            timeoutMinutes = old?.timeoutMinutes ?: 0, useSubagent = old?.useSubagent ?: false)
         if (old == null) dao.insertTask(proposed)
         else if (old.instruction != proposed.instruction || old.dailyMinute != proposed.dailyMinute ||
             old.state != proposed.state || old.chatId != proposed.chatId) {
@@ -208,7 +211,9 @@ class OrbitTaskRepository(private val context: Context) {
             task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
 
         /** Runs longer than a normal background worker allows; they use the foreground lane. */
-        fun isLongRun(task: OrbitTaskEntity): Boolean = timeoutMinutes(task) > BACKGROUND_TIMEOUT_MINUTES
+        /** Only a subagent run can be long; a task handled by Orbit in the chat just wakes it. */
+        fun isLongRun(task: OrbitTaskEntity): Boolean =
+            task.useSubagent && timeoutMinutes(task) > BACKGROUND_TIMEOUT_MINUTES
 
         /** Modes that run at a chosen time of day or moment, so resuming waits for the next one. */
         private val timedModes = setOf("ONCE", "DAILY") + OrbitCalendarSchedule.modes

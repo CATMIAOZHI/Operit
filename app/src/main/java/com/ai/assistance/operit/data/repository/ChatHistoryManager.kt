@@ -3029,10 +3029,10 @@ class ChatHistoryManager private constructor(private val context: Context) {
         }
     }
 
-    suspend fun appendOrbitDeliveryBatch(ids: List<String>): List<com.ai.assistance.operit.data.model.OrbitDeliveryEntity> {
+    suspend fun appendOrbitDeliveryBatch(ids: List<String>, roleName: String = ""): List<com.ai.assistance.operit.data.model.OrbitDeliveryEntity> {
         val first = ids.firstOrNull()?.let { database.orbitTaskDao().delivery(it) } ?: return emptyList()
         return chatMutex(first.chatId).withLock {
-            database.orbitTaskDao().appendDeliveryBatch(ids, System.currentTimeMillis(), database.chatDao(), database.messageDao())
+            database.orbitTaskDao().appendDeliveryBatch(ids, System.currentTimeMillis(), database.chatDao(), database.messageDao(), roleName)
         }
     }
 

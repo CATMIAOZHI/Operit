@@ -111,7 +111,8 @@ internal fun VirtualTranscript(
         return
     }
     val toolMode = toolModeValue!!
-    val showThinking = showThinkingValue!!
+    // Orbit's developer view shows all of Orbit's thinking, whatever the display setting.
+    val showThinking = showThinkingValue!! || LocalShowHiddenChatRows.current
     val collapse = collapseValue!!
     val grouper = remember(toolMode, showThinking) { ThinkToolsXmlNodeGrouper(showThinking, toolCollapseMode = toolMode) }
     val documents = remember(chatId, grouper) { mutableStateMapOf<Long, TranscriptDocumentEntry>() }

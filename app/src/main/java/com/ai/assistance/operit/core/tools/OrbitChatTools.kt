@@ -39,11 +39,12 @@ internal object OrbitChatTools {
 
     val reactPrompt = ToolPrompt(
         name = REACT,
-        description = "给用户最新的一条消息点一个表情回应，就像在聊天软件里点表情。emoji 只能是一个表情。",
+        description = "给用户最新的一条消息点一个表情回应，就像在聊天软件里点表情。任何表情都可以，但只能是一个表情。",
         parametersStructured = listOf(
-            ToolParameterSchema("emoji", description = "一个表情，比如 😂 ❤️ 🎉 🫂", required = true),
+            ToolParameterSchema("emoji", description = "任意一个表情，比如 😂 ❤️ 🎉 🫂 🐱 🍰 👏🏻 🇨🇳", required = true),
         ),
         details = """
+  - 所有表情都能用，挑最贴合这句话的那个，不必局限于常见的几个。
   - 朋友会点表情的时候就点：好笑、温暖、小成就、一起开心、重要的近况，或者接住他话里某个具体的东西。
   - 难过、脆弱的时候用 🫂 这类关心的表情，不要用庆祝或调皮的。
   - 有意义才点，不要每条都点。点了表情照样可以回复文字。
@@ -118,8 +119,10 @@ internal object OrbitChatTools {
             val emoji = tool.parameters.firstOrNull { it.name == "emoji" }?.value?.trim().orEmpty()
             require(OrbitReactions.isEmoji(emoji)) { "emoji must be a single emoji" }
             val chatId = checkNotNull(caller)
-            val latest = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 12)
-                .firstOrNull { it.sender == "user" } ?: error("No user message to react to")
+            // Only what the user typed: hidden notices (tapbacks, due tasks) are not on screen.
+            val latest = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 24)
+                .firstOrNull { it.sender == "user" && it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL }
+                ?: error("No user message to react to")
             OrbitReactions.of(context, orbit.id).set(chatId, latest.timestamp, emoji)
             ToolResult(REACT, true, StringResultData("Reacted $emoji"))
         } catch (e: kotlinx.coroutines.CancellationException) {

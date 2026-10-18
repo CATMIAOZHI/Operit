@@ -111,6 +111,8 @@ internal fun OrbitProfilePage(
     onOpenIdentity: () -> Unit,
     onOpenUser: () -> Unit,
     onOpenFiles: () -> Unit,
+    developerMode: Boolean = false,
+    onOpenRawChat: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -179,7 +181,21 @@ internal fun OrbitProfilePage(
             }
         }
         when (tab) {
-            OrbitProfileTab.ACTIVITY -> activitySection(activity, chatTurns, onOpenProcess)
+            OrbitProfileTab.ACTIVITY -> {
+                // Developer option: the whole conversation as stored, hidden turns included.
+                if (developerMode) item(key = "developer-raw") {
+                    OrbitListRow(
+                        icon = orbitIcon("code-xml"),
+                        title = stringResource(R.string.orbit_dev_raw_row),
+                        detail = stringResource(R.string.orbit_dev_raw_row_desc),
+                        meta = null,
+                        iconTint = MaterialTheme.colorScheme.tertiary,
+                        showChevron = true,
+                        onClick = onOpenRawChat,
+                    )
+                }
+                activitySection(activity, chatTurns, onOpenProcess)
+            }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, actions, onOpenTask)
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
@@ -895,12 +911,10 @@ private fun OrbitExportRow(orbit: OrbitProfile) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
-    IdentityNavRow(
-        if (exporting) "loader" else "archive",
-        stringResource(if (exporting) R.string.orbit_export_running else R.string.orbit_export_row),
-        stringResource(R.string.orbit_export_row_desc),
-    ) {
-        if (exporting) return@IdentityNavRow
+    // The zip holds every chat and memory, so a tap only asks first.
+    var confirming by remember { mutableStateOf(false) }
+    fun startExport() {
+        if (exporting) return
         exporting = true
         scope.launch {
             try {
@@ -914,6 +928,31 @@ private fun OrbitExportRow(orbit: OrbitProfile) {
                 exporting = false
             }
         }
+    }
+    IdentityNavRow(
+        if (exporting) "loader" else "archive",
+        stringResource(if (exporting) R.string.orbit_export_running else R.string.orbit_export_row),
+        stringResource(R.string.orbit_export_row_desc),
+    ) {
+        if (!exporting) confirming = true
+    }
+    if (confirming) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { confirming = false },
+            title = { Text(stringResource(R.string.orbit_export_confirm_title)) },
+            text = { Text(stringResource(R.string.orbit_export_confirm_message)) },
+            confirmButton = {
+                androidx.compose.material3.TextButton(onClick = {
+                    confirming = false
+                    startExport()
+                }) { Text(stringResource(R.string.orbit_export_confirm)) }
+            },
+            dismissButton = {
+                androidx.compose.material3.TextButton(onClick = { confirming = false }) {
+                    Text(stringResource(android.R.string.cancel))
+                }
+            },
+        )
     }
 }
 

@@ -10,11 +10,11 @@ object OrbitReactionNotice {
     /** First line of every notice; it marks the hidden turn as a reaction for the activity list. */
     const val MARKER = "[orbit-reaction]"
     const val NOTHING_TO_DO = "orbit_nothing_to_do"
-    private const val QUOTE_LENGTH = 600
     private val markerLine = Regex(Regex.escape(MARKER) + "[ \\t]*([^\\n]+)")
 
     fun build(english: Boolean, emoji: String, quoted: String): String {
-        val quote = quoted.trim().let { if (it.length > QUOTE_LENGTH) it.take(QUOTE_LENGTH) + "…" else it }
+        // Start and end of a long message: an offer like "shall I draft it?" usually ends it.
+        val quote = com.ai.assistance.operit.util.QuoteExcerpt.of(quoted)
         return if (english) {
             "$MARKER $emoji\n" +
                 "The user reacted $emoji to this message of yours. This is not a new message; they typed nothing.\n" +

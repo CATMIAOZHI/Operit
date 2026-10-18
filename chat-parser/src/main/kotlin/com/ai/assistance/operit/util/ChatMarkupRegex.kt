@@ -160,7 +160,7 @@ object ChatMarkupRegex {
     )
 
     val replyToTag = Regex(
-        "<reply_to\\s+sender=\"([^\"]+)\"\\s+timestamp=\"([^\"]+)\">([^<]*)</reply_to>"
+        "<reply_to\\s+sender=\"([^\"]*)\"\\s+timestamp=\"([^\"]+)\">([^<]*)</reply_to>"
     )
 
     val attachmentDataTag = Regex(

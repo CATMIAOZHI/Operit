@@ -29,4 +29,16 @@ class OrbitDeliveryPolicyTest {
         assertEquals(at("2026-03-08T08:00:00-04:00"), OrbitDeliveryPolicy.nextAllowed(
             OrbitNotificationEntity("orbit", quietEnabled = true), now, false, now, ZoneId.of("America/New_York")))
     }
+
+    @Test fun `a task due right at the digest time wakes that morning, a report waits a day`() {
+        val policy = OrbitNotificationEntity("orbit")
+        for (queued in listOf("2026-10-17T09:00:00+08:00", "2026-10-17T09:00:00.500+08:00")) {
+            val created = at(queued)
+            assertEquals(created, OrbitDeliveryPolicy.nextAllowed(policy, created, true, created, zone, graceMs = 15 * 60_000L))
+            assertEquals(at("2026-10-18T09:00:00+08:00"), OrbitDeliveryPolicy.nextAllowed(policy, created, true, created, zone))
+        }
+        val afternoon = at("2026-10-17T14:00:00+08:00")
+        assertEquals(at("2026-10-18T09:00:00+08:00"),
+            OrbitDeliveryPolicy.nextAllowed(policy, afternoon, true, afternoon, zone, graceMs = 15 * 60_000L))
+    }
 }

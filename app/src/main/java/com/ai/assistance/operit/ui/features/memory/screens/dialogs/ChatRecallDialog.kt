@@ -16,7 +16,6 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
 import androidx.compose.foundation.clickable
 import com.ai.assistance.operit.R
-import com.ai.assistance.operit.api.chat.library.MemoryLearningService
 import com.ai.assistance.operit.data.dao.*
 import com.ai.assistance.operit.data.repository.ChatRecallRepository
 import com.ai.assistance.operit.data.repository.parseRecallTime
@@ -35,8 +34,6 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     // A mistyped filter is not a read failure, so it must not be reported as one.
     val filterRoleInvalid = stringResource(R.string.chat_recall_filter_role_invalid)
     val filterTimeInvalid = stringResource(R.string.chat_recall_filter_time_invalid)
-    val draftExtracted = stringResource(R.string.skill_draft_extracted)
-    val extractionTimeout = stringResource(R.string.memory_extraction_timeout)
     var retry by remember(profileId) { mutableStateOf(0) }
     val scopedRepo by produceState<Result<ChatRecallRepository>?>(null, profileId, retry) {
         value = null
@@ -256,24 +253,6 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                         }
                     }
                     if(more) item { TextButton(onClick={ run { load(true) } },enabled=!busy) { Text(stringResource(R.string.chat_recall_more)) } }
-                }
-                sourceChat?.let { id ->
-                    Text(stringResource(R.string.skill_draft_manual_hint),style=MaterialTheme.typography.bodySmall)
-                    TextButton(onClick={ run {
-                        try {
-                            MemoryLearningService.extract(context,profileId,id)
-                        } catch(e: kotlinx.coroutines.TimeoutCancellationException) {
-                            // A timeout is our own limit, not a user cancellation, so report it.
-                            message = extractionTimeout
-                            return@run
-                        } catch(e: CancellationException) { throw e }
-                        catch(e: Exception) {
-                            // The extractor refuses with a specific, already-localized reason.
-                            message = e.message?.takeIf { it.isNotBlank() } ?: recallError
-                            return@run
-                        }
-                        message=draftExtracted
-                    } },enabled=!busy) { Text(stringResource(R.string.skill_draft_extract)) }
                 }
             }
         }
