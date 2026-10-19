@@ -1137,8 +1137,11 @@ internal fun StandardBrowserSessionTools.getSession(sessionId: String?): Browser
     return buildPageRegistry().activeSessionId?.let(::sessionById)
 }
 
+/** An AI call only sees tabs that use its own logins; the user's own actions see every tab. */
 internal fun StandardBrowserSessionTools.sessionById(sessionId: String): BrowserToolSession? =
-    StandardBrowserSessionTools.sessions[sessionId]
+    StandardBrowserSessionTools.sessions[sessionId]?.takeIf { session ->
+        BrowserProfiles.currentScope().let { it == null || it == session.profileName }
+    }
 
 internal fun StandardBrowserSessionTools.resolvePreferredSessionId(): String? {
     val registry = buildPageRegistry()
@@ -1914,8 +1917,10 @@ internal fun StandardBrowserSessionTools.ensureOverlayPermission(toolName: Strin
 
 internal fun StandardBrowserSessionTools.buildPageRegistry(): BrowserPageRegistry {
     val orderedIds = orderedSessionIdsFromState()
+    val scope = BrowserProfiles.currentScope()
     val activeId =
         StandardBrowserSessionTools.activeSessionId?.takeIf { sessionById(it) != null }
+            ?: scope?.let { StandardBrowserSessionTools.lastActiveByProfile[it] }?.takeIf { sessionById(it) != null }
             ?: orderedIds.firstOrNull()
     return BrowserPageRegistry(
         orderedSessionIds = orderedIds,
@@ -1931,6 +1936,7 @@ private fun StandardBrowserSessionTools.orderedSessionIdsFromState(): List<Strin
         .filter { sessionById(it) != null }
         .forEach(orderedIds::add)
     StandardBrowserSessionTools.sessions.values
+        .filter { sessionById(it.id) != null }
         .sortedWith(compareBy<BrowserToolSession> { it.createdAt }.thenBy { it.id })
         .mapTo(orderedIds) { it.id }
     return orderedIds.toList()
@@ -2365,6 +2371,9 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
     fullPage: Boolean,
     ref: String?
 ): String {
+    if (!fullPage && ref == null) {
+        captureViewportWithDevtools(session, filename, type)?.let { return it }
+    }
     return runOnMainSync {
         ensureSessionAttachedOnMain(session.id)
         val resolvedType = if (type == "jpg") "jpeg" else type
@@ -2402,6 +2411,90 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
         bitmap.recycle()
         output.absolutePath
     }
+}
+
+/**
+ * The visible page through DevTools, which also catches video, canvas and GPU layers that a
+ * WebView redraw can miss. It is scaled to the same size as the WebView capture, so screenshot
+ * coordinates mean the same thing either way. Null means use the WebView capture.
+ */
+private fun StandardBrowserSessionTools.captureViewportWithDevtools(
+    session: BrowserToolSession,
+    filename: String?,
+    type: String
+): String? {
+    if (!BrowserCdp.screenshotsWork(session.id)) return null
+    val connection = BrowserCdp.connection(this, session) ?: return null
+    val size =
+        runOnMainSync {
+            ensureSessionAttachedOnMain(session.id)
+            Pair(
+                session.viewportWidthPx ?: session.webView.width,
+                session.viewportHeightPx ?: session.webView.height
+            )
+        }
+    if (size.first <= 0 || size.second <= 0) return null
+    // The target goes through the usual screenshot budget before anything is decoded.
+    val bitmap = runCatching { createBrowserScreenshotBitmap(size.first, size.second) }.getOrNull() ?: return null
+    val drawn =
+        try {
+            val png = BrowserCdp.captureViewportPng(connection)
+            png != null && drawDevtoolsPng(png, bitmap)
+        } catch (e: Throwable) {
+            bitmap.recycle()
+            throw e
+        }
+    if (!drawn) {
+        bitmap.recycle()
+        BrowserCdp.markScreenshotFailed(session.id)
+        return null
+    }
+    val resolvedType = if (type == "jpg") "jpeg" else type
+    val output = resolveBrowserOutputFile(filename, "page", if (resolvedType == "png") "png" else "jpg")
+    output.parentFile?.mkdirs()
+    try {
+        FileOutputStream(output).use { stream ->
+            bitmap.compress(
+                if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
+                92,
+                stream
+            )
+        }
+    } finally {
+        bitmap.recycle()
+    }
+    return output.absolutePath
+}
+
+/**
+ * Draws a DevTools PNG (device pixels) into [target] (screenshot pixels). It is decoded at the
+ * largest power-of-two reduction that still covers the target, so a dense screen never needs a
+ * full device-pixel bitmap.
+ */
+private fun drawDevtoolsPng(png: ByteArray, target: Bitmap): Boolean {
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(png, 0, png.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return false
+    var sample = 1
+    while (bounds.outWidth / (sample * 2) >= target.width && bounds.outHeight / (sample * 2) >= target.height) {
+        sample *= 2
+    }
+    val decoded =
+        android.graphics.BitmapFactory.decodeByteArray(
+            png, 0, png.size,
+            android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }
+        ) ?: return false
+    try {
+        Canvas(target).drawBitmap(
+            decoded,
+            null,
+            android.graphics.Rect(0, 0, target.width, target.height),
+            android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+        )
+    } finally {
+        decoded.recycle()
+    }
+    return true
 }
 
 internal fun StandardBrowserSessionTools.captureViewportBitmap(

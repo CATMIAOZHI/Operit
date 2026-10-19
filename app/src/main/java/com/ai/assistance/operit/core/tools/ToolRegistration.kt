@@ -1468,6 +1468,25 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     handler.registerTool(
+            name = "browser_mouse_click_xy",
+            descriptionGenerator = { tool ->
+                val x = tool.parameters.find { it.name == "x" }?.value ?: "?"
+                val y = tool.parameters.find { it.name == "y" }?.value ?: "?"
+                "Tap the browser page at screenshot point ($x, $y)"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_devtools",
+            descriptionGenerator = { tool ->
+                val method = tool.parameters.find { it.name == "method" }?.value ?: ""
+                "Send DevTools command ${method.ifBlank { "(missing method)" }} to the browser page"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
             name = "browser_tabs",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: ""

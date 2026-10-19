@@ -23,14 +23,19 @@ internal object OrbitBrowserHandoff {
         OrbitBrowserControl.acquire(expected.id)
         try {
             val browser = StandardBrowserSessionTools(context.applicationContext)
+            // The user signs in where the Orbit browses, so the login lands in the Orbit's own set.
+            val profile = BrowserProfiles.forOrbit(context, expected.orbitId)
             val sessionId = withContext(Dispatchers.Main) {
+                BrowserProfiles.withScope(profile) {
                 browser.ensureOverlayOnMain(context.applicationContext, initialExpanded = true)
                 // Never hand the user a document that an earlier AI script may still mutate.
                 val session = input.sessionId.takeIf { alreadyOwned }?.let(StandardBrowserSessionTools.sessions::get)
+                    ?.takeIf { it.profileName == profile }
                     ?: browser.createSessionTabOnMain(context.applicationContext, input.requestedUrl, expected.title)
                 browser.ensureSessionAttachedOnMain(session.id)
                 browser.setExpandedOnMain(true)
                 session.id
+                }
             }
             dao.saveInput(input.copy(sessionId = sessionId))
         } catch (error: Exception) {

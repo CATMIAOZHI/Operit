@@ -84,12 +84,46 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         internal const val MAX_VIEWPORT_LAYOUT_PIXEL_COUNT = 33_554_432L
         internal const val MAX_SCREENSHOT_DIMENSION_PX = 32_768
         internal const val MAX_SCREENSHOT_PIXEL_COUNT = 16_777_216L
-        internal const val DEFAULT_USER_AGENT =
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/$DESKTOP_CHROME_FULL_VERSION Safari/537.36"
-        internal const val MOBILE_USER_AGENT =
-            "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
-                "(KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
+        private const val DEVTOOLS_INLINE_CHARS = 20_000
+        private const val DEVTOOLS_PRETTY_LIMIT_CHARS = 200_000
+        private val DEVTOOLS_METHOD = Regex("^[A-Z][A-Za-z]*\\.[a-z][A-Za-z]*$")
+        /**
+         * DevTools domains that stay inside the current tab. Browser-wide and target domains could
+         * reach other tabs and their logins; Fetch would pause requests with no one to resume them.
+         */
+        private val DEVTOOLS_DOMAINS =
+            setOf(
+                "Accessibility", "Animation", "Audits", "CSS", "CacheStorage", "Console", "DOM",
+                "DOMDebugger", "DOMSnapshot", "DOMStorage", "Debugger", "Emulation", "HeapProfiler",
+                "IO", "IndexedDB", "Input", "LayerTree", "Log", "Memory", "Network", "Overlay", "Page",
+                "Performance", "PerformanceTimeline", "Profiler", "Runtime", "Security", "ServiceWorker",
+                "WebAudio"
+            )
+
+        /**
+         * Chrome's version from the phone's WebView, so the user agent and its client hints name
+         * the engine that really runs the page.
+         */
+        internal val chromeFullVersion: String by lazy {
+            runCatching {
+                androidx.webkit.WebViewCompat.getCurrentWebViewPackage(
+                    com.ai.assistance.operit.core.application.OperitApplication.instance.applicationContext
+                )?.versionName
+            }.getOrNull()
+                ?.let { Regex("^\\d+\\.\\d+\\.\\d+\\.\\d+").find(it)?.value }
+                ?: DESKTOP_CHROME_FULL_VERSION
+        }
+        internal val chromeMajorVersion: String get() = chromeFullVersion.substringBefore('.')
+
+        /** Chrome's reduced user agents, which carry only the major version. */
+        internal val DEFAULT_USER_AGENT: String
+            get() =
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/$chromeMajorVersion.0.0.0 Safari/537.36"
+        internal val MOBILE_USER_AGENT: String
+            get() =
+                "Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 " +
+                    "(KHTML, like Gecko) Chrome/$chromeMajorVersion.0.0.0 Mobile Safari/537.36"
 
         internal val mainHandler = Handler(Looper.getMainLooper())
 
@@ -103,7 +137,13 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         internal val sessionConfigLock = Any()
 
         @Volatile internal var browserHost: WebSessionBrowserHost? = null
+        /** The last tab each login profile had in front, so an Orbit returns to its own tab. */
+        internal val lastActiveByProfile = ConcurrentHashMap<String, String>()
         @Volatile internal var activeSessionId: String? = null
+            set(value) {
+                field = value
+                value?.let { id -> sessions[id]?.let { lastActiveByProfile[it.profileName] = id } }
+            }
         @Volatile internal var desktopModeEnabled: Boolean = true
         @Volatile internal var desktopModeInitialized: Boolean = false
         @Volatile internal var pendingExternalOpenRequest: PendingExternalOpenRequest? = null
@@ -157,7 +197,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val webView: WebView,
         val sessionName: String?,
         val customUserAgent: String? = null,
-        val createdAt: Long = System.currentTimeMillis()
+        val createdAt: Long = System.currentTimeMillis(),
+        /** Whose saved logins this tab uses; see [BrowserProfiles]. */
+        val profileName: String = BrowserProfiles.MAIN
     ) {
         @Volatile var currentUrl: String = "about:blank"
         @Volatile var pageTitle: String = ""
@@ -212,6 +254,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     override fun invoke(tool: AITool): ToolResult {
         return try {
+            val profile = BrowserProfiles.forCurrentCaller(context, tool)
+            BrowserProfiles.withScope(profile) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserControl.aiCall { when (tool.name) {
                 "browser_click" -> browserClick(tool)
                 "browser_close" -> browserClose(tool)
@@ -235,8 +279,11 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 "browser_tabs" -> browserTabs(tool)
                 "browser_take_screenshot" -> browserTakeScreenshot(tool)
                 "browser_type" -> browserType(tool)
+                "browser_mouse_click_xy" -> browserMouseClickXy(tool)
+                "browser_devtools" -> browserDevtools(tool)
                 else -> error(tool.name, "Unsupported browser session tool: ${tool.name}")
             } }
+            }
         } catch (e: Exception) {
             AppLogger.e(TAG, "Tool execution failed: ${tool.name}", e)
             error(tool.name, e.message ?: "Unknown error")
@@ -255,6 +302,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 getSession(null) ?: createSessionTabOnMain(context.applicationContext, "about:blank")
             }
         val markers = captureActionMarkers(session)
+        // Attach DevTools before loading so this page's requests get their status codes.
+        BrowserCdp.connection(this, session)
 
         runOnMainSync<Unit> {
             ensureSessionAttachedOnMain(session.id)
@@ -1344,7 +1393,10 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
     private fun browserNetworkRequests(tool: AITool): ToolResult {
         val session = getSession(null) ?: return error(tool.name, "No active browser tab")
         val includeStatic = boolParam(tool, "includeStatic", false)
-        val rendered = renderNetworkRequestLog(session, includeStatic)
+        val devtoolsConnected = BrowserCdp.connection(this, session) != null
+        val rendered =
+            renderNetworkRequestLog(session, includeStatic) +
+                if (devtoolsConnected) "" else "\n(Status codes are unavailable: DevTools is not connected to this tab.)"
         val filename = param(tool, "filename")?.trim()?.takeIf { it.isNotBlank() }
         val resultText =
             if (filename != null) {
@@ -1633,6 +1685,110 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         )
     }
 
+    /**
+     * Taps a point given in pixels of the page screenshot. The screenshot and the WebView only
+     * differ by a fixed scale, so the point maps straight onto the view.
+     */
+    private fun browserMouseClickXy(tool: AITool): ToolResult {
+        val session = getSession(null) ?: return error(tool.name, "No active browser tab")
+        val x = param(tool, "x")?.trim()?.toDoubleOrNull()
+            ?: return error(tool.name, "x is required, in pixels of the page screenshot")
+        val y = param(tool, "y")?.trim()?.toDoubleOrNull()
+            ?: return error(tool.name, "y is required, in pixels of the page screenshot")
+        val doubleClick = boolParam(tool, "doubleClick", false)
+        val markers = captureActionMarkers(session)
+        val problem =
+            runOnMainSync<String?> {
+                ensureSessionAttachedOnMain(session.id)
+                val webView = session.webView
+                val imageWidth = session.viewportWidthPx ?: webView.width
+                val imageHeight = session.viewportHeightPx ?: webView.height
+                when {
+                    webView.width <= 0 || webView.height <= 0 || imageWidth <= 0 || imageHeight <= 0 ->
+                        "The page is not laid out yet. Take a screenshot and try again."
+                    x < 0 || y < 0 || x >= imageWidth || y >= imageHeight ->
+                        "($x, $y) is outside the page screenshot, which is ${imageWidth}x$imageHeight."
+                    else -> {
+                        val viewX = (x * webView.width / imageWidth).toFloat()
+                        val viewY = (y * webView.height / imageHeight).toFloat()
+                        webView.requestFocus()
+                        val start = SystemClock.uptimeMillis()
+                        repeat(if (doubleClick) 2 else 1) { index ->
+                            val downAt = start + index * 120L
+                            val down = MotionEvent.obtain(downAt, downAt, MotionEvent.ACTION_DOWN, viewX, viewY, 0)
+                            val up = MotionEvent.obtain(downAt, downAt + 40L, MotionEvent.ACTION_UP, viewX, viewY, 0)
+                            try {
+                                webView.dispatchTouchEvent(down)
+                                webView.dispatchTouchEvent(up)
+                            } finally {
+                                down.recycle()
+                                up.recycle()
+                            }
+                        }
+                        null
+                    }
+                }
+            }
+        if (problem != null) return pageError(tool.name, session, problem)
+        val settlement =
+            settleBrowserAction(
+                initialSession = session,
+                markers = markers,
+                policy = BrowserActionSettlementPolicy(waitForDocumentReady = true, waitForTimeSeconds = 0.5)
+            )
+        return ok(
+            tool.name,
+            buildSettledBrowserResponse(
+                settlement = settlement,
+                result = "Tapped (${x.toInt()}, ${y.toInt()}) in screenshot pixels${if (doubleClick) " twice" else ""}"
+            )
+        )
+    }
+
+    /** Sends one Chrome DevTools Protocol command to the current tab and returns its result. */
+    private fun browserDevtools(tool: AITool): ToolResult {
+        val session = getSession(null) ?: return error(tool.name, "No active browser tab")
+        val method = param(tool, "method")?.trim().orEmpty()
+        if (!DEVTOOLS_METHOD.matches(method)) {
+            return error(tool.name, "method must look like Domain.command, for example Runtime.evaluate")
+        }
+        val domain = method.substringBefore('.')
+        if (domain !in DEVTOOLS_DOMAINS) {
+            return error(
+                tool.name,
+                "$domain is not available here. Allowed domains: ${DEVTOOLS_DOMAINS.sorted().joinToString(", ")}"
+            )
+        }
+        val params =
+            param(tool, "params")?.trim()?.takeIf { it.isNotEmpty() }?.let { raw ->
+                runCatching { JSONObject(raw) }.getOrElse {
+                    return error(tool.name, "params must be a JSON object")
+                }
+            } ?: JSONObject()
+        val connection =
+            BrowserCdp.connection(this, session)
+                ?: return error(tool.name, "DevTools is not available for this tab right now. Try again after the page loads.")
+        val result =
+            try {
+                connection.send(method, params, 15_000L)
+            } catch (e: CdpException) {
+                return error(tool.name, "DevTools: ${e.message}")
+            }
+        val filename = param(tool, "filename")?.trim()?.takeIf { it.isNotBlank() }
+        // Pretty-printing copies the whole result again; only small results get it.
+        val compact = result.toString()
+        val text = if (filename == null && compact.length <= DEVTOOLS_PRETTY_LIMIT_CHARS) result.toString(2) else compact
+        val shown =
+            when {
+                filename != null -> "Saved the result to ${writeBrowserTextOutput(filename, text, "devtools", "json")}"
+                text.length > DEVTOOLS_INLINE_CHARS ->
+                    text.take(DEVTOOLS_INLINE_CHARS) +
+                        "\n... (${text.length - DEVTOOLS_INLINE_CHARS} more characters; pass filename to save all)"
+                else -> text
+            }
+        return ok(tool.name, buildBrowserResponse(code = "await cdp.send('$method')", result = shown))
+    }
+
     private fun browserType(tool: AITool): ToolResult {
         val session = getSession(null) ?: return error(tool.name, "No active browser tab")
         val ref = param(tool, "ref")?.trim()?.takeIf { it.isNotBlank() }
@@ -1774,6 +1930,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
     internal fun nextSnapshotGeneration(): Long = snapshotGenerationSeed.incrementAndGet()
     internal fun <T> runOnMainSync(timeoutMs: Long = 8_000L, block: () -> T): T {
         val orbitToken = com.ai.assistance.operit.features.orbit.OrbitBrowserControl.token()
+        val profileScope = BrowserProfiles.currentScope()
         if (Looper.myLooper() == Looper.getMainLooper()) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
             return block()
@@ -1786,7 +1943,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         mainHandler.post {
             try {
                 com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
-                result = block()
+                result = BrowserProfiles.withScope(profileScope, block)
             } catch (t: Throwable) {
                 error = t
             } finally {

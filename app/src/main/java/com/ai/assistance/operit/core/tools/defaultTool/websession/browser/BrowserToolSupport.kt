@@ -45,7 +45,14 @@ internal data class BrowserNetworkRequestEntry(
     val isStatic: Boolean,
     val headers: Map<String, String> = emptyMap(),
     val timestamp: Long = System.currentTimeMillis()
-)
+) {
+    /** Filled from DevTools when it is connected; guarded by the session's networkEntries lock. */
+    var status: Int? = null
+    var mimeType: String? = null
+    var failure: String? = null
+    /** DevTools' ID for this request, usable with Network.getResponseBody. */
+    var requestId: String? = null
+}
 
 internal data class PendingDialog(
     val type: String,
@@ -279,7 +286,60 @@ internal fun StandardBrowserSessionTools.renderNetworkRequestLog(
     return entries.joinToString("\n") { entry ->
         val frameTag = if (entry.isMainFrame) " [main-frame]" else ""
         val staticTag = if (entry.isStatic) " [static]" else ""
-        "- ${entry.method} ${entry.url}$frameTag$staticTag"
+        val outcome =
+            when {
+                entry.failure != null && entry.status != null ->
+                    " => [${entry.status}, then failed: ${entry.failure}]"
+                entry.failure != null -> " => [failed: ${entry.failure}]"
+                entry.status != null -> " => [${entry.status}]" + (entry.mimeType?.let { " $it" } ?: "")
+                else -> ""
+            }
+        val idTag = entry.requestId?.let { " (requestId: $it)" } ?: ""
+        "- ${entry.method} ${entry.url}$outcome$frameTag$staticTag$idTag"
+    }
+}
+
+/**
+ * Records what DevTools saw a request end with: its status, or why it failed. A request is tied
+ * to one entry by its DevTools ID, so a later failure updates that same entry. A redirect hop
+ * ([isRedirectHop]) shares the ID with the final request, so it is matched by method and URL only.
+ */
+internal fun StandardBrowserSessionTools.recordNetworkOutcome(
+    session: BrowserToolSession,
+    requestId: String?,
+    method: String?,
+    url: String,
+    resourceType: String?,
+    status: Int?,
+    mimeType: String?,
+    failure: String?,
+    isRedirectHop: Boolean = false
+) {
+    if (url.isBlank() || url.startsWith("data:")) return
+    val id = requestId?.takeIf { it.isNotBlank() && !isRedirectHop }
+    val wantedMethod = method?.takeIf { it.isNotBlank() } ?: "GET"
+    synchronized(session.networkEntries) {
+        val entry =
+            id?.let { wanted -> session.networkEntries.lastOrNull { it.requestId == wanted } }
+                ?: session.networkEntries.lastOrNull {
+                    it.requestId == null && it.url == url && it.status == null && it.failure == null &&
+                        it.method.equals(wantedMethod, ignoreCase = true)
+                }
+                ?: BrowserNetworkRequestEntry(
+                    method = wantedMethod,
+                    url = url,
+                    isMainFrame = resourceType == "Document",
+                    isStatic = resourceType in setOf("Image", "Stylesheet", "Font", "Script", "Media")
+                ).also {
+                    session.networkEntries += it
+                    if (session.networkEntries.size > StandardBrowserSessionTools.MAX_EVENT_LOG_ENTRIES) {
+                        session.networkEntries.removeAt(0)
+                    }
+                }
+        if (id != null) entry.requestId = id
+        if (status != null) entry.status = status
+        mimeType?.takeIf { it.isNotBlank() }?.let { entry.mimeType = it }
+        if (failure != null) entry.failure = failure
     }
 }
 

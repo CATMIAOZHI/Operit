@@ -148,6 +148,24 @@
             ]
         },
         {
+            "name": "click_xy",
+            "description": { "zh": "按页面截图上的像素坐标点按页面。先用 take_screenshot 截取当前页面（不带 fullPage 和 ref），再用图上的坐标。适合快照里没有 ref 的地方，比如画布、图片按钮、地图。", "en": "Tap the page at pixel coordinates of a page screenshot. Take a plain take_screenshot first (no fullPage or ref) and use coordinates from that image. Useful where the snapshot has no ref, such as canvases, image buttons or maps." },
+            "parameters": [
+                { "name": "x", "description": { "zh": "横坐标，截图左边为 0。", "en": "Horizontal pixel in the screenshot, 0 at the left edge." }, "type": "number", "required": true },
+                { "name": "y", "description": { "zh": "纵坐标，截图上边为 0。", "en": "Vertical pixel in the screenshot, 0 at the top edge." }, "type": "number", "required": true },
+                { "name": "doubleClick", "description": { "zh": "可选，是否连点两下，默认 false。", "en": "Optional double tap. Defaults to false." }, "type": "boolean", "required": false }
+            ]
+        },
+        {
+            "name": "devtools",
+            "description": { "zh": "向当前标签页发送一条 Chrome DevTools 协议（CDP）命令并返回结果，用来调试页面：读 DOM 和 CSS、看性能指标、取响应内容（先用 browser_network_requests 查到 requestId）、模拟设备等。只返回这条命令的结果，不推送事件。只能用当前页面范围内的域，例如 Runtime、DOM、CSS、Network、Page、Performance、Emulation、Debugger；Target、Browser、Storage、Fetch 不可用。", "en": "Send one Chrome DevTools Protocol (CDP) command to the current tab and return its result, for debugging the page: read DOM and CSS, check performance metrics, get response bodies (find the requestId with browser_network_requests first), emulate devices and so on. Only the command's result is returned; events are not streamed. Only page-scoped domains work, such as Runtime, DOM, CSS, Network, Page, Performance, Emulation and Debugger; Target, Browser, Storage and Fetch are not available." },
+            "parameters": [
+                { "name": "method", "description": { "zh": "命令名，格式 Domain.command，例如 DOM.getDocument 或 Network.getResponseBody。", "en": "Command name as Domain.command, for example DOM.getDocument or Network.getResponseBody." }, "type": "string", "required": true },
+                { "name": "params", "description": { "zh": "可选，命令参数，JSON 对象。", "en": "Optional command parameters as a JSON object." }, "type": "object", "required": false },
+                { "name": "filename", "description": { "zh": "可选，结果太长时保存到这个文件。", "en": "Optional file to save a long result to." }, "type": "string", "required": false }
+            ]
+        },
+        {
             "name": "snapshot",
             "description": { "zh": "获取当前页面结构化快照，包括同源 iframe 内容。", "en": "Get a structured page snapshot, including same-origin iframe content." },
             "parameters": [
@@ -302,6 +320,18 @@ interface WaitForPayload {
     textGone?: string;
 }
 
+interface ClickXyPayload {
+    x: number;
+    y: number;
+    doubleClick?: boolean;
+}
+
+interface DevtoolsPayload {
+    method: string;
+    params?: Record<string, unknown> | string;
+    filename?: string;
+}
+
 interface TabsPayload {
     action: BrowserTabAction;
     index?: number;
@@ -327,6 +357,8 @@ const TOOL_NAMES = [
     "select_option",
     "snapshot",
     "take_screenshot",
+    "click_xy",
+    "devtools",
     "type",
     "wait_for",
     "tabs"
@@ -488,6 +520,16 @@ async function take_screenshot(params: ScreenshotPayload = {}) {
     return Tools.Net.browserTakeScreenshot(params);
 }
 
+async function click_xy(params: ClickXyPayload) {
+    const result = await Tools.Net.browserMouseClickXy(params);
+    return maybePersistLargeBrowserResponse(result, "click_xy");
+}
+
+async function devtools(params: DevtoolsPayload) {
+    const result = await Tools.Net.browserDevtools(params);
+    return maybePersistLargeBrowserResponse(result, "devtools");
+}
+
 async function type(params: TypePayload) {
     const result = await Tools.Net.browserType(params);
     return maybePersistLargeBrowserResponse(result, "type");
@@ -526,6 +568,8 @@ exports.run_code = run_code;
 exports.select_option = select_option;
 exports.snapshot = snapshot;
 exports.take_screenshot = take_screenshot;
+exports.click_xy = click_xy;
+exports.devtools = devtools;
 exports.type = type;
 exports.wait_for = wait_for;
 exports.tabs = tabs;

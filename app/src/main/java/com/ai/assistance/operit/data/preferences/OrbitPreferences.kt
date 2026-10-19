@@ -9,6 +9,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.forgetOrbitBrowser
 import java.io.File
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -58,6 +59,11 @@ data class OrbitProfile(
     val deleting: Boolean = false,
     /** Separate topic chats next to the main chat, like Muse's side chats. Their ids are also owned chats. */
     val sideChats: List<OrbitSideChat> = emptyList(),
+    /**
+     * When true the Orbit's browser uses the main app's logins. Its own saved logins stay on disk
+     * while sharing, so turning this off brings them back.
+     */
+    val browserSharesMainLogin: Boolean = false,
 ) {
     /** The main chat and every side chat: the chats where the user talks to this Orbit. */
     val talkChatIds: List<String> get() = listOf(chatId) + sideChats.map { it.chatId }
@@ -260,10 +266,25 @@ class OrbitPreferences private constructor(context: Context) {
             com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()
             deleteOwnedAvatar(avatarUri)
         }
+        // Its tabs close and its own browser logins go with it.
+        try {
+            val browser = withContext(Dispatchers.IO) {
+                com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools(appContext)
+            }
+            withContext(Dispatchers.Main) { browser.forgetOrbitBrowser(orbitId) }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w("OrbitPreferences", "Could not clear the Orbit's browser: ${e.message}")
+        }
     }
 
     suspend fun setName(orbitId: String, name: String) {
         updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(name = name) else it } }
+    }
+
+    suspend fun setBrowserSharesMainLogin(orbitId: String, shared: Boolean) {
+        updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(browserSharesMainLogin = shared) else it } }
     }
 
     suspend fun bindMemory(orbitId: String, memorySpaceId: String) {
@@ -458,6 +479,7 @@ class OrbitPreferences private constructor(context: Context) {
                                 }
                             }
                         }.orEmpty(),
+                        browserSharesMainLogin = item.optBoolean("browserSharesMainLogin", false),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -480,6 +502,7 @@ class OrbitPreferences private constructor(context: Context) {
                             put("sideChats", JSONArray(orbit.sideChats.map {
                                 JSONObject().put("chatId", it.chatId).put("title", it.title).put("createdAt", it.createdAt)
                             }))
+                            put("browserSharesMainLogin", orbit.browserSharesMainLogin)
                         }
                     )
                 }

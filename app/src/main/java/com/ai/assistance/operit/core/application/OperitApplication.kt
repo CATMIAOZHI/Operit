@@ -162,6 +162,25 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
         }
 
         globalImageLoader = ImageLoader.Builder(this).build()
+
+        // Logins of deleted Orbits can only be removed before any tab loads them, so do it now.
+        // Other processes never open browser tabs and must not start WebView.
+        if (isMainAppProcess()) {
+            runCatching {
+                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles
+                    .deletePendingAtStartup(this)
+            }
+        }
+    }
+
+    private fun isMainAppProcess(): Boolean {
+        val name =
+            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
+                getProcessName()
+            } else {
+                runCatching { java.io.File("/proc/self/cmdline").readText().trim('\u0000', ' ', '\n') }.getOrNull()
+            }
+        return name == null || name == packageName
     }
 
     /**

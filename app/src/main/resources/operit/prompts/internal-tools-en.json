@@ -809,6 +809,66 @@
         "notes": ""
       },
       {
+        "name": "browser_mouse_click_xy",
+        "description": "Tap the page at pixel coordinates of a page screenshot. Take a plain browser_take_screenshot first (no fullPage or ref) and use its coordinates.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "number",
+            "description": "Horizontal pixel in the screenshot, 0 at the left edge",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "number",
+            "description": "Vertical pixel in the screenshot, 0 at the top edge",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "doubleClick",
+            "type": "boolean",
+            "description": "Optional double tap",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_devtools",
+        "description": "Send one Chrome DevTools Protocol command to the current tab and return its result. Returns only this command's result; events are not streamed. Only page-scoped domains are allowed; Target, Browser, Storage and Fetch are unavailable. To get a response body, find its requestId with browser_network_requests first.",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "method",
+            "type": "string",
+            "description": "Command name as Domain.command",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "params",
+            "type": "string",
+            "description": "Optional command parameters as a JSON object",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "Optional file to save a long result to",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
         "name": "browser_type",
         "description": "Type text into an editable element.",
         "parameters": "",

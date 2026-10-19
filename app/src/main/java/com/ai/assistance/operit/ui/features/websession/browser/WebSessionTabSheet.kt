@@ -100,6 +100,16 @@ internal fun WebSessionTabSheet(
                                         fontWeight = FontWeight.SemiBold
                                     )
                                 }
+                                tab.ownerLabel?.let { owner ->
+                                    Text(
+                                        text = stringResource(R.string.web_session_tab_owner, owner),
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.tertiary,
+                                        fontWeight = FontWeight.SemiBold
+                                    )
+                                }
                                 Text(
                                     text = tab.title,
                                     maxLines = 1,

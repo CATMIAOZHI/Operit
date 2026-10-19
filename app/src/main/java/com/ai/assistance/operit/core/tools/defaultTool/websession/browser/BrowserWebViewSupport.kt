@@ -45,15 +45,24 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     appContext: Context,
     sessionId: String,
     sessionName: String?,
-    customUserAgent: String?
+    customUserAgent: String?,
+    profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
 ): BrowserToolSession {
+    BrowserCdp.enableDebuggingOnMain()
     val webView = WebView(resolveWebViewContext(appContext))
+    try {
+        BrowserProfiles.applyTo(webView, profileName)
+    } catch (e: Throwable) {
+        webView.destroy()
+        throw e
+    }
     val session =
         BrowserToolSession(
             id = sessionId,
             webView = webView,
             sessionName = sessionName,
-            customUserAgent = customUserAgent
+            customUserAgent = customUserAgent,
+            profileName = profileName
         )
     if (StandardBrowserSessionTools.desktopModeEnabled) {
         session.viewportWidthPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH
@@ -103,7 +112,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
         }
     }
     applySessionUserAgent(session, userAgent)
-    configureCookiePolicy(session.webView)
+    configureCookiePolicy(session.webView, session.profileName)
 
     session.webView.apply {
         importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
@@ -811,6 +820,11 @@ internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: Strin
 }
 
 internal fun StandardBrowserSessionTools.syncProjectedBrowserStateOnMain() {
+    // The overlay always shows every tab, whoever's call is running.
+    BrowserProfiles.withScope(null) { syncProjectedBrowserStateUnscoped() }
+}
+
+private fun StandardBrowserSessionTools.syncProjectedBrowserStateUnscoped() {
     val registry = buildPageRegistry()
     val resolvedActiveId = registry.activeSessionId
     val activeSession = resolvedActiveId?.let(::sessionById)
@@ -839,6 +853,9 @@ internal fun StandardBrowserSessionTools.buildBrowserState(
     val activeId = registry.activeSessionId
     val activeSession = activeId?.let(::sessionById)
     val orderedIds = registry.orderedSessionIds
+    val orbits by lazy {
+        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).snapshot.orbits
+    }
 
     return WebSessionBrowserState(
         activeSessionId = activeId,
@@ -871,7 +888,12 @@ internal fun StandardBrowserSessionTools.buildBrowserState(
                         title = sessionDisplayTitle(session),
                         url = session.currentUrl.ifBlank { "about:blank" },
                         isActive = session.id == activeId,
-                        hasSslError = session.hasSslError
+                        hasSslError = session.hasSslError,
+                        ownerLabel =
+                            session.profileName.takeIf { it != BrowserProfiles.MAIN }?.let { profile ->
+                                orbits.firstOrNull { BrowserProfiles.orbitProfileName(it.id) == profile }?.name
+                                    ?.ifBlank { null } ?: "Orbit"
+                            }
                     )
                 }
             },
@@ -986,6 +1008,10 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
         userAgentString = userAgent
         useWideViewPort = isDesktopMode && session.viewportWidthPx == null
         loadWithOverviewMode = isDesktopMode && session.viewportWidthPx == null
+        // Sites can otherwise read the app's package name from every request.
+        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+            WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet())
+        }
 
         if (
             session.customUserAgent == null &&
@@ -995,19 +1021,26 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
                 UserAgentMetadata.Builder()
                     .setMobile(!isDesktopMode)
                     .setPlatform(if (isDesktopMode) "Windows" else "Android")
+            // Name Chrome rather than "Android WebView", matching the user agent string.
+            val brandVersions =
+                listOf("Chromium", "Google Chrome").map { brand ->
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand(brand)
+                        .setMajorVersion(StandardBrowserSessionTools.chromeMajorVersion)
+                        .setFullVersion(StandardBrowserSessionTools.chromeFullVersion)
+                        .build()
+                } +
+                    UserAgentMetadata.BrandVersion.Builder()
+                        .setBrand("Not.A/Brand")
+                        .setMajorVersion("99")
+                        .setFullVersion("99.0.0.0")
+                        .build()
+            userAgentMetadataBuilder
+                .setBrandVersionList(brandVersions)
+                .setFullVersion(StandardBrowserSessionTools.chromeFullVersion)
             if (isDesktopMode) {
                 // Null fields inherit Android WebView defaults, which would contradict the desktop UA.
-                val brandVersions =
-                    listOf("Chromium", "Google Chrome").map { brand ->
-                        UserAgentMetadata.BrandVersion.Builder()
-                            .setBrand(brand)
-                            .setMajorVersion(StandardBrowserSessionTools.DESKTOP_CHROME_MAJOR_VERSION)
-                            .setFullVersion(StandardBrowserSessionTools.DESKTOP_CHROME_FULL_VERSION)
-                            .build()
-                    }
                 userAgentMetadataBuilder
-                    .setBrandVersionList(brandVersions)
-                    .setFullVersion(StandardBrowserSessionTools.DESKTOP_CHROME_FULL_VERSION)
                     .setPlatformVersion("10.0.0")
                     .setArchitecture("x86")
                     .setModel("")
@@ -1029,8 +1062,8 @@ internal fun StandardBrowserSessionTools.applyViewportOverride(session: BrowserT
     }
 }
 
-internal fun StandardBrowserSessionTools.configureCookiePolicy(webView: WebView) {
-    val cookieManager = CookieManager.getInstance()
+internal fun StandardBrowserSessionTools.configureCookiePolicy(webView: WebView, profileName: String) {
+    val cookieManager = BrowserProfiles.cookieManager(profileName)
     cookieManager.setAcceptCookie(true)
     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
         cookieManager.setAcceptThirdPartyCookies(webView, true)
@@ -1045,7 +1078,8 @@ internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
             appContext = parentSession.webView.context ?: context.applicationContext,
             sessionId = UUID.randomUUID().toString(),
             sessionName = parentSession.sessionName,
-            customUserAgent = parentSession.customUserAgent
+            customUserAgent = parentSession.customUserAgent,
+            profileName = parentSession.profileName
         )
     StandardBrowserSessionTools.sessions[popupSession.id] = popupSession
     addSessionOrder(popupSession.id)
@@ -1339,13 +1373,25 @@ internal fun StandardBrowserSessionTools.resolvePendingDialogOnMain(
     return pending
 }
 
+/** Closes a deleted Orbit's tabs, then removes its own saved logins. */
+internal fun StandardBrowserSessionTools.forgetOrbitBrowser(orbitId: String) {
+    val profile = BrowserProfiles.orbitProfileName(orbitId)
+    StandardBrowserSessionTools.sessions.values
+        .filter { it.profileName == profile }
+        .forEach { closeSession(it.id) }
+    StandardBrowserSessionTools.lastActiveByProfile.remove(profile)
+    BrowserProfiles.deleteOrbitData(context, orbitId)
+}
+
 internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolean {
-    val orderedBeforeClose = orderedSessionIds()
+    // Tabs of other logins stay open, so the overlay and the next tab follow every tab.
+    val orderedBeforeClose = BrowserProfiles.withScope(null) { orderedSessionIds() }
     val closedIndex = orderedBeforeClose.indexOf(sessionId)
     val wasActive = StandardBrowserSessionTools.activeSessionId == sessionId
     val previouslyActiveId = StandardBrowserSessionTools.activeSessionId
     val session = StandardBrowserSessionTools.sessions.remove(sessionId) ?: return false
     removeSessionOrder(sessionId)
+    BrowserCdp.forget(sessionId)
 
     runOnMainSync<Unit> {
         userscriptManager.detachSession(sessionId)
@@ -1366,6 +1412,7 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
         notifySessionStateChanged(session)
         cleanupWebViewOnMain(session.webView)
 
+        BrowserProfiles.withScope(null) {
         val remainingIds = orderedSessionIds().filter { sessionById(it) != null }
         val nextSessionId =
             if (wasActive) {
@@ -1388,6 +1435,7 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
             destroyOverlayOnMain()
         }
         refreshSessionUiOnMain()
+        }
     }
 
     return true

@@ -80,6 +80,8 @@ export interface ToolResultMap {
     'browser_wait_for': string;
     'browser_snapshot': string;
     'browser_take_screenshot': string;
+    'browser_mouse_click_xy': string;
+    'browser_devtools': string;
     'browser_type': string;
     'browser_tabs': string;
     'multipart_request': HttpResponseData;
