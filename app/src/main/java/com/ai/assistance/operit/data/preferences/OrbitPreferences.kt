@@ -257,6 +257,7 @@ class OrbitPreferences private constructor(context: Context) {
         }
         withContext(Dispatchers.IO) {
             com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
+            com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()
             deleteOwnedAvatar(avatarUri)
         }
     }

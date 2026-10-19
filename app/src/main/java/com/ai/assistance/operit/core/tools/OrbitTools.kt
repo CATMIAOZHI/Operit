@@ -86,16 +86,6 @@ internal object OrbitTools {
     }
 
     /**
-     * The persona of the Orbit that owns [chatId], from its Soul.md, or null in any other chat.
-     * It stands in for the role card's persona, which only seeded Soul.md once.
-     */
-    suspend fun soulFor(context: Context, chatId: String?): String? {
-        val preferences = OrbitPreferences.getInstance(context)
-        val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return null
-        return preferences.readSoul(orbit.id)
-    }
-
-    /**
      * True in a chat that belongs to an Orbit. Orbit always has its tools under the fixed fast
      * auto-review permission, so the global tools switch does not turn them off there.
      */
@@ -103,12 +93,18 @@ internal object OrbitTools {
         com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
 
     /**
-     * The system prompt part that tells an Orbit who it is in its own chat, or an empty string in
-     * any other chat. It includes PROMPT.md and IDENTITY.md from the Orbit's folder, so it changes
-     * only when Orbit renames itself or one of those files or layer switches changes.
+     * Orbit's parts of the system prompt, in its own chat; null in any other chat. They are placed
+     * apart so the prompt runs from what rarely changes to what changes often: [handbook] (PROMPT.md)
+     * comes before the app's system prompt; [runtime], [identity] and [soul] come after it, followed
+     * by memory.md and user.md.
      */
-    suspend fun systemPromptBlock(context: Context, chatId: String?, useEnglish: Boolean): String {
-        val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return ""
+    class PromptParts(val handbook: String, val runtime: String, val identity: String, val soul: String) {
+        /** All parts in prompt order, for a copy the user can read. */
+        val all: String get() = listOf(handbook, runtime, identity, soul).filter { it.isNotEmpty() }.joinToString("\n\n")
+    }
+
+    suspend fun promptParts(context: Context, chatId: String?, useEnglish: Boolean): PromptParts? {
+        val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return null
         val name = orbit.name.replace("<", "").replace(">", "").trim()
         val body =
             if (useEnglish) {
@@ -133,10 +129,12 @@ internal object OrbitTools {
         val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
         // File text is data inside our tags, so escape it the way memory notes are escaped.
         fun escape(text: String) = text.trim().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-        val proactive = "\n<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
-        val identity = "\n<orbit_identity source=\"IDENTITY.md\">\n" +
+        val handbook = "<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"
+        val identity = "<orbit_identity source=\"IDENTITY.md\">\n" +
             escape(files.identity(context, orbit.id)) +
             "\n</orbit_identity>"
+        val soul = OrbitPreferences.getInstance(context).readSoul(orbit.id).takeIf { it.isNotBlank() }
+            ?.let { "<orbit_soul source=\"SOUL.md\">\n${escape(it)}\n</orbit_soul>" }.orEmpty()
         // A side chat is its own thread; work started here reports back here.
         val side = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id }
             ?.sideChats?.firstOrNull { it.chatId == chatId }
@@ -148,18 +146,9 @@ internal object OrbitTools {
         }.orEmpty()
         val firstTalk = com.ai.assistance.operit.features.orbit.OrbitOnboarding.hint(context, orbit, chatId, useEnglish)
             ?.let { "\n$it" }.orEmpty()
-        return "<orbit>\n$body$sideNote$proactive$identity$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
+        val runtime = "<orbit>\n$body$sideNote$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
+        return PromptParts(handbook, runtime, identity, soul)
     }
-
-    /**
-     * The part of [systemPromptBlock] the app writes itself: everything but PROMPT.md and
-     * IDENTITY.md, which have their own layers. Their text is escaped, so no tag sits inside them.
-     */
-    fun runtimeOnly(block: String): String =
-        block.replace(Regex("""\n?<orbit_handbook source="PROMPT\.md">.*?</orbit_handbook>""", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("""\n?<orbit_identity source="IDENTITY\.md">.*?</orbit_identity>""", RegexOption.DOT_MATCHES_ALL), "")
-            .replace(Regex("\n{3,}"), "\n\n")
-            .trim()
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {
         val chatId = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId

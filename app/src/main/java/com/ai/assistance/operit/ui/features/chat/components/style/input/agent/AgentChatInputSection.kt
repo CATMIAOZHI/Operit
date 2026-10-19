@@ -178,6 +178,8 @@ import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.layout
 
 @Composable
 fun AgentChatInputSection(
@@ -491,7 +493,18 @@ fun AgentChatInputSection(
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
     val showQueueAction = isProcessing && canSendMessage
     val showCancelAction = isProcessing && !showQueueAction
-    val sendButtonEnabled = true
+    // Orbit has no voice conversation (it would open the floating window and show its tool calls).
+    // With nothing to send, its round button slides away and only the microphone stays.
+    val orbitPreferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
+    val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
+    val isOrbitChat = orbitSettings.orbitForChat(currentChatId) != null
+    val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
+    val actionSlot by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (hideVoiceEntry) 0f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "actionSlot",
+    )
+    val sendButtonEnabled = !hideVoiceEntry
     val tokenLimitWarning: @Composable () -> Unit = {
         if (isOverTokenLimit && canSendMessage && !showQueueAction) {
             Text(
@@ -1050,7 +1063,7 @@ fun AgentChatInputSection(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                         val actionButtonBackground =
                             when {
@@ -1079,7 +1092,7 @@ fun AgentChatInputSection(
                             }
 
                         Box(
-                            modifier = Modifier.size(40.dp),
+                            modifier = Modifier.collapseWidth(actionSlot).size(40.dp),
                             contentAlignment = Alignment.Center,
                         ) {
                             if (showProcessingStatus) {
@@ -1358,7 +1371,7 @@ fun AgentChatInputSection(
                                 )
                             }
 
-                            Spacer(modifier = Modifier.width(6.dp))
+                            Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                             val actionButtonBackground =
                                 when {
@@ -1387,7 +1400,7 @@ fun AgentChatInputSection(
                                 }
 
                             Box(
-                                modifier = Modifier.size(40.dp),
+                                modifier = Modifier.collapseWidth(actionSlot).size(40.dp),
                                 contentAlignment = Alignment.Center,
                             ) {
                                 if (showProcessingStatus) {
@@ -1766,6 +1779,23 @@ private fun AgentModelSelectorPopup(
         }
     }
 }
+
+/**
+ * Shows [fraction] of this slot's width while its content keeps its full size and fades and
+ * shrinks in place, so a button can slide shut without squeezing into an oval.
+ */
+internal fun Modifier.collapseWidth(fraction: Float): Modifier =
+    this
+        .layout { measurable, constraints ->
+            val placeable = measurable.measure(constraints.copy(minWidth = 0))
+            val width = (placeable.width * fraction).roundToInt()
+            layout(width, placeable.height) { placeable.place((width - placeable.width) / 2, 0) }
+        }
+        .graphicsLayer {
+            alpha = fraction
+            scaleX = 0.6f + 0.4f * fraction
+            scaleY = 0.6f + 0.4f * fraction
+        }
 
 @Composable
 private fun AgentThinkingSettingsItem(

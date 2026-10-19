@@ -102,14 +102,13 @@ internal object OrbitFileTools {
                 }
                 "prompt_copy" -> {
                     val english = LocaleUtils.usesEnglishPrompt(context)
-                    val block = OrbitTools.systemPromptBlock(context, runtime?.callerChatId, english)
-                    val soul = OrbitPreferences.getInstance(context).readSoul(orbit.id)
+                    val block = OrbitTools.promptParts(context, runtime?.callerChatId, english)?.all.orEmpty()
                     val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
                     val path = "files/orbit-prompt-$stamp.md"
                     val text = if (english) {
-                        "# Orbit's part of the system prompt\n\nThe Orbit section and SOUL.md. The app's shared rules and tool list are not included.\n\n$block\n\n## SOUL.md\n\n$soul\n"
+                        "# Orbit's part of the system prompt\n\nPROMPT.md, the Orbit section, IDENTITY.md and SOUL.md. The app's shared rules and tool list are not included.\n\n$block\n"
                     } else {
-                        "# Orbit 部分的系统提示词\n\n包含 Orbit 段落和 SOUL.md，不含应用通用规则和工具列表。\n\n$block\n\n## SOUL.md\n\n$soul\n"
+                        "# Orbit 部分的系统提示词\n\n包含 PROMPT.md、Orbit 段落、IDENTITY.md 和 SOUL.md，不含应用通用规则和工具列表。\n\n$block\n"
                     }
                     val entry = files.saveBytes(path, text.byteInputStream())
                     "Saved as ${entry.path}. The user finds it under Files in the Builds tab."

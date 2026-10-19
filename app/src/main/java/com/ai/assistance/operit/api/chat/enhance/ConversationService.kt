@@ -587,14 +587,17 @@ class ConversationService(
                 val activeCard = effectiveRoleCardId?.let {
                     characterCardManager.getCharacterCardFlow(it).first()
                 }
-                // An Orbit chat takes its persona from the Orbit's own Soul.md, not a role card.
-                val orbitSoul =
+                // An Orbit chat takes its persona from the Orbit's own Soul.md, not a role card. Its
+                // parts sit around the app's system prompt (see OrbitTools.promptParts), so the
+                // intro slot is left empty for it.
+                val orbitParts =
                     if (ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)) {
-                        com.ai.assistance.operit.core.tools.OrbitTools.soulFor(context, chatId)
+                        com.ai.assistance.operit.core.tools.OrbitTools.promptParts(
+                            context, chatId, LocaleUtils.usesEnglishPrompt(context))
                     } else {
                         null
                     }
-                val introPrompt = orbitSoul ?: activeCard?.let {
+                val introPrompt = if (orbitParts != null) "" else activeCard?.let {
                     characterCardManager.combinePrompts(
                         it.id,
                         promptFunctionType = promptFunctionType
@@ -701,14 +704,12 @@ class ConversationService(
                     } else {
                         ""
                     }
-                // 构建最终的系统提示词
-                val orbitPrompt =
-                    if (allowPersonalContext) {
-                        com.ai.assistance.operit.core.tools.OrbitTools.systemPromptBlock(context, chatId, useEnglish)
-                    } else {
-                        ""
-                    }
+                // 构建最终的系统提示词：先放少变的部分，Orbit 的 Soul、记忆、资料放最后
                 val finalSystemPrompt = buildString {
+                    if (orbitParts != null) {
+                        append(orbitParts.handbook)
+                        append("\n\n")
+                    }
                     append(systemPrompt)
                     if (!additionalSystemPrompt.isNullOrBlank()) {
                         append("\n\n<subagent_profile source=\"agent_profile\">\n")
@@ -721,9 +722,10 @@ class ConversationService(
                         append("\n</assistant_role>")
                     }
                     append(waifuRulesText)
-                    if (orbitPrompt.isNotEmpty()) {
-                        append("\n\n")
-                        append(orbitPrompt)
+                    if (orbitParts != null) {
+                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul)
+                            .filter { it.isNotEmpty() }
+                            .forEach { append("\n\n"); append(it) }
                     }
                     if (memoryNotes.isNotBlank()) {
                         append("\n\n")
@@ -752,12 +754,9 @@ class ConversationService(
                     aiName
                 )
                 // An Orbit's prompt layers page shows what the app itself wrote into this prompt.
-                val promptSections = if (privateOwner != null && orbitPrompt.isNotEmpty()) mapOf(
-                    "runtime" to replacePromptPlaceholders(
-                        com.ai.assistance.operit.core.tools.OrbitTools.runtimeOnly(orbitPrompt), aiName),
-                    "tools" to replacePromptPlaceholders(
-                        (if (introPrompt.isNotBlank()) systemPrompt.replaceFirst(introPrompt, "") else systemPrompt).trim(),
-                        aiName),
+                val promptSections = if (privateOwner != null && orbitParts != null) mapOf(
+                    "runtime" to replacePromptPlaceholders(orbitParts.runtime, aiName),
+                    "tools" to replacePromptPlaceholders(systemPrompt.trim(), aiName),
                 ) else emptyMap()
                 val savedSystem = try {
                     learningSnapshot?.bindSystem(finalSystemPromptWithReplacements, promptRevisions,

@@ -522,11 +522,16 @@ private fun OrbitChatPage(
                     transitionSpec = {
                         val forward = targetState.size > initialState.size
                         if (forward) {
+                            // The page below stays drawn until the new one has fully slid over it.
                             slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
-                                ExitTransition.None
+                                ExitTransition.KeepUntilTransitionsFinished
                         } else {
                             EnterTransition.None togetherWith
                                 slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it }
+                        }.apply {
+                            // The deeper page always draws on top: it slides in over the page below,
+                            // and on the way back it slides off without the page below covering it.
+                            targetContentZIndex = targetState.size.toFloat()
                         }
                     },
                     label = "orbitSubPage",
