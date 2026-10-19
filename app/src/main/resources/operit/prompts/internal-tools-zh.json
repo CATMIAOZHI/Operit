@@ -690,13 +690,13 @@
       },
       {
         "name": "browser_run_code",
-        "description": "运行 Playwright 风格的代码片段。",
+        "description": "在当前标签页运行有限的 Playwright 风格代码，并非完整 Playwright。",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "code",
             "type": "string",
-            "description": "Playwright 风格 JavaScript 代码片段",
+            "description": "一个接收 page 的函数，例如 async (page) => { await page.locator('#login').click(); }；或直接写函数体，可用 await 和 return",
             "required": true,
             "default": null
           }

@@ -125,7 +125,7 @@
             "name": "run_code",
             "description": { "zh": "运行有限的 Playwright 风格代码，并非完整 Playwright。截图请调用 take_screenshot，不支持 page.screenshot；注入样式请用 page.evaluate 创建 style 元素，不支持 page.addStyleTag。", "en": "Run a limited Playwright-style snippet, not full Playwright. Use take_screenshot for images; page.screenshot is unsupported. Inject styles by creating a style element with page.evaluate; page.addStyleTag is unsupported." },
             "parameters": [
-                { "name": "code", "description": { "zh": "代码片段。", "en": "Code snippet." }, "type": "string", "required": true }
+                { "name": "code", "description": { "zh": "代码片段：一个接收 page 的函数，例如 async (page) => { await page.locator('#login').click(); }；或直接写函数体，可用 await 和 return。", "en": "Code snippet: a function that takes page, such as async (page) => { await page.locator('#login').click(); }, or a plain body that may use await and return." }, "type": "string", "required": true }
             ]
         },
         {

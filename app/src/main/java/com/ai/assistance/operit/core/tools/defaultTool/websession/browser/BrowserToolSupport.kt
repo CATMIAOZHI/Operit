@@ -67,7 +67,9 @@ internal data class PendingDialog(
 internal data class PendingAsyncJsCall(
     val latch: CountDownLatch = CountDownLatch(1),
     @Volatile var result: String? = null,
-    @Volatile var error: String? = null
+    @Volatile var error: String? = null,
+    /** Set only by the injection callback: the page could not parse the script, so none of it ran. */
+    @Volatile var notParsed: Boolean = false
 )
 
 internal data class WebDownloadEvent(
