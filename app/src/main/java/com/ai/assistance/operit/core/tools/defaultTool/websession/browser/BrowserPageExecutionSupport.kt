@@ -2036,6 +2036,17 @@ internal fun StandardBrowserSessionTools.locatorExpressionForElement(
     selectorSuffix: String
 ): String = locatorExpressionForRef(session, ref) + selectorSuffix
 
+/** The page could not even parse the script, so nothing in it ran. */
+internal class BrowserScriptSyntaxException(message: String) : RuntimeException(message)
+
+/**
+ * Runs [expression] in the page and waits for its (possibly promised) value.
+ *
+ * The expression is placed straight into the injected script. Pages such as GitHub's login set a
+ * Content Security Policy without 'unsafe-eval', which blocks eval() and new Function() even for
+ * code injected by the app; script injected by the app itself is not subject to that policy.
+ * A script the page cannot parse throws [BrowserScriptSyntaxException].
+ */
 internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
     webView: WebView,
     expression: String,
@@ -2044,6 +2055,8 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
     val callId = UUID.randomUUID().toString()
     val pending = PendingAsyncJsCall()
     val orbitToken = com.ai.assistance.operit.features.orbit.OrbitBrowserControl.token()
+    // Inside parentheses a trailing semicolon would be a syntax error; a line comment is kept apart by the newline.
+    val inlineExpression = expression.trimEnd().trimEnd(';').trimEnd()
     StandardBrowserSessionTools.pendingAsyncJsCalls[callId] = pending
     StandardBrowserSessionTools.mainHandler.post {
         try {
@@ -2058,8 +2071,9 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
                 """
                 (function() {
                     try {
-                        const operitExpression = ${quoteJs(expression)};
-                        const operitValue = (0, eval)(operitExpression);
+                        const operitValue = (
+$inlineExpression
+                        );
                         Promise.resolve(operitValue)
                             .then(function(value) {
                                 let payload;
@@ -2085,7 +2099,13 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
                     return true;
                 })();
                 """.trimIndent()
-            webView.evaluateJavascript(wrapped, null)
+            webView.evaluateJavascript(wrapped) { started ->
+                // A script that parsed always returns true; anything else means it never ran.
+                if (started != "true" && StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId) != null) {
+                    pending.notParsed = true
+                    pending.latch.countDown()
+                }
+            }
         } catch (e: Exception) {
             StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId)
             pending.error = e.message ?: "Async JavaScript wrapper error"
@@ -2096,6 +2116,7 @@ internal fun StandardBrowserSessionTools.evaluateJavascriptAsync(
         StandardBrowserSessionTools.pendingAsyncJsCalls.remove(callId)
         throw RuntimeException("JavaScript execution timeout (${timeoutMs}ms)")
     }
+    if (pending.notParsed) throw BrowserScriptSyntaxException("The script has a syntax error, so it did not run")
     pending.error?.let { throw RuntimeException(it) }
     return pending.result ?: "{\"ok\":true,\"value\":null}"
 }
@@ -2753,7 +2774,7 @@ internal fun StandardBrowserSessionTools.runPlaywrightLikeCode(
     session: BrowserToolSession,
     code: String
 ): String {
-    val expression =
+    fun buildScript(runner: String): String =
         """
         (async function() {
             const isVisible = (el) => {
@@ -2879,34 +2900,33 @@ internal fun StandardBrowserSessionTools.runPlaywrightLikeCode(
                     throw new Error("page.setViewportSize is not supported in browser_run_code. Use browser.resize instead.");
                 }
             };
-            const codeSource = ${quoteJs(code)};
-            const AsyncFunction = Object.getPrototypeOf(async function(){}).constructor;
-
-            let fn = null;
-            try {
-                const maybeFn = (0, eval)("(" + codeSource + ")");
-                if (typeof maybeFn === "function") {
-                    fn = maybeFn;
-                }
-            } catch (_) {}
-
-            let value;
-            if (fn) {
-                value = await fn(page);
-            } else {
-                const runner = new AsyncFunction("page", "console", codeSource);
-                value = await runner(page, console);
-            }
+$runner
+            const value = await operitRunner(page, console);
             return value == null ? "" : value;
         })()
         """.trimIndent()
-    return extractAsyncJsValue(
-        evaluateJavascriptAsync(
-            session.webView,
-            expression,
-            StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(15_000L)
-        )
-    )
+    val timeoutMs = StandardBrowserSessionTools.DEFAULT_TIMEOUT_MS.coerceAtLeast(15_000L)
+    // The code goes into the injected script as source, because pages with a strict Content
+    // Security Policy refuse eval() and new Function(). Code that is one expression is evaluated
+    // once: a function (any form, comments included) is called with page, any other value is the
+    // result. Only code the page cannot parse as an expression runs as an async function body,
+    // and a parse failure runs nothing, so no code runs twice.
+    val expressionForm =
+        "const operitExpressionValue = (\n" + code.trimEnd().trimEnd(';').trimEnd() + "\n);\n" +
+            "const operitRunner = typeof operitExpressionValue === \"function\"\n" +
+            "    ? operitExpressionValue\n" +
+            "    : async function() { return operitExpressionValue; };"
+    val bodyForm = "const operitRunner = async function(page, console) {\n" + code + "\n};"
+    try {
+        return extractAsyncJsValue(evaluateJavascriptAsync(session.webView, buildScript(expressionForm), timeoutMs))
+    } catch (_: BrowserScriptSyntaxException) {
+        // Statements such as "await page.click(); return 1" are not one expression.
+    }
+    return try {
+        extractAsyncJsValue(evaluateJavascriptAsync(session.webView, buildScript(bodyForm), timeoutMs))
+    } catch (_: BrowserScriptSyntaxException) {
+        throw RuntimeException("code has a JavaScript syntax error, so it did not run")
+    }
 }
 
 internal fun StandardBrowserSessionTools.parseHeaders(raw: String?): Map<String, String> {

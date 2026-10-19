@@ -690,13 +690,13 @@
       },
       {
         "name": "browser_run_code",
-        "description": "Run a Playwright-style code snippet against the current tab.",
+        "description": "Run a limited Playwright-style snippet against the current tab, not full Playwright.",
         "parameters": "",
         "parametersStructured": [
           {
             "name": "code",
             "type": "string",
-            "description": "Playwright-style JavaScript snippet",
+            "description": "A function that takes page, such as async (page) => { await page.locator('#login').click(); }, or a plain body that may use await and return",
             "required": true,
             "default": null
           }
