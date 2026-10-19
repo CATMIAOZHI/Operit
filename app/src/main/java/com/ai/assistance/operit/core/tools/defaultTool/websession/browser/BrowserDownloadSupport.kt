@@ -1110,7 +1110,7 @@ internal fun StandardBrowserSessionTools.startBrowserManagedDownload(
     if (userAgent.isNotBlank()) {
         headers["User-Agent"] = userAgent
     }
-    android.webkit.CookieManager.getInstance().getCookie(url)?.takeIf { it.isNotBlank() }?.let {
+    BrowserProfiles.cookieFor(session.profileName, url)?.takeIf { it.isNotBlank() }?.let {
         headers["Cookie"] = it
     }
     session.currentUrl.takeIf { it.isNotBlank() }?.let {

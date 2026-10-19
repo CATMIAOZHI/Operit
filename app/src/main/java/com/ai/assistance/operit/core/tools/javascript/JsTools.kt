@@ -161,6 +161,8 @@ fun getJsToolsDefinition(): String {
             },
             // 网络操作
             Net: {
+                // Browser calls pass the host-filled chat ID the way memory calls do, so an Orbit's
+                // package calls open and see only the tabs that use the Orbit's own logins.
                 httpGet: (url, ignoreSsl) => {
                     const params = { url, method: "GET" };
                     if (ignoreSsl !== undefined) params.ignore_ssl = ignoreSsl ? "true" : "false";
@@ -193,13 +195,13 @@ fun getJsToolsDefinition(): String {
                     if (params.headers !== undefined && typeof params.headers === 'object') {
                         params.headers = JSON.stringify(params.headers);
                     }
-                    return toolCall("browser_navigate", params);
+                    return toolCall("browser_navigate", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserNavigateBack: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserNavigateBack only accepts one options object");
                     }
-                    return toolCall("browser_navigate_back", options || {});
+                    return toolCall("browser_navigate_back", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserClick: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -246,19 +248,19 @@ fun getJsToolsDefinition(): String {
                     if (params.doubleClick !== undefined) {
                         params.doubleClick = !!params.doubleClick;
                     }
-                    return toolCall("browser_click", params);
+                    return toolCall("browser_click", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserClose: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserClose only accepts one options object");
                     }
-                    return toolCall("browser_close", options || {});
+                    return toolCall("browser_close", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserCloseAll: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
                         throw new Error("browserCloseAll only accepts one options object");
                     }
-                    return toolCall("browser_close_all", options || {});
+                    return toolCall("browser_close_all", Tools.Memory._withHostChat({ ...(options || {}) }));
                 },
                 browserConsoleMessages: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -274,7 +276,7 @@ fun getJsToolsDefinition(): String {
                     if (params.filename !== undefined && params.filename !== null) {
                         params.filename = String(params.filename);
                     }
-                    return toolCall("browser_console_messages", params);
+                    return toolCall("browser_console_messages", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserDrag: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -289,7 +291,7 @@ fun getJsToolsDefinition(): String {
                             throw new Error("browserDrag requires " + key);
                         }
                     });
-                    return toolCall("browser_drag", params);
+                    return toolCall("browser_drag", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserEvaluate: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -311,7 +313,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element && !params.ref) {
                         throw new Error("ref is required when element is provided");
                     }
-                    return toolCall("browser_evaluate", params);
+                    return toolCall("browser_evaluate", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserFileUpload: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -324,7 +326,7 @@ fun getJsToolsDefinition(): String {
                         }
                         params.paths = params.paths.map((path) => String(path));
                     }
-                    return toolCall("browser_file_upload", params);
+                    return toolCall("browser_file_upload", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserFillForm: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -334,7 +336,7 @@ fun getJsToolsDefinition(): String {
                     if (!Array.isArray(params.fields) || params.fields.length === 0) {
                         throw new Error("browserFillForm requires a non-empty fields array");
                     }
-                    return toolCall("browser_fill_form", params);
+                    return toolCall("browser_fill_form", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserHandleDialog: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -347,7 +349,7 @@ fun getJsToolsDefinition(): String {
                     if (params.promptText !== undefined && params.promptText !== null) {
                         params.promptText = String(params.promptText);
                     }
-                    return toolCall("browser_handle_dialog", params);
+                    return toolCall("browser_handle_dialog", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserHover: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -363,7 +365,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element !== undefined && params.element !== null) {
                         params.element = String(params.element);
                     }
-                    return toolCall("browser_hover", params);
+                    return toolCall("browser_hover", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserNetworkRequests: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -376,7 +378,7 @@ fun getJsToolsDefinition(): String {
                     if (params.filename !== undefined && params.filename !== null) {
                         params.filename = String(params.filename);
                     }
-                    return toolCall("browser_network_requests", params);
+                    return toolCall("browser_network_requests", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserPressKey: (keyOrOptions) => {
                     const params = typeof keyOrOptions === 'string' ? { key: keyOrOptions } : { ...(keyOrOptions || {}) };
@@ -386,7 +388,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.key) {
                         throw new Error("browserPressKey requires key");
                     }
-                    return toolCall("browser_press_key", params);
+                    return toolCall("browser_press_key", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserResize: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -396,7 +398,7 @@ fun getJsToolsDefinition(): String {
                     if (params.width === undefined || params.height === undefined) {
                         throw new Error("browserResize requires width and height");
                     }
-                    return toolCall("browser_resize", params);
+                    return toolCall("browser_resize", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserRunCode: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -409,7 +411,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.code) {
                         throw new Error("browserRunCode requires code");
                     }
-                    return toolCall("browser_run_code", params);
+                    return toolCall("browser_run_code", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserSelectOption: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -429,7 +431,7 @@ fun getJsToolsDefinition(): String {
                     if (params.element !== undefined && params.element !== null) {
                         params.element = String(params.element);
                     }
-                    return toolCall("browser_select_option", params);
+                    return toolCall("browser_select_option", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserSnapshot: (options) => {
                     if (options !== undefined && (typeof options !== 'object' || Array.isArray(options))) {
@@ -455,7 +457,7 @@ fun getJsToolsDefinition(): String {
                         }
                         params.depth = depth;
                     }
-                    return toolCall("browser_snapshot", params);
+                    return toolCall("browser_snapshot", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserTabs: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -468,7 +470,7 @@ fun getJsToolsDefinition(): String {
                     if (!params.action) {
                         throw new Error("browserTabs requires action");
                     }
-                    return toolCall("browser_tabs", params);
+                    return toolCall("browser_tabs", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserTakeScreenshot: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -496,7 +498,41 @@ fun getJsToolsDefinition(): String {
                     if (params.fullPage !== undefined) {
                         params.fullPage = !!params.fullPage;
                     }
-                    return toolCall("browser_take_screenshot", params);
+                    return toolCall("browser_take_screenshot", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserMouseClickXy: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserMouseClickXy only accepts one options object");
+                    }
+                    const params = { ...options };
+                    ["x", "y"].forEach((key) => {
+                        const value = Number(params[key]);
+                        if (!Number.isFinite(value)) {
+                            throw new Error("browserMouseClickXy requires numeric " + key);
+                        }
+                        params[key] = value;
+                    });
+                    if (params.doubleClick !== undefined) {
+                        params.doubleClick = !!params.doubleClick;
+                    }
+                    return toolCall("browser_mouse_click_xy", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserDevtools: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserDevtools only accepts one options object");
+                    }
+                    const params = { ...options };
+                    params.method = String(params.method || "").trim();
+                    if (!params.method) {
+                        throw new Error("browserDevtools requires method");
+                    }
+                    if (params.params !== undefined && params.params !== null && typeof params.params !== 'string') {
+                        params.params = JSON.stringify(params.params);
+                    }
+                    if (params.filename !== undefined && params.filename !== null) {
+                        params.filename = String(params.filename);
+                    }
+                    return toolCall("browser_devtools", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserType: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -522,7 +558,7 @@ fun getJsToolsDefinition(): String {
                     if (params.slowly !== undefined) {
                         params.slowly = !!params.slowly;
                     }
-                    return toolCall("browser_type", params);
+                    return toolCall("browser_type", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserWaitFor: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -542,7 +578,7 @@ fun getJsToolsDefinition(): String {
                     if (params.textGone !== undefined && params.textGone !== null) {
                         params.textGone = String(params.textGone);
                     }
-                    return toolCall("browser_wait_for", params);
+                    return toolCall("browser_wait_for", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 // 新增增强版HTTP请求
                 http: (options) => {

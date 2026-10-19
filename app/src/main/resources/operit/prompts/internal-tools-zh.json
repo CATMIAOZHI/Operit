@@ -809,6 +809,66 @@
         "notes": ""
       },
       {
+        "name": "browser_mouse_click_xy",
+        "description": "按页面截图上的像素坐标点按页面。先用 browser_take_screenshot 截取当前页面（不带 fullPage 和 ref），再用图上的坐标。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "x",
+            "type": "number",
+            "description": "横坐标，截图左边为 0",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "y",
+            "type": "number",
+            "description": "纵坐标，截图上边为 0",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "doubleClick",
+            "type": "boolean",
+            "description": "可选，是否连点两下",
+            "required": false,
+            "default": "false"
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
+        "name": "browser_devtools",
+        "description": "向当前标签页发送一条 Chrome DevTools 协议命令并返回结果。只返回本条命令的结果，不推送事件。只能用当前页面范围内的域；Target、Browser、Storage、Fetch 不可用。取响应内容前，先用 browser_network_requests 查到 requestId。",
+        "parameters": "",
+        "parametersStructured": [
+          {
+            "name": "method",
+            "type": "string",
+            "description": "命令名，格式 Domain.command",
+            "required": true,
+            "default": null
+          },
+          {
+            "name": "params",
+            "type": "string",
+            "description": "可选，命令参数，JSON 对象",
+            "required": false,
+            "default": null
+          },
+          {
+            "name": "filename",
+            "type": "string",
+            "description": "可选，结果太长时保存到这个文件",
+            "required": false,
+            "default": null
+          }
+        ],
+        "details": "",
+        "notes": ""
+      },
+      {
         "name": "browser_type",
         "description": "向可编辑元素输入文本。",
         "parameters": "",

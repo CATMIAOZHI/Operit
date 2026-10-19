@@ -229,6 +229,24 @@ export namespace Net {
     }): Promise<string>;
 
     /**
+     * Tap the page at pixel coordinates of a plain page screenshot.
+     */
+    function browserMouseClickXy(options: {
+        x: number;
+        y: number;
+        doubleClick?: boolean;
+    }): Promise<string>;
+
+    /**
+     * Send one Chrome DevTools Protocol command to the current tab. Only page-scoped domains work.
+     */
+    function browserDevtools(options: {
+        method: string;
+        params?: Record<string, unknown> | string;
+        filename?: string;
+    }): Promise<string>;
+
+    /**
      * Type text into an element by snapshot ref.
      */
     function browserType(options: {

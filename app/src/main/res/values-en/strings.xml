@@ -9567,6 +9567,11 @@
     <string name="orbit_emoji_group_flags">Flags</string>
     <string name="orbit_vault_row">Password vault</string>
     <string name="orbit_vault_row_desc">See and delete saved passwords and keys</string>
+    <string name="orbit_browser_share_login">Share browser logins with the app</string>
+    <string name="orbit_browser_share_login_off">Orbit uses its own logins, kept apart from the app\'s.</string>
+    <string name="orbit_browser_share_login_on">Orbit uses the app\'s logins. Its own logins are kept; turn this off to switch back.</string>
+    <string name="orbit_browser_share_login_unsupported">This phone\'s WebView can\'t keep logins apart, so Orbit shares the app\'s.</string>
+    <string name="web_session_tab_owner">%1$s\'s logins</string>
     <string name="orbit_import_row">Import memory from another AI</string>
     <string name="orbit_import_row_desc">Bring over what ChatGPT, Claude and others know about you</string>
     <string name="orbit_import_title">Import memory from another AI</string>

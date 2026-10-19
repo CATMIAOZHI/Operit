@@ -71,6 +71,8 @@ interface ToolResultMap {
 - `browser_wait_for` → `StringResultData`
 - `browser_snapshot` → `StringResultData`
 - `browser_take_screenshot` → `StringResultData`
+- `browser_mouse_click_xy` → `StringResultData`
+- `browser_devtools` → `StringResultData`
 - `browser_type` → `StringResultData`
 - `browser_tabs` → `StringResultData`
 - `multipart_request` → `HttpResponseData`
@@ -79,6 +81,8 @@ interface ToolResultMap {
 浏览器包提供 `browser:take_screenshot`，底层调用 `Tools.Net.browserTakeScreenshot`。
 不传参数时截取当前页面；`fullPage=true` 截取完整页面；元素截图需要同时提供最新快照的 `ref` 和 `element`，不能与 `fullPage` 合用。
 返回值包含图片绝对路径，可交给 `read_file` 查看。`browser:run_code` 是有限的 Playwright 风格接口，不支持 `page.screenshot` 或 `page.addStyleTag`；截图使用上述工具，注入样式使用 `page.evaluate` 创建 `style` 元素。
+页面截图优先通过应用内 WebView 的 DevTools 获取，能拍到视频、画布等图层；拿不到时回退到 WebView 重绘。`browser:click_xy` 接收这张页面截图上的像素坐标并点按页面。
+`browser:devtools` 向当前标签页发送一条 Chrome DevTools 协议命令，只允许当前页面范围内的域；Target、Browser、Storage、Fetch 不可用。DevTools 连接后，`browser:network_requests` 会显示每个请求的状态码或失败原因。
 
 ### 系统操作
 

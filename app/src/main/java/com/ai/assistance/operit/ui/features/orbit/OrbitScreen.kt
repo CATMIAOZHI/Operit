@@ -1144,6 +1144,25 @@ private fun OrbitSettingsSheet(
                         searchable = false,
                         onClick = onOpenImport,
                     )
+                    SettingsRowDivider(inset = false)
+                    val separateLoginsSupported = remember {
+                        com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()
+                    }
+                    SettingsSwitchRow(
+                        title = stringResource(R.string.orbit_browser_share_login),
+                        subtitle =
+                            when {
+                                !separateLoginsSupported -> stringResource(R.string.orbit_browser_share_login_unsupported)
+                                orbit.browserSharesMainLogin -> stringResource(R.string.orbit_browser_share_login_on)
+                                else -> stringResource(R.string.orbit_browser_share_login_off)
+                            },
+                        checked = orbit.browserSharesMainLogin || !separateLoginsSupported,
+                        enabled = separateLoginsSupported,
+                        searchable = false,
+                        onCheckedChange = { shared ->
+                            scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
+                        },
+                    )
                 }
             }
 

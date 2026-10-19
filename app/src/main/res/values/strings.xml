@@ -9544,6 +9544,11 @@
     <string name="orbit_emoji_group_flags">旗帜</string>
     <string name="orbit_vault_row">密码保险箱</string>
     <string name="orbit_vault_row_desc">查看和删除保存的密码和密钥</string>
+    <string name="orbit_browser_share_login">浏览器和主应用共用登录</string>
+    <string name="orbit_browser_share_login_off">现在 Orbit 用自己的一套登录，和主应用互不相通。</string>
+    <string name="orbit_browser_share_login_on">现在 Orbit 用主应用的登录。它自己那套登录还留着，关掉就换回来。</string>
+    <string name="orbit_browser_share_login_unsupported">这台手机的系统 WebView 不支持分开登录，Orbit 只能和主应用共用。</string>
+    <string name="web_session_tab_owner">%1$s 的登录</string>
     <string name="orbit_import_row">从别的 AI 导入记忆</string>
     <string name="orbit_import_row_desc">把 ChatGPT、Claude 对你的了解带过来</string>
     <string name="orbit_import_title">从别的 AI 导入记忆</string>

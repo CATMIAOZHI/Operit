@@ -20,7 +20,9 @@ internal data class WebSessionBrowserTab(
     val title: String,
     val url: String,
     val isActive: Boolean,
-    val hasSslError: Boolean
+    val hasSslError: Boolean,
+    /** The Orbit whose own logins this tab uses; null for the main app's tabs. */
+    val ownerLabel: String? = null
 )
 
 @Immutable
