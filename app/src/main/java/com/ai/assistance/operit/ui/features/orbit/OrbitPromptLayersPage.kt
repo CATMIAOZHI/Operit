@@ -86,6 +86,12 @@ private class LayerInfo(
 private enum class PromptView { FULL, RUNTIME, TOOLS }
 
 /**
+ * The last sizes read, for one Orbit only. Coming back from a file shows them at once while they
+ * are read again, so the list never blinks into a spinner.
+ */
+@Volatile private var layerCache: Pair<String, LayerInfo>? = null
+
+/**
  * What goes into Orbit's system prompt, in the order it is sent. Every layer is always included.
  * Files open their editor; the parts the app writes open a read-only view of the text it injected.
  */
@@ -103,8 +109,10 @@ internal fun OrbitPromptLayersPage(
     var reload by remember { mutableIntStateOf(0) }
     val context = LocalContext.current
     // null while loading; a failure shows a retry instead of spinning forever.
-    val info by produceState<Result<LayerInfo>?>(null, orbit.id, reload) {
-        value = null
+    val info by produceState(
+        layerCache?.takeIf { it.first == orbit.id }?.let { Result.success(it.second) }, orbit.id, reload,
+    ) {
+        if (value?.isSuccess != true) value = null
         value = withContext(Dispatchers.IO) { runCatching {
             fun bytes(text: String) = text.toByteArray(Charsets.UTF_8).size.toLong()
             LayerInfo(
@@ -121,6 +129,7 @@ internal fun OrbitPromptLayersPage(
                     .latestSystem(CharacterCardManager.DEFAULT_CHARACTER_CARD_ID),
             )
         } }.onFailure { if (it is CancellationException) throw it }
+            .onSuccess { layerCache = orbit.id to it }
     }
     AnimatedContent(
         targetState = view,
@@ -166,6 +175,7 @@ private fun LayersList(
     val replying = remember(orbit) { OrbitPackages.replying(context, orbit) }
     val busy by replying.collectAsState(initial = false)
     var refreshing by remember { mutableStateOf(false) }
+    var confirmRefresh by remember { mutableStateOf(false) }
     fun size(bytes: Long?) = bytes?.let { Formatter.formatShortFileSize(context, it) }
     fun chars(text: String?) = text?.let { Formatter.formatShortFileSize(context, it.toByteArray(Charsets.UTF_8).size.toLong()) }
     val listState = rememberLazyListState()
@@ -186,9 +196,7 @@ private fun LayersList(
         }
         if (loaded == null) {
             item(key = "loading") {
-                Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator()
-                }
+                OrbitDelayedSpinner()
             }
             return@LazyColumn
         }
@@ -199,9 +207,12 @@ private fun LayersList(
         }
         item(key = "layers") {
             val sections = info.saved?.sections.orEmpty()
+            // The order they are sent in: what rarely changes first, what changes often last.
             LayerCard {
-                LayerRow(1, stringResource(R.string.orbit_layer_soul), "SOUL.md",
-                    stringResource(R.string.orbit_layer_soul_desc), size(info.soulBytes), onOpenSoul)
+                LayerRow(1, stringResource(R.string.orbit_layer_base), OrbitPromptFiles.PROMPT_FILE,
+                    stringResource(R.string.orbit_layer_base_desc) +
+                        if (info.promptCustom) " · " + stringResource(R.string.orbit_layer_custom) else "",
+                    size(info.promptBytes), onOpenPrompt)
                 LayerDivider()
                 LayerRow(2, stringResource(R.string.orbit_layer_tools), null,
                     stringResource(R.string.orbit_layer_tools_desc), chars(sections["tools"])) { onView(PromptView.TOOLS) }
@@ -209,13 +220,11 @@ private fun LayersList(
                 LayerRow(3, stringResource(R.string.orbit_layer_runtime), null,
                     stringResource(R.string.orbit_layer_runtime_desc), chars(sections["runtime"])) { onView(PromptView.RUNTIME) }
                 LayerDivider()
-                LayerRow(4, stringResource(R.string.orbit_layer_base), OrbitPromptFiles.PROMPT_FILE,
-                    stringResource(R.string.orbit_layer_base_desc) +
-                        if (info.promptCustom) " · " + stringResource(R.string.orbit_layer_custom) else "",
-                    size(info.promptBytes), onOpenPrompt)
-                LayerDivider()
-                LayerRow(5, stringResource(R.string.orbit_layer_identity), OrbitPromptFiles.IDENTITY_FILE,
+                LayerRow(4, stringResource(R.string.orbit_layer_identity), OrbitPromptFiles.IDENTITY_FILE,
                     stringResource(R.string.orbit_layer_identity_desc), size(info.identityBytes), onOpenIdentity)
+                LayerDivider()
+                LayerRow(5, stringResource(R.string.orbit_layer_soul), "SOUL.md",
+                    stringResource(R.string.orbit_layer_soul_desc), size(info.soulBytes), onOpenSoul)
                 LayerDivider()
                 LayerRow(6, stringResource(R.string.orbit_layer_memory), "memory.md",
                     stringResource(R.string.orbit_layer_memory_desc), size(info.memoryBytes), onOpenMemory)
@@ -242,24 +251,51 @@ private fun LayersList(
                     enabled = !busy && !refreshing,
                 ) {
                     if (busy || refreshing) return@ActionRow
-                    refreshing = true
-                    scope.launch {
-                        try {
-                            // Every chat of this Orbit reads its files and tools again on its next reply.
-                            orbit.talkChatIds.forEach { LearningPromptSnapshotRepository(context, it).delete() }
-                            Toast.makeText(context, R.string.orbit_prompt_refreshed, Toast.LENGTH_SHORT).show()
-                            onReload()
-                        } catch (cancelled: CancellationException) {
-                            throw cancelled
-                        } catch (_: Exception) {
-                            Toast.makeText(context, R.string.orbit_prompt_refresh_failed, Toast.LENGTH_SHORT).show()
-                        } finally {
-                            refreshing = false
-                        }
-                    }
+                    confirmRefresh = true
                 }
             }
         }
+    }
+
+    if (confirmRefresh) {
+        TaskConfirmSheet(
+            icon = "refresh-cw",
+            title = stringResource(R.string.orbit_prompt_refresh_confirm_title),
+            message = stringResource(R.string.orbit_prompt_refresh_confirm_message),
+            confirmText = stringResource(R.string.orbit_prompt_refresh),
+            dismissText = stringResource(R.string.cancel),
+            destructive = false,
+            onDismiss = { confirmRefresh = false },
+            onConfirm = {
+                confirmRefresh = false
+                if (busy || refreshing) return@TaskConfirmSheet
+                refreshing = true
+                scope.launch {
+                    try {
+                        // Every chat of this Orbit reads its files and tools again on its next reply.
+                        orbit.talkChatIds.forEach { LearningPromptSnapshotRepository(context, it).delete() }
+                        Toast.makeText(context, R.string.orbit_prompt_refreshed, Toast.LENGTH_SHORT).show()
+                        onReload()
+                    } catch (cancelled: CancellationException) {
+                        throw cancelled
+                    } catch (_: Exception) {
+                        Toast.makeText(context, R.string.orbit_prompt_refresh_failed, Toast.LENGTH_SHORT).show()
+                    } finally {
+                        refreshing = false
+                    }
+                }
+            },
+        )
+    }
+}
+
+/** A spinner that shows only when loading takes a while, so a quick load never flashes one. */
+@Composable
+internal fun OrbitDelayedSpinner() {
+    var slow by remember { mutableStateOf(false) }
+    androidx.compose.runtime.LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+    Box(Modifier.fillMaxWidth().padding(top = 60.dp), contentAlignment = Alignment.Center) {
+        if (slow) CircularProgressIndicator()
     }
 }
 

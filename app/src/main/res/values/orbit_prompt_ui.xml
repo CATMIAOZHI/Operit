@@ -11,6 +11,8 @@
     <string name="orbit_prompt_refresh">刷新提示词</string>
     <string name="orbit_prompt_refresh_desc">一段对话里，记忆、资料和工具会先固定下来。刷新后 Orbit 下次回复时重新读取。</string>
     <string name="orbit_prompt_refresh_busy">Orbit 正在回复，等它说完再刷新。</string>
+    <string name="orbit_prompt_refresh_confirm_title">刷新提示词？</string>
+    <string name="orbit_prompt_refresh_confirm_message">Orbit 下次回复时会重新读取记忆、资料和工具，并重新生成整份提示词。这一次回复会慢一点，也会多用一些 token。</string>
     <string name="orbit_prompt_refreshed">已刷新，下次回复时生效</string>
     <string name="orbit_prompt_refresh_failed">刷新失败，请稍后再试</string>
     <string name="orbit_prompt_copied">已复制</string>
@@ -25,7 +27,15 @@
     <string name="orbit_packages_search">搜索工具包</string>
     <string name="orbit_packages_count">已开启 %1$d / %2$d</string>
     <string name="orbit_packages_empty">没有找到工具包</string>
-    <string name="orbit_packages_needs_container">需要先在主应用开启「%1$s」才能用</string>
+    <string name="orbit_packages_folder_automatic">自动化</string>
+    <string name="orbit_packages_folder_experimental">实验功能</string>
+    <string name="orbit_packages_folder_draw">绘图</string>
+    <string name="orbit_packages_folder_other">其他</string>
+    <string name="orbit_packages_folder_opened">已展开</string>
+    <string name="orbit_packages_folder_closed">已折叠</string>
+    <string name="orbit_packages_needs_missing">「%1$s」需要的插件没装或版本不对，暂时开不了</string>
+    <string name="orbit_packages_still_needed">「%1$s」还在被 %2$s 使用，请先关掉它们</string>
+    <string name="orbit_packages_list_separator">、</string>
     <string name="orbit_packages_save_failed">没能保存这个开关，已恢复原样</string>
     <string name="orbit_packages_imported">已导入主应用的开关</string>
     <string name="orbit_packages_import_failed">导入失败，请稍后再试</string>

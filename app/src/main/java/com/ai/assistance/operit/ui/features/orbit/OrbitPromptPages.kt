@@ -199,7 +199,12 @@ internal fun OrbitFilePage(
                 Text(stringResource(R.string.orbit_file_load_failed))
                 TextButton(onClick = { reload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
             }
-            content == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
+            content == null -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+                // Files load in a moment; a spinner only for a slow read, so a page never flashes one.
+                var slow by remember { mutableStateOf(false) }
+                LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+                if (slow) CircularProgressIndicator()
+            }
             editing -> OutlinedTextField(
                 value = draft,
                 onValueChange = {

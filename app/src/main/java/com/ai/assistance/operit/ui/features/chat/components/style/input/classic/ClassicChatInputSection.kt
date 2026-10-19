@@ -96,6 +96,7 @@ import com.ai.assistance.operit.ui.features.chat.components.style.input.common.H
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.SuppressFieldLongPress
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.holdToTalk
 import com.ai.assistance.operit.ui.features.chat.components.style.input.common.rememberKeyboardDown
+import com.ai.assistance.operit.ui.features.chat.components.style.input.agent.collapseWidth
 import androidx.compose.ui.layout.onGloballyPositioned
 import kotlinx.coroutines.delay
 import com.ai.assistance.operit.data.preferences.ApiPreferences
@@ -264,12 +265,15 @@ fun ClassicChatInputSection(
 
     val showQueueAction = isProcessing && canSendMessage
     val showCancelAction = isProcessing && !showQueueAction
-    val sendButtonEnabled =
-        when {
-            isProcessing -> true // Queue / Cancel button
-            canSendMessage -> true // Send button is always enabled if there's content
-            else -> true // Mic button
-        }
+    // Orbit has no voice conversation (it would open the floating window and show its tool calls).
+    // With nothing to send, its round button slides away and only the microphone stays.
+    val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
+    val actionSlot by androidx.compose.animation.core.animateFloatAsState(
+        targetValue = if (hideVoiceEntry) 0f else 1f,
+        animationSpec = androidx.compose.animation.core.tween(180),
+        label = "actionSlot",
+    )
+    val sendButtonEnabled = !hideVoiceEntry
 
     val voicePermissionLauncher =
         rememberLauncherForActivityResult(
@@ -961,12 +965,13 @@ fun ClassicChatInputSection(
                             )
                         }
 
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(6.dp * actionSlot))
 
                         // Send button (发送按钮) - 确保圆形
                         Box(
                     modifier =
                     Modifier
+                        .collapseWidth(actionSlot)
                         .size(36.dp)
                         .clip(CircleShape)
                         .background(

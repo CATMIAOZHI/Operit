@@ -11,6 +11,8 @@
     <string name="orbit_prompt_refresh">Refresh prompt</string>
     <string name="orbit_prompt_refresh_desc">Within a conversation, memory, profile and tools are fixed at the start. After a refresh, Orbit reads them again on its next reply.</string>
     <string name="orbit_prompt_refresh_busy">Orbit is replying. Refresh once it is done.</string>
+    <string name="orbit_prompt_refresh_confirm_title">Refresh the prompt?</string>
+    <string name="orbit_prompt_refresh_confirm_message">On its next reply, Orbit reads its memory, profile and tools again and builds the whole prompt anew. That reply is a little slower and uses more tokens.</string>
     <string name="orbit_prompt_refreshed">Refreshed. It applies to the next reply</string>
     <string name="orbit_prompt_refresh_failed">Could not refresh. Try again later</string>
     <string name="orbit_prompt_copied">Copied</string>
@@ -25,7 +27,15 @@
     <string name="orbit_packages_search">Search packages</string>
     <string name="orbit_packages_count">%1$d of %2$d on</string>
     <string name="orbit_packages_empty">No packages found</string>
-    <string name="orbit_packages_needs_container">Needs “%1$s” turned on in the main app first</string>
+    <string name="orbit_packages_folder_automatic">Automation</string>
+    <string name="orbit_packages_folder_experimental">Experimental</string>
+    <string name="orbit_packages_folder_draw">Drawing</string>
+    <string name="orbit_packages_folder_other">Other</string>
+    <string name="orbit_packages_folder_opened">Expanded</string>
+    <string name="orbit_packages_folder_closed">Collapsed</string>
+    <string name="orbit_packages_needs_missing">\"%1$s\" needs a plugin that is missing or the wrong version, so it can\'t be switched on yet</string>
+    <string name="orbit_packages_still_needed">\"%1$s\" is still used by %2$s. Switch those off first</string>
+    <string name="orbit_packages_list_separator">", "</string>
     <string name="orbit_packages_save_failed">Could not save that switch. It is back as it was</string>
     <string name="orbit_packages_imported">Imported the main app\'s switches</string>
     <string name="orbit_packages_import_failed">Could not import. Try again later</string>

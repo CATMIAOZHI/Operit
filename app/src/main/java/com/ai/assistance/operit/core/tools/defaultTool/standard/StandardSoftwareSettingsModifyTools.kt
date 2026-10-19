@@ -343,14 +343,23 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                     error = "'$packageName' is a ToolPkg container; turn it on or off in the main app.",
                 )
             }
-            val before = kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                val previous = packageName in packages.enabled(context, orbit.id, packageManager)
-                packages.setEnabled(context, orbit.id, packageManager, packageName, enabled)
-                previous
+            val outcome = runCatching {
+                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
+                    val previous = packageName in packages.enabled(context, orbit.id, packageManager)
+                    previous to packages.setEnabled(context, orbit.id, packageManager, packageName, enabled)
+                }
             }
+            val (before, added) = outcome.getOrElse { error ->
+                return ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
+                    error = error.message ?: "Could not switch '$packageName' for this Orbit.",
+                )
+            }
+            val alsoOn = added - packageName
             // Orbit is mid-reply here, so its prompt is rebuilt once this reply ends.
             packages.refreshPromptWhenIdle(context, orbit)
-            val needs = packages.missingContainer(packageManager, packageName)
             return ToolResult(
                 toolName = tool.name,
                 success = true,
@@ -360,7 +369,7 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                     previousEnabled = before,
                     currentEnabled = enabled,
                     message = "Switched ${if (enabled) "on" else "off"} for this Orbit only; the main app is unchanged." +
-                        (needs?.takeIf { enabled }?.let { " It needs the ToolPkg container '$it' turned on in the main app before it can be used." } ?: ""),
+                        if (alsoOn.isNotEmpty()) " Also switched on what it requires: ${alsoOn.joinToString(", ")}." else "",
                 ),
             )
         }

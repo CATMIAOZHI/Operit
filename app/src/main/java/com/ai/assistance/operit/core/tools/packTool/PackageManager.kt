@@ -931,6 +931,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     }
                 }
                 addAll(enabledContainerNames)
+                // Plugins an Orbit has switched on keep their files even while the main app has them off.
+                addAll(
+                    com.ai.assistance.operit.features.orbit.OrbitPackages.containersInUse(context, this@PackageManager)
+                        .filter(toolPkgContainers::containsKey)
+                )
             }
 
             val expectedCacheDirNames = retainedContainerNames.map(::toolPkgCacheDirName).toSet()
@@ -1590,8 +1595,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         ensureInitialized()
         val normalizedContainerPackageName = normalizePackageName(containerPackageName)
         val runtime = toolPkgContainers[normalizedContainerPackageName] ?: return null
-        val enabledSet = getEnabledPackageNameSetInternal()
-        if (!enabledSet.contains(runtime.packageName)) {
+        // An Orbit may use a plugin the main app has switched off.
+        if (!isToolPkgContainerUsable(runtime.packageName)) {
             return null
         }
         if (runtime.mainEntry.isBlank()) {
@@ -3119,16 +3124,17 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             return "ToolPkg container '$normalizedPackageName' is not a package and cannot be activated."
         }
 
-        // First check if packageName is a standard enabled package (priority)
         val enabledPackageNames = getEnabledPackageNames()
+        // An Orbit chat uses the Orbit's own package list; any other caller uses the main app's.
+        val orbitPackages = orbitPackagesFor(callerChatId)
         val subpackageRuntime = toolPkgSubpackageByPackageName[normalizedPackageName]
-        if (subpackageRuntime != null &&
+        // An Orbit's list stands on its own: a plugin subpackage it switched on works even while the
+        // plugin is off in the main app (its files are prepared on demand).
+        if (subpackageRuntime != null && orbitPackages == null &&
             !enabledPackageNames.contains(subpackageRuntime.containerPackageName)
         ) {
             return "ToolPkg container '${subpackageRuntime.containerPackageName}' is not enabled. Package '$normalizedPackageName' is inactive."
         }
-        // An Orbit chat uses the Orbit's own package list; any other caller uses the main app's.
-        val orbitPackages = orbitPackagesFor(callerChatId)
         if (orbitPackages != null && availablePackages.containsKey(normalizedPackageName) &&
             normalizedPackageName !in orbitPackages) {
             return "Package '$normalizedPackageName' is switched off for this Orbit."
@@ -3783,6 +3789,33 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
     private fun isPackageOnForChat(packageName: String, chatId: String?): Boolean =
         orbitPackagesFor(chatId)?.contains(normalizePackageName(packageName)) ?: isPackageEnabled(packageName)
 
+    /** Whether a plugin's files and scripts may be used: on in the main app, or used by an Orbit. */
+    internal fun isToolPkgContainerUsable(containerName: String): Boolean =
+        getEnabledPackageNameSetInternal().contains(containerName) ||
+            com.ai.assistance.operit.features.orbit.OrbitPackages.usesContainer(context, this, containerName)
+
+    /** The plugin a package belongs to, or the name itself when it is a plugin; null otherwise. */
+    internal fun toolPkgContainerOf(packageName: String): String? {
+        val normalized = normalizePackageName(packageName)
+        return toolPkgSubpackageByPackageName[normalized]?.containerPackageName
+            ?: normalized.takeIf(toolPkgContainers::containsKey)
+    }
+
+    /**
+     * Everything an Orbit must also switch on for [packageName] to work: the plugins it requires and
+     * their default subpackages. Throws with a readable reason when a requirement is missing.
+     */
+    internal fun orbitRequiredPackages(packageName: String): List<String> {
+        ensureInitialized()
+        val required = collectRequiredToolPkgPackages(normalizePackageName(packageName))
+        val result = linkedSetOf<String>()
+        required.forEach { name ->
+            result += name
+            toolPkgContainers[name]?.subpackages?.filter { it.enabledByDefault }?.forEach { result += it.packageName }
+        }
+        return result.toList()
+    }
+
     /** Checks if a package is enabled */
     fun isPackageEnabled(packageName: String): Boolean {
         ensureInitialized()
@@ -3828,8 +3861,12 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             saveEnabledPackageNames(currentPackages.toList())
             saveToolPkgSubpackageStates(subpackageStates)
             addToDisabledIfDefaultEnabled(normalizedPackageName)
-            deleteToolPkgCacheDir(normalizedPackageName)
-            destroyToolPkgExecutionEngines(normalizedPackageName)
+            // An Orbit keeps its own switches: while one still uses this plugin, its files and running
+            // engines stay so the Orbit's tools keep working.
+            if (!com.ai.assistance.operit.features.orbit.OrbitPackages.usesContainer(context, this, normalizedPackageName)) {
+                deleteToolPkgCacheDir(normalizedPackageName)
+                destroyToolPkgExecutionEngines(normalizedPackageName)
+            }
             ReadingCompanionAutoCommentary.cancelIfDisabledPackage(
                 context = context,
                 packageName = normalizedPackageName,
