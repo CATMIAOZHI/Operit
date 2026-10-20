@@ -7332,27 +7332,12 @@
     <string name="webvisit_title">网页访问中</string>
     <string name="webvisit_url_label">访问网址:</string>
     <string name="webvisit_status_loading_page">正在加载页面...</string>
-    <string name="webvisit_status_waiting_page">等待页面完全加载...</string>
-    <string name="webvisit_status_captcha">请在%1$d秒内完成人机验证...</string>
-    <string name="webvisit_status_extracting">正在提取内容，%1$d秒后自动继续...</string>
-    <string name="webvisit_status_extracted_waiting">内容已提取，等待手动继续...</string>
-    <string name="webvisit_status_waiting_extraction">页面已加载，等待提取内容...</string>
+    <string name="webvisit_status_extracting">已读取，等待更多内容加载，%1$d秒后自动继续...</string>
+    <string name="webvisit_status_waiting_extraction">正在读取页面内容...</string>
     <string name="webvisit_page_title">页面标题: %1$s</string>
-    <string name="webvisit_button_cancel_countdown">取消倒计时</string>
-    <string name="webvisit_button_cancel_auto">取消自动</string>
     <string name="webvisit_button_cancel">取消</string>
     <string name="webvisit_button_minimize">缩小</string>
-    <string name="webvisit_button_continue_now">立即继续 (%1$ds)</string>
-    <string name="webvisit_button_continue">继续处理</string>
-    <string name="webvisit_button_manual_extract">手动提取</string>
-    <string name="webvisit_button_extract">提取内容</string>
-    <string name="webvisit_cancelled">操作已取消</string>
-    <string name="webvisit_webview_unavailable">WebView不可用，无法提取内容。</string>
     <string name="webvisit_help_loading_page">正在加载页面，请稍候...</string>
-    <string name="webvisit_help_countdown">正在自动倒计时，点击\"取消倒计时\"可停止自动处理</string>
-    <string name="webvisit_help_cancel_auto">点击\"取消自动\"可切换到手动模式</string>
-    <string name="webvisit_help_manual_mode">已切换到手动模式，点击\"手动提取\"继续</string>
-    <string name="webvisit_help_extracted">内容已提取完成，点击\"继续处理\"继续</string>
 
     <!-- SiliconFlow Voice Provider -->
     <string name="siliconflow_voice_alex">Alex - 沉稳男声</string>
@@ -9251,14 +9236,14 @@
     <string name="orbit_soul_user_edit">你手动修改</string>
     <string name="orbit_identity_note">关于这个文件：这是 Orbit 对自己的描述，记着你给它起的名字、它的角色和给人的感觉。Orbit 每次对话都会读它，保持前后一致；你们一起决定改变时，它会更新这里；名字只能由 Orbit 自己改，这里会跟着同步。你可以随时编辑。这段说明不属于文件内容。</string>
     <string name="orbit_soul_note">关于这个文件：这是 Orbit 的人格，写着它在每次对话里坚持的价值观和习惯。它最初来自角色卡，Orbit 会慢慢完善它，改了会告诉你。你可以随时编辑。这段说明不属于文件内容。</string>
-    <string name="orbit_prompt_note">关于这个文件：这是 Orbit 的工作手册，写着它怎么主动做事、安排提醒、记住东西和说话。没改过时会跟着应用更新；保存后就一直用你的版本。这段说明不属于文件内容。</string>
+    <string name="orbit_prompt_note">关于这个文件：这是 Orbit 的工作手册，写着它怎么主动做事、安排提醒、记住东西和说话。它由应用内置、只读，始终跟着应用更新；文件夹里的 PROMPT.md 被谁改了都不会生效。这段说明不属于文件内容。</string>
+    <string name="orbit_file_read_only">只读</string>
     <string name="orbit_section_prompts">提示词</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
     <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，全部始终包含。点开可以查看或编辑。</string>
     <string name="orbit_layer_base">基础指令</string>
     <string name="orbit_layer_base_desc">主动、提醒、记忆、说话方式和安全</string>
-    <string name="orbit_layer_custom">已修改</string>
     <string name="orbit_layer_soul">个性</string>
     <string name="orbit_layer_soul_desc">价值观和习惯</string>
     <string name="orbit_layer_identity">身份</string>
@@ -9553,6 +9538,8 @@
     <string name="orbit_dev_view_raw">查看原文</string>
     <string name="orbit_dev_view_raw_hint">这条消息存在记录里的原样：思考、工具调用和隐藏标记都在。只能查看，不能修改。</string>
     <string name="orbit_dev_view_raw_copied">已复制原文</string>
+    <string name="orbit_dev_chats_search">搜索侧聊</string>
+    <string name="orbit_dev_chats_none">没有找到这个聊天</string>
     <string name="orbit_approval_vault_login">保存了登录</string>
     <string name="orbit_approval_vault_key">保存了 API 密钥</string>
     <string name="orbit_approval_state_approved">已同意</string>

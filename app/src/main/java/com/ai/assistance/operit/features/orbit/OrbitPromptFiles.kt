@@ -16,8 +16,8 @@ import kotlinx.coroutines.withContext
 /**
  * An Orbit's own system files, kept in its folder next to Soul.md:
  *
- * - PROMPT.md: how Orbit works. Missing means the built-in default in the app's language, so app
- *   updates still reach it until the user edits it.
+ * - PROMPT.md: how Orbit works. Always the app's built-in handbook in the app's language and read
+ *   only: a copy in the folder, edited by anyone, is never read, so app updates always reach it.
  * - IDENTITY.md: Orbit's name, character, vibe and signature emoji, written by Orbit and the user.
  *
  * Every layer always goes into the system prompt; none of them can be left out.
@@ -62,24 +62,12 @@ object OrbitPromptFiles {
     fun defaultPrompt(context: Context): String =
         if (useEnglish(context)) OrbitPromptDefaults.PROMPT_EN else OrbitPromptDefaults.PROMPT_ZH
 
-    /** PROMPT.md as Orbit reads it: the user's copy, or the built-in default. */
-    suspend fun prompt(context: Context, orbitId: String): String =
-        read(File(dir(context, orbitId), PROMPT_FILE))?.takeIf { it.isNotBlank() } ?: defaultPrompt(context)
-
-    suspend fun isPromptCustom(context: Context, orbitId: String): Boolean =
-        read(File(dir(context, orbitId), PROMPT_FILE))?.isNotBlank() == true
-
-    suspend fun savePrompt(context: Context, orbitId: String, body: String) {
-        val file = File(dir(context, orbitId), PROMPT_FILE)
-        // Saving the default unchanged keeps following app updates.
-        if (body.trim() == defaultPrompt(context).trim()) resetPrompt(context, orbitId)
-        else write(file, body)
-    }
-
-    suspend fun resetPrompt(context: Context, orbitId: String) = withContext(Dispatchers.IO) {
-        val file = File(dir(context, orbitId), PROMPT_FILE)
-        lock(file).withLock { file.delete(); Unit }
-    }
+    /**
+     * PROMPT.md as Orbit reads it: always the built-in handbook. A PROMPT.md that Orbit or anyone
+     * wrote into the folder is ignored, so it cannot change how Orbit works.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun prompt(context: Context, orbitId: String): String = defaultPrompt(context)
 
     fun identityTemplate(context: Context, name: String): String =
         (if (useEnglish(context)) OrbitPromptDefaults.IDENTITY_EN else OrbitPromptDefaults.IDENTITY_ZH)

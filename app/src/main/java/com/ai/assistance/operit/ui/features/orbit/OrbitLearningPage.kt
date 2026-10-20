@@ -78,7 +78,7 @@ private val learningGroups = listOf(
  * Each row pushes its page from the right, like the other pages under the profile.
  */
 @Composable
-internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
+internal fun OrbitLearningPage(spaceId: String, mainChatId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
     // The open pages, top last, one per line: a library page, or the skills and a skill's history.
     var pages by rememberSaveable { mutableStateOf("") }
     val stack = remember(pages) { pages.split('\n').filter { it.isNotEmpty() } }
@@ -109,12 +109,18 @@ internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit, onDraft: (St
             }
             shown.startsWith(SKILL_HISTORY) -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(
                 spaceId, onDismiss = close, initialSkillName = shown.removePrefix(SKILL_HISTORY))
+            // Extraction records stay in Orbit's look and open their run here, read only.
+            shown == "logs" -> OrbitMemoryLogsPage(spaceId, mainChatId, close) { log ->
+                pages = (stack + (MEMORY_LOG + log.id)).joinToString("\n")
+            }
+            shown.startsWith(MEMORY_LOG) -> OrbitMemoryLogPage(spaceId, shown.removePrefix(MEMORY_LOG), close)
             else -> com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryDestination(shown, spaceId, close)
         }
     }
 }
 
 private const val SKILL_HISTORY = "skill-history:"
+private const val MEMORY_LOG = "memory-log:"
 
 @Composable
 private fun OrbitLearningHome(listState: LazyListState, onBack: () -> Unit, onOpen: (String) -> Unit) {

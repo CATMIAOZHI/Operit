@@ -94,6 +94,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -269,6 +270,26 @@ private fun OrbitChatPage(
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
+    // Leaving the developer view: 0 is in place, 1 is shrunk to the right and faded out. The back
+    // swipe drives it with the finger; once out of sight the chat switches back to Orbit's look and
+    // grows back in.
+    val devLeave = remember(orbit.id) { androidx.compose.animation.core.Animatable(0f) }
+    var devLeaving by remember(orbit.id) { mutableStateOf(false) }
+    val devScope = rememberCoroutineScope()
+    fun leaveDevView() {
+        if (devLeaving) return
+        devLeaving = true
+        devScope.launch {
+            try {
+                val rest = (OrbitMotion.PUSH_MS * (1f - devLeave.value)).toInt().coerceAtLeast(120)
+                devLeave.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
+                devChatView = false
+                devLeave.animateTo(0f, tween(260, easing = OrbitMotion.Easing))
+            } finally {
+                devLeaving = false
+            }
+        }
+    }
     // Reports that reached a chat the user is not looking at show as a dot until it is opened.
     val unreadChats by com.ai.assistance.operit.features.orbit.OrbitDelivery.unreadChats.collectAsState()
     val reactions by remember(orbit.id, currentChatId) {
@@ -389,12 +410,42 @@ private fun OrbitChatPage(
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
         BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) { tab = OrbitTab.CHAT }
-        BackHandler(enabled = devView && !showProfile && !showChats && stack.isEmpty()) { devChatView = false }
+        // The back swipe shrinks the developer view to the right under the finger, like leaving a page.
+        // Stays on while the view is leaving, so a second back is swallowed here instead of leaving Orbit.
+        androidx.activity.compose.PredictiveBackHandler(
+            enabled = devLeaving || (devView && !showProfile && !showChats && stack.isEmpty())
+        ) { events ->
+            if (devLeaving) {
+                events.collect { }
+                return@PredictiveBackHandler
+            }
+            try {
+                events.collect { devLeave.snapTo(it.progress) }
+                leaveDevView()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                // Let go before the edge: it settles back in place.
+                if (!devLeaving) devScope.launch { devLeave.animateTo(0f, tween(220, easing = OrbitMotion.Easing)) }
+                throw e
+            }
+        }
+        // What shows around the shrinking view. Read only while drawing, so the swipe never recomposes.
+        val leaveBackdrop = MaterialTheme.colorScheme.surfaceContainerHighest
+        Box(Modifier.fillMaxSize().drawBehind { if (devLeave.value > 0f) drawRect(leaveBackdrop) })
         // While the menu is open, screen readers only see the menu, not the page behind it.
         Column(
             Modifier.fillMaxSize().graphicsLayer {
                 // A page opened from the settings over the chat moves it a little to the left, like iOS.
-                translationX = if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()
+                val leave = devLeave.value
+                translationX = (if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()) +
+                    size.width * 0.12f * leave
+                if (leave > 0f) {
+                    val scale = 1f - 0.08f * leave
+                    scaleX = scale
+                    scaleY = scale
+                    alpha = 1f - leave
+                    shape = RoundedCornerShape(28.dp)
+                    clip = true
+                }
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
                 if (showChats || stack.isNotEmpty() || showProfile || editingFile != null) Modifier.clearAndSetSemantics { }
@@ -413,7 +464,7 @@ private fun OrbitChatPage(
                             OrbitDevHeader(
                                 orbit = orbit, currentChatId = currentChatId,
                                 onSelectChat = { talkChatId = it },
-                                onExit = { devChatView = false },
+                                onExit = { leaveDevView() },
                             )
                         } else {
                             OrbitHeader(
@@ -609,7 +660,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.MEMORY_LIBRARY -> {
                     val id = memoryResult?.getOrNull()
                     if (id != null) {
-                        OrbitLearningPage(id, back, onDraft = ::draftToChat)
+                        OrbitLearningPage(id, orbit.chatId, back, onDraft = ::draftToChat)
                     } else {
                         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                             Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
@@ -766,10 +817,8 @@ private fun OrbitDevHeader(
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val mainTitle = stringResource(R.string.orbit_chats_main)
-    val chats = remember(orbit, mainTitle) {
-        listOf(orbit.chatId to mainTitle) + orbit.sideChats.map { it.chatId to it.title }
-    }
-    val currentTitle = chats.firstOrNull { it.first == currentChatId }?.second ?: mainTitle
+    val currentTitle = orbit.sideChats.firstOrNull { it.chatId == currentChatId }?.title ?: mainTitle
+    val canSwitch = orbit.sideChats.isNotEmpty()
     var pickerOpen by remember { mutableStateOf(false) }
     Box(
         modifier =
@@ -800,12 +849,12 @@ private fun OrbitDevHeader(
                 modifier =
                     Modifier.widthIn(max = 240.dp)
                         .clip(RoundedCornerShape(50))
-                        .clickable(enabled = chats.size > 1, onClickLabel = switchLabel,
+                        .clickable(enabled = canSwitch, onClickLabel = switchLabel,
                             role = androidx.compose.ui.semantics.Role.DropdownList) { pickerOpen = true },
             ) {
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.padding(start = 18.dp, end = if (chats.size > 1) 10.dp else 18.dp, top = 6.dp, bottom = 6.dp),
+                    modifier = Modifier.padding(start = 18.dp, end = if (canSwitch) 10.dp else 18.dp, top = 6.dp, bottom = 6.dp),
                 ) {
                     Column(Modifier.weight(1f, fill = false), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(
@@ -822,7 +871,7 @@ private fun OrbitDevHeader(
                             overflow = TextOverflow.Ellipsis,
                         )
                     }
-                    if (chats.size > 1) {
+                    if (canSwitch) {
                         Icon(
                             Icons.Filled.KeyboardArrowDown,
                             contentDescription = null,
@@ -832,23 +881,10 @@ private fun OrbitDevHeader(
                     }
                 }
             }
-            DropdownMenu(expanded = pickerOpen, onDismissRequest = { pickerOpen = false }) {
-                chats.forEach { (id, title) ->
-                    val isCurrent = id == currentChatId
-                    DropdownMenuItem(
-                        text = { Text(title, maxLines = 1, overflow = TextOverflow.Ellipsis) },
-                        trailingIcon = if (isCurrent) {
-                            { Icon(orbitIcon("check"), contentDescription = null, modifier = Modifier.size(18.dp)) }
-                        } else null,
-                        modifier = Modifier.semantics { selected = isCurrent },
-                        onClick = {
-                            pickerOpen = false
-                            onSelectChat(id)
-                        },
-                    )
-                }
-            }
         }
+    }
+    if (pickerOpen) {
+        OrbitDevChatSheet(orbit, currentChatId, onSelect = onSelectChat, onDismiss = { pickerOpen = false })
     }
 }
 

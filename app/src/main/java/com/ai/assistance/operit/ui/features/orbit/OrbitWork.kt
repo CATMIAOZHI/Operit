@@ -38,6 +38,17 @@ internal sealed interface OrbitProcess {
         val chatId: String get() =
             "orbit-task-" + UUID.nameUUIDFromBytes("$runId:$generation".toByteArray())
     }
+
+    /** One memory extraction run: the hidden chat in which a helper read Orbit's talk and took notes. */
+    data class Learning(
+        val chatId: String,
+        override val title: String,
+        override val time: Long,
+        val spaceId: String,
+        val logId: String,
+        /** Still sorting when opened; the record then keeps itself up to date. */
+        val running: Boolean = false,
+    ) : OrbitProcess
 }
 
 /** One chat turn in which Orbit did work (thought or used tools) before it answered. */
@@ -226,6 +237,8 @@ internal object OrbitWork {
                 .filter { raw || it.displayMode != com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER }
             // The task's own instructions open the hidden chat; the work starts after them.
             is OrbitProcess.TaskRun -> manager.loadChatMessages(process.chatId).filter { raw || it.sender != "user" }
+            // The whole run, its instructions included: that is what an audit of it needs.
+            is OrbitProcess.Learning -> manager.loadChatMessages(process.chatId)
         }
     }
 

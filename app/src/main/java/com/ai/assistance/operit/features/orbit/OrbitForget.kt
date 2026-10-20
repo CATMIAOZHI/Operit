@@ -83,15 +83,12 @@ internal object OrbitForget {
                 hits += Hit("files", "trash:${item.id}", "purge")
             }
         }
-        // Soul, identity and a custom prompt are the Orbit's own voice; they are listed for the user, never auto-edited.
+        // Soul and identity are the Orbit's own voice; they are listed for the user, never auto-edited.
+        // PROMPT.md is the app's built-in handbook and holds nothing about the user.
         runCatching { OrbitSoulRepository(context, orbit.id).snapshot().current.body }.getOrNull()
             ?.let { matcher.lines(it) }?.forEach { hits += Hit(USER_REVIEW, "SOUL.md#L$it", "user_review") }
         runCatching { OrbitPromptFiles.identity(context, orbit.id) }.getOrNull()
             ?.let { matcher.lines(it) }?.forEach { hits += Hit(USER_REVIEW, "IDENTITY.md#L$it", "user_review") }
-        if (runCatching { OrbitPromptFiles.isPromptCustom(context, orbit.id) }.getOrDefault(false)) {
-            runCatching { OrbitPromptFiles.prompt(context, orbit.id) }.getOrNull()
-                ?.let { matcher.lines(it) }?.forEach { hits += Hit(USER_REVIEW, "PROMPT.md#L$it", "user_review") }
-        }
         val skills = LearnedSkillRepository(context, spaceId)
         runCatching { skills.owned(spaceId) }.getOrDefault(emptySet()).forEach { name ->
             runCatching { skills.files(name) }.getOrDefault(emptyList()).forEach { path ->

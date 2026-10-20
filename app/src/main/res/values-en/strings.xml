@@ -6865,27 +6865,12 @@
     <string name="webvisit_title">Web Browsing</string>
     <string name="webvisit_url_label">Visiting URL:</string>
     <string name="webvisit_status_loading_page">Loading page...</string>
-    <string name="webvisit_status_waiting_page">Waiting for page to fully load...</string>
-    <string name="webvisit_status_captcha">Please complete CAPTCHA verification within %1$d seconds...</string>
-    <string name="webvisit_status_extracting">Extracting content, will auto-continue in %1$d seconds...</string>
-    <string name="webvisit_status_extracted_waiting">Content extracted, waiting for manual continue...</string>
-    <string name="webvisit_status_waiting_extraction">Page loaded, waiting for content extraction...</string>
+    <string name="webvisit_status_extracting">Read, waiting for more to load, continuing in %1$d seconds...</string>
+    <string name="webvisit_status_waiting_extraction">Reading the page...</string>
     <string name="webvisit_page_title">Page title: %1$s</string>
-    <string name="webvisit_button_cancel_countdown">Cancel Countdown</string>
-    <string name="webvisit_button_cancel_auto">Cancel Auto</string>
     <string name="webvisit_button_cancel">Cancel</string>
     <string name="webvisit_button_minimize">Minimize</string>
-    <string name="webvisit_button_continue_now">Continue Now (%1$ds)</string>
-    <string name="webvisit_button_continue">Continue</string>
-    <string name="webvisit_button_manual_extract">Manual Extract</string>
-    <string name="webvisit_button_extract">Extract Content</string>
-    <string name="webvisit_cancelled">Operation cancelled</string>
-    <string name="webvisit_webview_unavailable">WebView unavailable, cannot extract content.</string>
     <string name="webvisit_help_loading_page">Loading page, please wait...</string>
-    <string name="webvisit_help_countdown">Auto-countdown in progress, click \"Cancel Countdown\" to stop auto-processing</string>
-    <string name="webvisit_help_cancel_auto">Click \"Cancel Auto\" to switch to manual mode</string>
-    <string name="webvisit_help_manual_mode">Switched to manual mode, click \"Manual Extract\" to continue</string>
-    <string name="webvisit_help_extracted">Content extraction complete, click \"Continue\" to proceed</string>
 
     <!-- SiliconFlow Voice Provider -->
     <string name="siliconflow_voice_alex">Alex - Calm Male Voice</string>
@@ -9274,14 +9259,14 @@
     <string name="orbit_soul_user_edit">Edited by you</string>
     <string name="orbit_identity_note">About this file: this is how Orbit describes itself. It records the name you gave Orbit, its character and how it comes across. Orbit reads it at the start of each conversation so it stays consistent, and updates it when the two of you change these things together. Only Orbit can change its name; the name here follows it. You can edit it at any time. This note is not part of the file.</string>
     <string name="orbit_soul_note">About this file: this is Orbit\'s persona, the values and habits it holds to in every conversation. It starts from the role card. Orbit may refine it over time and tells you when it does. You can edit it at any time. This note is not part of the file.</string>
-    <string name="orbit_prompt_note">About this file: this is Orbit\'s handbook, covering how it takes initiative, sets reminders, remembers things and talks. Until you change it, it follows app updates; once you save, your version is used. This note is not part of the file.</string>
+    <string name="orbit_prompt_note">About this file: this is Orbit\'s handbook, covering how it takes initiative, sets reminders, remembers things and talks. It is built into the app, read only, and always follows app updates; a PROMPT.md edited in the folder has no effect. This note is not part of the file.</string>
+    <string name="orbit_file_read_only">Read only</string>
     <string name="orbit_section_prompts">Prompts</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
     <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order, always. Tap one to see or edit it.</string>
     <string name="orbit_layer_base">Base instructions</string>
     <string name="orbit_layer_base_desc">Initiative, reminders, memory, tone and safety</string>
-    <string name="orbit_layer_custom">Edited</string>
     <string name="orbit_layer_soul">Personality</string>
     <string name="orbit_layer_soul_desc">Values and habits</string>
     <string name="orbit_layer_identity">Identity</string>
@@ -9576,6 +9561,8 @@
     <string name="orbit_dev_view_raw">View raw</string>
     <string name="orbit_dev_view_raw_hint">This message exactly as stored, with its thinking, tool calls and hidden tags. Read-only.</string>
     <string name="orbit_dev_view_raw_copied">Raw text copied</string>
+    <string name="orbit_dev_chats_search">Search side chats</string>
+    <string name="orbit_dev_chats_none">No chat found</string>
     <string name="orbit_approval_vault_login">Saved a login</string>
     <string name="orbit_approval_vault_key">Saved an API key</string>
     <string name="orbit_approval_state_approved">Approved</string>

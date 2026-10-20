@@ -72,7 +72,6 @@ import kotlinx.coroutines.withContext
 
 private class LayerInfo(
     val promptBytes: Long,
-    val promptCustom: Boolean,
     val soulBytes: Long,
     val identityBytes: Long,
     val memoryBytes: Long?,
@@ -116,7 +115,6 @@ internal fun OrbitPromptLayersPage(
             fun bytes(text: String) = text.toByteArray(Charsets.UTF_8).size.toLong()
             LayerInfo(
                 promptBytes = bytes(OrbitPromptFiles.prompt(context, orbit.id)),
-                promptCustom = OrbitPromptFiles.isPromptCustom(context, orbit.id),
                 soulBytes = bytes(OrbitPreferences.getInstance(context).readSoul(orbit.id)),
                 identityBytes = bytes(OrbitPromptFiles.identity(context, orbit.id)),
                 memoryBytes = orbit.memorySpaceId?.let { bytes(MemoryNotesRepository(context, it).load().markdown) },
@@ -199,8 +197,7 @@ private fun LayersList(
             // The order they are sent in: what rarely changes first, what changes often last.
             LayerCard {
                 LayerRow(1, stringResource(R.string.orbit_layer_base), OrbitPromptFiles.PROMPT_FILE,
-                    stringResource(R.string.orbit_layer_base_desc) +
-                        if (info.promptCustom) " · " + stringResource(R.string.orbit_layer_custom) else "",
+                    stringResource(R.string.orbit_layer_base_desc),
                     size(info.promptBytes), onOpenPrompt)
                 LayerDivider()
                 LayerRow(2, stringResource(R.string.orbit_layer_tools), null,
