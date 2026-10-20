@@ -25,19 +25,20 @@ internal object OrbitBoardTools {
             name = FEED,
             description = "管理用户「动态」标签页里的短文。你是作者，内容由动态简介（brief）引导。" +
                 "post 发一条；list 查看已有的；delete 删除；move 调整顺序；brief_get / brief_update 读写简介；" +
-                "generate 在后台按简介写一条新的。",
+                "generate 马上在后台写一条新的。平时每 12 小时会自动在后台写一条。",
             parametersStructured = listOf(
                 ToolParameterSchema("action", description = "post/list/delete/move/brief_get/brief_update/generate", required = true),
                 ToolParameterSchema("post_id", description = "已有短文编号，delete/move 必填", required = false),
                 ToolParameterSchema("title", description = "post：标题，最多80字符", required = false),
-                ToolParameterSchema("emoji", description = "post：标题旁显示的一个 emoji，贴合内容，如 📱 🏎️ 🎧", required = false),
+                ToolParameterSchema("emoji", description = "post 必填：标题旁显示的一个 emoji，贴合内容，如 📱 🏎️ 🎧", required = false),
                 ToolParameterSchema("body", description = "post：正文，几段短文字，最多6000字符；链接写成 [文字](网址)，只引用你真的打开过的", required = false),
                 ToolParameterSchema("why_for_you", description = "post：一句话说明为什么给这位用户看，必填", required = false),
-                ToolParameterSchema("brief", description = "brief_update：新的简介全文，最多2000字符；空字符串表示清空并停止每日动态", required = false),
+                ToolParameterSchema("brief", description = "brief_update：新的简介全文，最多2000字符；空字符串表示恢复默认简介", required = false),
                 ToolParameterSchema("direction", description = "move：up 或 down", required = false),
             ),
             details = """
-  - 用户说「多写点 F1、少写加密货币」这类话时，用 brief_get 读出简介，改好后 brief_update。真的改了内容会马上在后台写一条新的，并每天早上写一条。
+  - 用户说「多写点 F1、少写加密货币」这类话时，用 brief_get 读出简介，改好后 brief_update。真的改了内容会马上在后台写一条新的。
+  - 动态由你的后台任务「动态更新」每 12 小时写一条；用户想改频率时用 orbit_task 改这个任务的时间，不要取消它。
   - 新短文出现在动态页，不会推送，也不会在聊天里说。不要说「已经发好了」，只能说已经开始写。
   - 每条都要写 why_for_you 和 emoji。不要编造链接。
   - list 里的 vote 是用户的反馈：liked 多写这类，disliked 少写这类。
@@ -46,12 +47,13 @@ internal object OrbitBoardTools {
         ToolPrompt(
             name = IDEA,
             description = "在用户「点子」标签页提出你可以为他做的事或做的东西。用户点「就这么办」只会把 plan 放进他的输入框，" +
-                "他发出来你才收到，由你去做。create 新建；list 查看；done 在你真的做完后把卡片标成已做。你不能替用户关掉卡片。",
+                "他发出来你才收到，由你去做。create 新建；list 查看；update 改图标或分类；done 在你真的做完后把卡片标成已做。你不能替用户关掉卡片。",
             parametersStructured = listOf(
-                ToolParameterSchema("action", description = "create/list/done", required = true),
-                ToolParameterSchema("idea_id", description = "done：要标成已做的卡片编号（先 list 查）", required = false),
+                ToolParameterSchema("action", description = "create/list/update/done", required = true),
+                ToolParameterSchema("idea_id", description = "update/done：卡片编号（先 list 查）", required = false),
                 ToolParameterSchema("title", description = "create：卡片标题，最多80字符", required = false),
-                ToolParameterSchema("emoji", description = "create：标题旁显示的一个 emoji，贴合内容，如 📦 🛡️ 🎁", required = false),
+                ToolParameterSchema("emoji", description = "create 必填、update 可选：标题旁显示的一个 emoji，贴合内容，如 📦 🛡️ 🎁", required = false),
+                ToolParameterSchema("category", description = "create 必填、update 可选：分类，productivity 效率提升、money 财务管理、relationships 人际关系、health 健康与健身、shopping 购物、other 更多点子", required = false),
                 ToolParameterSchema("description", description = "create：给用户看的说明：做什么、对他有什么用，最多6000字符", required = false),
                 ToolParameterSchema("includes", description = "create：做完会交付的东西，每行一项「名称 | 一句说明」，最多6行", required = false),
                 ToolParameterSchema("plan", description = "create：用户选中后你要做的具体事，写给你自己看，最多2000字符", required = false),
@@ -59,8 +61,11 @@ internal object OrbitBoardTools {
             ),
             details = """
   - 只提和用户真实情况有关、你现在就做得到的事；先 list，不要重复已有的卡片。
-  - 卡片两周左右自动下架。用户可以关掉它；你没有关掉卡片的工具，不要说你关掉了。
+  - 每个点子都要有一个贴合内容的 emoji 和一个分类；同一页尽量不要用同样的 emoji。用户想换图标或分类时用 update。
+  - 你的后台任务「每日点子」每天上午 9 点会想新点子；用户想改频率时用 orbit_task 改这个任务的时间，不要取消它。
+  - 卡片两周左右自动下架，用户喜欢的会一直留着。用户可以关掉它；你没有关掉卡片的工具，不要说你关掉了。
   - 用户右滑表示喜欢、左滑表示不喜欢，list 里的 vote 就是这个反馈：多提 liked 这类，少提 disliked 这类。
+  - list 里 past 是已经下架、关掉或做过的点子和用户当时的反馈，用来了解用户口味，不要再提一样的。
 """,
         ),
         ToolPrompt(
@@ -93,20 +98,26 @@ internal object OrbitBoardTools {
                     val feed = OrbitBoardRepository(context, orbit.id, Board.FEED)
                     when (args["action"]) {
                         "post" -> json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId,
-                            emoji = args["emoji"].orEmpty()), Board.FEED)
+                            emoji = emoji(arg("emoji"))), Board.FEED)
                         "list" -> JSONArray(feed.list().take(30).map { json(it, Board.FEED, brief = true) })
                         "delete" -> { feed.delete(arg("post_id")); "Deleted" }
                         "move" -> { feed.move(arg("post_id"), arg("direction") == "up"); "Moved" }
-                        "brief_get" -> OrbitBoardRepository.readBrief(context, orbit.id).ifBlank { "(empty)" }
+                        "brief_get" -> OrbitBoardRepository.readBrief(context, orbit.id).ifBlank {
+                            "(The user has not written one; the default is used:) " + OrbitFeedGenerator.defaultBrief(context)
+                        }
                         "brief_update" -> {
-                            // A missing brief is a mistake; only an explicit empty string clears it.
+                            // A missing brief is a mistake; only an explicit empty string resets it.
                             val brief = args["brief"] ?: error("Missing brief")
-                            OrbitFeedGenerator.saveBrief(context, orbit.id, brief)
-                            if (brief.isBlank()) "Cleared. The daily feed post is stopped."
-                            else "Saved. A changed brief starts a new post in the background."
+                            val started = OrbitFeedGenerator.saveBrief(context, orbit.id, brief)
+                            when {
+                                started == false -> "Saved, but the feed routine is paused, so no new post started."
+                                brief.isBlank() -> "Reset to the default brief."
+                                started == true -> "Saved. A new post is being written in the background."
+                                else -> "Saved. The brief did not change."
+                            }
                         }
                         "generate" -> if (OrbitFeedGenerator.writeOne(context, orbit.id)) "Started in the background"
-                            else error("The feed brief is empty; set it with brief_update first")
+                            else error("The feed routine is paused; resume it with orbit_task first")
                         else -> error("Unknown action")
                     }
                 }
@@ -117,10 +128,31 @@ internal object OrbitBoardTools {
                             val days = args["expires_in_days"]?.takeIf { it.isNotBlank() }?.toInt() ?: 14
                             require(days in 1..30) { "expires_in_days must be 1 to 30" }
                             json(ideas.create(arg("title"), arg("description"), arg("plan"), requestId,
-                                System.currentTimeMillis() + days * 24L * 60 * 60 * 1000, emoji = args["emoji"].orEmpty(),
-                                parts = parts(args["includes"])), Board.IDEAS)
+                                System.currentTimeMillis() + days * 24L * 60 * 60 * 1000, emoji = emoji(arg("emoji")),
+                                parts = parts(args["includes"]), category = arg("category")), Board.IDEAS)
                         }
-                        "list" -> JSONArray(ideas.list().map { json(it, Board.IDEAS, brief = true) })
+                        "list" -> {
+                            val all = ideas.listAll()
+                            val showing = ideas.list().filter { it.state == "OPEN" }
+                            val ids = showing.map { it.id }.toSet()
+                            // What the user answered before still teaches their taste after the card is gone.
+                            val answered = all.filter { it.id !in ids && (it.vote != 0 || it.state == "BUILT") }
+                            // The done ideas the Ideas tab shows come first, so Orbit can always update them.
+                            val past = (answered.filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) +
+                                answered.sortedByDescending { it.updatedAt }).distinctBy { it.id }.take(40)
+                            JSONObject().put("open", JSONArray(showing.map { json(it, Board.IDEAS, brief = true) }))
+                                .put("past", JSONArray(past.map {
+                                    JSONObject().put("id", it.id).put("title", it.title).put("emoji", it.emoji)
+                                        .put("category", OrbitBoardRepository.categoryOf(it))
+                                        .put("state", it.state).put("vote", voteName(it.vote))
+                                }))
+                        }
+                        "update" -> {
+                            val emoji = args["emoji"]?.takeIf { it.isNotBlank() }
+                            val category = args["category"]?.takeIf { it.isNotBlank() }
+                            require(emoji != null || category != null) { "Give emoji or category to change" }
+                            json(ideas.update(arg("idea_id"), emoji = emoji, category = category), Board.IDEAS)
+                        }
                         "done" -> json(ideas.update(arg("idea_id"), state = "BUILT"), Board.IDEAS)
                         else -> error("Unknown action")
                     }
@@ -165,6 +197,10 @@ internal object OrbitBoardTools {
         else -> "none"
     }
 
+    /** One emoji, or a clear error the model can fix. */
+    private fun emoji(value: String): String =
+        OrbitBoardRepository.emojiOf(value).ifEmpty { error("emoji must be one emoji, like 📦") }
+
     private fun json(item: OrbitBoardRepository.Item, board: Board, brief: Boolean = false): JSONObject {
         val body = if (brief) item.body.take(300) else item.body
         val value = JSONObject().put("id", item.id).put("title", item.title).put("state", item.state)
@@ -173,6 +209,7 @@ internal object OrbitBoardTools {
             Board.FEED -> value.put("emoji", item.emoji).put("body", body).put("why_for_you", item.extra)
                 .put("vote", voteName(item.vote))
             Board.IDEAS -> value.put("emoji", item.emoji).put("description", body).put("plan", item.extra)
+                .put("category", item.category)
                 .put("includes", JSONArray(item.parts.map { "${it.title} | ${it.detail}".trimEnd(' ', '|') }))
                 .put("vote", voteName(item.vote)).put("expiresAt", item.expiresAt)
             Board.TRACKING -> value.put("detail", body).put("notes", JSONArray(item.notes.takeLast(10).map {

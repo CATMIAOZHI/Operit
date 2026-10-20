@@ -76,6 +76,7 @@ import com.ai.assistance.operit.features.orbit.OrbitBoardRepository
 import com.ai.assistance.operit.features.orbit.OrbitBoardRepository.Board
 import com.ai.assistance.operit.features.orbit.OrbitExecutionGate
 import com.ai.assistance.operit.features.orbit.OrbitFeedGenerator
+import com.ai.assistance.operit.features.orbit.OrbitRoutines
 import com.ai.assistance.operit.features.orbit.OrbitGoalRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskScheduler
@@ -226,11 +227,16 @@ internal fun OrbitTabPage(
  */
 internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable () -> Unit)?> { null }
 
-/** The page frame: Orbit's fixed header, a large title and an optional action on the right. */
+/**
+ * The page frame: Orbit's fixed header, a large title and an optional action on the right.
+ * [overlay] is a page pushed over the list but under the header, so Orbit's picture stays put
+ * while it slides in; it gets the top padding its own list needs.
+ */
 @Composable
 private fun TabList(
     title: String,
     action: (@Composable () -> Unit)? = null,
+    overlay: (@Composable (top: Dp) -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
@@ -239,12 +245,13 @@ private fun TabList(
     // Measured after the first frame; the guess is the header's usual size so nothing jumps.
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     var headerHeight by remember { mutableStateOf(statusBarTop + 120.dp) }
+    // The header's lower edge fades out, so the title tucks a little under it.
+    val listTop = if (header == null) statusBarTop + 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp)
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 20.dp, end = 20.dp, bottom = 24.dp,
-                // The header's lower edge fades out, so the title tucks a little under it.
                 top = if (header == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
@@ -268,6 +275,7 @@ private fun TabList(
             }
             content()
         }
+        overlay?.invoke(listTop)
         if (header != null) {
             Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
                 header()
@@ -513,46 +521,31 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.FEED) }
     val posts by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
     var briefVersion by remember { mutableIntStateOf(0) }
+    // The brief the feed follows: the user's own, or the default one.
     val brief by produceState<String?>(null, orbit.id, briefVersion) {
         value = try {
-            OrbitBoardRepository.readBrief(context, orbit.id)
+            OrbitFeedGenerator.effectiveBrief(context, orbit.id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
-            ""
+            OrbitFeedGenerator.defaultBrief(context)
         }
     }
     var editingBrief by remember { mutableStateOf(false) }
     val started = stringResource(R.string.orbit_feed_started)
+    val paused = stringResource(R.string.orbit_feed_paused)
 
     TabList(
         title = stringResource(R.string.orbit_tab_feed),
         action = {
-            if (!brief.isNullOrBlank()) {
-                OrbitCircleButton(orbitIcon("sparkles"), stringResource(R.string.orbit_feed_write_now), {
-                    action { if (OrbitFeedGenerator.writeOne(context, orbit.id)) showToast(context, started) }
-                })
-            }
+            OrbitCircleButton(orbitIcon("sparkles"), stringResource(R.string.orbit_feed_write_now), {
+                action { showToast(context, if (OrbitFeedGenerator.writeOne(context, orbit.id)) started else paused) }
+            })
         },
     ) {
         val currentBrief = brief
         if (currentBrief != null) {
-            item(key = "brief") {
-                if (currentBrief.isBlank()) {
-                    SoftCard {
-                        Icon(orbitIcon("newspaper"), null, Modifier.size(28.dp))
-                        Text(
-                            stringResource(R.string.orbit_feed_brief_title), style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                        )
-                        Text(stringResource(R.string.orbit_feed_brief_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(4.dp))
-                        PillButton(stringResource(R.string.orbit_feed_brief_write), "pencil", { editingBrief = true })
-                    }
-                } else {
-                    BriefPill(currentBrief) { editingBrief = true }
-                }
-            }
+            item(key = "brief") { BriefPill(currentBrief) { editingBrief = true } }
         }
         val list = posts
         when {
@@ -582,11 +575,18 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
             onSave = { text ->
                 editingBrief = false
                 action {
-                    OrbitFeedGenerator.saveBrief(context, orbit.id, text)
+                    val started = OrbitFeedGenerator.saveBrief(context, orbit.id, text)
                     briefVersion++
                     showToast(
                         context,
-                        context.getString(if (text.isBlank()) R.string.orbit_feed_brief_cleared else R.string.orbit_feed_brief_saved),
+                        context.getString(
+                            when {
+                                started == false -> R.string.orbit_feed_brief_saved_paused
+                                text.isBlank() -> R.string.orbit_feed_brief_cleared
+                                started == null -> R.string.orbit_feed_brief_unchanged
+                                else -> R.string.orbit_feed_brief_saved
+                            },
+                        ),
                     )
                 }
             },
@@ -636,7 +636,7 @@ private fun BriefDialog(initial: String, onDismiss: () -> Unit, onSave: (String)
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            stringResource(if (initial.isBlank()) R.string.orbit_feed_brief_hint else R.string.orbit_feed_brief_dialog_hint),
+                            stringResource(R.string.orbit_feed_brief_hint),
                             style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
                         )
                     }
@@ -767,6 +767,32 @@ private fun FeedPostRow(
 
 // ---------------------------------------------------------------- Ideas
 
+/** The picture and name of each idea category, in the order they are shown. */
+private val ideaCategoryEmoji = mapOf(
+    "productivity" to "⚡", "money" to "💰", "relationships" to "🤝",
+    "health" to "💪", "shopping" to "🛍️", "other" to "✨",
+)
+
+@Composable
+private fun ideaCategoryName(category: String): String = stringResource(
+    when (category) {
+        "productivity" -> R.string.orbit_idea_category_productivity
+        "money" -> R.string.orbit_idea_category_money
+        "relationships" -> R.string.orbit_idea_category_relationships
+        "health" -> R.string.orbit_idea_category_health
+        "shopping" -> R.string.orbit_idea_category_shopping
+        else -> R.string.orbit_idea_category_other
+    }
+)
+
+/** How many of the newest ideas sit on top; the rest are found in their category. */
+private const val RECENT_IDEAS = 5
+
+/**
+ * Muse's Ideas tab: the newest ideas on top, then the categories, each opening its own page, then
+ * the ideas Orbit already did. Any idea opens its details. New ideas come from the Ideas routine
+ * every morning; the button asks it for some now.
+ */
 @Composable
 private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val context = LocalContext.current
@@ -775,19 +801,46 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val ideas by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
     var dismissing by remember { mutableStateOf<OrbitBoardRepository.Item?>(null) }
     var openedId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    val askIdeas = { onDraft(context.getString(R.string.orbit_ideas_ask_message)) }
+    var category by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // Keeps the category on screen while its page slides away.
+    var shownCategory by remember(orbit.id) { mutableStateOf(category) }
+    LaunchedEffect(category) { category?.let { shownCategory = it } }
+    val started = stringResource(R.string.orbit_ideas_started)
+    val paused = stringResource(R.string.orbit_ideas_paused)
+    val askIdeas: () -> Unit = {
+        action { showToast(context, if (OrbitRoutines.runNow(context, orbit.id, feed = false)) started else paused) }
+    }
     // Tapping the chosen answer again takes it back.
     fun vote(idea: OrbitBoardRepository.Item, vote: Int) =
         action { repository.update(idea.id, vote = if (idea.vote == vote) 0 else vote) }
 
-    TabList(title = stringResource(R.string.orbit_tab_ideas)) {
-        val list = ideas
+    val list = ideas
+    val open = remember(list) { list.orEmpty().filter { it.state == "OPEN" } }
+    val recent = remember(open) { open.sortedByDescending { it.createdAt }.take(RECENT_IDEAS) }
+    val byCategory = remember(open) { open.groupBy { OrbitBoardRepository.categoryOf(it) } }
+    val done = remember(list) { list.orEmpty().filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) }
+
+    TabList(
+        title = stringResource(R.string.orbit_tab_ideas),
+        overlay = { top ->
+            OrbitCoverPage(visible = category != null, onDismiss = { category = null }) {
+                (category ?: shownCategory)?.let { shown ->
+                    IdeaCategoryPage(
+                        category = shown,
+                        ideas = byCategory[shown].orEmpty(),
+                        top = top,
+                        onBack = { category = null },
+                        onOpen = { openedId = it.id },
+                        onVote = ::vote,
+                    )
+                }
+            }
+        },
+    ) {
         if (list == null) {
             item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             return@TabList
         }
-        val open = list.filter { it.state == "OPEN" }
-        val done = list.filter { it.state == "BUILT" }.take(10)
         if (open.isEmpty()) {
             item(key = "empty") {
                 SoftCard {
@@ -804,9 +857,15 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            items(open, key = { it.id }) { idea ->
+            items(recent, key = { it.id }) { idea ->
                 IdeaRow(idea, onOpen = { openedId = idea.id }, onVote = { vote(idea, it) })
             }
+        }
+        item(key = "categoriesTitle") { GroupTitle(stringResource(R.string.orbit_ideas_categories)) }
+        items(OrbitBoardRepository.IDEA_CATEGORIES, key = { "category-$it" }) { name ->
+            IdeaCategoryRow(name, byCategory[name]?.size ?: 0) { category = name }
+        }
+        if (open.isNotEmpty()) {
             item(key = "more") {
                 Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
                     PillButton(stringResource(R.string.orbit_ideas_ask), "sparkles", askIdeas)
@@ -815,15 +874,13 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
         }
         if (done.isNotEmpty()) {
             item(key = "doneTitle") { GroupTitle(stringResource(R.string.orbit_ideas_done)) }
-            items(done, key = { "done-" + it.id }) { idea ->
-                OrbitListRow(orbitIcon("check"), idea.title, idea.body, shortDate(idea.updatedAt), onClick = {})
-            }
+            items(done, key = { "done-" + it.id }) { idea -> DoneIdeaRow(idea) { openedId = idea.id } }
         }
     }
 
     // The sheet follows the saved idea, so a vote shows at once; an idea that is gone closes it.
-    val opened = openedId?.let { id -> ideas?.firstOrNull { it.id == id && it.state == "OPEN" } }
-    LaunchedEffect(ideas, openedId) { if (openedId != null && ideas != null && opened == null) openedId = null }
+    val opened = openedId?.let { id -> list?.firstOrNull { it.id == id && it.state in setOf("OPEN", "BUILT") } }
+    LaunchedEffect(list, openedId) { if (openedId != null && list != null && opened == null) openedId = null }
     if (opened != null) {
         IdeaSheet(
             idea = opened,
@@ -834,6 +891,11 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
                 onDraft(context.getString(R.string.orbit_idea_build_message, opened.title, opened.extra.ifBlank { opened.body }))
             },
             onVote = { vote(opened, it) },
+            // Orbit changes the icon: the request waits in the chat input for the user to finish.
+            onChangeIcon = {
+                openedId = null
+                onDraft(context.getString(R.string.orbit_idea_change_icon_message, opened.title))
+            },
             onClose = {
                 openedId = null
                 dismissing = opened
@@ -857,6 +919,102 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     }
 }
 
+/** One category on the Ideas tab: its picture, its name and how many ideas it holds. */
+@Composable
+private fun IdeaCategoryRow(category: String, count: Int, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.bleed(20.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                Modifier.size(44.dp).clip(CircleShape).background(colors.onSurface.copy(alpha = 0.05f)),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(ideaCategoryEmoji[category] ?: "✨", fontSize = 22.sp, lineHeight = 26.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(14.dp))
+            Text(
+                ideaCategoryName(category), style = MaterialTheme.typography.titleMedium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+            )
+            Text(
+                if (count > 0) stringResource(R.string.orbit_idea_category_count, count)
+                else stringResource(R.string.orbit_idea_category_none),
+                style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1,
+            )
+            Icon(
+                orbitIcon("chevron-right"), null, Modifier.padding(start = 4.dp).size(20.dp),
+                tint = colors.onSurfaceVariant.copy(alpha = 0.6f),
+            )
+        }
+    }
+}
+
+/** An idea Orbit already did: tap for its details. */
+@Composable
+private fun DoneIdeaRow(idea: OrbitBoardRepository.Item, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.bleed(20.dp)) {
+        Row(
+            Modifier.fillMaxWidth().clickable(role = Role.Button, onClick = onClick)
+                .padding(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(Modifier.size(44.dp), contentAlignment = Alignment.Center) {
+                Text(idea.emoji.ifBlank { "💡" }, fontSize = 26.sp, lineHeight = 30.sp, maxLines = 1)
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(idea.title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Text(
+                    stringResource(R.string.orbit_idea_done_at, shortDate(idea.builtAt)),
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                )
+            }
+            Icon(orbitIcon("chevron-right"), null, Modifier.size(20.dp), tint = colors.onSurfaceVariant.copy(alpha = 0.6f))
+        }
+    }
+}
+
+/** One category's ideas, pushed over the Ideas tab under Orbit's header. */
+@Composable
+private fun IdeaCategoryPage(
+    category: String,
+    ideas: List<OrbitBoardRepository.Item>,
+    top: Dp,
+    onBack: () -> Unit,
+    onOpen: (OrbitBoardRepository.Item) -> Unit,
+    onVote: (OrbitBoardRepository.Item, Int) -> Unit,
+) {
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = top, bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            item(key = "frame") {
+                Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(bottom = 4.dp)) {
+                    OrbitCircleButton(orbitIcon("chevron-left"), stringResource(R.string.back), onBack)
+                    Spacer(Modifier.width(14.dp))
+                    Text(
+                        ideaCategoryName(category), style = MaterialTheme.typography.headlineMedium,
+                        fontWeight = FontWeight.SemiBold, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            if (ideas.isEmpty()) {
+                item(key = "empty") { Hint(stringResource(R.string.orbit_idea_category_empty)) }
+            } else {
+                items(ideas, key = { it.id }) { idea ->
+                    IdeaRow(idea, onOpen = { onOpen(idea) }, onVote = { onVote(idea, it) })
+                }
+            }
+        }
+    }
+}
 @Composable
 private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote: (Int) -> Unit) {
     val colors = MaterialTheme.colorScheme
@@ -913,9 +1071,12 @@ private fun IdeaSheet(
     onDismiss: () -> Unit,
     onStart: () -> Unit,
     onVote: (Int) -> Unit,
+    onChangeIcon: () -> Unit,
     onClose: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    // An idea Orbit already did shows the same details; there is nothing left to start or dismiss.
+    val done = idea.state == "BUILT"
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var menu by remember { mutableStateOf(false) }
@@ -931,16 +1092,24 @@ private fun IdeaSheet(
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 Column(Modifier.padding(horizontal = 24.dp)) {
+                    Text(idea.emoji.ifBlank { "💡" }, fontSize = 40.sp, lineHeight = 48.sp, maxLines = 1)
+                    Spacer(Modifier.height(8.dp))
                     Text(idea.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                     Spacer(Modifier.height(12.dp))
                     Text(body, style = MaterialTheme.typography.bodyLarge)
-                    if (idea.expiresAt > 0) {
+                    val note = when {
+                        done -> stringResource(R.string.orbit_idea_done_at, shortDate(idea.builtAt))
+                        // A liked idea stays until it is done or dismissed.
+                        idea.liked -> stringResource(R.string.orbit_idea_kept)
+                        idea.expiresAt > 0 -> {
                         val days = ((idea.expiresAt - System.currentTimeMillis()) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
+                            stringResource(R.string.orbit_idea_expires, days)
+                        }
+                        else -> null
+                    }
+                    if (note != null) {
                         Spacer(Modifier.height(8.dp))
-                        Text(
-                            stringResource(R.string.orbit_idea_expires, days), style = MaterialTheme.typography.bodySmall,
-                            color = colors.onSurfaceVariant,
-                        )
+                        Text(note, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                     }
                 }
                 if (idea.parts.isNotEmpty()) {
@@ -998,20 +1167,44 @@ private fun IdeaSheet(
                             onClick = { menu = false; onVote(-1) },
                         )
                         DropdownMenuItem(
-                            text = { Text(stringResource(R.string.orbit_idea_dismiss_action), color = colors.error) },
-                            leadingIcon = { Icon(orbitIcon("x"), null, tint = colors.error) },
-                            onClick = { menu = false; hideThen(onClose) },
+                            text = { Text(stringResource(R.string.orbit_idea_change_icon)) },
+                            leadingIcon = { Icon(orbitIcon("smile"), null) },
+                            onClick = { menu = false; hideThen(onChangeIcon) },
                         )
+                        if (!done) {
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.orbit_idea_dismiss_action), color = colors.error) },
+                                leadingIcon = { Icon(orbitIcon("x"), null, tint = colors.error) },
+                                onClick = { menu = false; hideThen(onClose) },
+                            )
+                        }
                     }
                 }
                 Spacer(Modifier.width(12.dp))
-                Button(
-                    onClick = { hideThen(onStart) }, shape = RoundedCornerShape(50),
-                    modifier = Modifier.weight(1f).height(56.dp),
-                ) {
-                    Icon(orbitIcon("wand-sparkles"), null, Modifier.size(20.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.orbit_idea_start), style = MaterialTheme.typography.titleMedium)
+                if (done) {
+                    // Shown where the start button would be, so the sheet keeps its shape.
+                    Surface(
+                        shape = RoundedCornerShape(50), color = colors.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier.weight(1f).height(56.dp),
+                    ) {
+                        Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
+                            Icon(orbitIcon("check"), null, Modifier.size(20.dp), tint = colors.onSurfaceVariant)
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                stringResource(R.string.orbit_idea_done_badge), style = MaterialTheme.typography.titleMedium,
+                                color = colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                } else {
+                    Button(
+                        onClick = { hideThen(onStart) }, shape = RoundedCornerShape(50),
+                        modifier = Modifier.weight(1f).height(56.dp),
+                    ) {
+                        Icon(orbitIcon("wand-sparkles"), null, Modifier.size(20.dp))
+                        Spacer(Modifier.width(8.dp))
+                        Text(stringResource(R.string.orbit_idea_start), style = MaterialTheme.typography.titleMedium)
+                    }
                 }
             }
         }

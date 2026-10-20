@@ -298,6 +298,13 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     suspend fun tasks(orbitId: String): List<OrbitTaskEntity>
 
+    /** Live tasks with one exact title and schedule mode, e.g. the old daily feed task to retire. */
+    @Query(
+        "SELECT * FROM orbit_tasks WHERE orbitId = :orbitId AND kind = :kind AND scheduleMode = :scheduleMode " +
+            "AND title = :title AND state NOT IN ('CANCELLED', 'DONE')",
+    )
+    suspend fun liveTasksTitled(orbitId: String, kind: String, scheduleMode: String, title: String): List<OrbitTaskEntity>
+
     @Query("SELECT * FROM orbit_tasks WHERE id = :id")
     suspend fun task(id: String): OrbitTaskEntity?
 

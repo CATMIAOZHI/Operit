@@ -455,7 +455,9 @@ object OrbitTaskRunner {
         task.kind == OrbitWatchSources.KIND -> "what this task watches"
         task.kind == "URL_CHANGE" -> "web page"
         task.source == OrbitRoutines.GOALS_SOURCE -> "the user's active goals"
-        task.source.isBlank() || task.source == OrbitRoutines.CHAT_SOURCE -> "the recent Orbit conversation"
+        task.source == OrbitRoutines.FEED_SOURCE -> "the feed brief"
+        task.source.isBlank() || task.source == OrbitRoutines.CHAT_SOURCE || task.source == OrbitRoutines.IDEAS_SOURCE ->
+            "the recent Orbit conversation"
         else -> "page named by the task; the excerpt below is the recent Orbit conversation"
     }
 
