@@ -15,11 +15,14 @@ import androidx.compose.runtime.setValue
  *
  * [marker] is text the target message carries and no other message in that transcript does, which is
  * what makes the match exact rather than a guess.
+ *
+ * A request with a [timestamp] (a search result) names the message itself and lands right on it.
  */
 internal data class TranscriptJumpRequest(
     val chatId: String,
     val marker: String,
     val token: Long,
+    val timestamp: Long? = null,
 )
 
 internal object TranscriptJumpHost {
@@ -30,6 +33,12 @@ internal object TranscriptJumpHost {
     fun request(chatId: String?, marker: String) {
         val id = chatId?.takeIf { it.isNotBlank() } ?: return
         request = TranscriptJumpRequest(chatId = id, marker = marker, token = ++issued)
+    }
+
+    /** Files a request to land on the message saved at [timestamp] in [chatId]. */
+    fun requestMessage(chatId: String?, timestamp: Long) {
+        val id = chatId?.takeIf { it.isNotBlank() } ?: return
+        request = TranscriptJumpRequest(chatId = id, marker = "", token = ++issued, timestamp = timestamp)
     }
 
     /** The request waiting for [chatId], or null. Reading it does not take it. */

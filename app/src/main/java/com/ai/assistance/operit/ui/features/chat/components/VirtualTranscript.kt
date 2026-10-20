@@ -361,6 +361,18 @@ internal fun VirtualTranscript(
     var jumpLocatedAt by remember(chatId) { mutableStateOf<Long?>(null) }
     LaunchedEffect(jumpRequest?.token, rows.map { it.key }) {
         val request = jumpRequest ?: return@LaunchedEffect
+        // A search result names its message: load the page holding it if needed, then land there.
+        request.timestamp?.let { timestamp ->
+            if (messages.none { it.timestamp == timestamp } && reveal?.invoke(timestamp) != true) {
+                TranscriptJumpHost.consume(request.token)
+                return@LaunchedEffect
+            }
+            TranscriptJumpHost.consume(request.token)
+            restoring = false
+            onFollowingChange?.invoke(false)
+            pendingJump = timestamp
+            return@LaunchedEffect
+        }
         val requestIndex =
             messages.indexOfFirst { message -> message.content.contains(request.marker) }
         if (requestIndex >= 0) {

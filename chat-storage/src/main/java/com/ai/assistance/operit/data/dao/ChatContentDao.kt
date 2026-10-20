@@ -90,6 +90,7 @@ data class ChatRecallHit(
 )
 
 data class ChatRecallSession(val chatId: String, val title: String, val updatedAt: Long, val profile: String?)
+
 data class ChatRecallPart(val messageId: Long, val chatId: String, val sender: String,
     val timestamp: Long, val content: String, val totalChars: Int, val containsNull: Boolean = false)
 
@@ -377,6 +378,14 @@ abstract class ChatContentDao {
     @Transaction
     open suspend fun getMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<MessageEntity> =
         materializeMessages(queryMessagesByTimestamps(chatId, timestamps))
+
+    @Query(MESSAGE_CONTENT_ROW_QUERY + " WHERE messageId IN (:messageIds)")
+    protected abstract suspend fun queryMessagesByIds(messageIds: List<Long>): List<MessageContentRow>
+
+    /** The messages with [messageIds], each with its whole text however long, in no set order. */
+    @Transaction
+    open suspend fun getMessagesByIds(messageIds: List<Long>): List<MessageEntity> =
+        if (messageIds.isEmpty()) emptyList() else materializeMessages(queryMessagesByIds(messageIds))
 
     @Query(
         "SELECT SUBSTR(CAST(content AS BLOB), :startByte, :byteCount)" +
