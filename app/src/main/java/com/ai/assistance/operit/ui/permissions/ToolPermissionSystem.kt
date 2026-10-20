@@ -815,20 +815,40 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         }
     }
 
+    /**
+     * Whether [tool] only touches the chat's bound workspace or, in an Orbit's chat, only reads that
+     * Orbit's own folder. Orbit keeps its notes, files, uploads and skills there and reads them all the
+     * time, so reviewing each read only costs tokens. Writes stay reviewed: the folder also holds state
+     * the app trusts (packages.json, approvals.json, learning-boundary.json). Its vault lives elsewhere.
+     */
+    private suspend fun isInsideApprovedScope(tool: AITool, reviewContext: ToolPermissionReviewContext): Boolean {
+        if (WorkspaceToolPermissionPolicy.isAutoApproved(
+                context = context,
+                tool = tool,
+                workspacePath = reviewContext.workspacePath,
+                workspaceEnv = reviewContext.workspaceEnv,
+                callerChatId = reviewContext.callerChatId,
+            )) return true
+        if (tool.name.lowercase() !in ORBIT_FOLDER_READ_TOOLS) return false
+        val chatId = reviewContext.callerChatId?.takeIf { it.isNotBlank() } ?: return false
+        val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        val orbit = preferences.current().ownerForChat(chatId) ?: return false
+        val orbitRoot = runCatching { preferences.orbitDir(orbit.id).canonicalPath }.getOrNull() ?: return false
+        return WorkspaceToolPermissionPolicy.isAutoApproved(
+            context = context,
+            tool = tool,
+            workspacePath = orbitRoot,
+            workspaceEnv = "android",
+            callerChatId = chatId,
+        )
+    }
+
     private suspend fun resolveCurrentPermissionRoute(
         tool: AITool,
         reviewContext: ToolPermissionReviewContext,
     ): PermissionRoute {
         val level = getEffectivePermissionLevel(tool.name, reviewContext.callerChatId)
-        val workspaceApproved =
-            level == PermissionLevel.AUTO_REVIEW &&
-                WorkspaceToolPermissionPolicy.isAutoApproved(
-                    context = context,
-                    tool = tool,
-                    workspacePath = reviewContext.workspacePath,
-                    workspaceEnv = reviewContext.workspaceEnv,
-                    callerChatId = reviewContext.callerChatId,
-                )
+        val workspaceApproved = level == PermissionLevel.AUTO_REVIEW && isInsideApprovedScope(tool, reviewContext)
         return resolvePermissionRoute(level, workspaceApproved)
     }
 
@@ -838,15 +858,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         reviewContext: ToolPermissionReviewContext,
         onAsk: suspend () -> ToolPermissionDecision,
     ): ToolPermissionDecision {
-        val workspaceApproved =
-            level == PermissionLevel.AUTO_REVIEW &&
-                WorkspaceToolPermissionPolicy.isAutoApproved(
-                    context = context,
-                    tool = tool,
-                    workspacePath = reviewContext.workspacePath,
-                    workspaceEnv = reviewContext.workspaceEnv,
-                    callerChatId = reviewContext.callerChatId,
-                )
+        val workspaceApproved = level == PermissionLevel.AUTO_REVIEW && isInsideApprovedScope(tool, reviewContext)
 
         return when (resolvePermissionRoute(level, workspaceApproved)) {
             PermissionRoute.ALLOW -> ToolPermissionDecision.Allowed
@@ -1131,6 +1143,12 @@ internal fun orbitPermissionLevel(
         PermissionLevel.FORBID -> PermissionLevel.FORBID
         else -> PermissionLevel.AUTO_REVIEW
     }
+
+/** Generic file tools that only read; in an Orbit's chat they run unreviewed inside its own folder. */
+private val ORBIT_FOLDER_READ_TOOLS = setOf(
+    "read_file", "read_file_part", "read_file_full", "read_file_binary",
+    "list_files", "grep_code", "file_exists", "file_info",
+)
 
 /** Key prefix of Orbit's own tool levels, kept apart from the main app's "tool_permission_". */
 internal const val ORBIT_TOOL_PERMISSION_PREFIX = "orbit_tool_permission_"
