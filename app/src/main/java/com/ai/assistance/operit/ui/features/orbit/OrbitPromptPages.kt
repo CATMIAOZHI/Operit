@@ -76,7 +76,8 @@ internal fun OrbitFilePage(
     title: String,
     note: String,
     load: suspend () -> String,
-    save: suspend (String) -> Unit,
+    /** Null for a read-only file: no pencil, no editor. */
+    save: (suspend (String) -> Unit)?,
     onBack: () -> Unit,
     actions: List<OrbitFileAction> = emptyList(),
     maxChars: Int = OrbitPromptFiles.MAX_CHARS,
@@ -151,16 +152,22 @@ internal fun OrbitFilePage(
                         IconButton(enabled = !busy, onClick = {
                             val body = draft
                             run {
-                                save(body)
+                                checkNotNull(save)(body)
                                 content = load()
                                 leaveEditor()
                             }
                         }) { Icon(orbitIcon("check"), stringResource(R.string.orbit_file_save)) }
-                    } else {
+                    } else if (save != null) {
                         IconButton(enabled = content != null, onClick = {
                             draft = content.orEmpty()
                             editing = true
                         }) { Icon(orbitIcon("square-pen"), stringResource(R.string.orbit_file_edit)) }
+                    } else {
+                        // Read only: a lock in the pill where the pencil would be.
+                        Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+                            Icon(orbitIcon("lock"), stringResource(R.string.orbit_file_read_only), Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
                     }
                     if (actions.isNotEmpty() || editing) {
                         Box {
@@ -273,11 +280,8 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
         title = OrbitPromptFiles.PROMPT_FILE,
         note = stringResource(R.string.orbit_prompt_note),
         load = { OrbitPromptFiles.prompt(context, orbitId) },
-        save = { OrbitPromptFiles.savePrompt(context, orbitId, it) },
+        save = null,
         onBack = onBack,
-        actions = listOf(OrbitFileAction(stringResource(R.string.orbit_file_reset_default), "rotate-ccw") {
-            OrbitPromptFiles.resetPrompt(context, orbitId)
-        }),
     )
 }
 

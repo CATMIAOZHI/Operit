@@ -3,8 +3,10 @@ package com.ai.assistance.operit.ui.features.orbit
 import android.widget.Toast
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,12 +23,15 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -52,11 +57,14 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.semantics.toggleableState
+import androidx.compose.ui.state.ToggleableState
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.AIToolHandler
+import com.ai.assistance.operit.core.tools.ToolPackage
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitPackages
@@ -75,8 +83,18 @@ private class PackageRow(
 @Immutable
 private class PackageFolder(val key: String, val title: String, val icon: String, val rows: List<PackageRow>)
 
-private class PackagesState(val folders: List<PackageFolder>, val enabled: Set<String>, val mainCount: Int) {
+/**
+ * What the page shows: the Orbit's imported packages in folders, imported ones the app no longer
+ * has, which are on, and the main app's packages that can still be imported.
+ */
+private class PackagesState(
+    val folders: List<PackageFolder>,
+    val missing: List<String>,
+    val enabled: Set<String>,
+    val importable: List<PackageFolder>,
+) {
     val total = folders.sumOf { it.rows.size }
+    val importableCount = importable.sumOf { it.rows.size }
 }
 
 /** The main app's package categories, in its order. */
@@ -89,51 +107,80 @@ private fun categoryIcon(category: String) = when (category) {
     else -> "folder"
 }
 
+/** [packages] in the main app's folders: plugins with their subpackages, the rest by category. */
+private fun folders(
+    context: android.content.Context,
+    packageManager: PackageManager,
+    all: Map<String, ToolPackage>,
+    packages: Map<String, ToolPackage>,
+): List<PackageFolder> {
+    fun row(name: String, pkg: ToolPackage) = PackageRow(
+        name = name,
+        title = pkg.displayName.resolve(context).ifBlank { name },
+        description = pkg.description.resolve(context),
+    )
+    val byPlugin = linkedMapOf<String, MutableList<PackageRow>>()
+    val byCategory = linkedMapOf<String, MutableList<PackageRow>>()
+    packages.forEach { (name, pkg) ->
+        val plugin = packageManager.resolveToolPkgSubpackageRuntimeInternal(name)?.containerPackageName
+        if (plugin != null) byPlugin.getOrPut(plugin) { mutableListOf() } += row(name, pkg)
+        else byCategory.getOrPut(pkg.category.ifBlank { "Other" }) { mutableListOf() } += row(name, pkg)
+    }
+    val categories = byCategory.entries.sortedWith(compareBy(
+        { CATEGORY_ORDER.indexOf(it.key).let { i -> if (i < 0) CATEGORY_ORDER.size else i } }, { it.key },
+    )).map { (category, rows) ->
+        PackageFolder("category:$category", categoryTitle(context, category), categoryIcon(category),
+            rows.sortedBy { it.title.lowercase() })
+    }
+    val plugins = byPlugin.map { (plugin, rows) ->
+        PackageFolder("plugin:$plugin", all[plugin]?.displayName?.resolve(context)?.ifBlank { null } ?: plugin,
+            "puzzle", rows.sortedBy { it.title.lowercase() })
+    }.sortedBy { it.title.lowercase() }
+    return categories + plugins
+}
+
+/** [folders] cut down to what matches [needle]; a folder whose name matches keeps every package. */
+private fun filtered(folders: List<PackageFolder>, needle: String): List<PackageFolder> =
+    if (needle.isEmpty()) folders else folders.mapNotNull { folder ->
+        val inTitle = folder.title.lowercase().contains(needle)
+        val rows = if (inTitle) folder.rows else folder.rows.filter {
+            it.title.lowercase().contains(needle) || it.name.lowercase().contains(needle) ||
+                it.description.lowercase().contains(needle)
+        }
+        rows.takeIf { it.isNotEmpty() }?.let { PackageFolder(folder.key, folder.title, folder.icon, it) }
+    }
+
 /**
- * Orbit's own package switches. They start as a copy of the main app's and change only here, so
- * switching a package off on one side leaves the other side alone.
+ * Orbit's own packages: only the ones imported from the main app, each with its own switch. The
+ * user picks which of the main app's packages to import; nothing follows the main app afterwards.
  */
 @Composable
 internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
-    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val packageManager = remember { PackageManager.getInstance(context, AIToolHandler.getInstance(context)) }
     var reload by remember { mutableIntStateOf(0) }
+    var picking by remember { mutableStateOf(false) }
+    var importing by remember { mutableStateOf(false) }
+    // The picker takes back first while it is open.
+    OrbitPageBack(onBack = onBack)
     // null while loading; a failure shows a retry instead of spinning forever.
     val loaded by produceState<Result<PackagesState>?>(null, orbit.id, reload) {
-        value = null
+        if (value?.isSuccess != true) value = null
         value = withContext(Dispatchers.IO) {
             try { Result.success(run {
                 val candidates = OrbitPackages.candidates(packageManager)
                 val all = packageManager.getAvailablePackages()
-                fun row(name: String, pkg: com.ai.assistance.operit.core.tools.ToolPackage) = PackageRow(
-                    name = name,
-                    title = pkg.displayName.resolve(context).ifBlank { name },
-                    description = pkg.description.resolve(context),
-                )
-                // A plugin's subpackages share the plugin's folder; the rest follow the main app's categories.
-                val byPlugin = linkedMapOf<String, MutableList<PackageRow>>()
-                val byCategory = linkedMapOf<String, MutableList<PackageRow>>()
-                candidates.forEach { (name, pkg) ->
-                    val plugin = packageManager.resolveToolPkgSubpackageRuntimeInternal(name)?.containerPackageName
-                    if (plugin != null) byPlugin.getOrPut(plugin) { mutableListOf() } += row(name, pkg)
-                    else byCategory.getOrPut(pkg.category.ifBlank { "Other" }) { mutableListOf() } += row(name, pkg)
-                }
-                val categories = byCategory.entries.sortedWith(compareBy(
-                    { CATEGORY_ORDER.indexOf(it.key).let { i -> if (i < 0) CATEGORY_ORDER.size else i } }, { it.key },
-                )).map { (category, rows) ->
-                    PackageFolder("category:$category", categoryTitle(context, category), categoryIcon(category),
-                        rows.sortedBy { it.title.lowercase() })
-                }
-                val plugins = byPlugin.map { (plugin, rows) ->
-                    PackageFolder("plugin:$plugin", all[plugin]?.displayName?.resolve(context)?.ifBlank { null } ?: plugin,
-                        "puzzle", rows.sortedBy { it.title.lowercase() })
-                }.sortedBy { it.title.lowercase() }
+                val state = OrbitPackages.state(context, orbit.id)
                 PackagesState(
-                    folders = categories + plugins,
-                    enabled = OrbitPackages.enabled(context, orbit.id, packageManager),
-                    mainCount = OrbitPackages.mainEnabled(packageManager).size,
+                    folders = folders(context, packageManager, all, candidates.filterKeys { it in state.imported }),
+                    // Dependency containers stay hidden; anything else Orbit can no longer use
+                    // (deleted or archived) is listed so it can be removed.
+                    missing = state.imported.filter {
+                        it !in candidates && !(it in all && packageManager.isToolPkgContainer(it))
+                    }.sorted(),
+                    enabled = state.enabled,
+                    importable = folders(context, packageManager, all, candidates.filterKeys { it !in state.imported }),
                 )
             }) } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -145,9 +192,20 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
     // Switches flip at once; the file catches up in the background.
     var overrides by remember(loaded) { mutableStateOf(emptyMap<String, Boolean>()) }
     var query by remember { mutableStateOf("") }
-    var confirmImport by remember { mutableStateOf(false) }
     // Folders start closed so a long list stays short; a search opens every folder with a match.
     var opened by remember { mutableStateOf(emptySet<String>()) }
+
+    fun reason(e: Exception, fallback: Int): String = when (e) {
+        is OrbitPackages.NeedsMissingException ->
+            context.getString(R.string.orbit_packages_needs_missing, e.packageName)
+        is OrbitPackages.StillNeededException ->
+            context.getString(
+                R.string.orbit_packages_still_needed,
+                e.packageName,
+                e.dependents.joinToString(context.getString(R.string.orbit_packages_list_separator)),
+            )
+        else -> context.getString(fallback)
+    }
 
     fun toggle(name: String, on: Boolean, before: Boolean) {
         overrides = overrides + (name to on)
@@ -156,24 +214,28 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 val added = OrbitPackages.setEnabled(context, orbit.id, packageManager, name, on)
                 // Plugins this one needs were switched on with it.
                 overrides = overrides + added.associateWith { true }
+                if (added.any { it != name }) reload++
                 OrbitPackages.refreshPromptWhenIdle(context, orbit)
             } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
             } catch (e: Exception) {
                 // Show the switch as it really is, and say so.
                 overrides = overrides + (name to before)
-                val reason = when (e) {
-                    is OrbitPackages.NeedsMissingException ->
-                        context.getString(R.string.orbit_packages_needs_missing, e.packageName)
-                    is OrbitPackages.StillNeededException ->
-                        context.getString(
-                            R.string.orbit_packages_still_needed,
-                            e.packageName,
-                            e.dependents.joinToString(context.getString(R.string.orbit_packages_list_separator)),
-                        )
-                    else -> context.getString(R.string.orbit_packages_save_failed)
-                }
-                Toast.makeText(context, reason, Toast.LENGTH_LONG).show()
+                Toast.makeText(context, reason(e, R.string.orbit_packages_save_failed), Toast.LENGTH_LONG).show()
+            }
+        }
+    }
+
+    fun remove(name: String) {
+        scope.launch {
+            try {
+                OrbitPackages.remove(context, orbit.id, packageManager, name)
+                OrbitPackages.refreshPromptWhenIdle(context, orbit)
+                reload++
+            } catch (cancelled: kotlinx.coroutines.CancellationException) {
+                throw cancelled
+            } catch (e: Exception) {
+                Toast.makeText(context, reason(e, R.string.orbit_packages_save_failed), Toast.LENGTH_LONG).show()
             }
         }
     }
@@ -211,7 +273,7 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
             ) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
-                        .clickable(role = Role.Button) { confirmImport = true }
+                        .clickable(role = Role.Button) { picking = true }
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -223,11 +285,24 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                     Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
                         Text(stringResource(R.string.orbit_packages_import), style = MaterialTheme.typography.bodyLarge,
                             fontWeight = FontWeight.Medium)
-                        Text(stringResource(R.string.orbit_packages_import_desc, state.mainCount),
+                        Text(stringResource(R.string.orbit_packages_import_desc, state.importableCount),
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
+                    Icon(orbitIcon("chevron-right"), contentDescription = null, modifier = Modifier.size(20.dp),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
+        }
+        if (state.total == 0 && state.missing.isEmpty()) {
+            item(key = "none") {
+                Text(
+                    stringResource(R.string.orbit_packages_none),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 24.dp),
+                )
+            }
+            return@LazyColumn
         }
         item(key = "search") {
             Spacer(Modifier.height(18.dp))
@@ -242,15 +317,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
         }
         val needle = query.trim().lowercase()
         val searching = needle.isNotEmpty()
-        val folders = if (!searching) state.folders else state.folders.mapNotNull { folder ->
-            val inTitle = folder.title.lowercase().contains(needle)
-            val rows = if (inTitle) folder.rows else folder.rows.filter {
-                it.title.lowercase().contains(needle) || it.name.lowercase().contains(needle) ||
-                    it.description.lowercase().contains(needle)
-            }
-            rows.takeIf { it.isNotEmpty() }?.let { PackageFolder(folder.key, folder.title, folder.icon, it) }
-        }
-        if (folders.isEmpty()) {
+        val shown = filtered(state.folders, needle)
+        if (shown.isEmpty() && searching) {
             item(key = "empty") {
                 Text(
                     stringResource(R.string.orbit_packages_empty),
@@ -260,62 +328,226 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 )
             }
         }
-        folders.forEach { folder ->
-            val open = searching || folder.key in opened
-            // Each folder is one gray card drawn in slices, so each package stays its own lazy item.
-            item(key = folder.key) {
-                FolderSlice(first = true, last = !open) {
-                    FolderHeader(
-                        folder = folder,
-                        onCount = folder.rows.count { isOn(it.name) },
-                        open = open,
-                        enabled = !searching,
-                    ) { opened = if (folder.key in opened) opened - folder.key else opened + folder.key }
-                }
-            }
-            if (open) {
-                itemsIndexed(folder.rows, key = { _, row -> folder.key + "/" + row.name }) { index, row ->
-                    FolderSlice(first = false, last = index == folder.rows.lastIndex) {
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 66.dp, end = 16.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
-                        )
-                        val on = isOn(row.name)
-                        PackageItem(row, on) { toggle(row.name, it, on) }
+        folderItems(shown, searching, opened, { key -> opened = if (key in opened) opened - key else opened + key },
+            countOf = { folder -> folder.rows.count { isOn(it.name) } }) { row ->
+            val on = isOn(row.name)
+            PackageItem(row, on, onToggle = { toggle(row.name, it, on) }, onRemove = { remove(row.name) })
+        }
+        // Imported packages the app no longer has: they cannot be used, only taken out.
+        if (state.missing.isNotEmpty() && !searching) {
+            item(key = "missing") {
+                SectionTitle(stringResource(R.string.orbit_packages_missing))
+                Surface(
+                    shape = RoundedCornerShape(20.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                ) {
+                    Column {
+                        state.missing.forEachIndexed { index, name ->
+                            if (index > 0) HorizontalDivider(Modifier.padding(start = 16.dp, end = 16.dp),
+                                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = 16.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(name, style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f),
+                                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                androidx.compose.material3.TextButton(onClick = { remove(name) }) {
+                                    Text(stringResource(R.string.orbit_packages_remove))
+                                }
+                            }
+                        }
                     }
                 }
             }
-            item(key = folder.key + "/gap") { Spacer(Modifier.height(12.dp)) }
         }
     }
 
-    if (confirmImport) {
-        TaskConfirmSheet(
-            icon = "download",
-            title = stringResource(R.string.orbit_packages_import_title),
-            message = stringResource(R.string.orbit_packages_import_message),
-            confirmText = stringResource(R.string.orbit_packages_import_confirm),
-            dismissText = stringResource(R.string.cancel),
-            destructive = false,
-            onDismiss = { confirmImport = false },
-            onConfirm = {
-                confirmImport = false
+    // The main app's packages slide in from the right to be picked.
+    OrbitCoverPage(visible = picking, onDismiss = { picking = false }) {
+        val state = loaded?.getOrNull()
+        OrbitPackageImportPage(
+            folders = state?.importable.orEmpty(),
+            busy = importing,
+            onBack = { picking = false },
+            onImport = { names ->
+                importing = true
                 scope.launch {
                     try {
-                        OrbitPackages.importFromMain(context, orbit.id, packageManager)
+                        val result = OrbitPackages.importSelected(context, orbit.id, packageManager, names)
                         OrbitPackages.refreshPromptWhenIdle(context, orbit)
-                        Toast.makeText(context, R.string.orbit_packages_imported, Toast.LENGTH_SHORT).show()
+                        val failed = result.failed.values.firstOrNull()
+                        Toast.makeText(
+                            context,
+                            if (failed != null) reason(failed, R.string.orbit_packages_import_failed)
+                            else context.getString(R.string.orbit_packages_imported, result.added.size),
+                            Toast.LENGTH_SHORT,
+                        ).show()
+                        picking = false
                         reload++
                     } catch (cancelled: kotlinx.coroutines.CancellationException) {
                         throw cancelled
                     } catch (_: Exception) {
                         Toast.makeText(context, R.string.orbit_packages_import_failed, Toast.LENGTH_SHORT).show()
+                    } finally {
+                        importing = false
                     }
                 }
             },
         )
     }
 }
+
+/** Folders drawn as gray cards in slices, each package its own lazy item. */
+private fun LazyListScope.folderItems(
+    folders: List<PackageFolder>,
+    searching: Boolean,
+    opened: Set<String>,
+    onFlip: (String) -> Unit,
+    countOf: (PackageFolder) -> Int,
+    countText: Int = R.string.orbit_packages_count,
+    content: @Composable (PackageRow) -> Unit,
+) {
+    folders.forEach { folder ->
+        val open = searching || folder.key in opened
+        item(key = folder.key) {
+            FolderSlice(first = true, last = !open) {
+                FolderHeader(folder = folder, onCount = countOf(folder), countText = countText, open = open, enabled = !searching) {
+                    onFlip(folder.key)
+                }
+            }
+        }
+        if (open) {
+            itemsIndexed(folder.rows, key = { _, row -> folder.key + "/" + row.name }) { index, row ->
+                FolderSlice(first = false, last = index == folder.rows.lastIndex) {
+                    HorizontalDivider(
+                        modifier = Modifier.padding(start = 66.dp, end = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                    )
+                    content(row)
+                }
+            }
+        }
+        item(key = folder.key + "/gap") { Spacer(Modifier.height(12.dp)) }
+    }
+}
+
+/**
+ * The main app's packages that are not in this Orbit yet, in the same folders, each with a check
+ * box. The ones picked are imported together, switched on.
+ */
+@Composable
+private fun OrbitPackageImportPage(
+    folders: List<PackageFolder>,
+    busy: Boolean,
+    onBack: () -> Unit,
+    onImport: (Set<String>) -> Unit,
+) {
+    var picked by remember { mutableStateOf(emptySet<String>()) }
+    var query by remember { mutableStateOf("") }
+    var opened by remember { mutableStateOf(emptySet<String>()) }
+    Column(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding().navigationBarsPadding().imePadding(),
+    ) {
+        LazyColumn(
+            Modifier.weight(1f).fillMaxWidth(),
+            contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 16.dp),
+        ) {
+            item(key = "header") {
+                OrbitPageHeader(stringResource(R.string.orbit_packages_import), onBack)
+                Text(
+                    stringResource(R.string.orbit_packages_import_help),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 14.dp),
+                )
+            }
+            if (folders.isEmpty()) {
+                item(key = "all-in") {
+                    Text(
+                        stringResource(R.string.orbit_packages_import_all_in),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(start = 4.dp, top = 12.dp),
+                    )
+                }
+                return@LazyColumn
+            }
+            item(key = "search") {
+                SearchPill(query, { query = it })
+                Spacer(Modifier.height(16.dp))
+            }
+            val needle = query.trim().lowercase()
+            val searching = needle.isNotEmpty()
+            val shown = filtered(folders, needle)
+            if (shown.isEmpty()) {
+                item(key = "empty") {
+                    Text(
+                        stringResource(R.string.orbit_packages_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                    )
+                }
+            }
+            folderItems(shown, searching, opened, { key -> opened = if (key in opened) opened - key else opened + key },
+                countOf = { folder -> folder.rows.count { it.name in picked } },
+                countText = R.string.orbit_packages_picked_count) { row ->
+                PickItem(row, row.name in picked) { on -> picked = if (on) picked + row.name else picked - row.name }
+            }
+        }
+        if (folders.isNotEmpty()) {
+            Surface(
+                shape = RoundedCornerShape(50),
+                color = if (picked.isEmpty() || busy) MaterialTheme.colorScheme.surfaceVariant
+                    else MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)
+                    .clip(RoundedCornerShape(50))
+                    .clickable(enabled = picked.isNotEmpty() && !busy, role = Role.Button) {
+                        onImport(picked)
+                    },
+            ) {
+                Text(
+                    stringResource(R.string.orbit_packages_import_count, picked.size),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (picked.isEmpty() || busy) MaterialTheme.colorScheme.onSurfaceVariant
+                        else MaterialTheme.colorScheme.surface,
+                    modifier = Modifier.padding(vertical = 14.dp).fillMaxWidth(),
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun PickItem(row: PackageRow, picked: Boolean, onPick: (Boolean) -> Unit) {
+    Row(
+        Modifier.fillMaxWidth()
+            .toggleable(value = picked, role = Role.Checkbox, onValueChange = onPick)
+            .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Box(
+            Modifier.size(36.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surface),
+            contentAlignment = Alignment.Center,
+        ) { Icon(orbitIcon("package"), contentDescription = null, modifier = Modifier.size(18.dp)) }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(row.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            if (row.description.isNotBlank()) {
+                Text(row.description, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        Spacer(Modifier.width(8.dp))
+        Checkbox(checked = picked, onCheckedChange = null)
+    }
+}
+
 
 @Composable
 internal fun SearchPill(query: String, onChange: (String) -> Unit, placeholder: String = stringResource(R.string.orbit_packages_search)) {
@@ -346,12 +578,22 @@ internal fun SearchPill(query: String, onChange: (String) -> Unit, placeholder: 
     }
 }
 
+/** One imported package: tap switches it, a long press offers to take it out of the Orbit. */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Unit) {
+private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Unit, onRemove: () -> Unit) {
+    var menu by remember { mutableStateOf(false) }
+    Box {
     Row(
         Modifier.fillMaxWidth()
             // One target for screen readers: the package name and its on/off state together.
-            .toggleable(value = on, role = Role.Switch, onValueChange = onToggle)
+            .combinedClickable(
+                role = Role.Switch,
+                onClick = { onToggle(!on) },
+                onLongClick = { menu = true },
+                onLongClickLabel = stringResource(R.string.orbit_packages_remove),
+            )
+            .semantics { toggleableState = if (on) ToggleableState.On else ToggleableState.Off }
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -376,6 +618,17 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
         Spacer(Modifier.width(8.dp))
         Switch(checked = on, onCheckedChange = null)
     }
+    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        DropdownMenuItem(
+            text = { Text(stringResource(R.string.orbit_packages_remove)) },
+            leadingIcon = { Icon(orbitIcon("trash-2"), contentDescription = null, modifier = Modifier.size(18.dp)) },
+            onClick = {
+                menu = false
+                onRemove()
+            },
+        )
+    }
+    }
 }
 
 /** A slice of a folder's gray card: the header on top, packages below, round corners at both ends. */
@@ -392,7 +645,7 @@ internal fun FolderSlice(first: Boolean, last: Boolean, content: @Composable () 
 }
 
 @Composable
-private fun FolderHeader(folder: PackageFolder, onCount: Int, open: Boolean, enabled: Boolean, onClick: () -> Unit) {
+private fun FolderHeader(folder: PackageFolder, onCount: Int, countText: Int, open: Boolean, enabled: Boolean, onClick: () -> Unit) {
     val turn by animateFloatAsState(if (open) 180f else 0f, tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing),
         label = "folderChevron")
     val openedText = stringResource(R.string.orbit_packages_folder_opened)
@@ -415,7 +668,7 @@ private fun FolderHeader(folder: PackageFolder, onCount: Int, open: Boolean, ena
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(folder.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(stringResource(R.string.orbit_packages_count, onCount, folder.rows.size),
+            Text(stringResource(countText, onCount, folder.rows.size),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         if (enabled) {

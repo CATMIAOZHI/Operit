@@ -65,7 +65,11 @@ internal fun OrbitProcessPage(
     val active = androidx.compose.runtime.rememberUpdatedState(LocalOrbitPageActive.current)
     // A background run still working is read again every few seconds until it ends.
     val record by produceState<ProcessRecord?>(null, process, developer) {
-        var running = (process as? OrbitProcess.TaskRun)?.running == true
+        var running = when (process) {
+            is OrbitProcess.TaskRun -> process.running
+            is OrbitProcess.Learning -> process.running
+            is OrbitProcess.ChatTurn -> false
+        }
         while (true) {
             value = try {
                 ProcessRecord(OrbitWork.messages(context, process, raw = developer), failed = false, running = running)
@@ -75,11 +79,18 @@ internal fun OrbitProcessPage(
                 com.ai.assistance.operit.util.AppLogger.w("OrbitProcess", "Could not load a process: ${e.message}")
                 ProcessRecord(value?.messages.orEmpty(), failed = value == null, running = running)
             }
-            if (!running || process !is OrbitProcess.TaskRun) break
+            if (!running) break
             delay(5_000)
             androidx.compose.runtime.snapshotFlow { active.value }.first { it }
             running = try {
-                OrbitTaskRepository(context).dao.run(process.runId)?.state == "RUNNING"
+                when (process) {
+                    is OrbitProcess.TaskRun -> OrbitTaskRepository(context).dao.run(process.runId)?.state == "RUNNING"
+                    is OrbitProcess.Learning -> kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository(context, process.spaceId)
+                            .list().firstOrNull { it.id == process.logId }?.status == "running"
+                    }
+                    is OrbitProcess.ChatTurn -> false
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

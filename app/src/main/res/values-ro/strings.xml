@@ -6700,27 +6700,12 @@
     <string name="webvisit_title">În timpul accesării paginii web</string>
     <string name="webvisit_url_label">Accesați adresa web:</string>
     <string name="webvisit_status_loading_page">Se încarcă pagina...</string>
-    <string name="webvisit_status_waiting_page">Așteptați până când pagina se încarcă complet...</string>
-    <string name="webvisit_status_captcha">Vă rugăm să%1$dVerificarea om-mașină se realizează în câteva secunde...</string>
     <string name="webvisit_status_extracting">Se încarcă conținutul,%1$dSe va relua automat după câteva secunde...</string>
-    <string name="webvisit_status_extracted_waiting">Conținutul a fost extras; se așteaptă continuarea manuală...</string>
     <string name="webvisit_status_waiting_extraction">Pagina s-a încărcat, se așteaptă extragerea conținutului...</string>
     <string name="webvisit_page_title">Titlul paginii: %1$s</string>
-    <string name="webvisit_button_cancel_countdown">Anulează numărătoarea inversă</string>
-    <string name="webvisit_button_cancel_auto">Anulare automată</string>
     <string name="webvisit_button_cancel">Anulare</string>
     <string name="webvisit_button_minimize">Reducere</string>
-    <string name="webvisit_button_continue_now">Continuă acum (%1$ds)</string>
-    <string name="webvisit_button_continue">Continuarea procesării</string>
-    <string name="webvisit_button_manual_extract">Extragere manuală</string>
-    <string name="webvisit_button_extract">Extragerea conținutului</string>
-    <string name="webvisit_cancelled">Operațiunea a fost anulată</string>
-    <string name="webvisit_webview_unavailable">WebViewIndisponibil, nu se poate extrage conținutul.</string>
     <string name="webvisit_help_loading_page">Se încarcă pagina, vă rugăm să așteptați...</string>
-    <string name="webvisit_help_countdown">Se efectuează numărătoarea inversă automată, faceți clic pe\"Anulează numărătoarea inversă\"Se poate opri procesarea automată</string>
-    <string name="webvisit_help_cancel_auto">Faceți clic\"Anulare automată\"Se poate comuta la modul manual</string>
-    <string name="webvisit_help_manual_mode">S-a trecut la modul manual, faceți clic pe\"Extragere manuală\"Continuă</string>
-    <string name="webvisit_help_extracted">Extragerea conținutului s-a finalizat, faceți clic pe\"Continuarea procesării\"Continuă</string>
 
     <!-- SiliconFlow Voice Provider -->
     <string name="siliconflow_voice_alex">Alex - O voce masculină calmă și gravă</string>
