@@ -51,6 +51,9 @@ import com.ai.assistance.operit.util.stream.asFlow
  */
 val LocalOrbitChatLook = compositionLocalOf { false }
 
+/** The fence an Orbit chat draws as a card from a tool: "```orbit-card" and one line of JSON. */
+const val ORBIT_CARD_FENCE = "orbit-card"
+
 /** Emoji reactions Orbit put on the user's messages in this chat, by message time. */
 val LocalOrbitReactions = compositionLocalOf<Map<Long, String>> { emptyMap() }
 
@@ -111,8 +114,16 @@ val LocalOrbitUserReactions = compositionLocalOf<OrbitUserReactions?> { null }
 /** What Orbit said in a message, without its thinking, tool calls, tool results or status lines. */
 object OrbitSpeech {
     private val blank = Regex("\n{3,}")
-    private val cardFence = Regex("```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?(?:```|$)")
-    private val shownCard = Regex("```a2ui(?:[ \\t]+card-\\d{1,2})?[ \\t]*\\n")
+    private val cardFence = Regex("```(?:a2ui(?:-ref)?|${ORBIT_CARD_FENCE})[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+    private val shownCard = Regex("```(?:a2ui(?:[ \\t]+card-\\d{1,2})?|${ORBIT_CARD_FENCE})[ \\t]*\\n")
+    // Orbit's own words can never draw an Orbit card; only a tool's result can (see [cards]).
+    // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
+    private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
+    private val cardToolResult = Regex(
+        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file)\"[^>]*\\bstatus=\"success\"",
+        RegexOption.IGNORE_CASE,
+    )
+    private val placeholder = Regex("\uE000(\\d+)\uE001")
     // The chat is re-shown as a reply streams in; each stored text is cleaned only once.
     private val cleaned = java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, String>())
     // Stored instead of a text that needed no cleaning: a value pointing at its own key would keep
@@ -139,24 +150,75 @@ object OrbitSpeech {
     fun words(content: String, cardOnly: String): String {
         val said = of(content)
         if (said.isEmpty()) return ""
-        return said.replace(cardFence, "").replace(blank, "\n\n").trim()
+        return said.replace(cardFence, "").replace(messageBreak, "\n").replace(blank, "\n\n").trim()
             .ifEmpty { if (shownCard.containsMatchIn(said)) cardOnly else "" }
+    }
+
+    /** Orbit puts this between messages it sends one after another (Muse's "separate bubbles"). */
+    internal val messageBreak = Regex("<message_break\\s*/?>(?:\\s*</message_break>)?", RegexOption.IGNORE_CASE)
+
+    /** One Orbit reply as the bubbles it sends: its words split at each message break, then its cards. */
+    fun bubbles(shown: String): Pair<List<String>, List<String>> {
+        val (speech, cards) = splitCards(shown)
+        val parts = if (speech.contains("message_break", ignoreCase = true)) {
+            speech.split(messageBreak).map { it.trim() }.filter { it.isNotEmpty() }
+        } else listOf(speech).filter { it.isNotBlank() }
+        return parts to cards
+    }
+
+    /**
+     * One shown Orbit reply as the bubbles it is drawn as, top to bottom: its words split at each
+     * message break, then each card on its own. A reply with neither is one bubble, as it is.
+     */
+    fun pieces(shown: String): List<String> {
+        if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n")) return listOf(shown)
+        val (parts, cards) = bubbles(shown)
+        return parts + cards.map { "```$ORBIT_CARD_FENCE\n$it\n```" }
     }
 
     private fun clean(content: String): String {
         var text = ChatUtils.removeThinkingContent(content)
         text = ChatMarkupRegex.removeGeminiThoughtSignatureMeta(text)
         text = ChatMarkupRegex.removeOpenAiResponsesReasoningMeta(text)
+        // A card a tool put in the chat (a secure entry card, a picture or file Orbit sent) stays
+        // where the tool ran; every other step and result goes.
+        val cards = mutableListOf<String>()
+        // The marks below stand in for cards; the same characters in the text itself are dropped.
+        if (text.indexOf('\uE000') >= 0 || text.indexOf('\uE001') >= 0) text = text.replace("\uE000", "").replace("\uE001", "")
+        text = text.replace(ChatMarkupRegex.toolOrToolResultBlock) { match ->
+            cardOf(match.value)?.let { card ->
+                cards += card
+                "\uE000${cards.size - 1}\uE001"
+            }.orEmpty()
+        }
+        // "Viewed N images": the pictures Orbit looked at while working, which the user never sees.
+        text = com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser.removeImageLinks(text)
         listOf(
-            ChatMarkupRegex.toolOrToolResultBlock,
             ChatMarkupRegex.toolSelfClosingTag,
             ChatMarkupRegex.toolResultSelfClosingTag,
             ChatMarkupRegex.statusTag,
             ChatMarkupRegex.statusSelfClosingTag,
             ChatMarkupRegex.emotionTag,
         ).forEach { text = text.replace(it, "") }
+        // A card Orbit wrote itself never shows; checked last, so removing a tag cannot put one together.
+        if (text.contains(ORBIT_CARD_FENCE)) text = text.replace(writtenOrbitCard, "")
+        if (cards.isNotEmpty()) {
+            text = text.replace(placeholder) { m ->
+                val card = m.groupValues[1].toIntOrNull()?.let(cards::getOrNull) ?: return@replace ""
+                "\n\n```$ORBIT_CARD_FENCE\n$card\n```\n\n"
+            }
+        }
         // A reply cut off mid-step (cancelled, interrupted) can end in a step that never closed.
         return text.replace(unclosedStepAtEnd, "").replace(blank, "\n\n").trim()
+    }
+
+    /** The card in one of Orbit's tool results, as one line of JSON, or null. */
+    private fun cardOf(block: String): String? {
+        if (!block.contains(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY) || !cardToolResult.containsMatchIn(block)) return null
+        val body = block.substringAfter("<content>", "").substringBeforeLast("</content>", "")
+        return runCatching {
+            org.json.JSONObject(body.trim()).optJSONObject(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY)?.toString()
+        }.getOrNull()
     }
 
     /**
@@ -164,10 +226,46 @@ object OrbitSpeech {
      * actions point at messages by position; rows with nothing to say are skipped when drawn
      * (see [hidden]). A reply still being written shows what Orbit has said so far ([live], read
      * from its stream by [rememberOrbitLiveSpeech]); its thinking and tool calls never show.
+     *
+     * Cards Orbit's tools made during a turn are sent after its reply, like Muse: they move to the
+     * last row of that turn, and while Orbit is still working ([busy]) the newest turn holds them back.
      */
-    fun history(messages: List<ChatMessage>): List<ChatMessage> = messages.map { message ->
-        if (message.sender != "ai" || message.displayMode.isCollaborationEvent) message
-        else message.copy(content = of(message.content), contentStream = null)
+    fun history(messages: List<ChatMessage>, busy: Boolean = false): List<ChatMessage> {
+        val out = ArrayList<ChatMessage>(messages.size)
+        val pending = mutableListOf<String>()
+        var lastAi = -1
+        fun flush() {
+            if (lastAi >= 0 && pending.isNotEmpty()) {
+                val row = out[lastAi]
+                out[lastAi] = row.copy(content = (row.content + pending.joinToString("") { "\n\n```$ORBIT_CARD_FENCE\n$it\n```" }).trim())
+            }
+            pending.clear()
+        }
+        for (message in messages) {
+            if (message.sender == "user") {
+                flush()
+                lastAi = -1
+            }
+            if (message.sender != "ai" || message.displayMode.isCollaborationEvent) {
+                out += message
+                continue
+            }
+            val (speech, cards) = splitCards(of(message.content))
+            pending += cards
+            lastAi = out.size
+            out += message.copy(content = speech, contentStream = null)
+        }
+        if (!busy) flush()
+        return out
+    }
+
+    private val cardBlock = Regex("\\n*```$ORBIT_CARD_FENCE\\n([^\\n]*)\\n```\\n*")
+
+    /** What Orbit said in [shown] (cleaned text), and the cards in it, in order. */
+    fun splitCards(shown: String): Pair<String, List<String>> {
+        if (!shown.contains("```$ORBIT_CARD_FENCE\n")) return shown to emptyList()
+        val cards = cardBlock.findAll(shown).map { it.groupValues[1] }.toList()
+        return shown.replace(cardBlock, "\n\n").replace(blank, "\n\n").trim() to cards
     }
 
     /**
@@ -187,7 +285,7 @@ object OrbitSpeech {
     )
 
     /** What Orbit has said so far in a reply still being written: finished words, no open steps. */
-    fun live(partial: String): String = clean(partial).replace(openTagAtEnd, "").trim()
+    fun live(partial: String): String = splitCards(clean(partial)).first.replace(openTagAtEnd, "").trim()
 
     /** Rows an Orbit chat does not draw: subagent cards, summaries, placeholders and empty replies. */
     fun hidden(message: ChatMessage): Boolean =

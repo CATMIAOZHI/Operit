@@ -1,7 +1,13 @@
 
 package com.ai.assistance.operit.ui.features.chat.components.style.bubble
 
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.key
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
@@ -73,9 +79,18 @@ fun BubbleStyleChatMessage(
             val backdrop = if (aiBubbleImageStyle == null && !aiMessageLiquidGlassEnabled && !aiMessageWaterGlassEnabled &&
                 aiMessageColor.alpha >= .95f) aiMessageColor.copy(alpha = 1f) else Color.Unspecified
             CompositionLocalProvider(LocalDynamicUiBackdrop provides backdrop) {
-            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
+            // An Orbit reply can be several messages sent one after another (and the cards its tools
+            // sent): each is its own bubble, stacked, all still this one message for long-press,
+            // reply and reactions.
+            val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode) {
+                if (orbitLook && message.contentStream == null && !message.displayMode.isCollaborationEvent)
+                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieces(message.content)
+                else null
+            }
+            val bubble: @Composable (ChatMessage, ChatMessageHeightMemory?) -> Unit = { shown, memory ->
             BubbleAiMessageComposable(
-                message = message,
+                message = shown,
                 showHeader = showAssistantHeader && !message.displayMode.isCollaborationEvent,
                 inlineContent = if (message.displayMode.isCollaborationEvent) {
                     { com.ai.assistance.operit.ui.features.chat.components.CollaborationMessageCard(message, horizontalPadding = 0.dp) }
@@ -93,11 +108,27 @@ fun BubbleStyleChatMessage(
                 expandThinkToolsGroups = expandThinkToolsGroups,
                 forceShowThinkingProcess = forceShowThinkingProcess,
                 isHidden = isHidden,
-                heightMemory = heightMemory,
+                heightMemory = memory,
                 enableDialogs = enableDialogs,
                 enableToolDetailDialogs = enableToolDetailDialogs,
                 onAvatarLongPressMention = onRoleAvatarLongPress,
             )
+            }
+            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
+                if (pieces == null) {
+                    bubble(message, heightMemory)
+                } else {
+                    // Always the same stack, even for one bubble: a reply that grows a second bubble
+                    // while streaming keeps the first one as it is drawn.
+                    Column(
+                        Modifier.fillMaxWidth().then(
+                            if (heightMemory == null || isHidden) Modifier
+                            else Modifier.onSizeChanged { heightMemory.updateMeasured(message.timestamp, it.height) }
+                        ),
+                    ) {
+                        pieces.forEachIndexed { i, piece -> key(i) { bubble(message.copy(content = piece), null) } }
+                    }
+                }
             }
             }
         }

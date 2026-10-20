@@ -582,8 +582,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         displayedChatHistory.lastOrNull { it.sender == "ai" && it.contentStream != null && !it.displayMode.isCollaborationEvent }
     } else null
     val orbitLiveSpeech by com.ai.assistance.operit.ui.features.chat.components.rememberOrbitLiveSpeech(orbitStreaming)
-    val orbitSpokenHistory = remember(displayedChatHistory, orbitLook) {
-        if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(displayedChatHistory)
+    // Only the newest turn can still be in progress; an older page of the chat is never held back.
+    val orbitTurnBusy = isLoading && !hasNewerDisplayHistory
+    val orbitSpokenHistory = remember(displayedChatHistory, orbitLook, orbitTurnBusy) {
+        // Cards from Orbit's tools wait until its reply is done, then follow it as their own message.
+        if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(displayedChatHistory, busy = orbitTurnBusy)
         else displayedChatHistory
     }
     val orbitSpeechHistory = remember(displayedChatHistory, orbitSpokenHistory, orbitLook, orbitLiveSpeech) {

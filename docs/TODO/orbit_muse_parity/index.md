@@ -63,7 +63,8 @@ status: in-progress
 | 表情回应 | `orbit_react` 给用户最新的消息点一个表情，存在 `orbit/<UUID>/reactions.json`，显示在消息气泡右下角 [DONE batch4] |
 | 侧聊 | 顶部右边的「聊天」按钮里新建、切换、重命名、删除侧聊；`orbit_chat` list / create / read；在侧聊里安排的任务结果回到那个侧聊，侧聊删掉后回到主聊天 [DONE batch4] |
 | 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
-| 密码保险箱 | `orbit_vault`：request_login / request_api_key 弹安全录入卡，值直接加密存进保险箱，Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5] |
+| 密码保险箱 | `orbit_vault`：request_login / request_api_key 在聊天里放一张安全卡片并立即返回；用户点卡片在弹层里填，值直接加密存进保险箱，保存后隐藏通知 Orbit 接着做，关掉卡片什么都不发；Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5，卡片流程 batch7] |
+| 发图片和文件 | `orbit_file` 的 send：把 `files/` 里的文件像真人一样发进聊天，图片点一下存相册，其他文件点一下用别的应用打开；Orbit 读图时的「已查看 N 张图像」在 Orbit 聊天里不显示 [DONE batch7] |
 | 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、动态点子、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉；SOUL / IDENTITY / 提示词里的命中只列出请用户自己改；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5] |
 | 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
 | 发送前检查 | `orbit_presend_check`：对外发消息前核对草稿已定稿、没有密码和已忘内容、收件人明确、用户看过并同意 [DONE batch5] |

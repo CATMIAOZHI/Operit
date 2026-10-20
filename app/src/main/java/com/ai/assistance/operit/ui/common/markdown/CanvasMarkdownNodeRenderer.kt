@@ -686,6 +686,12 @@ private fun renderNodeContent(
                     blockIndex = index,
                     ink = textColor,
                 )
+            } else if (firstLine == "```" + com.ai.assistance.operit.ui.features.chat.components.ORBIT_CARD_FENCE &&
+                com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+            ) {
+                // A card one of Orbit's tools put in the chat: a secure entry card, a picture or a file.
+                // Only the exact opening the app writes counts, so a look-alike Orbit typed never draws one.
+                com.ai.assistance.operit.ui.features.orbit.OrbitChatCard(codeContent)
             } else if (language == "a2ui-ref") {
                 // The reference did not resolve in its turn; keep the raw text for the model, show a notice.
                 androidx.compose.material3.Text(

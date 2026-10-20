@@ -46,7 +46,8 @@ internal object OrbitVaultTools {
             ToolParameterSchema("body", description = "http_request：可选，请求正文", required = false),
         ),
         details = """
-  - 需要登录或 API 密钥时，先 list 看有没有存过；没有就用 request_login / request_api_key。这会在 Orbit 页面弹出一张安全录入卡，用户在卡里输入，值直接存进保险箱，不经过聊天。调用会等用户填完（最多 5 分钟），只能在和用户的聊天里用。
+  - 需要登录或 API 密钥时，先 list 看有没有存过；没有就用 request_login / request_api_key。这会立刻在聊天里放一张安全卡片，然后马上返回，不会等用户。用户点卡片、在弹出的输入框里填，值直接存进保险箱，不经过聊天。只能在和用户的聊天里用。
+  - 放完卡片就结束这一轮，可以简单说一句“卡片在下面，填好我接着弄”。用户保存后你会收到一条隐藏通知，再接着做；用户不填或关掉卡片，你什么都不会收到，不要追问，也不要为同一个网站再放一张卡。
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
   - API：用 http_request，宿主会把密钥加到请求里，只发往存密钥时登记的主机，返回里的密钥会被打码。
@@ -67,10 +68,11 @@ internal object OrbitVaultTools {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
                         "The secure entry card only works in a chat with the user; ask the user in chat"
                     }
+                    val chatId = caller.orEmpty()
                     val request = if (arg("action") == "request_login") {
                         val url = arg("page_url")
                         val host = OrbitVault.httpsHost(url) ?: error("page_url must be an https address")
-                        OrbitVault.Request(orbit.id, OrbitVault.LOGIN, host, url, arg("username_hint").take(200), emptyList(), "")
+                        OrbitVault.Request(orbit.id, chatId, OrbitVault.LOGIN, host, url, arg("username_hint").take(200), emptyList(), "")
                     } else {
                         val provider = arg("provider").take(60)
                         require(provider.isNotEmpty()) { "Missing provider" }
@@ -82,12 +84,15 @@ internal object OrbitVaultTools {
                         require(placement == "bearer" || placement.matches(Regex("(header|query):[A-Za-z0-9_-]{1,60}"))) {
                             "placement must be bearer, header:<name> or query:<name>"
                         }
-                        OrbitVault.Request(orbit.id, OrbitVault.API_KEY, provider, "", "", hosts, placement)
+                        OrbitVault.Request(orbit.id, chatId, OrbitVault.API_KEY, provider, "", "", hosts, placement)
                     }
-                    val id = OrbitVault.ask(request)
-                    if (id == null) JSONObject().put("saved", false)
-                        .put("note", "The user closed the card or did not fill it in. Do not ask for the value in chat.")
-                    else JSONObject().put("saved", true).put("credential_id", id).put("site", request.site)
+                    // The card goes into the chat and the turn moves on; a save sends a hidden note.
+                    JSONObject().put("card_sent", true).put("site", request.site)
+                        .put("note", "A secure card is now in the chat. The user fills it in whenever they like; " +
+                            "you get a hidden note once it is saved, and nothing if they skip it. End this turn now. " +
+                            "Do not ask for the value in chat and do not send another card for this site.")
+                        .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
+                            com.ai.assistance.operit.features.orbit.OrbitChatCards.vault(request))
                 }
                 "list" -> {
                     val domain = arg("domain").lowercase()

@@ -67,7 +67,7 @@ internal object OrbitReactionSender {
                 val message = withContext(Dispatchers.IO) {
                     ChatHistoryManager.getInstance(app).loadChatMessagesByTimestamps(chatId, listOf(timestamp)).firstOrNull()
                 } ?: return@launch
-                val said = OrbitSpeech.of(message.content)
+                val said = OrbitSpeech.words(message.content, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
                 if (said.isBlank()) return@launch
                 // Says whether the send was taken. If the chat just got busy, it is refused without
                 // touching anything (no summary or message is cancelled), and the catch below lets

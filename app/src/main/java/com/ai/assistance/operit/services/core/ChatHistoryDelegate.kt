@@ -269,7 +269,22 @@ class ChatHistoryDelegate(
         }.map { ChatMessage(timestamp = it.timestamp, sender = it.sender, content = "") }
         val page = if (after != null) takeOldestDisplayPages(candidates, pageCount)
             else takeNewestDisplayPages(candidates, pageCount)
-        return chatHistoryManager.loadChatMessagesByTimestamps(chatId, page.map { it.timestamp })
+        val timestamps = page.map { it.timestamp }
+        // An Orbit chat draws every row as something Orbit said, with no process to fold: what it
+        // said (and the cards it sent) before the user spoke up mid-reply is a row of that reply's
+        // process, so it comes along with the reply.
+        val isOrbitChat = try {
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (_: Exception) {
+            false
+        }
+        val withProcess = if (!isOrbitChat) timestamps else {
+            val finals = timestamps.toHashSet()
+            timestamps + structure.turns.filter { it.finalTimestamp in finals }.flatMap { it.memberTimestamps }
+        }
+        return chatHistoryManager.loadChatMessagesByTimestamps(chatId, withProcess)
     }
 
     suspend fun loadTranscriptProcess(key: Long) {
