@@ -81,8 +81,9 @@ enum class NavigationTransitionSource {
 
 private const val TAG = "OperitApp"
 
+/** Orbit is a home of its own: back at its root leaves the app, never drops into the main chat. */
 internal fun shouldHandleSystemBack(canPop: Boolean, currentScreen: Screen): Boolean =
-    canPop || currentScreen !is Screen.AiChat
+    currentScreen !is Screen.Orbit && (canPop || currentScreen !is Screen.AiChat)
 
 private data class NetworkStateSnapshot(
     val isAvailable: Boolean,

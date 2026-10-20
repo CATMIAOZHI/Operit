@@ -9151,9 +9151,12 @@
     <string name="orbit_feed_brief_cleared">已清空，每日动态停了</string>
     <string name="orbit_feed_posts_empty">还没有动态。写好简介后，Orbit 会在这里给你写短文。</string>
     <string name="orbit_feed_why">为什么给你看</string>
-    <string name="orbit_feed_discuss">聊聊</string>
+    <string name="orbit_feed_discuss">讨论</string>
     <string name="orbit_feed_discuss_message">我们聊聊这条动态：「%1$s」\n\n%2$s</string>
     <string name="orbit_feed_like">喜欢</string>
+    <string name="orbit_feed_dislike">不喜欢</string>
+    <string name="orbit_feed_brief_dialog_title">动态版块说明</string>
+    <string name="orbit_feed_brief_dialog_hint">你的动态版块按下面这段话来写。你改了它，之后的动态都按新的写。</string>
     <string name="orbit_move_up">上移</string>
     <string name="orbit_move_down">下移</string>
     <string name="orbit_ideas_empty">Orbit 想到能为你做的事，会放在这里。</string>
@@ -9165,7 +9168,9 @@
     <string name="orbit_idea_dismiss">关掉这个点子？</string>
     <string name="orbit_idea_dismiss_message">关掉后它不会再出现。</string>
     <string name="orbit_idea_dismiss_action">关掉</string>
-    <string name="orbit_idea_dismiss_hint">长按卡片可以关掉</string>
+    <string name="orbit_idea_swipe_hint">右滑喜欢，左滑不喜欢，点开看详情</string>
+    <string name="orbit_idea_includes">包含的内容</string>
+    <string name="orbit_idea_start">开始吧</string>
     <string name="orbit_ideas_done">做过的</string>
     <string name="orbit_tracking_section">我在跟进</string>
     <string name="orbit_tracking_done_section">已办完</string>

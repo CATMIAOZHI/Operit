@@ -30,7 +30,8 @@ internal object OrbitBoardTools {
                 ToolParameterSchema("action", description = "post/list/delete/move/brief_get/brief_update/generate", required = true),
                 ToolParameterSchema("post_id", description = "已有短文编号，delete/move 必填", required = false),
                 ToolParameterSchema("title", description = "post：标题，最多80字符", required = false),
-                ToolParameterSchema("body", description = "post：正文，几段短文字，最多6000字符；只引用你真的打开过的链接", required = false),
+                ToolParameterSchema("emoji", description = "post：标题旁显示的一个 emoji，贴合内容，如 📱 🏎️ 🎧", required = false),
+                ToolParameterSchema("body", description = "post：正文，几段短文字，最多6000字符；链接写成 [文字](网址)，只引用你真的打开过的", required = false),
                 ToolParameterSchema("why_for_you", description = "post：一句话说明为什么给这位用户看，必填", required = false),
                 ToolParameterSchema("brief", description = "brief_update：新的简介全文，最多2000字符；空字符串表示清空并停止每日动态", required = false),
                 ToolParameterSchema("direction", description = "move：up 或 down", required = false),
@@ -38,7 +39,8 @@ internal object OrbitBoardTools {
             details = """
   - 用户说「多写点 F1、少写加密货币」这类话时，用 brief_get 读出简介，改好后 brief_update。真的改了内容会马上在后台写一条新的，并每天早上写一条。
   - 新短文出现在动态页，不会推送，也不会在聊天里说。不要说「已经发好了」，只能说已经开始写。
-  - 每条都要写 why_for_you。不要编造链接。
+  - 每条都要写 why_for_you 和 emoji。不要编造链接。
+  - list 里的 vote 是用户的反馈：liked 多写这类，disliked 少写这类。
 """,
         ),
         ToolPrompt(
@@ -49,13 +51,16 @@ internal object OrbitBoardTools {
                 ToolParameterSchema("action", description = "create/list/done", required = true),
                 ToolParameterSchema("idea_id", description = "done：要标成已做的卡片编号（先 list 查）", required = false),
                 ToolParameterSchema("title", description = "create：卡片标题，最多80字符", required = false),
+                ToolParameterSchema("emoji", description = "create：标题旁显示的一个 emoji，贴合内容，如 📦 🛡️ 🎁", required = false),
                 ToolParameterSchema("description", description = "create：给用户看的说明：做什么、对他有什么用，最多6000字符", required = false),
+                ToolParameterSchema("includes", description = "create：做完会交付的东西，每行一项「名称 | 一句说明」，最多6行", required = false),
                 ToolParameterSchema("plan", description = "create：用户选中后你要做的具体事，写给你自己看，最多2000字符", required = false),
                 ToolParameterSchema("expires_in_days", "integer", "create：几天后自动下架，1–30，默认14", false),
             ),
             details = """
   - 只提和用户真实情况有关、你现在就做得到的事；先 list，不要重复已有的卡片。
-  - 卡片两周左右自动下架。用户可以长按关掉它；你没有关掉卡片的工具，不要说你关掉了。
+  - 卡片两周左右自动下架。用户可以关掉它；你没有关掉卡片的工具，不要说你关掉了。
+  - 用户右滑表示喜欢、左滑表示不喜欢，list 里的 vote 就是这个反馈：多提 liked 这类，少提 disliked 这类。
 """,
         ),
         ToolPrompt(
@@ -87,7 +92,8 @@ internal object OrbitBoardTools {
                 FEED -> {
                     val feed = OrbitBoardRepository(context, orbit.id, Board.FEED)
                     when (args["action"]) {
-                        "post" -> json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId), Board.FEED)
+                        "post" -> json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId,
+                            emoji = args["emoji"].orEmpty()), Board.FEED)
                         "list" -> JSONArray(feed.list().take(30).map { json(it, Board.FEED, brief = true) })
                         "delete" -> { feed.delete(arg("post_id")); "Deleted" }
                         "move" -> { feed.move(arg("post_id"), arg("direction") == "up"); "Moved" }
@@ -111,7 +117,8 @@ internal object OrbitBoardTools {
                             val days = args["expires_in_days"]?.takeIf { it.isNotBlank() }?.toInt() ?: 14
                             require(days in 1..30) { "expires_in_days must be 1 to 30" }
                             json(ideas.create(arg("title"), arg("description"), arg("plan"), requestId,
-                                System.currentTimeMillis() + days * 24L * 60 * 60 * 1000), Board.IDEAS)
+                                System.currentTimeMillis() + days * 24L * 60 * 60 * 1000, emoji = args["emoji"].orEmpty(),
+                                parts = parts(args["includes"])), Board.IDEAS)
                         }
                         "list" -> JSONArray(ideas.list().map { json(it, Board.IDEAS, brief = true) })
                         "done" -> json(ideas.update(arg("idea_id"), state = "BUILT"), Board.IDEAS)
@@ -143,13 +150,31 @@ internal object OrbitBoardTools {
         }
     }
 
+    /** "Name | one line" per line; a line without a bar is just a name. */
+    private fun parts(value: String?): List<OrbitBoardRepository.Part> =
+        value.orEmpty().lines().map { it.trim().removePrefix("-").removePrefix("•").trim() }.filter { it.isNotEmpty() }
+            .map { line ->
+                val bar = line.indexOfFirst { it == '|' || it == '｜' }
+                if (bar < 0) OrbitBoardRepository.Part(line, "")
+                else OrbitBoardRepository.Part(line.substring(0, bar).trim(), line.substring(bar + 1).trim())
+            }
+
+    private fun voteName(vote: Int) = when {
+        vote > 0 -> "liked"
+        vote < 0 -> "disliked"
+        else -> "none"
+    }
+
     private fun json(item: OrbitBoardRepository.Item, board: Board, brief: Boolean = false): JSONObject {
         val body = if (brief) item.body.take(300) else item.body
         val value = JSONObject().put("id", item.id).put("title", item.title).put("state", item.state)
             .put("createdAt", item.createdAt)
         when (board) {
-            Board.FEED -> value.put("body", body).put("why_for_you", item.extra).put("liked", item.liked)
-            Board.IDEAS -> value.put("description", body).put("plan", item.extra).put("expiresAt", item.expiresAt)
+            Board.FEED -> value.put("emoji", item.emoji).put("body", body).put("why_for_you", item.extra)
+                .put("vote", voteName(item.vote))
+            Board.IDEAS -> value.put("emoji", item.emoji).put("description", body).put("plan", item.extra)
+                .put("includes", JSONArray(item.parts.map { "${it.title} | ${it.detail}".trimEnd(' ', '|') }))
+                .put("vote", voteName(item.vote)).put("expiresAt", item.expiresAt)
             Board.TRACKING -> value.put("detail", body).put("notes", JSONArray(item.notes.takeLast(10).map {
                 JSONObject().put("at", it.at).put("text", it.text)
             }))

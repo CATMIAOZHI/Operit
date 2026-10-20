@@ -9176,7 +9176,10 @@
     <string name="orbit_feed_why">Why you are seeing this</string>
     <string name="orbit_feed_discuss">Discuss</string>
     <string name="orbit_feed_discuss_message">Let us talk about this post: \"%1$s\"\n\n%2$s</string>
-    <string name="orbit_feed_like">Love</string>
+    <string name="orbit_feed_like">Like</string>
+    <string name="orbit_feed_dislike">Not for me</string>
+    <string name="orbit_feed_brief_dialog_title">Feed instructions</string>
+    <string name="orbit_feed_brief_dialog_hint">Your Feed is written from these words. Any change you make applies to the posts that follow.</string>
     <string name="orbit_move_up">Move up</string>
     <string name="orbit_move_down">Move down</string>
     <string name="orbit_ideas_empty">Things Orbit could do for you show up here.</string>
@@ -9188,7 +9191,9 @@
     <string name="orbit_idea_dismiss">Dismiss this idea?</string>
     <string name="orbit_idea_dismiss_message">It will not show again.</string>
     <string name="orbit_idea_dismiss_action">Dismiss</string>
-    <string name="orbit_idea_dismiss_hint">Long-press a card to dismiss it</string>
+    <string name="orbit_idea_swipe_hint">Swipe right if you like it, left if not. Tap for details.</string>
+    <string name="orbit_idea_includes">What’s included</string>
+    <string name="orbit_idea_start">Let’s start</string>
     <string name="orbit_ideas_done">Done</string>
     <string name="orbit_tracking_section">I am tracking</string>
     <string name="orbit_tracking_done_section">Done</string>
