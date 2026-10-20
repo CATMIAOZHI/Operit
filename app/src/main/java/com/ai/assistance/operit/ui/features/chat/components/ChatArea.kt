@@ -415,7 +415,7 @@ fun ChatArea(
             if (orbitLook) {
                 // Orbit is typing for as long as it works on a reply, like a person would be.
                 if (isLoading && !hasNewerDisplayHistory) {
-                    val typing = stringResource(R.string.orbit_typing)
+                    val typing = stringResource(R.string.orbit_typing, currentOrbitName())
                     Surface(
                         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
                         color = aiMessageColor,

@@ -133,7 +133,9 @@ class OrbitTaskWorker(context: Context, parameters: WorkerParameters) : Coroutin
 class OrbitLongTaskWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
     override suspend fun doWork(): Result = runOrbitLane(applicationContext, longLane = true) { task ->
         if (!OrbitLongRunNotification.mayStartFromBackground(applicationContext)) return@runOrbitLane false
-        setForeground(OrbitLongRunNotification.foregroundInfo(applicationContext, task.title))
+        val orbitName = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(applicationContext).current()
+            .orbits.firstOrNull { it.id == task.orbitId }?.name.orEmpty()
+        setForeground(OrbitLongRunNotification.foregroundInfo(applicationContext, orbitName, task.title))
         OrbitLongRunNotification.isShowing(applicationContext)
     }
 }

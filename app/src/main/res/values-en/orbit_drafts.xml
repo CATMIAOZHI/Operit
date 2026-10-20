@@ -3,7 +3,7 @@
     <string name="orbit_avatar_draft_image">Please use this picture as your avatar.</string>
     <string name="orbit_avatar_draft_pet">Please use my pet "%1$s" as your avatar (pet id: %2$s).</string>
     <string name="orbit_avatar_draft_reset">Please change your avatar back to the role card\'s picture.</string>
-    <string name="orbit_avatar_sheet_note">Your choice goes into the chat box for Orbit, who changes it.</string>
+    <string name="orbit_avatar_sheet_note">Your choice goes into the chat box for %1$s, who changes it.</string>
     <string name="orbit_person_new_draft">Help me add a new person:</string>
     <string name="orbit_group_new_draft">Help me add a new group:</string>
     <string name="orbit_goal_note_draft">Please log progress on the goal "%1$s":</string>

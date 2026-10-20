@@ -37,7 +37,7 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {
             if (orbitSpace) {
                 // Orbit always learns this way, so its page keeps only the timing and says so once.
-                Text(stringResource(R.string.memory_orbit_learning_fixed),
+                Text(stringResource(R.string.memory_orbit_learning_fixed, com.ai.assistance.operit.ui.features.orbit.rememberOrbitNameForSpace(profileId) ?: stringResource(R.string.nav_orbit)),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp))

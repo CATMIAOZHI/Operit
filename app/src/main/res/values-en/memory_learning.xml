@@ -13,8 +13,8 @@
     <string name="memory_skills_path_desc">When the master switch is on, extract reusable skills in this space. Installation follows auto-approval; continuous revision uses the switch below.</string>
     <string name="memory_auto_approve">Automatically approve AI changes (this space)</string>
     <string name="memory_auto_approve_desc">On by default. New notes, global user.md and skill additions, edits and deletions from this space apply automatically, with full history. Turn off for manual review. Existing pending changes are not approved in bulk.</string>
-    <string name="memory_orbit_learning_fixed">Orbit always reviews its memory, learns and revises skills, reads its thinking while doing so, and applies changes on its own. Here you only set how often.</string>
-    <string name="memory_learned_hint_orbit">Skills Orbit learned from its chats. It keeps revising them in the background, and every change keeps its history.</string>
+    <string name="memory_orbit_learning_fixed">%1$s always reviews its memory, learns and revises skills, reads its thinking while doing so, and applies changes on its own. Here you only set how often.</string>
+    <string name="memory_learned_hint_orbit">Skills %1$s learned from its chats. It keeps revising them in the background, and every change keeps its history.</string>
     <string name="memory_review_auto_applied">Change automatically approved and applied. See change history for details.</string>
     <string name="memory_graph_title">Memory graph</string>
     <string name="memory_nav_graph">Explore memory nodes and connections</string>

@@ -51,6 +51,13 @@ import com.ai.assistance.operit.util.stream.asFlow
  */
 val LocalOrbitChatLook = compositionLocalOf { false }
 
+/** The name the user gave the Orbit on screen; empty outside an Orbit, where words say "Orbit". */
+val LocalOrbitName = compositionLocalOf { "" }
+
+/** [LocalOrbitName], or "Orbit" when none is given. */
+@Composable
+fun currentOrbitName(): String = LocalOrbitName.current.ifBlank { androidx.compose.ui.res.stringResource(R.string.nav_orbit) }
+
 /** The fence an Orbit chat draws as a card from a tool: "```orbit-card" and one line of JSON. */
 const val ORBIT_CARD_FENCE = "orbit-card"
 
@@ -409,7 +416,7 @@ fun OrbitReactedUserMessage(timestamp: Long, content: @Composable () -> Unit) {
     }
     Column(Modifier.fillMaxWidth()) {
         content()
-        ReactionBadge(reaction, stringResource(R.string.orbit_reaction_label, reaction), Alignment.CenterEnd, end = 8.dp)
+        ReactionBadge(reaction, stringResource(R.string.orbit_reaction_label, currentOrbitName(), reaction), Alignment.CenterEnd, end = 8.dp)
     }
 }
 

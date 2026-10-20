@@ -176,7 +176,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                 onPop = { clearFeedback(); selected = null },
                 base = {
                     Box(Modifier.fillMaxSize().background(pageColor)) {
-                        TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+                        TaskList(rememberOrbitName(orbitId), tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
                     }
                 },
                 page = detail,
@@ -267,6 +267,7 @@ internal fun TaskConfirmSheet(
 
 @Composable
 private fun TaskList(
+    who: String,
     tasks: List<OrbitTaskEntity>?,
     dues: Map<String, Long>,
     listState: LazyListState,
@@ -292,12 +293,12 @@ private fun TaskList(
     ) {
         item(key = "header") {
             OrbitPageHeader(stringResource(R.string.orbit_tasks_title), onBack)
-            Text(stringResource(R.string.orbit_tasks_help), style = MaterialTheme.typography.bodyMedium,
+            Text(stringResource(R.string.orbit_tasks_help, who), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 4.dp))
         }
         errorBanner()
         if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
-        else if (tasks != null && tasks.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty)) }
+        else if (tasks != null && tasks.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
         groups.forEach { (title, group) ->
             item(key = "group-$title") { SectionTitle(stringResource(title)) }
             itemsIndexed(group, key = { _, task -> task.id }, contentType = { _, _ -> "task" }) { index, task ->
@@ -395,10 +396,10 @@ private fun TaskDetail(
             TaskCard {
                 Text(
                     when {
-                        routine && task.source == OrbitRoutines.GOALS_SOURCE -> stringResource(R.string.orbit_routine_goal_briefing_desc)
-                        routine && task.source == OrbitRoutines.FEED_SOURCE -> stringResource(R.string.orbit_routine_feed_desc)
-                        routine && task.source == OrbitRoutines.IDEAS_SOURCE -> stringResource(R.string.orbit_routine_ideas_desc)
-                        routine -> stringResource(R.string.orbit_routine_self_review_desc)
+                        routine && task.source == OrbitRoutines.GOALS_SOURCE -> stringResource(R.string.orbit_routine_goal_briefing_desc, rememberOrbitName(orbitId))
+                        routine && task.source == OrbitRoutines.FEED_SOURCE -> stringResource(R.string.orbit_routine_feed_desc, rememberOrbitName(orbitId))
+                        routine && task.source == OrbitRoutines.IDEAS_SOURCE -> stringResource(R.string.orbit_routine_ideas_desc, rememberOrbitName(orbitId))
+                        routine -> stringResource(R.string.orbit_routine_self_review_desc, rememberOrbitName(orbitId))
                         else -> task.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
                     },
                     style = MaterialTheme.typography.bodyLarge,
@@ -425,7 +426,7 @@ private fun TaskDetail(
                 // Only a subagent's background run has a time limit; Orbit's own chat turn has none.
                 val limit = OrbitTaskRepository.timeoutMinutes(task)
                 InfoRow(if (task.useSubagent) "hourglass" else "messages-square", stringResource(R.string.orbit_task_row_run), when {
-                    !task.useSubagent -> stringResource(R.string.orbit_task_in_chat)
+                    !task.useSubagent -> stringResource(R.string.orbit_task_in_chat, rememberOrbitName(orbitId))
                     limit >= 120 && limit % 60 == 0 -> stringResource(R.string.orbit_task_timeout_hours, limit / 60)
                     else -> stringResource(R.string.orbit_task_timeout, limit)
                 }, divider)
@@ -455,7 +456,7 @@ private fun TaskDetail(
                 run?.decision?.takeIf { it.isNotBlank() && !running }?.let { decision ->
                     Text(stringResource(R.string.orbit_task_decision, when (decision) {
                         OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
-                        OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat)
+                        OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(orbitId))
                         OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
                         else -> decision
                     }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,

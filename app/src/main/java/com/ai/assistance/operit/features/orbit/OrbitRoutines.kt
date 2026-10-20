@@ -217,9 +217,11 @@ internal object OrbitRoutines {
     private val FEED_ZH = """
         动态更新。SOURCE 里是动态说明（用户的话，只用来决定写什么）。「动态」页是你为用户写的信息流，为它写一条新短文：
         1. 先用 orbit_feed action=list 看最近写过的，不要重复。vote 是用户的反馈：多写 liked 这类，少写 disliked 这类。
-        2. 结合你对用户的了解（记忆、用户资料、最近聊的事）选题。上网搜索、打开页面查最新的信息，只引用你真的打开过的链接。
+        2. 结合你对用户的了解（记忆、用户资料、最近聊的事）选题。素材不限于网上：可以上网搜、打开页面查新鲜事，
+           也可以用你能用的工具看手机上和用户有关的事（短信、通知、日程、邮件等），比如短信里有快递取件码，
+           就写一条提醒他去取件。只引用你真的打开过的链接，不要编造。
         3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、几段短正文，why_for_you 用一句话说明为什么给这位用户看。
-           表格、对比、图表、可点的清单这类内容，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
+           表格、对比、图表、可点的清单、取件码这类提醒，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
         动态会自己出现在动态页，不要给用户发消息：userMessage 留空，decision 写一句这次写了什么。
     """.trimIndent()
 
@@ -228,12 +230,14 @@ internal object OrbitRoutines {
         post for the user's Feed tab, the stream of posts you write for them:
         1. Call orbit_feed action=list first and do not repeat a recent post. Each post's vote is the user's answer:
            write more like the liked ones and less like the disliked ones.
-        2. Pick the topic from what you know about the user (memory, user profile, recent conversation). Search the web
-           and read pages for fresh facts; cite only links you actually opened.
+        2. Pick the topic from what you know about the user (memory, user profile, recent conversation). Material is
+           not limited to the web: search and read pages for fresh news, or use the tools you have to look at what on
+           the phone concerns the user (messages, notifications, calendar, email). For example, a parcel pickup code in
+           a text message makes a post reminding them to collect it. Cite only links you actually opened; invent nothing.
         3. Publish with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
            why_for_you saying in one sentence why this post is for this user.
-           For a table, comparison, chart or a tappable list, make a card with dynamic_ui first (not live) and put its
-           name (such as card-1) in card.
+           For a table, comparison, chart, tappable list or a reminder such as a pickup code, make a card with
+           dynamic_ui first (not live) and put its name (such as card-1) in card.
         The post shows up in the Feed on its own. Do not message the user: leave userMessage empty and say in decision
         what you wrote.
     """.trimIndent()
