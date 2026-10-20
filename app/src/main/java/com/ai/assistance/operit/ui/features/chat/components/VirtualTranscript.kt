@@ -29,8 +29,10 @@ import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.ui.common.markdown.LocalResponseProcessExpanded
 import com.ai.assistance.operit.ui.common.markdown.ResponseActivityHeader
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice
 import com.ai.assistance.operit.ui.common.markdown.prepareTranscriptMarkdown
@@ -115,7 +117,23 @@ internal fun VirtualTranscript(
     val showThinking = showThinkingValue!! || LocalShowHiddenChatRows.current
     val collapse = collapseValue!!
     val grouper = remember(toolMode, showThinking) { ThinkToolsXmlNodeGrouper(showThinking, toolCollapseMode = toolMode) }
-    val documents = remember(chatId, grouper) { mutableStateMapOf<Long, TranscriptDocumentEntry>() }
+    // Prepared replies are kept per way of grouping. Orbit's developer view groups with thinking
+    // shown, so going to Orbit's look and back finds its long replies already split into the same
+    // rows instead of preparing them again from nothing. A grouping not in use keeps only the
+    // replies that were around the screen when it was left.
+    val documentsByGrouping = remember(chatId) {
+        HashMap<Pair<ToolCollapseMode, Boolean>, androidx.compose.runtime.snapshots.SnapshotStateMap<Long, TranscriptDocumentEntry>>()
+    }
+    val nearbyByGrouping = remember(chatId) { HashMap<Pair<ToolCollapseMode, Boolean>, Set<Long>>() }
+    val grouping = toolMode to showThinking
+    val documents = documentsByGrouping.getOrPut(grouping) { mutableStateMapOf() }
+    LaunchedEffect(chatId, grouping) {
+        documentsByGrouping.forEach { (other, cached) ->
+            if (other == grouping) return@forEach
+            val nearby = nearbyByGrouping[other].orEmpty()
+            cached.keys.toList().filterNot { it in nearby }.forEach { cached.remove(it) }
+        }
+    }
     // Skipped rows are dropped before cards are formed, and each remaining row is a card of its own,
     // so a hidden step never squares off or merges the bubbles around it.
     val baseRows = transcriptRows(messages, process).let { all ->
@@ -152,6 +170,42 @@ internal fun VirtualTranscript(
         )
     }
     val scope = rememberCoroutineScope()
+    // Orbit's developer view draws this chat with more rows than Orbit's own look. Each look keeps
+    // the row it was on and whether it was following the newest message, so going to the other look
+    // and back lands where it was. Read without observing, so scrolling never recomposes this.
+    val look = LocalOrbitChatLook.current
+    val lookAnchors = remember(chatId) { HashMap<Boolean, Triple<Any?, Int, Boolean>>() }
+    val shownLook = remember(chatId) { booleanArrayOf(look) }
+    val rowsForLook by rememberUpdatedState(rows)
+    val followingForLook by rememberUpdatedState(following)
+    if (shownLook[0] != look) {
+        androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+            val first = listState.firstVisibleItemIndex
+            val row = listState.layoutInfo.visibleItemsInfo.firstOrNull { it.index == first }
+            lookAnchors[shownLook[0]] = Triple(row?.key, listState.firstVisibleItemScrollOffset, followingForLook)
+        }
+        shownLook[0] = look
+    }
+    LaunchedEffect(chatId, look) {
+        val anchor = lookAnchors[look] ?: return@LaunchedEffect
+        val (key, offset, wasFollowing) = anchor
+        try {
+            // Following again goes to the newest message by itself; otherwise stop following first,
+            // so it does not pull the list away from the row being restored.
+            onFollowingChange?.invoke(wasFollowing)
+            if (wasFollowing || key == null) return@LaunchedEffect
+            // The row may still be preparing; wait a little for it, giving up if the reader scrolls.
+            // First the old follow has to be gone, or it would pull the list back to the newest message.
+            val index = withTimeoutOrNull(1_500) {
+                snapshotFlow { followingForLook }.first { !it }
+                snapshotFlow { rowsForLook.indexOfFirst { it.key == key } }.first { it >= 0 }
+            } ?: return@LaunchedEffect
+            if (!listState.isScrollInProgress) listState.scrollToItem(index, offset)
+        } finally {
+            // A newer anchor saved while this waited is left for its own restore.
+            if (lookAnchors[look] === anchor) lookAnchors.remove(look)
+        }
+    }
     val dragging by listState.interactionSource.collectIsDraggedAsState()
     var direction by remember(chatId) { mutableStateOf(0) }
     var lastPageRequest by remember(chatId) { mutableStateOf<Pair<Int, Long>?>(null) }
@@ -188,6 +242,8 @@ internal fun VirtualTranscript(
         // it left the screen would turn its rows back into one placeholder during a fling.
         val keep = currentMessages.mapTo(hashSetOf()) { it.timestamp }
         documents.keys.toList().filterNot { it in keep }.forEach { documents.remove(it) }
+        // Noted before preparing: leaving the grouping halfway through still keeps these.
+        nearbyByGrouping[grouping] = prepareCandidates.mapTo(hashSetOf()) { it.first }
         prepareCandidates.forEach { (timestamp, content) ->
             if (documents[timestamp]?.content != content) {
                 val document = prepareTranscriptMarkdown(content, grouper)
