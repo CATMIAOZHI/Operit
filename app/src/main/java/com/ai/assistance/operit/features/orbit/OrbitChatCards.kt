@@ -22,6 +22,7 @@ internal object OrbitChatCards {
     const val VAULT_KEY = "vault_api_key"
     const val IMAGE = "image"
     const val FILE = "file"
+    const val APPROVAL = "approval"
 
     val imageTypes = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
 
@@ -43,6 +44,14 @@ internal object OrbitChatCards {
         .put("name", name)
         .put("size", size)
         .apply { if (width > 0 && height > 0) put("width", width).put("height", height) }
+
+    /** An approval request; the card reads its title and answer from the approval list. */
+    fun approval(orbitId: String, approval: OrbitApprovals.Approval): JSONObject = JSONObject()
+        .put("kind", APPROVAL)
+        .put("orbit_id", orbitId)
+        .put("approval_id", approval.id)
+        .put("title", approval.title)
+        .put("detail", approval.detail.take(400))
 
     /** The entry sheet a vault card opens, or null when [card] is not a complete vault card. */
     fun vaultRequest(card: JSONObject): OrbitVault.Request? {

@@ -195,6 +195,12 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         try {
                             val id = OrbitVault.save(context, orbit.id, request, username, secret)
                             secret = ""
+                            // The approval list notes the save (only the site and the time), before
+                            // the sheet and its scope go away.
+                            runCatching {
+                                com.ai.assistance.operit.features.orbit.OrbitApprovals.recordVaultSave(
+                                    context, orbit.id, request.chatId, request.site, login)
+                            }
                             runCatching { sheetState.hide() }
                             OrbitVault.close(request)
                             OrbitVaultNotice.send(context, orbit, request, id)

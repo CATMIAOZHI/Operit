@@ -531,7 +531,9 @@ fun ClassicChatSettingsBar(
                                         Modifier.padding(vertical = 4.dp)
                                 .verticalScroll(rememberScrollState())
                         ) {
-                            ClassicSettingsFoldSection(
+                            // Orbit always remembers on its own: no memory section, no Max mode.
+                            val orbitMenu = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+                            if (!orbitMenu) ClassicSettingsFoldSection(
                                 title = stringResource(R.string.memory),
                                 value = currentProfileName,
                                 icon = Icons.Outlined.Portrait,
@@ -706,7 +708,7 @@ fun ClassicChatSettingsBar(
                                     showMenu = false
                                 }
                             )
-                            SettingItem(
+                            if (!orbitMenu) SettingItem(
                                 title = stringResource(R.string.max_mode_title),
                                 icon = if (enableMaxContextMode) Icons.Rounded.Whatshot else Icons.Outlined.Whatshot,
                                 iconTint = if (enableMaxContextMode) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
@@ -1253,7 +1255,9 @@ private fun ToolPermissionSettingItem(
                 overflow = TextOverflow.Ellipsis
             )
             Spacer(modifier = Modifier.height(6.dp))
-            PermissionStopSlider(
+            if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+                com.ai.assistance.operit.ui.permissions.OrbitAccessSlider()
+            } else PermissionStopSlider(
                 stop = selectedStop,
                 lockedStop = com.ai.assistance.operit.ui.permissions.rememberMainChatOrbitLockedStop(),
                 onStopSelected = { stop ->

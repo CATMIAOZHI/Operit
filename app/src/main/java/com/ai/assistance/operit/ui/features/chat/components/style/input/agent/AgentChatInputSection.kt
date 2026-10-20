@@ -1726,7 +1726,8 @@ private fun AgentModelSelectorPopup(
                             onInfoClick = { title, description -> infoPopupContent = title to description },
                         )
                     }
-                    AgentMaxContextSettingItem(
+                    // Orbit runs one long chat with its own compression: no Max mode there.
+                    if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) AgentMaxContextSettingItem(
                         enableMaxContextMode = enableMaxContextMode,
                         onToggleEnableMaxContextMode = onToggleEnableMaxContextMode,
                         onInfoClick = {
@@ -2552,7 +2553,9 @@ private fun AgentExtraSettingsPopup(
                             .padding(vertical = 4.dp)
                             .verticalScroll(rememberScrollState()),
                 ) {
-                    AgentMemorySelectorItem(
+                    // Orbit always remembers on its own, into its own memory: nothing to pick or turn off.
+                    val orbitMenu = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+                    if (!orbitMenu) AgentMemorySelectorItem(
                         preferenceProfiles = preferenceProfiles,
                         currentProfileId = currentProfileId,
                         onSelectMemory = onSelectMemory,
@@ -2591,7 +2594,7 @@ private fun AgentExtraSettingsPopup(
                         },
                     )
 
-                    inputMenuTogglesBySlot[InputMenuToggleSlots.MEMORY].orEmpty().forEach { toggle ->
+                    if (!orbitMenu) inputMenuTogglesBySlot[InputMenuToggleSlots.MEMORY].orEmpty().forEach { toggle ->
                         AgentInputMenuToggleSettingItem(
                             toggle = toggle,
                             onInfoClick = { title, description -> infoPopupContent = title to description },
@@ -2940,8 +2943,10 @@ private fun AgentToolsPermissionGroupItem(
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.5f))
                     .padding(horizontal = 12.dp, vertical = 8.dp),
         ) {
-            // Orbit's permission is fixed; there is nothing to pick.
-            if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+            // Orbit has its own two stops, kept apart from the main app's five.
+            if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+                com.ai.assistance.operit.ui.permissions.OrbitAccessSlider()
+            } else {
                 AgentPermissionStopSlider(
                     enableTools = enableTools,
                     permissionStop = permissionStop,

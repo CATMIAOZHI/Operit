@@ -127,6 +127,11 @@ fun BubbleAiMessageComposable(
     val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val bubbleShowAvatar = settings.layout.avatar && !orbitLook
     val orbitHasCard = orbitLook && remember(message.content) { OrbitCardFence.containsMatchIn(message.content) }
+    // One of Orbit's own cards on its own (a secure entry card, a picture, a file): the bubble is
+    // as wide as the card, never the whole row.
+    val orbitCardOnly = orbitLook && remember(message.content) {
+        message.content.startsWith("```" + com.ai.assistance.operit.ui.features.chat.components.ORBIT_CARD_FENCE + "\n")
+    }
     val bubbleWideLayoutEnabled = settings.layout.wide || orbitLook
     val showThinkingProcess = settings.layout.thinking
     val showStatusTags = settings.layout.status
@@ -245,7 +250,7 @@ fun BubbleAiMessageComposable(
     }
     val sharedCard = !cardEnds.first || !cardEnds.last
     val shouldUseExpandedBubbleLayout = sharedCard || inlineContent != null ||
-        rendererState.renderNodes.any { node -> node.type in ExpandedBubbleLayoutNodeTypes }
+        (!orbitCardOnly && rendererState.renderNodes.any { node -> node.type in ExpandedBubbleLayoutNodeTypes })
     val sizeTrackingModifier =
         if (heightMemory == null || isHidden || section == ResponseMessageSection.HEADER) {
             Modifier

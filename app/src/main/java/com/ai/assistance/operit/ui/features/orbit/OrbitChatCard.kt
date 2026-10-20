@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -64,7 +65,27 @@ fun OrbitChatCard(source: String) {
     when (card.optString("kind")) {
         OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY -> OrbitChatCards.vaultRequest(card)?.let { VaultCard(it) }
         OrbitChatCards.IMAGE, OrbitChatCards.FILE -> AttachmentCard(card)
+        OrbitChatCards.APPROVAL -> OrbitApprovalCard(card)
     }
+}
+
+/**
+ * The message's double-tap (like) and long-press (menu) on a card that also takes a tap of its
+ * own: a tap on the card never reaches the message around it otherwise.
+ */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+internal fun Modifier.orbitCardGestures(onClick: (() -> Unit)? = null, enabled: Boolean = true): Modifier {
+    val gestures = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitMessageGestures.current
+    if (gestures == null && onClick == null) return this
+    return this.combinedClickable(
+        interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
+        indication = if (onClick != null) androidx.compose.material3.ripple() else null,
+        enabled = enabled || gestures != null,
+        onClick = { if (enabled) onClick?.invoke() },
+        onDoubleClick = gestures?.onDoubleTap,
+        onLongClick = gestures?.onLongPress,
+    )
 }
 
 @Composable
@@ -77,7 +98,7 @@ private fun VaultCard(request: OrbitVault.Request) {
         value = runCatching { OrbitVault.has(OrbitVault.entries(context, request.orbitId), request.kind, request.site) }
             .getOrDefault(false)
     }
-    Column(Modifier.widthIn(max = 300.dp).padding(vertical = 4.dp)) {
+    Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             CardTile(if (login) "lock-keyhole" else "layout-grid")
             Spacer(Modifier.width(14.dp))
@@ -164,19 +185,21 @@ private fun AttachmentCard(card: JSONObject) {
         var saving by remember { mutableStateOf(false) }
         val label = stringResource(R.string.orbit_chat_image_desc, name)
         Surface(
-            onClick = {
-                if (saving) return@Surface
-                saving = true
-                scope.launch {
-                    val ok = saveToGallery(context, current)
-                    saving = false
-                    Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
-                        Toast.LENGTH_SHORT).show()
-                }
-            },
             shape = RoundedCornerShape(18.dp),
             color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.padding(vertical = 4.dp).semantics(mergeDescendants = true) { contentDescription = label },
+            modifier = Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp))
+                .orbitCardGestures(onClick = {
+                    if (!saving) {
+                        saving = true
+                        scope.launch {
+                            val ok = saveToGallery(context, current)
+                            saving = false
+                            Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
+                                Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                })
+                .semantics(mergeDescendants = true) { contentDescription = label },
         ) {
             Box {
                 AsyncImage(
@@ -203,11 +226,10 @@ private fun AttachmentCard(card: JSONObject) {
     val size = card.optLong("size", -1L)
     val label = stringResource(R.string.orbit_chat_file_desc, name)
     Surface(
-        onClick = { current?.let { f -> openOrbitFile(context) { f } } },
-        enabled = current != null,
         shape = RoundedCornerShape(16.dp),
         color = androidx.compose.ui.graphics.Color.Transparent,
-        modifier = Modifier.widthIn(max = 300.dp).padding(vertical = 4.dp)
+        modifier = Modifier.widthIn(max = 300.dp).padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
+            .orbitCardGestures(onClick = { current?.let { f -> openOrbitFile(context) { f } } }, enabled = current != null)
             .semantics(mergeDescendants = true) { contentDescription = label },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

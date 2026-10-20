@@ -103,6 +103,7 @@ import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Reply
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.AccountTree
+import androidx.compose.material.icons.filled.Code
 import androidx.compose.material.icons.filled.Summarize
 import androidx.compose.ui.draw.alpha
 import com.ai.assistance.operit.api.chat.llmprovider.MediaLinkParser
@@ -536,6 +537,8 @@ private fun MessageItem(
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
+    // Developer view: the message exactly as stored (thinking, tool calls, hidden tags), read-only.
+    var showRawMessage by remember { mutableStateOf(false) }
 
     fun buildPluginMenuItemParams(): ChatMessageMenuItemParams =
         ChatMessageMenuItemParams(
@@ -544,6 +547,17 @@ private fun MessageItem(
             messageIndex = messageIndex,
             message = message
         )
+    val openMessageMenu: () -> Unit = {
+        if (!isMultiSelectMode && isActionable) {
+            pluginMenuItems =
+                if (!isHiddenUserMessage && allowTranscriptMutation) {
+                    ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
+                } else {
+                    emptyList()
+                }
+            showContextMenu = true
+        }
+    }
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
     // they landed on the reply's own background whenever the row shared its turn's card, and a reply
     // written as several messages (waifu mode) carries the same totals on every one of them. The
@@ -595,22 +609,14 @@ private fun MessageItem(
                         showHiddenUserMessageDialog = true
                     }
                 },
-                onLongClick = { 
-                    if (!isMultiSelectMode && isActionable) {
-                        pluginMenuItems =
-                            if (!isHiddenUserMessage && allowTranscriptMutation) {
-                                ChatMessageMenuItemRegistry.createMenuItems(
-                                    buildPluginMenuItemParams()
-                                )
-                            } else {
-                                emptyList()
-                            }
-                        showContextMenu = true
-                    }
-                },
+                onLongClick = openMessageMenu,
                 onDoubleClick = quickLike,
             ),
     ) {
+        androidx.compose.runtime.CompositionLocalProvider(
+            LocalOrbitMessageGestures provides
+                if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
+        ) {
         OrbitSwipeToReply(
             enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
                 allowTranscriptMutation && onReplyToMessage != null,
@@ -686,6 +692,7 @@ private fun MessageItem(
             }
 
             footer()
+        }
         }
         }
 
@@ -1062,6 +1069,28 @@ private fun MessageItem(
                 )
             }
 
+            if (showHiddenRows) DropdownMenuItem(
+                text = {
+                    Text(
+                        stringResource(id = R.string.orbit_dev_view_raw),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                },
+                onClick = {
+                    showContextMenu = false
+                    showRawMessage = true
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Code,
+                        contentDescription = stringResource(id = R.string.orbit_dev_view_raw),
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp)
+                    )
+                },
+                modifier = Modifier.heightIn(min = 44.dp)
+            )
+
             // 信息 (an Orbit chat keeps model and token details out of sight)
             if (!orbitLook) DropdownMenuItem(
                 text = {
@@ -1149,6 +1178,10 @@ private fun MessageItem(
                 message = message,
                 onDismiss = { showMessageInfoDialog = false }
             )
+        }
+
+        if (showRawMessage) {
+            OrbitRawMessageSheet(message = message, onDismiss = { showRawMessage = false })
         }
 
         if (showDeleteMessageConfirmDialog) {

@@ -177,6 +177,7 @@ internal object OrbitWork {
                     com.ai.assistance.operit.features.orbit.OrbitReactionNotice.emojiOf(content)?.let { reactionTitle.format(it) }
                         ?: com.ai.assistance.operit.features.orbit.OrbitWake.titleOf(content)?.let { scheduledTitle.format(it) }
                         ?: com.ai.assistance.operit.features.orbit.OrbitVaultNotice.titleOf(content)
+                        ?: com.ai.assistance.operit.features.orbit.OrbitApprovals.titleOf(content)
                 }?.let { ts to it }
             }
             // The nearest of the two started the turn: a tapback after the user's last message wins.

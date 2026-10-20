@@ -124,8 +124,10 @@ internal fun OrbitProfilePage(
     // A failed read shows an empty list; the profile stays usable.
     val activity by remember(orbit.id) { dao.observeActivity(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
-    val actions by remember(orbit.id) { dao.observeOrbitActions(orbit.id).catch { emit(emptyList()) } }
-        .collectAsState(initial = null)
+    val approvals by remember(orbit.id) {
+        com.ai.assistance.operit.features.orbit.OrbitApprovals.observe(context, orbit.id).catch { emit(emptyList()) }
+    }.collectAsState(initial = null)
+    var openApproval by remember(orbit.id) { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval?>(null) }
     val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
     // Work done while chatting. Read when the profile comes into view, then now and then while open.
@@ -198,7 +200,7 @@ internal fun OrbitProfilePage(
                 }
                 activitySection(activity, chatTurns, onOpenProcess)
             }
-            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, actions, onOpenTask)
+            OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask, onOpenAllTasks)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
                 IdentitySection(
@@ -212,6 +214,11 @@ internal fun OrbitProfilePage(
                 )
             }
         }
+    }
+    openApproval?.let { a ->
+        // The newest copy, so an answer given from the chat card shows here at once.
+        val current = approvals?.firstOrNull { it.id == a.id } ?: a
+        OrbitApprovalSheet(orbit, current, onDismiss = { openApproval = null })
     }
 }
 
@@ -692,17 +699,32 @@ private fun runDetail(run: OrbitActivityRow): String = when (run.state) {
 
 private fun LazyListScope.approvalsSection(
     tasks: List<OrbitTaskEntity>?,
-    actions: List<OrbitActionRow>?,
+    approvals: List<com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval>?,
     onOpenTask: (String) -> Unit,
+    onOpenApproval: (com.ai.assistance.operit.features.orbit.OrbitApprovals.Approval) -> Unit,
 ) {
-    if (tasks == null || actions == null) return loading()
+    if (tasks == null || approvals == null) return loading()
     val waiting = tasks.filter { it.state == "WAITING_USER" || it.state == "VERIFY" }
-    if (waiting.isEmpty() && actions.isEmpty()) {
+    val asking = approvals.filter { it.pending }
+    val records = approvals.filterNot { it.pending }
+    if (waiting.isEmpty() && approvals.isEmpty()) {
         item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_approvals_empty)) }
         return
     }
-    if (waiting.isNotEmpty()) {
+    if (asking.isNotEmpty() || waiting.isNotEmpty()) {
         item(key = "waiting-title") { SectionTitle(stringResource(R.string.orbit_profile_waiting)) }
+        items(asking, key = { "asking-${it.id}" }) { a ->
+            OrbitListRow(
+                icon = orbitIcon(approvalIcon(a)),
+                title = a.title,
+                detail = OrbitWork.listLine(a.detail),
+                meta = relativeTime(a.createdAt),
+                iconTint = MaterialTheme.colorScheme.primary,
+                iconBackground = MaterialTheme.colorScheme.primary.copy(alpha = 0.12f),
+                showChevron = true,
+                onClick = { onOpenApproval(a) },
+            )
+        }
         items(waiting, key = { "waiting-${it.id}" }) { task ->
             OrbitListRow(
                 icon = orbitIcon("hand"),
@@ -716,31 +738,22 @@ private fun LazyListScope.approvalsSection(
             )
         }
     }
-    if (actions.isNotEmpty()) {
+    if (records.isNotEmpty()) {
         item(key = "actions-title") { SectionTitle(stringResource(R.string.orbit_profile_approval_records)) }
-        items(actions, key = { "action-${it.id}" }) { action ->
-            val uncertain = action.state == "UNKNOWN" || action.state == "STARTED"
+        items(records, key = { "record-${it.id}" }) { a ->
+            val vault = a.kind == com.ai.assistance.operit.features.orbit.OrbitApprovals.VAULT_SAVED
+            val denied = a.state == com.ai.assistance.operit.features.orbit.OrbitApprovals.DENIED
             OrbitListRow(
-                icon = orbitIcon(if (uncertain) "shield-alert" else "shield-check"),
-                title = action.summary.ifBlank { action.toolName },
-                detail = action.taskTitle,
-                meta = actionState(action.state) + " · " + relativeTime(action.updatedAt),
-                iconTint = if (uncertain) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                onClick = { onOpenTask(action.taskId) },
+                icon = orbitIcon(approvalIcon(a)),
+                title = if (vault) stringResource(R.string.orbit_approval_vault_row, a.title) else a.title,
+                detail = if (vault) null else OrbitWork.listLine(a.detail),
+                meta = approvalStateText(a) + " · " + relativeTime(a.decidedAt.takeIf { it > 0 } ?: a.createdAt),
+                iconTint = if (denied) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                onClick = { onOpenApproval(a) },
             )
         }
     }
 }
-
-@Composable
-private fun actionState(state: String): String = stringResource(when (state) {
-    "PREPARED" -> R.string.orbit_profile_action_prepared
-    "STARTED" -> R.string.orbit_profile_action_started
-    "UNKNOWN" -> R.string.orbit_profile_action_unknown
-    "VERIFIED" -> R.string.orbit_profile_action_verified
-    "RETRY_ALLOWED" -> R.string.orbit_profile_action_retry
-    else -> R.string.orbit_profile_action_done
-})
 
 internal fun relativeTime(time: Long): String =
     DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
