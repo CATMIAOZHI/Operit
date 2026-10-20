@@ -29,6 +29,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithCache
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
@@ -155,14 +156,17 @@ internal fun OrbitBottomBar(selected: OrbitTab, onSelect: (OrbitTab) -> Unit, mo
 }
 
 /** Sends [text] into the Orbit chat as the user, the same as typing it. */
-internal fun sendToOrbit(context: android.content.Context, orbit: OrbitProfile, text: String) {
+/**
+ * Sends [text] alone to Orbit's main chat. What the user has in the input box (words, files, the
+ * message they reply to) stays there for their own next message. False when Orbit could not take
+ * it, for example while it is still answering.
+ */
+internal fun sendToOrbit(context: android.content.Context, orbit: OrbitProfile, text: String): Boolean =
     ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
-        .sendUserMessage(
-            chatIdOverride = orbit.chatId, messageTextOverride = text,
-            // Keep whatever reply the user picked in the chat for their own next message.
+        .trySendUserMessageToExistingChat(
+            chatId = orbit.chatId, messageText = text,
             turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
         )
-}
 
 /**
  * Per Orbit chat: what the user had typed before a button added its prompt, and the full text
@@ -195,6 +199,8 @@ internal fun OrbitTabPage(
     tab: OrbitTab,
     /** Fills Orbit's main chat input with a prompt and shows the chat; nothing is sent. */
     onDraft: (String) -> Unit,
+    /** Quotes something above Orbit's main chat input box, like a reply, and shows the chat. */
+    onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit = {},
     filesVersion: Int = 0,
     onOpenFile: (String) -> Unit = {},
 ) {
@@ -207,7 +213,7 @@ internal fun OrbitTabPage(
         Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
             when (tab) {
                 OrbitTab.CHAT -> Unit
-                OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft)
+                OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft, onQuote)
                 OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
                 OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
                 OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
@@ -228,14 +234,17 @@ internal fun OrbitTabPage(
 internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable () -> Unit)?> { null }
 
 /**
- * The page frame: Orbit's fixed header, a large title and an optional action on the right.
+ * The page frame: Orbit's fixed header, a large title and an optional action on the right. [info]
+ * adds a small ⓘ beside the title that says what the page is for. Without a [title] the page
+ * starts right under the header with its own first item.
  * [overlay] is a page pushed over the list but under the header, so Orbit's picture stays put
  * while it slides in; it gets the top padding its own list needs.
  */
 @Composable
 private fun TabList(
-    title: String,
+    title: String?,
     action: (@Composable () -> Unit)? = null,
+    info: (() -> Unit)? = null,
     overlay: (@Composable (top: Dp) -> Unit)? = null,
     content: LazyListScope.() -> Unit,
 ) {
@@ -261,14 +270,22 @@ private fun TabList(
                     if (header == null) {
                         OrbitCircleButton(orbitIcon("equal"), stringResource(R.string.menu), openDrawer)
                     }
-                    Row(
+                    if (title != null) Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.padding(top = if (header == null) 16.dp else 0.dp, bottom = 4.dp),
                     ) {
                         Text(
                             title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.weight(1f),
                         )
+                        if (info != null) {
+                            IconButton(onClick = info, modifier = Modifier.size(40.dp)) {
+                                Icon(
+                                    orbitIcon("info"), stringResource(R.string.orbit_tab_info, title), Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                        }
+                        Spacer(Modifier.weight(1f))
                         action?.invoke()
                     }
                 }
@@ -279,6 +296,39 @@ private fun TabList(
         if (header != null) {
             Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
                 header()
+            }
+        }
+    }
+}
+
+/** A short sheet that says what a tab is for, opened from the ⓘ beside its title. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun TabIntroSheet(emoji: String, title: String, lines: List<String>, onDismiss: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState())
+                .padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
+        ) {
+            Text(emoji, fontSize = 40.sp, lineHeight = 48.sp, maxLines = 1)
+            Spacer(Modifier.height(8.dp))
+            Text(title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+            lines.forEach { line ->
+                Spacer(Modifier.height(12.dp))
+                Text(line, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+            }
+            Spacer(Modifier.height(24.dp))
+            Surface(
+                onClick = { scope.launch { runCatching { sheetState.hide() }; onDismiss() } },
+                shape = RoundedCornerShape(50), color = colors.onSurface,
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.orbit_tab_info_ok), style = MaterialTheme.typography.titleMedium, color = colors.surface)
+                }
             }
         }
     }
@@ -515,7 +565,11 @@ private fun VoteButton(icon: String, label: String, active: Boolean, onClick: ()
 // ---------------------------------------------------------------- Feed
 
 @Composable
-private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
+private fun OrbitFeedPage(
+    orbit: OrbitProfile,
+    onDraft: (String) -> Unit,
+    onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit,
+) {
     val context = LocalContext.current
     val action = rememberAction()
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.FEED) }
@@ -532,14 +586,16 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
         }
     }
     var editingBrief by remember { mutableStateOf(false) }
-    val started = stringResource(R.string.orbit_feed_started)
-    val paused = stringResource(R.string.orbit_feed_paused)
+    var showIntro by rememberSaveable { mutableStateOf(false) }
+    val quoteSender = stringResource(R.string.orbit_feed_quote_sender)
 
     TabList(
         title = stringResource(R.string.orbit_tab_feed),
+        info = { showIntro = true },
         action = {
-            OrbitCircleButton(orbitIcon("sparkles"), stringResource(R.string.orbit_feed_write_now), {
-                action { showToast(context, if (OrbitFeedGenerator.writeOne(context, orbit.id)) started else paused) }
+            // Asks Orbit in the chat; the request waits in the input box for the user to send.
+            OrbitCircleButton(orbitIcon("refresh-cw"), stringResource(R.string.orbit_feed_write_now), {
+                onDraft(context.getString(R.string.orbit_feed_refresh_message))
             })
         },
     ) {
@@ -559,13 +615,34 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
                     // Tapping the chosen answer again takes it back.
                     onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
                     onDiscuss = {
-                        onDraft(context.getString(R.string.orbit_feed_discuss_message, post.title, post.body.take(1500)))
+                        // The post is quoted above the input box, like a reply; the user writes the rest.
+                        onQuote(
+                            com.ai.assistance.operit.data.model.ChatMessage(
+                                sender = "ai", content = post.title + "\n\n" + post.body,
+                                timestamp = post.createdAt, roleName = quoteSender,
+                            ),
+                        )
                     },
+                    cardOf = { repository.readCard(post.id) },
+                    onCardSubmit = { text ->
+                        sendToOrbit(context, orbit, context.getString(R.string.orbit_feed_card_message, post.title, text)).also { sent ->
+                            // The card stays open to try again when Orbit is still answering.
+                            if (!sent) showToast(context, context.getString(R.string.orbit_feed_card_busy))
+                        }
+                    },
+                    cardOwner = "orbit-feed:" + orbit.id,
                     onMove = { up -> action { repository.move(post.id, up) } },
                     onDelete = { action { repository.delete(post.id) } },
                 )
             }
         }
+    }
+
+    if (showIntro) {
+        TabIntroSheet(
+            "📰", stringResource(R.string.orbit_feed_intro_title),
+            listOf(stringResource(R.string.orbit_feed_intro_1), stringResource(R.string.orbit_feed_intro_2)),
+        ) { showIntro = false }
     }
 
     if (editingBrief) {
@@ -685,6 +762,12 @@ private fun FeedPostRow(
     isLast: Boolean,
     onVote: (Int) -> Unit,
     onDiscuss: () -> Unit,
+    /** Reads the post's Dynamic UI card (only called when it has one). */
+    cardOf: suspend () -> String?,
+    /** A card's "send" goes to Orbit's main chat. */
+    onCardSubmit: (String) -> Boolean,
+    /** Groups the card's saved state (what the user ticked or typed) under this Orbit's feed. */
+    cardOwner: String,
     onMove: (Boolean) -> Unit,
     onDelete: () -> Unit,
 ) {
@@ -709,6 +792,7 @@ private fun FeedPostRow(
                         body, style = MaterialTheme.typography.bodyLarge,
                         maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
                     )
+                    if (post.card) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
                     if (showWhy && post.extra.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Surface(shape = RoundedCornerShape(16.dp), color = colors.onSurface.copy(alpha = 0.05f)) {
@@ -767,6 +851,73 @@ private fun FeedPostRow(
 
 // ---------------------------------------------------------------- Ideas
 
+/**
+ * A feed post's Dynamic UI card, under its text. It is read from its own file when the post
+ * first scrolls into view and then kept in [feedCardCache], so scrolling back shows it at once
+ * instead of growing in again. Ticks and typed values are kept like in the chat; "send" goes to
+ * Orbit and only counts as sent when Orbit took it.
+ */
+@Composable
+private fun FeedPostCard(
+    post: OrbitBoardRepository.Item,
+    cardOf: suspend () -> String?,
+    onCardSubmit: (String) -> Boolean,
+    cardOwner: String,
+) {
+    val cacheKey = cardOwner + "/" + post.id
+    var reload by remember(cacheKey) { mutableIntStateOf(0) }
+    // null while reading; a failure keeps the card's place with a way to try again.
+    // The post says it has a card, so a missing or empty card file counts as a failure too.
+    val card by produceState<Result<String>?>(feedCardCache.get(cacheKey)?.let { Result.success(it) }, cacheKey, reload) {
+        if (value?.getOrNull() != null) return@produceState
+        value = try {
+            Result.success(checkNotNull(cardOf()) { "The card file is missing" }.also { feedCardCache.put(cacheKey, it) })
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+    }
+    val result = card
+    if (result == null) {
+        // Read again after the cache let it go: hold the height it had, so the posts below stay put.
+        val height = feedCardHeights.get(cacheKey) ?: return
+        Spacer(Modifier.height(with(LocalDensity.current) { height.toDp() }))
+        return
+    }
+    if (result.isFailure) {
+        Row(Modifier.padding(top = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                stringResource(R.string.orbit_feed_card_failed), style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.weight(1f, fill = false),
+            )
+            TextButton(onClick = { reload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+        }
+        return
+    }
+    val document = result.getOrNull() ?: return
+    val owner = remember(cardOwner, post.createdAt, document) {
+        com.ai.assistance.operit.ui.common.dynamicui.DynamicUiOwner(cardOwner, post.createdAt, 0, document)
+    }
+    val currentSubmit by rememberUpdatedState(onCardSubmit)
+    val submit = remember {
+        { _: com.ai.assistance.operit.ui.common.dynamicui.DynamicUiOwner, text: String -> currentSubmit(text) }
+    }
+    Column(Modifier.onSizeChanged { if (it.height > 0) feedCardHeights.put(cacheKey, it.height) }) {
+        Spacer(Modifier.height(10.dp))
+        CompositionLocalProvider(
+            com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner provides owner,
+            com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides submit,
+        ) {
+            com.ai.assistance.operit.ui.common.dynamicui.DynamicUiCard(document, closed = true, streaming = false, blockIndex = 0)
+        }
+    }
+}
+
+/** Feed cards already read, by "<owner>/<post id>": a post's card never changes. About 1 MB of text at most. */
+private val feedCardCache = object : android.util.LruCache<String, String>(512 * 1024) {
+    override fun sizeOf(key: String, value: String) = value.length
+}
+
+/** Each feed card's last height in pixels, kept longer than the cards themselves. */
+private val feedCardHeights = android.util.LruCache<String, Int>(1024)
+
 /** The picture and name of each idea category, in the order they are shown. */
 private val ideaCategoryEmoji = mapOf(
     "productivity" to "⚡", "money" to "💰", "relationships" to "🤝",
@@ -819,9 +970,17 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val recent = remember(open) { open.sortedByDescending { it.createdAt }.take(RECENT_IDEAS) }
     val byCategory = remember(open) { open.groupBy { OrbitBoardRepository.categoryOf(it) } }
     val done = remember(list) { list.orEmpty().filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) }
+    var showIntro by rememberSaveable { mutableStateOf(false) }
+    if (showIntro) {
+        TabIntroSheet(
+            "💡", stringResource(R.string.orbit_ideas_intro_title),
+            listOf(stringResource(R.string.orbit_ideas_intro_1), stringResource(R.string.orbit_ideas_intro_2)),
+        ) { showIntro = false }
+    }
 
     TabList(
         title = stringResource(R.string.orbit_tab_ideas),
+        info = { showIntro = true },
         overlay = { top ->
             OrbitCoverPage(visible = category != null, onDismiss = { category = null }) {
                 (category ?: shownCategory)?.let { shown ->
@@ -1489,6 +1648,26 @@ private fun GoalEditor(goal: OrbitGoalEntity?, onDismiss: () -> Unit, onSave: (S
 
 // ---------------------------------------------------------------- Builds
 
+/** One row of the Builds tab's first part: a work Orbit saved, or a file it made. */
+private sealed interface BuildEntry {
+    val key: String
+    val time: Long
+
+    data class Work(val latest: OrbitArtifactVersionEntity, val count: Int) : BuildEntry {
+        override val key get() = "work:" + latest.artifactId
+        override val time get() = latest.createdAt
+    }
+
+    data class Made(val file: com.ai.assistance.operit.features.orbit.OrbitFiles.Entry) : BuildEntry {
+        override val key get() = "file:" + file.path
+        override val time get() = file.modifiedAt
+    }
+}
+
+/**
+ * The Builds tab, like Muse: on top a switch between what Orbit made (its works and files) and the
+ * Library, the files the user sent Orbit in chat. Every row has a ⋮ for its actions.
+ */
 @Composable
 private fun OrbitBuildsPage(
     orbit: OrbitProfile,
@@ -1501,20 +1680,38 @@ private fun OrbitBuildsPage(
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val versions by remember(orbit.id) { dao.observeArtifacts(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
     var openArtifact by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // 0: what Orbit made; 1: the Library of what the user sent.
+    var section by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
     // files/ in Orbit's folder: things made for the user (reports, voice messages, shared files).
     val orbitFiles = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
     var filesReload by remember { mutableIntStateOf(0) }
-    val userFiles by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>>?>(null, orbit.id, filesReload, filesVersion) {
+    val madeFiles by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>>?>(null, orbit.id, filesReload, filesVersion) {
         value = try {
-            Result.success(orbitFiles.list().filter { it.path.startsWith("files/") }.sortedByDescending { it.modifiedAt })
+            Result.success(orbitFiles.list().filter { it.path.startsWith("files/") })
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
     }
     val pins by produceState(emptyList<String>(), orbit.id, filesReload, filesVersion) {
         value = try { orbitFiles.pins() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
     }
-    var kindFilter by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
-    var fileActions by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry?>(null) }
+    var uploadsReload by remember { mutableIntStateOf(0) }
+    // Read when the Library is shown, and again each time it is opened, so new uploads appear.
+    val uploads by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload>>?>(null, orbit.id, uploadsReload, section) {
+        if (section != 1) return@produceState
+        value = try {
+            Result.success(com.ai.assistance.operit.features.orbit.OrbitUploads.list(context, orbit.id))
+        } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+    }
+    var deletingUpload by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload?>(null) }
     val action = rememberAction()
+    // Pinned files first, in pin order; then works and files together, newest first.
+    val entries = remember(versions, madeFiles, pins) {
+        val works = versions.orEmpty()
+        val fileList = madeFiles?.getOrNull().orEmpty()
+        val workRows = works.groupBy { it.artifactId }.values
+            .map { group -> BuildEntry.Work(group.maxBy { it.createdAt }, group.size) }
+        val (pinned, rest) = fileList.map { BuildEntry.Made(it) }.partition { it.file.path in pins }
+        pinned.sortedBy { pins.indexOf(it.file.path) } + (workRows + rest).sortedByDescending { it.time }
+    }
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
     // Keeps the work on screen while its page slides away.
@@ -1522,69 +1719,146 @@ private fun OrbitBuildsPage(
     SideEffect { if (!history.isNullOrEmpty()) shownHistory = history }
     // The list stays under an open work's page, hidden from screen readers while covered.
     Box(Modifier.fillMaxSize().then(if (!history.isNullOrEmpty()) Modifier.clearAndSetSemantics { } else Modifier)) {
-    TabList(title = stringResource(R.string.orbit_tab_builds)) {
-        val list = versions
-        when {
-            list == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_artifacts_empty)) }
-            else -> {
-                val groups = list.groupBy { it.artifactId }.values
-                    .map { group -> group.maxBy { it.createdAt } to group.size }
-                    .sortedByDescending { it.first.createdAt }
-                items(groups, key = { it.first.artifactId }) { (latest, count) ->
-                    OrbitListRow(
-                        icon = orbitIcon(orbitFileIcon(latest.name)),
-                        title = latest.name,
-                        detail = if (count > 1) stringResource(R.string.orbit_builds_versions, count) else null,
-                        meta = shortDate(latest.createdAt),
-                        onClick = { openArtifact = latest.artifactId },
-                        showChevron = true,
-                    )
+    TabList(title = null) {
+        item(key = "sections") { BuildSections(section) { section = it } }
+        if (section == 0) {
+            val works = versions
+            val files = madeFiles
+            if (works == null || files == null) {
+                item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            } else {
+                if (files.isFailure) item(key = "files-failed") {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.weight(1f))
+                        TextButton(onClick = { filesReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                    }
+                }
+                if (entries.isEmpty() && files.isSuccess) item(key = "empty") { Hint(stringResource(R.string.orbit_builds_made_empty)) }
+                items(entries, key = { it.key }) { entry ->
+                    when (entry) {
+                        is BuildEntry.Work -> BuildRow(
+                            tile = { FileTile(entry.latest.name, work = true, seed = entry.latest.artifactId) },
+                            title = entry.latest.name,
+                            subtitle = stringResource(R.string.orbit_builds_work) +
+                                (if (entry.count > 1) " · " + stringResource(R.string.orbit_builds_versions, entry.count) else "") +
+                                " · " + shortDate(entry.latest.createdAt),
+                            onClick = { openArtifact = entry.latest.artifactId },
+                        ) { close ->
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
+                                onClick = { close(); openArtifact = entry.latest.artifactId })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_source)) },
+                                onClick = { close(); onOpenTask(entry.latest.taskId) })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_artifact_revise)) }, onClick = {
+                                close(); onDraft(context.getString(R.string.orbit_build_continue_draft, entry.latest.name))
+                            })
+                        }
+                        is BuildEntry.Made -> {
+                            val file = entry.file
+                            val name = file.path.substringAfterLast('/')
+                            val pinned = file.path in pins
+                            val isImage = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(file.path) ==
+                                com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+                            // Only pictures need the file; the safety checks touch the disk, so they run off the main thread.
+                            val image by produceState<java.io.File?>(null, file.path, file.modifiedAt, isImage) {
+                                value = if (!isImage) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                                    runCatching { orbitFiles.fileFor(file.path) }.getOrNull()
+                                }
+                            }
+                            BuildRow(
+                                tile = { FileTile(name, image = image, imageExpected = isImage) },
+                                title = name,
+                                subtitle = typeLabel(name) + " · " + shortDate(file.modifiedAt),
+                                pinned = pinned,
+                                onClick = {
+                                    if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(file.path)) onOpenFile(file.path)
+                                    else openOrbitFile(context) { orbitFiles.fileFor(file.path) }
+                                },
+                            ) { close ->
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(if (pinned) R.string.orbit_library_unpin else R.string.orbit_library_pin)) },
+                                    onClick = { close(); action { orbitFiles.setPinned(file.path, !pinned); filesReload++ } },
+                                )
+                                DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
+                                    onClick = { close(); shareOrbitFile(context) { orbitFiles.fileFor(file.path) } })
+                                DropdownMenuItem(
+                                    text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
+                                    onClick = {
+                                        close()
+                                        action {
+                                            try {
+                                                orbitFiles.delete(file.path)
+                                                showToast(context, context.getString(R.string.orbit_builds_moved_to_trash))
+                                            } finally {
+                                                filesReload++
+                                            }
+                                        }
+                                    },
+                                )
+                            }
+                        }
+                    }
                 }
             }
-        }
-        val filesResult = userFiles
-        val filesList = filesResult?.getOrNull()
-        item(key = "files-title") { GroupTitle(stringResource(R.string.orbit_library_title)) }
-        if (!filesList.isNullOrEmpty()) item(key = "files-hint") {
-            Text(
-                stringResource(R.string.orbit_library_long_press_hint), style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 8.dp),
-            )
-        }
-        if (!filesList.isNullOrEmpty()) item(key = "files-kinds") {
-            LibraryKindChips(filesList, kindFilter) { kindFilter = it }
-        }
-        when {
-            filesResult == null -> item(key = "files-loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            filesList == null -> item(key = "files-failed") {
-                Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                    Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    TextButton(onClick = { filesReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+        } else {
+            val result = uploads
+            val list = result?.getOrNull()
+            when {
+                result == null -> item(key = "uploads-loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                list == null -> item(key = "uploads-failed") {
+                    Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text(stringResource(R.string.orbit_file_load_failed), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        TextButton(onClick = { uploadsReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+                    }
                 }
-            }
-            filesList.isEmpty() -> item(key = "files-empty") { Hint(stringResource(R.string.orbit_builds_files_empty)) }
-            else -> {
-                val shown = filesList
-                    .filter { kindFilter == null || com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(it.path).name == kindFilter }
-                    .sortedBy { pins.indexOf(it.path).let { index -> if (index < 0) Int.MAX_VALUE else index } }
-                if (shown.isEmpty()) item(key = "files-kind-empty") { Hint(stringResource(R.string.orbit_library_kind_empty)) }
-                items(shown, key = { it.path }) { entry ->
-                    LibraryRow(orbitFiles, entry, pinned = entry.path in pins,
-                        onClick = {
-                            if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(entry.path)) onOpenFile(entry.path)
-                            else fileActions = entry
-                        },
-                        onLongClick = { fileActions = entry })
+                else -> {
+                    item(key = "uploads-usage") { UploadsUsage(list.sumOf { it.size }) }
+                    if (list.isEmpty()) item(key = "uploads-empty") { Hint(stringResource(R.string.orbit_uploads_empty)) }
+                    items(list, key = { "upload:" + it.file.absolutePath }) { upload ->
+                        val isImage = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(upload.name) ==
+                            com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+                        BuildRow(
+                            tile = { FileTile(upload.name, image = upload.file.takeIf { isImage }, imageExpected = isImage) },
+                            title = upload.name,
+                            subtitle = typeLabel(upload.name) + " · " +
+                                android.text.format.Formatter.formatShortFileSize(context, upload.size) +
+                                " · " + shortDate(upload.addedAt),
+                            onClick = { openOrbitFile(context) { upload.file } },
+                        ) { close ->
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
+                                onClick = { close(); openOrbitFile(context) { upload.file } })
+                            DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
+                                onClick = { close(); shareOrbitFile(context) { upload.file } })
+                            DropdownMenuItem(
+                                text = { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) },
+                                onClick = { close(); deletingUpload = upload },
+                            )
+                        }
+                    }
                 }
             }
         }
     }
     }
-    fileActions?.let { entry ->
-        val pinned = entry.path in pins
-        OrbitMadeFileActions(orbitFiles, entry, onDismiss = { fileActions = null }, onDeleted = { filesReload++ },
-            pinned = pinned, onTogglePin = { action { orbitFiles.setPinned(entry.path, !pinned); filesReload++ } })
+    deletingUpload?.let { upload ->
+        AlertDialog(
+            onDismissRequest = { deletingUpload = null },
+            title = { Text(stringResource(R.string.orbit_uploads_delete_title)) },
+            text = { Text(stringResource(R.string.orbit_uploads_delete_text, upload.name)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    deletingUpload = null
+                    action {
+                        try {
+                            com.ai.assistance.operit.features.orbit.OrbitUploads.delete(context, orbit.id, upload)
+                        } finally {
+                            uploadsReload++
+                        }
+                    }
+                }) { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) }
+            },
+            dismissButton = { TextButton(onClick = { deletingUpload = null }) { Text(stringResource(R.string.cancel)) } },
+        )
     }
     // A work's page slides in over the list; the back swipe slides it away under the finger.
     OrbitCoverPage(visible = !history.isNullOrEmpty(), onDismiss = { openArtifact = null }) {
@@ -1598,96 +1872,207 @@ private fun OrbitBuildsPage(
     }
 }
 
-/** The Library's filter: all files, or only pictures, audio, documents or the rest. */
+/** The switch at the top of the Builds tab: what Orbit made, or the Library of what the user sent. */
 @Composable
-private fun LibraryKindChips(
-    files: List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>,
-    selected: String?,
-    onSelect: (String?) -> Unit,
-) {
-    val counts = files.groupingBy { com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(it.path).name }.eachCount()
-    val kinds = listOf(
-        null to R.string.orbit_library_all,
-        "IMAGE" to R.string.orbit_library_images,
-        "AUDIO" to R.string.orbit_library_audio,
-        "DOCUMENT" to R.string.orbit_library_documents,
-        "OTHER" to R.string.orbit_library_other,
-    ).filter { (kind, _) -> kind == null || (counts[kind] ?: 0) > 0 || kind == selected }
-    Row(
-        Modifier.fillMaxWidth().horizontalScroll(androidx.compose.foundation.rememberScrollState()),
-        horizontalArrangement = Arrangement.spacedBy(8.dp),
+private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        shape = RoundedCornerShape(50), color = colors.surface,
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.6f)),
+        modifier = Modifier.fillMaxWidth().padding(bottom = 4.dp),
     ) {
-        kinds.forEach { (kind, label) ->
-            FilterChip(
-                selected = selected == kind,
-                onClick = { onSelect(kind) },
-                label = { Text(stringResource(label) + " " + (if (kind == null) files.size else counts[kind] ?: 0)) },
-            )
+        Row(Modifier.padding(6.dp)) {
+            listOf(R.string.orbit_builds_made, R.string.orbit_builds_uploads).forEachIndexed { index, label ->
+                val chosen = index == selected
+                Surface(
+                    onClick = { onSelect(index) },
+                    shape = RoundedCornerShape(50),
+                    color = if (chosen) colors.onSurface.copy(alpha = 0.07f) else Color.Transparent,
+                    modifier = Modifier.weight(1f).height(48.dp).semantics { this.selected = chosen },
+                ) {
+                    Box(contentAlignment = Alignment.Center) {
+                        Text(
+                            stringResource(label), style = MaterialTheme.typography.titleMedium,
+                            color = if (chosen) colors.onSurface else colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+            }
         }
     }
 }
 
-/** One Library file; a picture shows a small preview. Long press for pin, share and delete. */
-@OptIn(ExperimentalFoundationApi::class)
+/** How much of the Library's room is used, and what happens when it is full. */
 @Composable
-private fun LibraryRow(
-    files: com.ai.assistance.operit.features.orbit.OrbitFiles,
-    entry: com.ai.assistance.operit.features.orbit.OrbitFiles.Entry,
-    pinned: Boolean,
-    onClick: () -> Unit,
-    onLongClick: () -> Unit,
-) {
+private fun UploadsUsage(used: Long) {
     val context = LocalContext.current
-    val name = entry.path.substringAfterLast('/')
-    val image = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(entry.path) ==
-        com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
+    val limit = com.ai.assistance.operit.features.orbit.OrbitUploads.LIMIT_BYTES
+    SoftCard {
+        Text(
+            stringResource(
+                R.string.orbit_uploads_used,
+                android.text.format.Formatter.formatShortFileSize(context, used),
+                android.text.format.Formatter.formatShortFileSize(context, limit),
+            ),
+            style = MaterialTheme.typography.titleMedium,
+        )
+        LinearProgressIndicator(progress = { (used.toDouble() / limit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
+        Text(
+            stringResource(R.string.orbit_uploads_hint), style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
+/** One row of the Builds tab: a tile, the name and one line below it, and a ⋮ with its actions. */
+@Composable
+private fun BuildRow(
+    tile: @Composable () -> Unit,
+    title: String,
+    subtitle: String,
+    onClick: () -> Unit,
+    pinned: Boolean = false,
+    menu: @Composable ColumnScope.(close: () -> Unit) -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    var open by remember { mutableStateOf(false) }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp))
-            .combinedClickable(
-                onClick = onClick, onLongClick = onLongClick,
-                onLongClickLabel = stringResource(R.string.orbit_library_more_actions),
-            )
-            .padding(vertical = 10.dp, horizontal = 4.dp),
+        Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).clickable(onClick = onClick)
+            .padding(start = 4.dp, top = 8.dp, bottom = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier.size(52.dp).clip(RoundedCornerShape(14.dp))
-                .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)),
-        ) {
-            // Only pictures need the file; the safety checks touch the disk, so they run off the main thread.
-            val file by androidx.compose.runtime.produceState<java.io.File?>(null, entry.path, entry.modifiedAt, image) {
-                value = if (!image) null else kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    runCatching { files.fileFor(entry.path) }.getOrNull()
-                }
-            }
-            if (image) {
-                // A picture keeps the plain tile until its file is ready, so no icon flashes first.
-                file?.let {
-                    coil.compose.AsyncImage(
-                        model = it, contentDescription = null,
-                        contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
-                    )
-                }
-            } else {
-                Icon(orbitIcon(orbitFileIcon(name)), null, Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
+        tile()
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f)) {
-            Text(name, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    title, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f, fill = false),
+                )
+                if (pinned) {
+                    Icon(orbitIcon("pin"), stringResource(R.string.orbit_library_pinned),
+                        Modifier.padding(start = 6.dp).size(16.dp), tint = colors.onSurfaceVariant)
+                }
+            }
             Text(
-                shortDate(entry.modifiedAt) + " · " + android.text.format.Formatter.formatShortFileSize(context, entry.size),
-                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                subtitle, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant.copy(alpha = 0.8f),
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
-        if (pinned) {
-            Icon(orbitIcon("pin"), stringResource(R.string.orbit_library_pinned), Modifier.padding(start = 8.dp).size(18.dp),
-                tint = MaterialTheme.colorScheme.primary)
+        Box {
+            IconButton(onClick = { open = true }) {
+                Icon(orbitIcon("ellipsis-vertical"), stringResource(R.string.orbit_library_more_actions), Modifier.size(20.dp),
+                    tint = colors.onSurfaceVariant)
+            }
+            DropdownMenu(expanded = open, onDismissRequest = { open = false }) { menu { open = false } }
         }
     }
 }
 
+/** A file's type as shown under its name: the extension in capitals, or a word for a file without one. */
+@Composable
+private fun typeLabel(name: String): String =
+    name.substringAfterLast('.', "").uppercase().take(6).ifEmpty { stringResource(R.string.orbit_library_other) }
+
+/**
+ * The picture in front of a file: a picture's own preview; for a document, a small page with a
+ * folded corner and its type on it, like a red PDF or a gray MD; for a work Orbit made, a colored
+ * square, its color picked from [seed] so each work keeps its own.
+ */
+@Composable
+private fun FileTile(
+    name: String,
+    image: java.io.File? = null,
+    imageExpected: Boolean = false,
+    work: Boolean = false,
+    seed: String = name,
+) {
+    val colors = MaterialTheme.colorScheme
+    val ext = name.substringAfterLast('.', "").lowercase()
+    val kind = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(name)
+    val video = ext in setOf("mp4", "webm", "mov", "mkv")
+    val audio = kind == com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.AUDIO
+    // Pictures, works, sound and video get a rounded square; documents get a page.
+    if (image != null || imageExpected || work || audio || video) {
+        val (background, content) = when {
+            work -> workTileColors[Math.floorMod(seed.hashCode(), workTileColors.size)] to Color.White
+            audio -> Color(0xFF8E59D9) to Color.White
+            video -> Color(0xFF374151) to Color.White
+            else -> colors.onSurface.copy(alpha = 0.06f) to colors.onSurfaceVariant
+        }
+        Box(
+            contentAlignment = Alignment.Center,
+            modifier = Modifier.size(48.dp).clip(RoundedCornerShape(12.dp)).background(background),
+        ) {
+            when {
+                image != null -> coil.compose.AsyncImage(
+                    model = image, contentDescription = null,
+                    contentScale = androidx.compose.ui.layout.ContentScale.Crop, modifier = Modifier.fillMaxSize(),
+                )
+                // A picture keeps the plain tile until its file is ready, so no icon flashes first.
+                imageExpected -> Unit
+                work -> Icon(orbitIcon("component"), null, Modifier.size(24.dp), tint = content)
+                audio -> Icon(orbitIcon("audio-lines"), null, Modifier.size(24.dp), tint = content)
+                else -> Icon(orbitIcon("film"), null, Modifier.size(24.dp), tint = content)
+            }
+        }
+        return
+    }
+    val (page, label) = when (ext) {
+        "pdf" -> Color(0xFFE5484D) to Color.White
+        "doc", "docx", "rtf", "odt" -> Color(0xFF2F6FEB) to Color.White
+        "xls", "xlsx", "csv" -> Color(0xFF1F9D55) to Color.White
+        "ppt", "pptx" -> Color(0xFFE8743B) to Color.White
+        "zip", "rar", "7z", "tar", "gz" -> Color(0xFFB7791F) to Color.White
+        else -> colors.onSurface.copy(alpha = 0.07f) to colors.onSurfaceVariant
+    }
+    val fold = Color.Black.copy(alpha = 0.12f)
+    Box(Modifier.size(48.dp), contentAlignment = Alignment.Center) {
+        Box(
+            Modifier.size(width = 38.dp, height = 46.dp).drawWithCache {
+                val corner = size.width * 0.3f
+                val radius = 5.dp.toPx()
+                // The page, its top right corner cut off and folded down.
+                val outline = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(radius, 0f)
+                    lineTo(size.width - corner, 0f)
+                    lineTo(size.width, corner)
+                    lineTo(size.width, size.height - radius)
+                    quadraticTo(size.width, size.height, size.width - radius, size.height)
+                    lineTo(radius, size.height)
+                    quadraticTo(0f, size.height, 0f, size.height - radius)
+                    lineTo(0f, radius)
+                    quadraticTo(0f, 0f, radius, 0f)
+                    close()
+                }
+                val flap = androidx.compose.ui.graphics.Path().apply {
+                    moveTo(size.width - corner, 0f)
+                    lineTo(size.width - corner, corner - radius / 2)
+                    quadraticTo(size.width - corner, corner, size.width - corner + radius / 2, corner)
+                    lineTo(size.width, corner)
+                    close()
+                }
+                onDrawBehind {
+                    drawPath(outline, page)
+                    drawPath(flap, fold)
+                }
+            },
+            contentAlignment = Alignment.BottomCenter,
+        ) {
+            Text(
+                ext.uppercase().take(4).ifEmpty { "•" }, color = label, fontSize = 11.sp, fontWeight = FontWeight.Bold,
+                maxLines = 1, modifier = Modifier.padding(bottom = 6.dp),
+            )
+        }
+    }
+}
+
+/** Soft colors for works' tiles, white icon on each. */
+private val workTileColors = listOf(
+    Color(0xFFC08A6B), Color(0xFF6B9AC0), Color(0xFF7FAE84), Color(0xFFB77FB0),
+    Color(0xFFD1A04F), Color(0xFF6FA8A3), Color(0xFFC07474), Color(0xFF8C86C9),
+)
 
 
 @Composable

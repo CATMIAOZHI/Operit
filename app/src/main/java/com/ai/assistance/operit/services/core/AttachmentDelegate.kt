@@ -21,6 +21,7 @@ import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import android.webkit.MimeTypeMap
 import java.io.File
@@ -269,9 +270,30 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
                 }
             }
 
+    /** The Orbit whose chat is open, or null for an ordinary chat. Reads settings; call off the main thread. */
+    private fun orbitForCurrentChat(): String? =
+        try {
+            com.ai.assistance.operit.features.orbit.OrbitUploads.orbitFor(context, chatIdProvider())
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not tell whether this is an Orbit chat: ${e.message}")
+            null
+        }
+
     /** 从URI创建临时文件 */
     private suspend fun createTempFileFromUri(uri: Uri, fileName: String): java.io.File? =
             withContext(Dispatchers.IO) {
+                // In an Orbit chat the file goes to that Orbit's own folder, so it lasts.
+                val orbitId = orbitForCurrentChat()
+                if (orbitId != null) {
+                    return@withContext try {
+                        context.contentResolver.openInputStream(uri)?.use { input ->
+                            com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, fileName, input)
+                        }
+                    } catch (e: Exception) {
+                        AppLogger.e(TAG, "Failed to keep an Orbit upload", e)
+                        null
+                    }
+                }
                 try {
                     val fileExtension = fileName.substringAfterLast('.', "jpg")
 
@@ -572,6 +594,24 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
         }
     }
 
+    /**
+     * The user took an attachment out of the input box. Besides [removeAttachment], an upload an
+     * Orbit kept for it goes too: it was never sent. (Moving attachments into the send queue uses
+     * [removeAttachment] alone, so queued files stay.)
+     */
+    fun discardAttachment(filePath: String) {
+        removeAttachment(filePath)
+        discardScope.launch {
+            try {
+                com.ai.assistance.operit.features.orbit.OrbitUploads.discard(context, filePath)
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Could not remove an unsent Orbit upload: ${e.message}")
+            }
+        }
+    }
+
+    private val discardScope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.IO)
+
     /** Clear all attachments */
     fun clearAttachments() {
         synchronized(attachmentListLock) {
@@ -621,12 +661,21 @@ class AttachmentDelegate(private val context: Context, private val toolHandler: 
             }
             // Some capture backends reuse short filenames. An attachment must keep its own
             // snapshot until the model reads it, even after subsequent screen captures.
-            val snapshot = File.createTempFile(
-                "screen_attachment_", ".png", OperitPaths.cleanOnExitInternalDir(context)
-            )
-            attachmentFile = snapshot
-            file.inputStream().use { input ->
-                snapshot.outputStream().use { output -> input.copyTo(output) }
+            // In an Orbit chat it goes to that Orbit's Library instead, so it lasts.
+            val orbitId = orbitForCurrentChat()
+            val snapshot = if (orbitId != null) {
+                file.inputStream().use { input ->
+                    com.ai.assistance.operit.features.orbit.OrbitUploads.save(context, orbitId, "screenshot.png", input)
+                } ?: error("The screenshot is empty")
+            } else {
+                File.createTempFile(
+                    "screen_attachment_", ".png", OperitPaths.cleanOnExitInternalDir(context)
+                ).also { temp ->
+                    attachmentFile = temp
+                    file.inputStream().use { input ->
+                        temp.outputStream().use { output -> input.copyTo(output) }
+                    }
+                }
             }
             appendAttachment(AttachmentInfo(
                 filePath = snapshot.absolutePath,
