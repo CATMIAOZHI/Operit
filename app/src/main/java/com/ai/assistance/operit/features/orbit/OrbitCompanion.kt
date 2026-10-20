@@ -160,6 +160,19 @@ object OrbitCompanion {
     }
 
     /**
+     * A side chat opened without a title takes the one generated from its first message. One
+     * that already has a name (given by the user or by Orbit) keeps it.
+     */
+    suspend fun adoptGeneratedTitle(context: Context, chatId: String, title: String) {
+        val appContext = context.applicationContext
+        val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
+        if (clean.isEmpty()) return
+        val preferences = OrbitPreferences.getInstance(appContext)
+        if (preferences.current().orbitForChat(chatId)?.sideChats?.none { it.chatId == chatId } != false) return
+        preferences.renameSideChatIfTitled(chatId, appContext.getString(R.string.new_conversation), clean)
+    }
+
+    /**
      * Deletes a side chat and its history. Tasks made there report to the main chat from now on,
      * and reports still waiting to be posted go there too. It finishes even if the screen that
      * asked goes away, and the side chat stays listed until its history is really gone, so a

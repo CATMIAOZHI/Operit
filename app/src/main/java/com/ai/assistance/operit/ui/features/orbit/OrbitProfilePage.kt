@@ -115,6 +115,8 @@ internal fun OrbitProfilePage(
     onOpenFiles: () -> Unit,
     developerMode: Boolean = false,
     onOpenRawChat: () -> Unit = {},
+    /** Puts a prompt in Orbit's main chat box and shows the chat; nothing is sent. */
+    onDraft: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -140,7 +142,7 @@ internal fun OrbitProfilePage(
             kotlinx.coroutines.delay(15_000)
         }
     }
-    BackHandler(enabled = visible, onBack = onClose)
+    // Back is the screen's: it lowers this page with the swipe.
 
     LazyColumn(
         modifier =
@@ -163,7 +165,7 @@ internal fun OrbitProfilePage(
                         onClick = onOpenSettings,
                         modifier = Modifier.align(Alignment.TopEnd),
                     )
-                    EditableOrbitAvatar(orbit = orbit, modifier = Modifier.align(Alignment.TopCenter))
+                    EditableOrbitAvatar(orbit = orbit, onDraft = onDraft, modifier = Modifier.align(Alignment.TopCenter))
                 }
                 Spacer(Modifier.height(16.dp))
                 Text(
@@ -250,7 +252,7 @@ internal fun OrbitCircleButton(
 
 /** Orbit's picture with a small pencil. Tapping either opens the avatar sheet. */
 @Composable
-private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifier) {
+private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, modifier: Modifier = Modifier) {
     var showSheet by remember { mutableStateOf(false) }
     Box(modifier) {
         OrbitAvatar(
@@ -275,48 +277,50 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, modifier: Modifier = Modifi
             }
         }
     }
-    if (showSheet) OrbitAvatarSheet(orbit = orbit, onDismiss = { showSheet = false })
+    if (showSheet) OrbitAvatarSheet(onDraft = onDraft, onDismiss = { showSheet = false })
 }
 
 /**
- * One sheet for every way to change the picture: a photo, the role card's own picture, or one
- * of the user's pets shown as round previews.
+ * One sheet for every way to ask for a new picture: a photo, the role card's own picture, or one
+ * of the user's pets shown as round previews. The choice goes to Orbit's chat box as a request;
+ * Orbit changes its own avatar (orbit_set_avatar).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitAvatarSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
+private fun OrbitAvatarSheet(onDraft: (String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val preferences = remember { OrbitPreferences.getInstance(context) }
-    val latestOrbitId by rememberUpdatedState(orbit.id)
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var busy by remember { mutableStateOf(false) }
     fun failed() = android.widget.Toast.makeText(
         context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
     ).show()
-    fun apply(block: suspend () -> Unit) {
+    /** Runs [block], then closes the sheet and hands its prompt to the chat. */
+    fun ask(block: suspend () -> String?) {
         if (busy) return
         busy = true
         scope.launch {
-            val ok = try { block(); true } catch (error: Exception) {
+            val text = try { block() } catch (error: Exception) {
                 if (error is kotlinx.coroutines.CancellationException) throw error
-                failed()
-                false
+                null
             } finally { busy = false }
-            // The user may have closed the sheet while the picture was being saved.
-            if (ok && sheetState.isVisible) {
-                sheetState.hide()
-                onDismiss()
-            }
+            if (text == null) { failed(); return@launch }
+            sheetState.hide()
+            onDismiss()
+            onDraft(text)
         }
     }
     val pickImage =
         rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
             if (uri == null) return@rememberLauncherForActivityResult
-            val orbitId = latestOrbitId
-            apply {
-                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar")
-                if (saved == null) failed() else preferences.setAvatar(orbitId, saved.toString())
+            ask {
+                // A copy the app keeps, attached to the chat box so Orbit gets the picture with the request.
+                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar_request")
+                    ?: return@ask null
+                com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)
+                    .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+                    .handleAttachment(saved.toString())
+                context.getString(R.string.orbit_avatar_draft_image)
             }
         }
     val pets by remember { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
@@ -329,6 +333,12 @@ private fun OrbitAvatarSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
                 stringResource(R.string.orbit_change_avatar),
                 style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold,
+                modifier = Modifier.padding(bottom = 4.dp),
+            )
+            Text(
+                stringResource(R.string.orbit_avatar_sheet_note),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
@@ -343,7 +353,7 @@ private fun OrbitAvatarSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
                     icon = orbitIcon("rotate-ccw"),
                     label = stringResource(R.string.orbit_reset_avatar),
                     enabled = !busy,
-                    onClick = { apply { com.ai.assistance.operit.features.orbit.OrbitCompanion.resetAvatar(context, latestOrbitId) } },
+                    onClick = { ask { context.getString(R.string.orbit_avatar_draft_reset) } },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -358,18 +368,14 @@ private fun OrbitAvatarSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
                 pets.chunked(4).forEach { row ->
                     Row(Modifier.fillMaxWidth().padding(bottom = 14.dp)) {
                         row.forEach { pet ->
+                            val petName = pet.settings.displayName()
                             PetAvatarChoice(
                                 pet = pet,
                                 enabled = !busy,
                                 modifier = Modifier.weight(1f),
                                 onClick = {
-                                    val orbitId = latestOrbitId
-                                    apply {
-                                        val file = com.ai.assistance.operit.pet.PetAvatar.export(
-                                            context, pet, OrbitPreferences.AVATAR_FILE_PREFIX,
-                                        )
-                                        if (file == null) failed()
-                                        else preferences.setAvatar(orbitId, Uri.fromFile(file).toString())
+                                    ask {
+                                        context.getString(R.string.orbit_avatar_draft_pet, petName, pet.id)
                                     }
                                 },
                             )

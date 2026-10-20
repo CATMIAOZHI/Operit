@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Prompts a button puts in Orbit's chat box; the user finishes them and decides to send. -->
+    <string name="orbit_avatar_draft_image">帮我把头像换成这张图片。</string>
+    <string name="orbit_avatar_draft_pet">帮我把头像换成我的宠物「%1$s」（宠物编号：%2$s）。</string>
+    <string name="orbit_avatar_draft_reset">请把头像恢复成角色卡的默认头像。</string>
+    <string name="orbit_avatar_sheet_note">选好后会放进聊天框，发给 Orbit，由它来换。</string>
+    <string name="orbit_person_new_draft">帮我新建一个人物：</string>
+    <string name="orbit_group_new_draft">帮我新建一个群组：</string>
+    <string name="orbit_goal_note_draft">请给目标《%1$s》记录一条进展：</string>
+    <string name="orbit_build_continue_draft">请继续修改作品《%1$s》：</string>
+    <string name="orbit_skill_new_draft">请帮我创建一个技能：</string>
+</resources>

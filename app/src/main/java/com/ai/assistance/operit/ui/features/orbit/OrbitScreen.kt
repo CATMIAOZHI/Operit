@@ -299,6 +299,15 @@ private fun OrbitChatPage(
     }
     // The bottom tabs. The chat stays composed under the other tabs so going back never reloads it.
     var tab by rememberSaveable(orbit.id) { mutableStateOf(OrbitTab.CHAT) }
+    // A button that asks Orbit for something: its prompt waits in the main chat's input box, and
+    // every page over the chat closes so the user can finish it and decide whether to send.
+    fun draftToChat(text: String) {
+        draftToOrbit(context, orbit, text)
+        talkChatId = orbit.chatId
+        tab = OrbitTab.CHAT
+        showProfile = false
+        stackNames = ""
+    }
     // A tapped report notification or a share opens that chat, over whatever page was showing.
     val openRequest by com.ai.assistance.operit.features.orbit.OrbitNavigation.pendingChat.collectAsState()
     LaunchedEffect(openRequest, orbit.talkChatIds) {
@@ -388,7 +397,8 @@ private fun OrbitChatPage(
                 translationX = if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
-                if (showChats || stack.isNotEmpty()) Modifier.clearAndSetSemantics { } else Modifier
+                if (showChats || stack.isNotEmpty() || showProfile || editingFile != null) Modifier.clearAndSetSemantics { }
+                else Modifier
             )
         ) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -462,28 +472,22 @@ private fun OrbitChatPage(
         // Keeps the last file on screen while the page slides away.
         var shownFile by remember(orbit.id) { mutableStateOf(editingFile) }
         LaunchedEffect(editingFile) { editingFile?.let { shownFile = it } }
-        AnimatedVisibility(
+        OrbitCoverPage(
             visible = editingFile != null,
-            enter = slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it },
-            exit = slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it },
+            onDismiss = { editingFile = null; filesVersion++ },
         ) {
             (editingFile ?: shownFile)?.let { path ->
                 val files = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
                 OrbitMadeFilePage(files, path, onBack = { editingFile = null; filesVersion++ })
             }
         }
-        val profileDim by animateFloatAsState(
-            targetValue = if (showProfile) 0.18f else 0f,
-            animationSpec = tween(OrbitMotion.PRESENT_MS, easing = OrbitMotion.Easing),
-            label = "orbitProfileDim",
-        )
-        if (profileDim > 0f) {
-            Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = profileDim)))
-        }
-        AnimatedVisibility(
+        // The profile rises from the bottom; the back swipe lowers it with the finger.
+        OrbitCoverPage(
             visible = showProfile,
-            enter = slideInVertically(tween(OrbitMotion.PRESENT_MS, easing = OrbitMotion.Easing)) { it },
-            exit = slideOutVertically(tween(OrbitMotion.DISMISS_MS, easing = OrbitMotion.Easing)) { it },
+            onDismiss = { showProfile = false },
+            fromBottom = true,
+            backEnabled = stack.isEmpty(),
+            dim = 0.18f,
         ) {
             Box(Modifier.fillMaxSize()) {
                 // Pushed pages move the profile a little to the left underneath them.
@@ -515,12 +519,13 @@ private fun OrbitChatPage(
                         onOpenUser = { push(OrbitSubPage.USER) },
                         onOpenFiles = { push(OrbitSubPage.FILES) },
                         developerMode = settings.developerMode,
+                        onDraft = ::draftToChat,
                         onOpenRawChat = {
                             // Back on the chat, now drawn as a normal Operit chat.
                             devChatView = true
                             tab = OrbitTab.CHAT
                             stackNames = ""
-                                                        showProfile = false
+                            showProfile = false
                         },
                     )
                 }
@@ -543,6 +548,7 @@ private fun OrbitChatPage(
                     onOpenPrompts = { push(OrbitSubPage.PROMPTS) },
                     onOpenPackages = { push(OrbitSubPage.PACKAGES) },
                     onOpenToolPermissions = { push(OrbitSubPage.TOOL_PERMISSIONS) },
+                    onOpenToolAccess = { push(OrbitSubPage.TOOL_ACCESS) },
                     onOpenVault = { push(OrbitSubPage.VAULT) },
                     onOpenImport = { showImport = true },
                     onPause = back,
@@ -584,8 +590,9 @@ private fun OrbitChatPage(
                     if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
                     else LaunchedEffect(Unit) { back() }
                 }
+                OrbitSubPage.TOOL_ACCESS -> OrbitToolAccessPage(onBack = back)
                 OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
-                OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
+                OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
                 // No id opens the grouped list of every task.
                 OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId)
                 OrbitSubPage.PROCESS -> {
@@ -602,7 +609,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.MEMORY_LIBRARY -> {
                     val id = memoryResult?.getOrNull()
                     if (id != null) {
-                        OrbitLearningPage(id, back)
+                        OrbitLearningPage(id, back, onDraft = ::draftToChat)
                     } else {
                         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                             Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
@@ -640,7 +647,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, VAULT, VAULT_ENTRY }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -926,6 +933,7 @@ private fun OrbitSettingsPage(
     onOpenPrompts: () -> Unit,
     onOpenPackages: () -> Unit,
     onOpenToolPermissions: () -> Unit,
+    onOpenToolAccess: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
     onPause: () -> Unit,
@@ -937,7 +945,6 @@ private fun OrbitSettingsPage(
     val cardColor = settingsCardColor(hasBackgroundImage)
     val toolPermissions = remember { com.ai.assistance.operit.ui.permissions.ToolPermissionSystem.getInstance(context) }
     val fullAccess by toolPermissions.orbitFullAccessFlow.collectAsState(initial = null)
-    var showAccessSheet by remember { mutableStateOf(false) }
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             modifier =
@@ -986,7 +993,7 @@ private fun OrbitSettingsPage(
                         subtitle = stringResource(R.string.orbit_access_row_desc),
                         icon = lucide("shield"),
                         searchable = false,
-                        onClick = { if (fullAccess != null) showAccessSheet = true },
+                        onClick = onOpenToolAccess,
                         trailing = {
                             fullAccess?.let { full ->
                                 Text(
@@ -1077,17 +1084,6 @@ private fun OrbitSettingsPage(
                 )
             }
         }
-    }
-
-    if (showAccessSheet) {
-        OrbitToolAccessSheet(
-            fullAccess = fullAccess == true,
-            onDismiss = { showAccessSheet = false },
-            onPick = { full ->
-                showAccessSheet = false
-                scope.launch { toolPermissions.setOrbitFullAccess(full) }
-            },
-        )
     }
 }
 

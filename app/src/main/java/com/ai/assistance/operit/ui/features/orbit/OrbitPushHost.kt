@@ -6,6 +6,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animate
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -280,6 +281,93 @@ private fun <T> forget(holder: SaveableStateHolder, before: List<T>, after: List
     // Pages that are gone, or replaced at the same depth, start fresh next time.
     for (i in before.indices) {
         if (i >= after.size || before[i] != after[i]) holder.removeState("$i")
+    }
+}
+
+/**
+ * One page over the screen, sliding in from the right (or up from the bottom) and leaving the same
+ * way. The back swipe moves it with the finger and settles it back if let go early, like the pages
+ * in [OrbitPushHost]. The page's own plain back is left to this, as it is in the host; a page can
+ * still intercept back first. [backEnabled] false leaves back to something on top of it.
+ */
+@Composable
+internal fun OrbitCoverPage(
+    visible: Boolean,
+    onDismiss: () -> Unit,
+    fromBottom: Boolean = false,
+    backEnabled: Boolean = true,
+    dim: Float = 0f,
+    content: @Composable () -> Unit,
+) {
+    // 0: in place; 1: off screen.
+    val slide = remember { Animatable(if (visible) 0f else 1f) }
+    var composed by remember { mutableStateOf(visible) }
+    // True from a finished back swipe until the page is gone: taps and another back wait.
+    var settling by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val currentVisible by rememberUpdatedState(visible)
+    LaunchedEffect(visible) {
+        if (visible) {
+            composed = true
+            val ms = if (fromBottom) OrbitMotion.PRESENT_MS else OrbitMotion.PUSH_MS
+            slide.animateTo(0f, tween(ms, easing = OrbitMotion.Easing))
+        } else {
+            val ms = if (fromBottom) OrbitMotion.DISMISS_MS else OrbitMotion.PUSH_MS
+            try {
+                slide.animateTo(1f, tween(ms, easing = OrbitMotion.Easing))
+                composed = false
+            } finally {
+                settling = false
+            }
+        }
+    }
+    // Stays registered while the page slides away, so a second back is swallowed here instead of
+    // reaching the page underneath before this one is gone.
+    PredictiveBackHandler(enabled = composed && (!visible || settling || backEnabled)) { events ->
+        if (!currentVisible || settling) {
+            events.collect { }
+            return@PredictiveBackHandler
+        }
+        // A swipe that starts while the page is still coming in carries on from where it is.
+        val start = slide.value
+        try {
+            events.collect { slide.snapTo(start + (1f - start) * it.progress) }
+            settling = true
+            val rest = (OrbitMotion.PUSH_MS * (1f - slide.value)).toInt().coerceAtLeast(120)
+            slide.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
+            currentOnDismiss()
+        } catch (e: CancellationException) {
+            // Let go before the edge: the page settles back in place. A page already on its way
+            // out (closed some other way meanwhile) keeps going.
+            if (currentVisible) {
+                settling = false
+                scope.launch { slide.animateTo(0f, tween(220, easing = OrbitMotion.Easing)) }
+            }
+            throw e
+        }
+    }
+    if (!composed) return
+    if (dim > 0f) {
+        Box(Modifier.fillMaxSize().drawBehind { drawRect(Color.Black.copy(alpha = dim * (1f - slide.value))) })
+    }
+    Box(
+        Modifier.fillMaxSize()
+            .graphicsLayer {
+                if (fromBottom) translationY = size.height * slide.value else translationX = size.width * slide.value
+            }
+            // The page takes every touch on it, so blank parts never let a tap through underneath.
+            .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }
+    ) {
+        CompositionLocalProvider(LocalOrbitHostedBack provides true) { content() }
+    }
+    // While it slides in or out, a tap anywhere waits: the page is not ready yet, or is leaving.
+    if (!visible || settling || slide.isRunning) {
+        Box(
+            Modifier.fillMaxSize().pointerInput(Unit) {
+                awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+            }
+        )
     }
 }
 

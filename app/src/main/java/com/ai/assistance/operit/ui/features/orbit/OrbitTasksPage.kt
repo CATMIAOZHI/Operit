@@ -111,7 +111,8 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     // A message from one task's buttons does not follow the user to another task.
     fun clearFeedback() { actionError = null; notice = null }
     fun back() { clearFeedback(); if (selected != null && initialTaskId == null) selected = null else onBack() }
-    OrbitPageBack(intercept = selected != null && initialTaskId == null) { back() }
+    // An open task in the list is left by the push host below, with the back swipe.
+    OrbitPageBack { back() }
 
     val listState = rememberLazyListState()
     val errorBanner: LazyListScope.() -> Unit = {
@@ -137,29 +138,10 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
             }
         }
     }
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-        // Opening a task pushes its page in from the right over the list, which slides a little
-        // to the left underneath, like iOS; going back plays it in reverse.
-        val pageColor = MaterialTheme.colorScheme.background
-        AnimatedContent(
-            targetState = selected,
-            transitionSpec = {
-                val spec = tween<IntOffset>(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)
-                val forward = initialState == null && targetState != null
-                if (forward) {
-                    (slideInHorizontally(spec) { it } togetherWith slideOutHorizontally(spec) { -it * 3 / 10 })
-                        .apply { targetContentZIndex = 1f }
-                } else {
-                    (slideInHorizontally(spec) { -it * 3 / 10 } togetherWith slideOutHorizontally(spec) { it })
-                        .apply { targetContentZIndex = -1f }
-                }
-            },
-            label = "orbitTaskPush",
-        ) { shown ->
-          Box(Modifier.fillMaxSize().background(pageColor)) {
-            if (shown == null) {
-                TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
-            } else key(shown) {
+    val pageColor = MaterialTheme.colorScheme.background
+    val detail: @Composable (String) -> Unit = { shown ->
+        Box(Modifier.fillMaxSize().background(pageColor)) {
+            key(shown) {
             TaskDetail(
                 orbitId = orbitId,
                 taskId = shown,
@@ -180,7 +162,25 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                 onRecord = { id -> action { executionRecord = repository.executionRecord(id) } },
             )
             }
-          }
+        }
+    }
+    Box(Modifier.fillMaxSize().background(pageColor)) {
+        if (initialTaskId != null) {
+            // Opened on one task: back leaves the page.
+            detail(initialTaskId)
+        } else {
+            // Opening a task pushes its page in from the right over the list, like iOS; the back
+            // swipe slides it away under the finger.
+            OrbitPushHost(
+                entries = listOfNotNull(selected),
+                onPop = { clearFeedback(); selected = null },
+                base = {
+                    Box(Modifier.fillMaxSize().background(pageColor)) {
+                        TaskList(tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+                    }
+                },
+                page = detail,
+            )
         }
     }
 

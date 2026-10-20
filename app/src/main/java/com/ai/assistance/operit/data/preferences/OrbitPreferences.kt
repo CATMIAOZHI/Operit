@@ -328,6 +328,17 @@ class OrbitPreferences private constructor(context: Context) {
         }
     }
 
+    /** Renames a side chat only if its title is still [expected], in one update, so a name given meanwhile stays. */
+    suspend fun renameSideChatIfTitled(chatId: String, expected: String, title: String) {
+        updateOrbits { orbits ->
+            orbits.map { orbit ->
+                orbit.copy(sideChats = orbit.sideChats.map {
+                    if (it.chatId == chatId && it.title == expected) it.copy(title = title) else it
+                })
+            }
+        }
+    }
+
     /** Drops the side chat from the list; the id stays owned so its rows never show up elsewhere. */
     suspend fun removeSideChat(orbitId: String, chatId: String) {
         updateOrbits { orbits ->

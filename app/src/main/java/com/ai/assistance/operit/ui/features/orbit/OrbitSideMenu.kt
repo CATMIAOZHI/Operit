@@ -1,7 +1,7 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
+import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -56,6 +56,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -66,6 +67,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.graphicsLayer
@@ -111,13 +113,13 @@ internal fun OrbitSideMenu(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var creating by rememberSaveable { mutableStateOf(false) }
     var renaming by remember { mutableStateOf<OrbitSideChat?>(null) }
     var deleting by remember { mutableStateOf<OrbitSideChat?>(null) }
     var busy by remember { mutableStateOf(false) }
     var query by rememberSaveable { mutableStateOf("") }
     // How far the panel was dragged to the left, in pixels (0 or less).
     var dragOffset by remember { mutableFloatStateOf(0f) }
+    var panelPx by remember { mutableFloatStateOf(0f) }
     val focusManager = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     LaunchedEffect(visible) {
@@ -136,7 +138,24 @@ internal fun OrbitSideMenu(
     // The search is cleared only once the panel is fully gone, so nothing moves while it slides out.
     val gone = progress == 0f
     LaunchedEffect(gone) { if (gone) query = "" }
-    BackHandler(enabled = visible) { onDismiss() }
+    // The back swipe slides the panel away under the finger, like a drag; let go early and it returns.
+    PredictiveBackHandler(enabled = visible) { events ->
+        try {
+            events.collect { event -> dragOffset = -panelPx * event.progress }
+            val rest = (OrbitMotion.DISMISS_MS * (1f + dragOffset / panelPx.coerceAtLeast(1f))).toInt().coerceAtLeast(90)
+            animate(dragOffset, -panelPx, animationSpec = tween(rest, easing = OrbitMotion.Easing)) { value, _ ->
+                dragOffset = value
+            }
+            onDismiss()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            scope.launch {
+                animate(dragOffset, 0f, animationSpec = tween(220, easing = OrbitMotion.Easing)) { value, _ ->
+                    dragOffset = value
+                }
+            }
+            throw e
+        }
+    }
 
     fun open(chatId: String) {
         onSelect(chatId)
@@ -163,9 +182,14 @@ internal fun OrbitSideMenu(
         BoxWithConstraints(Modifier.fillMaxSize()) {
             val panelWidth = min(maxWidth * 0.84f, 380.dp)
             val panelWidthPx = with(LocalDensity.current) { panelWidth.toPx() }
+            SideEffect { panelPx = panelWidthPx }
             Box(
                 Modifier.fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.28f * progress))
+                    // Read while drawing, so a drag or back swipe fades it without recomposing.
+                    .drawBehind {
+                        val shown = (1f + dragOffset / panelWidthPx).coerceIn(0f, 1f)
+                        drawRect(Color.Black.copy(alpha = 0.28f * progress * shown))
+                    }
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -211,7 +235,13 @@ internal fun OrbitSideMenu(
                                 Toast.LENGTH_SHORT,
                             ).show()
                         } else {
-                            creating = true
+                            // No title to type: it is named after the first message, like any chat.
+                            act {
+                                val id = OrbitCompanion.createSideChat(
+                                    context, orbit.id, context.getString(R.string.new_conversation),
+                                )
+                                open(id)
+                            }
                         }
                     },
                     onOpenSettings = {
@@ -227,19 +257,6 @@ internal fun OrbitSideMenu(
         }
     }
 
-    if (creating) {
-        TitleDialog(
-            title = stringResource(R.string.orbit_chats_new), initial = "", busy = busy,
-            onDismiss = { if (!busy) creating = false },
-            onSave = { text ->
-                act {
-                    val id = OrbitCompanion.createSideChat(context, orbit.id, text)
-                    creating = false
-                    open(id)
-                }
-            },
-        )
-    }
     renaming?.let { side ->
         TitleDialog(
             title = stringResource(R.string.rename), initial = side.title, busy = busy,
