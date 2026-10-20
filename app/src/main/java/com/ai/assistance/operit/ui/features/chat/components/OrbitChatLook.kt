@@ -111,6 +111,14 @@ class OrbitUserReactions(val byMessage: Map<Long, String>, val toggle: (timestam
 
 val LocalOrbitUserReactions = compositionLocalOf<OrbitUserReactions?> { null }
 
+/**
+ * The message's own double-tap (like) and long-press (menu), for a card inside it that takes
+ * taps itself: without them, a tap on the card never reaches the message around it.
+ */
+class OrbitMessageGestures(val onDoubleTap: (() -> Unit)?, val onLongPress: (() -> Unit)?)
+
+val LocalOrbitMessageGestures = compositionLocalOf<OrbitMessageGestures?> { null }
+
 /** What Orbit said in a message, without its thinking, tool calls, tool results or status lines. */
 object OrbitSpeech {
     private val blank = Regex("\n{3,}")
@@ -120,7 +128,7 @@ object OrbitSpeech {
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
     private val cardToolResult = Regex(
-        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file)\"[^>]*\\bstatus=\"success\"",
+        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval)\"[^>]*\\bstatus=\"success\"",
         RegexOption.IGNORE_CASE,
     )
     private val placeholder = Regex("\uE000(\\d+)\uE001")

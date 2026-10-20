@@ -240,6 +240,8 @@ private fun OrbitChatPage(
 ) {
     val context = LocalContext.current
     var showSettings by remember { mutableStateOf(false) }
+    // Set while a page or sheet opened from the settings is showing; closing it reopens them.
+    var returnToSettings by rememberSaveable(orbit.id) { mutableStateOf(false) }
     var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
     // Pages pushed over the profile, as names so the stack survives recreation.
     var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
@@ -247,6 +249,11 @@ private fun OrbitChatPage(
     val subPage = stack.lastOrNull()
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
+    // Answers the user gave while Orbit could not hear them (the app closed while it was busy).
+    LaunchedEffect(orbit.id) {
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitApprovals.deliverPending(context.applicationContext, orbit) }
+            .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+    }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var openVaultEntryId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Not saved across process death; the page then just closes back to the profile.
@@ -260,6 +267,15 @@ private fun OrbitChatPage(
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
+    LaunchedEffect(stack.isEmpty(), showProfile, showImport) {
+        if (!returnToSettings || showImport) return@LaunchedEffect
+        if (stack.isEmpty()) {
+            returnToSettings = false
+            // Back from the page onto the profile: the settings it came from open again. Anything
+            // that closed the profile instead (a notification, leaving) just forgets them.
+            if (showProfile) showSettings = true
+        }
+    }
     // Developer option: the same chat drawn as a normal Operit chat (thinking, tools, hidden turns,
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
@@ -618,33 +634,27 @@ private fun OrbitChatPage(
     }
 
     if (showSettings) {
+        // A page opened from the settings sits on the profile, and leaving it comes back to the
+        // settings, even when they were opened from the side menu over the chat.
+        fun openFromSettings(page: OrbitSubPage) {
+            showSettings = false
+            returnToSettings = true
+            showProfile = true
+            push(page)
+        }
         OrbitSettingsSheet(
             orbit = orbit,
             settings = settings,
             hasBackgroundImage = hasBackgroundImage,
             onDismiss = { showSettings = false },
-            onOpenNotifications = {
-                showSettings = false
-                push(OrbitSubPage.NOTIFICATIONS)
-            },
-            onOpenPrompts = {
-                showSettings = false
-                push(OrbitSubPage.PROMPTS)
-            },
-            onOpenPackages = {
-                showSettings = false
-                push(OrbitSubPage.PACKAGES)
-            },
-            onOpenToolPermissions = {
-                showSettings = false
-                push(OrbitSubPage.TOOL_PERMISSIONS)
-            },
-            onOpenVault = {
-                showSettings = false
-                push(OrbitSubPage.VAULT)
-            },
+            onOpenNotifications = { openFromSettings(OrbitSubPage.NOTIFICATIONS) },
+            onOpenPrompts = { openFromSettings(OrbitSubPage.PROMPTS) },
+            onOpenPackages = { openFromSettings(OrbitSubPage.PACKAGES) },
+            onOpenToolPermissions = { openFromSettings(OrbitSubPage.TOOL_PERMISSIONS) },
+            onOpenVault = { openFromSettings(OrbitSubPage.VAULT) },
             onOpenImport = {
                 showSettings = false
+                returnToSettings = true
                 showImport = true
             },
             onPause = {
@@ -655,9 +665,16 @@ private fun OrbitChatPage(
     if (showImport) {
         OrbitImportMemorySheet(
             orbit = orbit,
-            onDismiss = { showImport = false },
+            onDismiss = {
+                showImport = false
+                if (returnToSettings) {
+                    returnToSettings = false
+                    showSettings = true
+                }
+            },
             onSent = {
                 showImport = false
+                returnToSettings = false
                 talkChatId = orbit.chatId
                 tab = OrbitTab.CHAT
                 showProfile = false

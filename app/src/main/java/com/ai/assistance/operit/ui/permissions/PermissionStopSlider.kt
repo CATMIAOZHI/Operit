@@ -14,23 +14,95 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.setProgress
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import kotlinx.coroutines.launch
 
 /**
- * The fixed permission of an Orbit chat, or null in any other chat. Orbit always runs under fast
- * auto-review; ToolPermissionSystem enforces it, and the chat controls show it locked.
+ * The permission of an Orbit chat, or null in any other chat: fast auto-review, or full access when
+ * the user picked it for Orbit. ToolPermissionSystem enforces it; the main chat's controls show it.
  */
 @Composable
 fun rememberOrbitLockedStop(chatId: String?): ToolPermissionStop? {
     val context = LocalContext.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.snapshot)
-    return if (settings.orbitForChat(chatId) != null) ToolPermissionStop.AUTO_REVIEW_FAST else null
+    val fullAccess by remember { ToolPermissionSystem.getInstance(context).orbitFullAccessFlow }
+        .collectAsState(initial = false)
+    return if (settings.orbitForChat(chatId) == null) null
+        else if (fullAccess) ToolPermissionStop.ALLOW else ToolPermissionStop.AUTO_REVIEW_FAST
+}
+
+/**
+ * Orbit's own two-stop permission: fast auto-review on the left, full access on the right. It
+ * reads and writes Orbit's setting, separate from the main app's five stops.
+ */
+@Composable
+fun OrbitAccessSlider(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    val system = remember { ToolPermissionSystem.getInstance(context) }
+    val fullAccess by system.orbitFullAccessFlow.collectAsState(initial = null)
+    val scope = androidx.compose.runtime.rememberCoroutineScope()
+    var value by remember { mutableStateOf<Float?>(null) }
+    LaunchedEffect(fullAccess) { fullAccess?.let { value = if (it) 1f else 0f } }
+    val shown = value ?: return
+    val full = shown >= 0.5f
+    fun pick(next: Boolean) {
+        value = if (next) 1f else 0f
+        if (next != fullAccess) scope.launch { system.setOrbitFullAccess(next) }
+    }
+    val label = stringResource(if (full) R.string.orbit_access_full else R.string.orbit_access_review)
+    Column(modifier = modifier.fillMaxWidth()) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.titleSmall,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.primary,
+        )
+        Slider(
+            value = shown,
+            onValueChange = { value = it },
+            onValueChangeFinished = { pick((value ?: 0f) >= 0.5f) },
+            valueRange = 0f..1f,
+            // Two choices, read out by name: a double tap switches, a swipe up/down picks a side.
+            modifier = Modifier.fillMaxWidth().height(32.dp).onPreviewKeyEvent { e ->
+                // Arrow keys jump straight to a side instead of moving the handle a little.
+                val next = when (e.key) {
+                    Key.DirectionRight, Key.DirectionUp, Key.MoveEnd, Key.PageUp -> true
+                    Key.DirectionLeft, Key.DirectionDown, Key.MoveHome, Key.PageDown -> false
+                    else -> return@onPreviewKeyEvent false
+                }
+                if (e.type == KeyEventType.KeyDown) pick(next)
+                true
+            }.clearAndSetSemantics {
+                stateDescription = label
+                progressBarRangeInfo = ProgressBarRangeInfo(if (full) 1f else 0f, 0f..1f)
+                onClick { pick(!full); true }
+                // Any step up means full access, any step down means auto review.
+                setProgress { target -> pick(target > (if (full) 1f else 0f) || (full && target >= 1f)); true }
+            },
+        )
+        Text(
+            text = stringResource(if (full) R.string.orbit_access_full_desc else R.string.orbit_access_review_desc),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
 }
 
 /** [rememberOrbitLockedStop] for the main chat, which is where an Orbit chat is shown. */
