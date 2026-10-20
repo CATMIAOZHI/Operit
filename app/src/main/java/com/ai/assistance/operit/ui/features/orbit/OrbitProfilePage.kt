@@ -45,7 +45,9 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -144,6 +146,7 @@ internal fun OrbitProfilePage(
     }
     // Back is the screen's: it lowers this page with the swipe.
 
+    CompositionLocalProvider(LocalProfileVisible provides visible) {
     LazyColumn(
         modifier =
             // Always opaque: the chat stays underneath this page.
@@ -216,6 +219,7 @@ internal fun OrbitProfilePage(
                 )
             }
         }
+    }
     }
     openApproval?.let { a ->
         // The newest copy, so an answer given from the chat card shows here at once.
@@ -592,8 +596,16 @@ internal fun EmptyHint(text: String) {
     )
 }
 
+/** False while the page is kept but hidden (a sub page or the developer view covers it). */
+private val LocalProfileVisible = compositionLocalOf { true }
+
 private fun LazyListScope.loading() = item(key = "loading") {
-    LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+    // The bar animates every frame, so a hidden page shows a still gap of the same size instead.
+    if (LocalProfileVisible.current) {
+        LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+    } else {
+        Spacer(Modifier.fillMaxWidth().padding(vertical = 24.dp).height(4.dp))
+    }
 }
 
 @Composable

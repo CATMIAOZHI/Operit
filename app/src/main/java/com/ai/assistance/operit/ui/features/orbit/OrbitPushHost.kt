@@ -385,7 +385,7 @@ internal fun OrbitCoverPage(
 
 /** A back dispatcher nothing sends to, for pages on screen but not on top. */
 @Composable
-private fun rememberInertBackOwner(): OnBackPressedDispatcherOwner {
+internal fun rememberInertBackOwner(): OnBackPressedDispatcherOwner {
     val lifecycle: Lifecycle = LocalLifecycleOwner.current.lifecycle
     return remember(lifecycle) {
         object : OnBackPressedDispatcherOwner {
