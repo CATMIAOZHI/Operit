@@ -107,6 +107,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -276,10 +277,12 @@ private fun OrbitChatPage(
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
-    // Leaving the developer view slides it off to the right like any pushed page: 0 is in place,
-    // 1 is off screen. As the back starts, what the developer view shows is recorded and the live
-    // chat underneath turns back into Orbit's look, so the recording slides away over the real,
-    // current Orbit chat. Let go early and it slides back and the developer view returns.
+    // The developer view is opened from the profile and goes back to it, like a page pushed over it:
+    // the profile stays where it was, kept but hidden, while the developer view shows. Leaving slides
+    // it off to the right: 0 is in place, 1 is off screen. As the back starts, what the developer view
+    // shows is recorded and the page it goes back to (the profile, or the Orbit chat if the profile
+    // was closed meanwhile) shows underneath, so the recording slides away over it. Let go early and
+    // it slides back and the developer view returns.
     val devLeave = remember(orbit.id) { androidx.compose.animation.core.Animatable(0f) }
     var devLeaving by remember(orbit.id) { mutableStateOf(false) }
     var devGesture by remember(orbit.id) { mutableStateOf(false) }
@@ -412,7 +415,9 @@ private fun OrbitChatPage(
     // A report counts as seen only while its chat is really on screen: chat tab, app in front.
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
-    val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !showProfile &&
+    // The profile kept under the developer view does not cover it.
+    val profileShown = showProfile && !devView
+    val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown &&
         subPage == null && !showImport &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
@@ -481,7 +486,7 @@ private fun OrbitChatPage(
         // Stays on while the view moves, so a second back is swallowed here instead of leaving Orbit.
         androidx.activity.compose.PredictiveBackHandler(
             enabled = devLeaving || devGesture || devSettling ||
-                (devView && !showProfile && !showChats && stack.isEmpty())
+                (devView && !showChats && stack.isEmpty())
         ) { events ->
             if (devLeaving || devSettling) {
                 events.collect { }
@@ -511,7 +516,7 @@ private fun OrbitChatPage(
                 // recording. The developer view itself never moves: without a recording (Android 8,
                 // or a swipe let go before it was ready) it simply stays, so no bare page shows.
                 translationX = (if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()) +
-                    (if (devPicture != null) -size.width * 0.3f * (1f - devLeave.value) else 0f)
+                    (if (devPicture != null && !showProfile) -size.width * 0.3f * (1f - devLeave.value) else 0f)
             }.drawWithContent {
                 if (devPictureWanted && devView) {
                     // Recording the developer view once for its way out; drawn from the recording too.
@@ -533,7 +538,7 @@ private fun OrbitChatPage(
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
                 // The recording on its way out covers it too, until the Orbit chat is fully shown.
-                if (showChats || stack.isNotEmpty() || showProfile || editingFile != null || devPicture != null) Modifier.clearAndSetSemantics { }
+                if (showChats || stack.isNotEmpty() || profileShown || editingFile != null || devPicture != null) Modifier.clearAndSetSemantics { }
                 else Modifier
             )
         ) {
@@ -592,26 +597,6 @@ private fun OrbitChatPage(
                 }, modifier = Modifier.tuckUnderKeyboard(androidx.compose.foundation.layout.WindowInsets.ime))
             }
         }
-        // The recorded developer view sliding off the Orbit chat, with the usual dim over the chat.
-        // It takes every touch while it moves. The recording is played into its own layer once and
-        // only the layer moves, so the swipe does not replay the whole page each frame.
-        devPicture?.let { picture ->
-            Box(
-                Modifier.fillMaxSize()
-                    .pointerInput(Unit) {
-                        awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
-                    }
-                    .drawBehind {
-                        val dim = 0.1f * (1f - devLeave.value)
-                        if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
-                    }
-            )
-            Box(
-                Modifier.fillMaxSize()
-                    .graphicsLayer { translationX = size.width * devLeave.value }
-                    .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
-            )
-        }
         // Orbit's own menu, opened only by the round button at the top left.
         OrbitSideMenu(
             visible = showChats,
@@ -637,7 +622,32 @@ private fun OrbitChatPage(
                 OrbitMadeFilePage(files, path, onBack = { editingFile = null; filesVersion++ })
             }
         }
-        // The profile rises from the bottom; the back swipe lowers it with the finger.
+        // The profile rises from the bottom; the back swipe lowers it with the finger. Under the
+        // developer view it is kept but not laid out, so it draws nothing and takes no touch, and comes
+        // back exactly as it was; closed meanwhile, it finishes closing out of sight. Its back goes to
+        // a dispatcher nobody presses until the developer view is fully gone. While the developer view
+        // slides off, it waits a little to the left under it.
+        val devOwnsBack = devView || devPicture != null || devLeaving || devGesture || devSettling
+        val realBackOwner = androidx.activity.compose.LocalOnBackPressedDispatcherOwner.current
+        val inertBackOwner = rememberInertBackOwner()
+        Box(
+            Modifier.fillMaxSize()
+                .then(
+                    // Closed while hidden, it stays out of sight until the developer view is fully gone.
+                    if (devView || (!showProfile && devOwnsBack)) Modifier.layout { _, constraints ->
+                        layout(constraints.maxWidth, constraints.maxHeight) {}
+                    } else Modifier
+                )
+                .graphicsLayer {
+                    if (devPicture != null) translationX = -size.width * 0.3f * (1f - devLeave.value)
+                }
+                // Screen readers reach it only once the developer view is gone.
+                .then(if (devPicture != null) Modifier.clearAndSetSemantics { } else Modifier)
+        ) {
+        CompositionLocalProvider(
+            androidx.activity.compose.LocalOnBackPressedDispatcherOwner provides
+                (if (devOwnsBack || realBackOwner == null) inertBackOwner else realBackOwner),
+        ) {
         OrbitCoverPage(
             visible = showProfile,
             onDismiss = { showProfile = false },
@@ -653,7 +663,7 @@ private fun OrbitChatPage(
                 ) {
                     OrbitProfilePage(
                         orbit = orbit,
-                        visible = showProfile && subPage == null,
+                        visible = profileShown && subPage == null,
                         onClose = { showProfile = false },
                         onOpenSettings = { push(OrbitSubPage.SETTINGS) },
                         onOpenTask = {
@@ -677,15 +687,16 @@ private fun OrbitChatPage(
                         developerMode = settings.developerMode,
                         onDraft = ::draftToChat,
                         onOpenRawChat = {
-                            // Back on the chat, now drawn as a normal Operit chat.
+                            // The chat drawn as a normal Operit chat, over the profile it goes back to.
                             devChatView = true
                             tab = OrbitTab.CHAT
                             stackNames = ""
-                            showProfile = false
                         },
                     )
                 }
             }
+        }
+        }
         }
         // Pages opened from the profile or the settings slide in over whatever is showing, so
         // opening one from the settings never shows the profile on the way.
@@ -782,6 +793,27 @@ private fun OrbitChatPage(
                     }
                 }
             }
+        }
+        // The recorded developer view sliding off the page it goes back to, over every page of this
+        // Orbit, with the usual dim over that page. It takes every touch while it moves. The recording
+        // is played into its own layer once and only the layer moves, so the swipe does not replay the
+        // whole page each frame.
+        devPicture?.let { picture ->
+            Box(
+                Modifier.fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+                    }
+                    .drawBehind {
+                        val dim = 0.1f * (1f - devLeave.value)
+                        if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
+                    }
+            )
+            Box(
+                Modifier.fillMaxSize()
+                    .graphicsLayer { translationX = size.width * devLeave.value }
+                    .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
+            )
         }
     }
 
