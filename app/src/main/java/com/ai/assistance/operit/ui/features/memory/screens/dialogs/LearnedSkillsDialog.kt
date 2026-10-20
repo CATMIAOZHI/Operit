@@ -43,7 +43,7 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
         }
     }
     if (showAutomation) {
-        MemoryAutomationPage(profileId) { showAutomation = false }
+        MemoryAutomationPage(profileId, interceptBack = true) { showAutomation = false }
         return
     }
     MemoryLibraryPage(stringResource(R.string.memory_learned_skills), profileId, onDismiss) {

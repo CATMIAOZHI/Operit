@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -112,7 +111,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
     // A message from one task's buttons does not follow the user to another task.
     fun clearFeedback() { actionError = null; notice = null }
     fun back() { clearFeedback(); if (selected != null && initialTaskId == null) selected = null else onBack() }
-    BackHandler { back() }
+    OrbitPageBack(intercept = selected != null && initialTaskId == null) { back() }
 
     val listState = rememberLazyListState()
     val errorBanner: LazyListScope.() -> Unit = {

@@ -141,7 +141,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     fullMessage?.let { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
         MemoryLibraryPage(stringResource(R.string.memory_recall_full), profileId,
-            { if (!busy) fullMessage = null }) {
+            { if (!busy) fullMessage = null }, interceptBack = true) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Text("${charOffset+1}–${charOffset+partLength} / ${part.totalChars}",
                     style = MaterialTheme.typography.labelMedium)
@@ -167,7 +167,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
         activeWork?.cancel()
         if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
         else onDismiss()
-    }) {
+    }, interceptBack = backStack.isNotEmpty()) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.chat_recall_hint),style=MaterialTheme.typography.bodySmall)

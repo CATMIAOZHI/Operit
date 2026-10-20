@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -53,8 +52,13 @@ private fun movedToTrashToast(context: android.content.Context) =
 
 /** A page frame like the profile's: round back button, title, then a list. */
 @Composable
-private fun OrbitListPage(title: String, onBack: () -> Unit, content: LazyListScope.() -> Unit) {
-    BackHandler(onBack = onBack)
+private fun OrbitListPage(
+    title: String,
+    onBack: () -> Unit,
+    interceptBack: Boolean = false,
+    content: LazyListScope.() -> Unit,
+) {
+    OrbitPageBack(intercept = interceptBack, onBack = onBack)
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
@@ -129,7 +133,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
 
     openPath?.let { path ->
         if (path.startsWith("files/")) {
-            OrbitMadeFilePage(files, path, onBack = { openPath = null; reload++ })
+            OrbitMadeFilePage(files, path, onBack = { openPath = null; reload++ }, interceptBack = true)
             return
         }
         val notebook = notebooks.firstOrNull { it.path == path }
@@ -156,6 +160,8 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
             }),
             maxChars = OrbitFiles.MAX_TEXT,
             startEditing = editPath == path,
+            // Back from a file returns to the files list, not past it.
+            interceptBack = true,
         )
         return
     }
@@ -283,7 +289,7 @@ internal fun OrbitMadeFileRow(entry: OrbitFiles.Entry, onClick: () -> Unit) {
 
 /** A text file Orbit made for the user: read, edit, share or move to the trash. */
 @Composable
-internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Unit) {
+internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Unit, interceptBack: Boolean = false) {
     val context = LocalContext.current
     OrbitFilePage(
         title = path.substringAfterLast('/'),
@@ -291,6 +297,7 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Un
         load = { files.read(path) },
         save = { files.write(path, it) },
         onBack = onBack,
+        interceptBack = interceptBack,
         actions = listOfNotNull(
             // A web page Orbit exported is read in a browser; the editor only shows its source.
             if (path.substringAfterLast('.').lowercase() in setOf("html", "htm")) {
@@ -376,7 +383,7 @@ private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
         }
         reload++
     }
-    OrbitListPage(stringResource(R.string.orbit_files_trash), onBack) {
+    OrbitListPage(stringResource(R.string.orbit_files_trash), onBack, interceptBack = true) {
         item(key = "help") {
             Text(stringResource(R.string.orbit_files_trash_desc, OrbitFiles.TRASH_DAYS), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))

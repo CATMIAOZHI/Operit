@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.EnterTransition
 import androidx.compose.animation.ExitTransition
@@ -82,26 +81,15 @@ internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit) {
     var page by rememberSaveable { mutableStateOf<String?>(null) }
     // Kept outside the transition so coming back lands where the list was left.
     val homeList = rememberLazyListState()
-    AnimatedContent(
-        targetState = page,
-        // Opaque, so the gap the pushed page has not covered yet never shows the page underneath.
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        transitionSpec = {
-            // iOS push: the new page covers from the right while the list underneath drifts left,
-            // so nothing behind this page shows through mid-swipe.
-            if (targetState != null) {
-                slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
-                    slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { -it / 4 }
-            } else {
-                slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { -it / 4 } togetherWith
-                    slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it }
-            }.apply { targetContentZIndex = if (targetState != null) 1f else 0f }
-        },
-        label = "orbitLearningPage",
+    // iOS push, with the swipe back following the finger. Opaque, so nothing behind shows through.
+    OrbitPushHost(
+        entries = listOfNotNull(page),
+        onPop = { page = null },
+        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+        base = { OrbitLearningHome(homeList, onBack) { page = it } },
     ) { shown ->
         val close = { page = null }
         when (shown) {
-            null -> OrbitLearningHome(homeList, onBack) { page = it }
             "skills" -> OrbitAllSkillsPage(spaceId, close)
             else -> com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryDestination(shown, spaceId, close)
         }
@@ -110,7 +98,7 @@ internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit) {
 
 @Composable
 private fun OrbitLearningHome(listState: LazyListState, onBack: () -> Unit, onOpen: (String) -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding().navigationBarsPadding(),
         state = listState,
@@ -197,7 +185,7 @@ private fun LearningRowItem(row: LearningRow, onClick: () -> Unit) {
 /** Every skill Orbit can load, in folders by where it came from, under the same header. */
 @Composable
 private fun OrbitAllSkillsPage(spaceId: String, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val repository by produceState<SkillRepository?>(null, spaceId) {
         value = SkillRepository.forMemorySpace(context, spaceId)

@@ -88,7 +88,8 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
             }
         }
     }
-    MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss) {
+    MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss,
+        interceptBack = busy || (draft != null && draft != base?.markdown)) {
         Box(Modifier.fillMaxSize()) {
             Column(
                 Modifier.fillMaxSize().padding(20.dp)

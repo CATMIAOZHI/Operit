@@ -1275,7 +1275,8 @@ private fun ToolPermissionSettingItem(
             )
         }
 
-        Box(
+        // Orbit keeps its own tools on; the main app's tool manager is not offered there.
+        if (!com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) Box(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(30.dp)

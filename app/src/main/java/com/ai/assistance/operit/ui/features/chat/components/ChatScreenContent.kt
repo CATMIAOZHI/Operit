@@ -261,7 +261,9 @@ fun ChatScreenContent(
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
-        if (chatHeaderOverlayMode && chatHeaderTransparent) {
+        // A page's own header (Orbit's) always floats over the chat: messages slide softly under
+        // its fade instead of stopping at a hard edge, whatever the chat header settings are.
+        if ((chatHeaderOverlayMode && chatHeaderTransparent) || headerContent != null) {
             // 覆盖模式：Header浮动在ChatArea之上
             Box(modifier = Modifier.fillMaxSize()) {
                 ChatArea(

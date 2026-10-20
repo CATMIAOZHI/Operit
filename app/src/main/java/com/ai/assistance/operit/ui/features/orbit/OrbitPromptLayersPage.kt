@@ -2,7 +2,6 @@ package com.ai.assistance.operit.ui.features.orbit
 
 import android.text.format.Formatter
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -131,27 +130,17 @@ internal fun OrbitPromptLayersPage(
         } }.onFailure { if (it is CancellationException) throw it }
             .onSuccess { layerCache = orbit.id to it }
     }
-    AnimatedContent(
-        targetState = view,
-        modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
-        transitionSpec = {
-            // The same iOS push as Orbit's other pages.
-            if (targetState != null) {
-                slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
-                    slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { -it / 4 }
-            } else {
-                slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { -it / 4 } togetherWith
-                    slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it }
-            }.apply { targetContentZIndex = if (targetState != null) 1f else 0f }
-        },
-        label = "orbitPromptView",
-    ) { shown ->
-        if (shown == null) {
+    // The same iOS push as Orbit's other pages, with the swipe back following the finger.
+    OrbitPushHost(
+        entries = listOfNotNull(view),
+        onPop = { view = null },
+        modifier = Modifier.background(MaterialTheme.colorScheme.background),
+        base = {
             LayersList(orbit, info, onBack, onOpenPrompt, onOpenSoul, onOpenIdentity, onOpenMemory, onOpenUser,
                 onView = { view = it }, onReload = { reload++ })
-        } else {
-            InjectedTextPage(shown, info?.getOrNull()?.saved) { view = null }
-        }
+        },
+    ) { shown ->
+        InjectedTextPage(shown, info?.getOrNull()?.saved) { view = null }
     }
 }
 
@@ -168,7 +157,7 @@ private fun LayersList(
     onView: (PromptView) -> Unit,
     onReload: () -> Unit,
 ) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Refreshing while Orbit is replying (here or in the floating window) would swap the prompt under that reply.
@@ -394,7 +383,7 @@ private fun ActionRow(icon: String, title: String, detail: String, enabled: Bool
 /** Read-only view of injected prompt text, split into paragraphs so a long prompt scrolls smoothly. */
 @Composable
 private fun InjectedTextPage(view: PromptView, saved: LearningPromptSnapshotRepository.SavedSystem?, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
     val title = stringResource(

@@ -239,9 +239,6 @@ private fun OrbitChatPage(
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
-    var showSettings by remember { mutableStateOf(false) }
-    // Set while a page or sheet opened from the settings is showing; closing it reopens them.
-    var returnToSettings by rememberSaveable(orbit.id) { mutableStateOf(false) }
     var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
     // Pages pushed over the profile, as names so the stack survives recreation.
     var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
@@ -267,15 +264,7 @@ private fun OrbitChatPage(
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
-    LaunchedEffect(stack.isEmpty(), showProfile, showImport) {
-        if (!returnToSettings || showImport) return@LaunchedEffect
-        if (stack.isEmpty()) {
-            returnToSettings = false
-            // Back from the page onto the profile: the settings it came from open again. Anything
-            // that closed the profile instead (a notification, leaving) just forgets them.
-            if (showProfile) showSettings = true
-        }
-    }
+    val pushState = remember(orbit.id) { OrbitPushState() }
     // Developer option: the same chat drawn as a normal Operit chat (thinking, tools, hidden turns,
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
@@ -319,7 +308,7 @@ private fun OrbitChatPage(
             tab = OrbitTab.CHAT
             showProfile = false
             stackNames = ""
-            showChats = false
+                        showChats = false
         }
         com.ai.assistance.operit.features.orbit.OrbitNavigation.consume(id)
     }
@@ -327,7 +316,7 @@ private fun OrbitChatPage(
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !showProfile &&
-        !showSettings && subPage == null && !showImport &&
+        subPage == null && !showImport &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
@@ -390,12 +379,16 @@ private fun OrbitChatPage(
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
-        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView) { tab = OrbitTab.CHAT }
-        BackHandler(enabled = devView && !showProfile && !showChats) { devChatView = false }
+        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) { tab = OrbitTab.CHAT }
+        BackHandler(enabled = devView && !showProfile && !showChats && stack.isEmpty()) { devChatView = false }
         // While the menu is open, screen readers only see the menu, not the page behind it.
         Column(
-            Modifier.fillMaxSize().then(
-                if (showChats) Modifier.clearAndSetSemantics { } else Modifier
+            Modifier.fillMaxSize().graphicsLayer {
+                // A page opened from the settings over the chat moves it a little to the left, like iOS.
+                translationX = if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()
+            }.then(
+                // Pages on the stack cover the chat; screen readers only see the top one.
+                if (showChats || stack.isNotEmpty()) Modifier.clearAndSetSemantics { } else Modifier
             )
         ) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -463,7 +456,7 @@ private fun OrbitChatPage(
                 tab = OrbitTab.CHAT
             },
             onDismiss = { showChats = false },
-            onOpenSettings = { showSettings = true },
+            onOpenSettings = { push(OrbitSubPage.SETTINGS) },
             onLeaveOrbit = leaveOrbit,
         )
         // Keeps the last file on screen while the page slides away.
@@ -494,17 +487,15 @@ private fun OrbitChatPage(
         ) {
             Box(Modifier.fillMaxSize()) {
                 // Pushed pages move the profile a little to the left underneath them.
-                val pushOffset by animateFloatAsState(
-                    targetValue = if (subPage != null) -0.3f else 0f,
-                    animationSpec = tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing),
-                    label = "orbitProfileParallax",
-                )
-                Box(Modifier.fillMaxSize().graphicsLayer { translationX = size.width * pushOffset }) {
+                Box(
+                    Modifier.fillMaxSize().graphicsLayer { translationX = -size.width * 0.3f * pushState.baseCover() }
+                        .then(if (stack.isNotEmpty()) Modifier.clearAndSetSemantics { } else Modifier)
+                ) {
                     OrbitProfilePage(
                         orbit = orbit,
                         visible = showProfile && subPage == null,
                         onClose = { showProfile = false },
-                        onOpenSettings = { showSettings = true },
+                        onOpenSettings = { push(OrbitSubPage.SETTINGS) },
                         onOpenTask = {
                             openTaskId = it
                             push(OrbitSubPage.TASK)
@@ -529,102 +520,100 @@ private fun OrbitChatPage(
                             devChatView = true
                             tab = OrbitTab.CHAT
                             stackNames = ""
-                            showProfile = false
+                                                        showProfile = false
                         },
                     )
                 }
-                AnimatedContent(
-                    targetState = stack,
-                    transitionSpec = {
-                        val forward = targetState.size > initialState.size
-                        if (forward) {
-                            // The page below stays drawn until the new one has fully slid over it.
-                            slideInHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it } togetherWith
-                                ExitTransition.KeepUntilTransitionsFinished
-                        } else {
-                            EnterTransition.None togetherWith
-                                slideOutHorizontally(tween(OrbitMotion.PUSH_MS, easing = OrbitMotion.Easing)) { it }
-                        }.apply {
-                            // The deeper page always draws on top: it slides in over the page below,
-                            // and on the way back it slides off without the page below covering it.
-                            targetContentZIndex = targetState.size.toFloat()
+            }
+        }
+        // Pages opened from the profile or the settings slide in over whatever is showing, so
+        // opening one from the settings never shows the profile on the way.
+        OrbitPushHost(
+            entries = stack,
+            onPop = { pop() },
+            state = pushState,
+        ) { page ->
+            val back = { pop() }
+            when (page) {
+                OrbitSubPage.SETTINGS -> OrbitSettingsPage(
+                    orbit = orbit,
+                    settings = settings,
+                    hasBackgroundImage = false,
+                    onBack = back,
+                    onOpenPrompts = { push(OrbitSubPage.PROMPTS) },
+                    onOpenPackages = { push(OrbitSubPage.PACKAGES) },
+                    onOpenToolPermissions = { push(OrbitSubPage.TOOL_PERMISSIONS) },
+                    onOpenVault = { push(OrbitSubPage.VAULT) },
+                    onOpenImport = { showImport = true },
+                    onPause = back,
+                )
+                OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back,
+                    onOpenHistory = { push(OrbitSubPage.SOUL_HISTORY) })
+                OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
+                OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
+                OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
+                OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
+                OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
+                OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
+                    orbit = orbit,
+                    onBack = back,
+                    onOpenPrompt = { push(OrbitSubPage.PROMPT) },
+                    onOpenSoul = { push(OrbitSubPage.SOUL) },
+                    onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                    onOpenMemory = { push(OrbitSubPage.MEMORY) },
+                    onOpenUser = { push(OrbitSubPage.USER) },
+                )
+                OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
+                OrbitSubPage.VAULT -> OrbitVaultPage(orbit, onBack = back, onOpenEntry = { id ->
+                    openVaultEntryId = id
+                    push(OrbitSubPage.VAULT_ENTRY)
+                })
+                OrbitSubPage.VAULT_ENTRY -> {
+                    val id = openVaultEntryId
+                    // Leaves only while this page is still on top, read when it is asked:
+                    // a delete that finishes after the user went back must not pop the list.
+                    if (id != null) OrbitVaultEntryPage(orbit, id, onBack = {
+                        val now = stackNames.split(',').filter { it.isNotEmpty() }
+                        if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
+                            stackNames = now.dropLast(1).joinToString(",")
                         }
-                    },
-                    label = "orbitSubPage",
-                ) { pages ->
-                    val page = pages.lastOrNull()
-                    val back = { pop() }
-                    when (page) {
-                        null -> Box(Modifier.fillMaxSize())
-                        OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back,
-                            onOpenHistory = { push(OrbitSubPage.SOUL_HISTORY) })
-                        OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
-                        OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
-                        OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
-                        OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
-                        OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
-                        OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
-                            orbit = orbit,
-                            onBack = back,
-                            onOpenPrompt = { push(OrbitSubPage.PROMPT) },
-                            onOpenSoul = { push(OrbitSubPage.SOUL) },
-                            onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
-                            onOpenMemory = { push(OrbitSubPage.MEMORY) },
-                            onOpenUser = { push(OrbitSubPage.USER) },
-                        )
-                        OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
-                        OrbitSubPage.VAULT -> OrbitVaultPage(orbit, onBack = back, onOpenEntry = { id ->
-                            openVaultEntryId = id
-                            push(OrbitSubPage.VAULT_ENTRY)
-                        })
-                        OrbitSubPage.VAULT_ENTRY -> {
-                            val id = openVaultEntryId
-                            // Leaves only while this page is still on top, read when it is asked:
-                            // a delete that finishes after the user went back must not pop the list.
-                            if (id != null) OrbitVaultEntryPage(orbit, id, onBack = {
-                                val now = stackNames.split(',').filter { it.isNotEmpty() }
-                                if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
-                                    stackNames = now.dropLast(1).joinToString(",")
+                    })
+                    else LaunchedEffect(Unit) { pop() }
+                }
+                OrbitSubPage.TOOL_PERMISSIONS -> {
+                    if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
+                    else LaunchedEffect(Unit) { back() }
+                }
+                OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
+                OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
+                // No id opens the grouped list of every task.
+                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId)
+                OrbitSubPage.PROCESS -> {
+                    val process = openProcess
+                    if (process != null) {
+                        OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
+                            openTaskId = taskId
+                            push(OrbitSubPage.TASK)
+                        }, developer = settings.developerMode)
+                    } else {
+                        LaunchedEffect(Unit) { pop() }
+                    }
+                }
+                OrbitSubPage.MEMORY_LIBRARY -> {
+                    val id = memoryResult?.getOrNull()
+                    if (id != null) {
+                        OrbitLearningPage(id, back)
+                    } else {
+                        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                            Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
+                                verticalArrangement = Arrangement.Center,
+                                horizontalAlignment = Alignment.CenterHorizontally) {
+                                if (memoryResult == null) CircularProgressIndicator()
+                                else {
+                                    Text(stringResource(R.string.orbit_memory_unavailable))
+                                    TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
                                 }
-                            })
-                            else LaunchedEffect(Unit) { pop() }
-                        }
-                        OrbitSubPage.TOOL_PERMISSIONS -> {
-                            if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
-                            else LaunchedEffect(Unit) { back() }
-                        }
-                        OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
-                        OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
-                        // No id opens the grouped list of every task.
-                        OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId)
-                        OrbitSubPage.PROCESS -> {
-                            val process = openProcess
-                            if (process != null) {
-                                OrbitProcessPage(process, onBack = back, onOpenTask = { taskId ->
-                                    openTaskId = taskId
-                                    push(OrbitSubPage.TASK)
-                                }, developer = settings.developerMode)
-                            } else {
-                                LaunchedEffect(Unit) { pop() }
-                            }
-                        }
-                        OrbitSubPage.MEMORY_LIBRARY -> {
-                            val id = memoryResult?.getOrNull()
-                            if (id != null) {
-                                OrbitLearningPage(id, back)
-                            } else {
-                                Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-                                    Column(Modifier.fillMaxSize().statusBarsPadding().padding(24.dp),
-                                        verticalArrangement = Arrangement.Center,
-                                        horizontalAlignment = Alignment.CenterHorizontally) {
-                                        if (memoryResult == null) CircularProgressIndicator()
-                                        else {
-                                            Text(stringResource(R.string.orbit_memory_unavailable))
-                                            TextButton(onClick = { memoryRetry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
-                                        }
-                                        TextButton(onClick = back) { Text(stringResource(R.string.back)) }
-                                    }
-                                }
+                                TextButton(onClick = back) { Text(stringResource(R.string.back)) }
                             }
                         }
                     }
@@ -633,48 +622,12 @@ private fun OrbitChatPage(
         }
     }
 
-    if (showSettings) {
-        // A page opened from the settings sits on the profile, and leaving it comes back to the
-        // settings, even when they were opened from the side menu over the chat.
-        fun openFromSettings(page: OrbitSubPage) {
-            showSettings = false
-            returnToSettings = true
-            showProfile = true
-            push(page)
-        }
-        OrbitSettingsSheet(
-            orbit = orbit,
-            settings = settings,
-            hasBackgroundImage = hasBackgroundImage,
-            onDismiss = { showSettings = false },
-            onOpenNotifications = { openFromSettings(OrbitSubPage.NOTIFICATIONS) },
-            onOpenPrompts = { openFromSettings(OrbitSubPage.PROMPTS) },
-            onOpenPackages = { openFromSettings(OrbitSubPage.PACKAGES) },
-            onOpenToolPermissions = { openFromSettings(OrbitSubPage.TOOL_PERMISSIONS) },
-            onOpenVault = { openFromSettings(OrbitSubPage.VAULT) },
-            onOpenImport = {
-                showSettings = false
-                returnToSettings = true
-                showImport = true
-            },
-            onPause = {
-                showSettings = false
-            },
-        )
-    }
     if (showImport) {
         OrbitImportMemorySheet(
             orbit = orbit,
-            onDismiss = {
-                showImport = false
-                if (returnToSettings) {
-                    returnToSettings = false
-                    showSettings = true
-                }
-            },
+            onDismiss = { showImport = false },
             onSent = {
                 showImport = false
-                returnToSettings = false
                 talkChatId = orbit.chatId
                 tab = OrbitTab.CHAT
                 showProfile = false
@@ -687,7 +640,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, VAULT, VAULT_ENTRY }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, VAULT, VAULT_ENTRY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -717,12 +670,16 @@ internal fun OrbitHeader(
                 .background(
                     Brush.verticalGradient(
                         0f to pageColor,
-                        0.55f to pageColor.copy(alpha = 0.92f),
+                        // Like iOS: solid behind the status bar, then messages show through more
+                        // and more toward the name, so they fade out under the header.
+                        0.22f to pageColor.copy(alpha = 0.94f),
+                        0.55f to pageColor.copy(alpha = 0.72f),
+                        0.82f to pageColor.copy(alpha = 0.32f),
                         1f to pageColor.copy(alpha = 0f),
                     )
                 )
                 .statusBarsPadding()
-                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 18.dp)
+                .padding(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 22.dp)
     ) {
         // Orbit's own menu (its chats, settings, back to Operit). Only this button opens it.
         Box(Modifier.align(Alignment.TopStart)) {
@@ -956,14 +913,16 @@ internal fun OrbitAvatar(
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
+/**
+ * The settings, a full page on the same stack as the pages it opens, so going back from one of
+ * them slides back to the settings, like iOS.
+ */
 @Composable
-private fun OrbitSettingsSheet(
+private fun OrbitSettingsPage(
     orbit: OrbitProfile,
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
-    onDismiss: () -> Unit,
-    onOpenNotifications: () -> Unit,
+    onBack: () -> Unit,
     onOpenPrompts: () -> Unit,
     onOpenPackages: () -> Unit,
     onOpenToolPermissions: () -> Unit,
@@ -971,114 +930,26 @@ private fun OrbitSettingsSheet(
     onOpenImport: () -> Unit,
     onPause: () -> Unit,
 ) {
+    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val preferences = remember { OrbitPreferences.getInstance(context) }
-    val running by OrbitCompanion.running.collectAsState()
     val cardColor = settingsCardColor(hasBackgroundImage)
-    var showTimePicker by remember { mutableStateOf(false) }
     val toolPermissions = remember { com.ai.assistance.operit.ui.permissions.ToolPermissionSystem.getInstance(context) }
     val fullAccess by toolPermissions.orbitFullAccessFlow.collectAsState(initial = null)
     var showAccessSheet by remember { mutableStateOf(false) }
-    var runRequestedAt by remember { mutableStateOf<Long?>(null) }
-    var notificationsAllowed by remember {
-        mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
-    }
-    val notificationPermissionLauncher =
-        rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
-            notificationsAllowed = granted
-        }
-    val showRunning =
-        running || runRequestedAt?.let { requestedAt -> settings.lastRunAt < requestedAt } == true
-    // A run that found the chat busy is put off without a record; once the work has started and
-    // stopped, or after a while with nothing happening, the button is free again.
-    var sawRunning by remember { mutableStateOf(false) }
-    LaunchedEffect(running) {
-        if (running) sawRunning = true
-        else if (sawRunning) { sawRunning = false; runRequestedAt = null }
-    }
-    LaunchedEffect(runRequestedAt) {
-        if (runRequestedAt != null) { kotlinx.coroutines.delay(90_000); if (!running) runRequestedAt = null }
-    }
-
-    ModalBottomSheet(
-        onDismissRequest = onDismiss,
-        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-    ) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
             modifier =
-                Modifier.fillMaxWidth()
+                Modifier.fillMaxSize()
+                    .statusBarsPadding()
                     .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp)
+                    .padding(start = 16.dp, end = 16.dp, top = 8.dp)
                     .navigationBarsPadding()
-                    .padding(bottom = 16.dp),
+                    .padding(bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
-            Text(
-                text = stringResource(R.string.orbit_settings),
-                style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold,
-            )
-
-            Column {
-                SettingsSectionTitle(
-                    text = stringResource(R.string.orbit_section_proactive),
-                    icon = lucide("heart-handshake"),
-                )
-                SettingsCard(backgroundColor = cardColor) {
-                    SettingsSwitchRow(
-                        title = stringResource(R.string.orbit_proactive_switch),
-                        subtitle =
-                            if (settings.proactiveEnabled && !notificationsAllowed) {
-                                stringResource(R.string.orbit_notification_permission_denied)
-                            } else {
-                                stringResource(R.string.orbit_proactive_switch_desc)
-                            },
-                        checked = settings.proactiveEnabled,
-                        searchable = false,
-                        onCheckedChange = { enabled ->
-                            scope.launch {
-                                preferences.setProactiveEnabled(enabled)
-                                OrbitCompanion.applySchedule(context)
-                            }
-                            if (
-                                enabled &&
-                                    !notificationsAllowed &&
-                                    Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
-                            ) {
-                                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
-                            }
-                        },
-                    )
-                    SettingsRowDivider(inset = false)
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_check_in_time),
-                        icon = lucide("calendar-clock"),
-                        searchable = false,
-                        onClick = { showTimePicker = true },
-                        trailing = {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = formatMinuteOfDay(settings.checkInMinuteOfDay),
-                                    style = MaterialTheme.typography.titleMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                                Icon(
-                                    imageVector = Icons.Default.ChevronRight,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                                    modifier = Modifier.size(20.dp),
-                                )
-                            }
-                        },
-                    )
-                }
-                Spacer(modifier = Modifier.height(10.dp))
-                SettingsInfoBanner(
-                    text = stringResource(R.string.orbit_proactive_banner),
-                    backgroundColor = cardColor,
-                )
-            }
+            OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
 
             Column {
                 SettingsSectionTitle(
@@ -1101,69 +972,6 @@ private fun OrbitSettingsSheet(
                         searchable = false,
                         onClick = onOpenPackages,
                     )
-                }
-            }
-
-            Column {
-                SettingsSectionTitle(
-                    text = stringResource(R.string.orbit_section_tasks),
-                    icon = lucide("calendar-clock"),
-                )
-                SettingsCard(backgroundColor = cardColor) {
-                    SettingsNavRow(
-                        title = stringResource(R.string.orbit_notifications_row),
-                        subtitle = stringResource(R.string.orbit_notifications_row_desc),
-                        icon = lucide("bell"),
-                        searchable = false,
-                        onClick = onOpenNotifications,
-                    )
-                    SettingsRowDivider(inset = false)
-                    FocusNotesField(
-                        initialNotes = settings.focusNotes,
-                        onSave = { notes ->
-                            preferences.setFocusNotes(notes)
-                            OrbitCompanion.applySchedule(context)
-                        },
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        FilledTonalButton(
-                            enabled = !showRunning,
-                            onClick = {
-                                runRequestedAt = System.currentTimeMillis()
-                                scope.launch {
-                                    try { OrbitCompanion.runNow(context) }
-                                    catch (e: kotlinx.coroutines.CancellationException) { throw e }
-                                    catch (e: Exception) {
-                                        runRequestedAt = 0L
-                                        toast(context, R.string.orbit_run_failed_unknown)
-                                    }
-                                }
-                            },
-                        ) {
-                            if (showRunning) {
-                                CircularProgressIndicator(modifier = Modifier.size(16.dp), strokeWidth = 2.dp)
-                                Spacer(modifier = Modifier.width(8.dp))
-                                Text(stringResource(R.string.orbit_running))
-                            } else {
-                                Text(stringResource(R.string.orbit_run_now))
-                            }
-                        }
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Text(
-                            text = lastRunText(settings),
-                            style = MaterialTheme.typography.bodySmall,
-                            color =
-                                if (settings.lastRunOutcome == OrbitRunOutcome.FAILED) {
-                                    MaterialTheme.colorScheme.error
-                                } else {
-                                    MaterialTheme.colorScheme.onSurfaceVariant
-                                },
-                            maxLines = 3,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f),
-                        )
-                    }
                 }
             }
 
@@ -1278,19 +1086,6 @@ private fun OrbitSettingsSheet(
             onPick = { full ->
                 showAccessSheet = false
                 scope.launch { toolPermissions.setOrbitFullAccess(full) }
-            },
-        )
-    }
-    if (showTimePicker) {
-        CheckInTimeDialog(
-            minuteOfDay = settings.checkInMinuteOfDay,
-            onDismiss = { showTimePicker = false },
-            onConfirm = { minuteOfDay ->
-                showTimePicker = false
-                scope.launch {
-                    preferences.setCheckInMinuteOfDay(minuteOfDay)
-                    OrbitCompanion.applySchedule(context)
-                }
             },
         )
     }

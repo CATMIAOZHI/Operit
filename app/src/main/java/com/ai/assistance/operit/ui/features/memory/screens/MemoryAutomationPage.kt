@@ -15,7 +15,7 @@ import com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences
 import kotlinx.coroutines.launch
 
 @Composable
-fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
+fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBack: () -> Unit) {
     val context = LocalContext.current
     val api = remember { ApiPreferences.getInstance(context) }
     val prefs = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
@@ -31,7 +31,7 @@ fun MemoryAutomationPage(profileId: String, onBack: () -> Unit) {
     var skillInterval by remember(profileId) { mutableStateOf(prefs.skillReviewInterval()) }
     var delayMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
-    MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack) {
+    MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack, interceptBack) {
         // An Orbit reviews all of its chats into its one memory; the app-wide switch does not apply.
         val orbitSpace = MemorySearchSettingsPreferences.isOrbitSpace(profileId)
         Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp)) {

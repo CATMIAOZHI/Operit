@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -80,7 +79,7 @@ private fun OrbitVault.Entry.isLogin() = kind == OrbitVault.LOGIN
  */
 @Composable
 internal fun OrbitVaultPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenEntry: (String) -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     var reload by remember { mutableStateOf(0) }
     val loaded = vaultEntries(orbit.id, reload)
     val list = loaded?.getOrNull()?.sortedByDescending { it.savedAt }
@@ -191,7 +190,7 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
     var deleting by remember { mutableStateOf(false) }
     // Going back is off while a delete runs; a finished delete leaves by itself. [onBack] only
     // leaves while this page is on top, so it is safe to ask twice.
-    BackHandler { if (!deleting) onBack() }
+    OrbitPageBack(intercept = deleting) { if (!deleting) onBack() }
     SecureWindow()
     val copiedText = stringResource(R.string.orbit_vault_copied)
     fun copy(text: String) {
