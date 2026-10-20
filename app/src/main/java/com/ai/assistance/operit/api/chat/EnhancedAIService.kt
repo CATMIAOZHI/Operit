@@ -2181,7 +2181,9 @@ class EnhancedAIService private constructor(
                 finalTurn.metadata[com.ai.assistance.operit.core.agent.collaboration.CollaborationPromptHistory.INTERMEDIATE_METADATA] != true &&
                 ChatUtils.removeThinkingContentWindow(finalTurn.content, 0).length > 0 &&
                 com.ai.assistance.operit.data.preferences.DisplayPreferencesManager.getInstance(this@EnhancedAIService.context)
-                    .composerPredictionsEnabled.first()
+                    .composerPredictionsEnabled.first() &&
+                // Orbit's chat reads like talking to a person: no suggested next message.
+                !com.ai.assistance.operit.core.tools.OrbitTools.isOrbitChat(this@EnhancedAIService.context, chatId)
             ) {
                 try {
                     val config = modelSnapshot.config

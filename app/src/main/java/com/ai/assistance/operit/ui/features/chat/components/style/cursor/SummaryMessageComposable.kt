@@ -32,7 +32,8 @@ fun SummaryMessageComposable(
     message: ChatMessage,
     backgroundColor: Color,
     textColor: Color,
-    onDelete: () -> Unit,
+    // Null when the transcript is read-only: the summary can be read but not removed.
+    onDelete: (() -> Unit)?,
     enableDialog: Boolean = true,  // 新增参数：是否启用弹窗功能，默认启用
     onEdit: ((ChatMessage) -> Unit)? = null
 ) {
@@ -159,13 +160,15 @@ fun SummaryMessageComposable(
                                 Text(context.getString(R.string.edit))
                             }
                         }
-                        TextButton(
-                            onClick = {
-                                showSummaryDialog = false
-                                showDeleteConfirmDialog = true
+                        if (onDelete != null) {
+                            TextButton(
+                                onClick = {
+                                    showSummaryDialog = false
+                                    showDeleteConfirmDialog = true
+                                }
+                            ) {
+                                Text(context.getString(R.string.delete), color = MaterialTheme.colorScheme.error)
                             }
-                        ) {
-                            Text(context.getString(R.string.delete), color = MaterialTheme.colorScheme.error)
                         }
                         Button(
                             onClick = { showSummaryDialog = false },
@@ -185,7 +188,7 @@ fun SummaryMessageComposable(
             confirmButton = {
                 Button(
                     onClick = {
-                        onDelete()
+                        onDelete?.invoke()
                         showDeleteConfirmDialog = false
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)

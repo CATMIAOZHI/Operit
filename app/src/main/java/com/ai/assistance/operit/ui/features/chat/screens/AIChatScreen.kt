@@ -212,6 +212,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val chatAppearance = rememberChatAppearance()
     // An Orbit chat always reads as message bubbles, whatever style regular chats use.
     val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    // Orbit's developer view is for reading what happened: no input box, nothing that rewrites
+    // the conversation.
+    val orbitDevView = com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
     // Orbit shows that it is working with its typing bubble; the status line would name its tools.
     val showInputProcessingStatus = showInputProcessingStatusPreference && !orbitLook
     val chatStyle = if (orbitLook) ChatStyle.BUBBLE else chatAppearance.chatStyle
@@ -252,7 +255,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val bubbleUserContentPaddingRight = chatAppearance.bubbleUserContentPaddingRight
     val bubbleAiContentPaddingLeft = chatAppearance.bubbleAiContentPaddingLeft
     val bubbleAiContentPaddingRight = chatAppearance.bubbleAiContentPaddingRight
-    val chatAreaHorizontalPadding = chatAppearance.chatAreaHorizontalPadding
+    // Orbit's bubbles sit close to the screen edges, the same on both sides, like a messaging app.
+    val chatAreaHorizontalPadding = if (orbitLook) 12f else chatAppearance.chatAreaHorizontalPadding
 
     // 添加编辑按钮和编辑状态
     val editingMessageIndex = remember { mutableStateOf<Int?>(null) }
@@ -1007,6 +1011,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                  actualViewModel = actualViewModel,
                                  enableMessageDialogs = !isFloatingMode,
                                  readOnlyTranscript = isReadOnlyTranscript,
+                                 lockTranscript = orbitDevView,
                                  showChatHistorySelector = showChatHistorySelector,
                                 // Leaving the Orbit page, the normal chat page can appear a moment
                                 // before Orbit hands the chat back; never show Orbit's messages here.
@@ -1070,7 +1075,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         )
 
                         if (
-                            !isReadOnlyTranscript &&
+                            !isReadOnlyTranscript && !orbitDevView &&
                                 inputStyle == UserPreferencesManager.INPUT_STYLE_CLASSIC
                         ) {
                             ClassicChatSettingsBar(
@@ -1157,7 +1162,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                         }
                     }
 
-                    if (!isReadOnlyTranscript) {
+                    if (!isReadOnlyTranscript && !orbitDevView) {
                         Box(
                             modifier =
                                 Modifier
@@ -1320,7 +1325,8 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
             }
         }
 
-        MentionSuggestionOverlay(
+        // No "/" shortcuts or "@" mentions in Orbit's chat.
+        if (!orbitLook && !orbitDevView) MentionSuggestionOverlay(
             actualViewModel = actualViewModel,
             bottomBarHeightPx = bottomBarHeightPx,
             inputBarTranslationYPx = inputBarTranslationYPx,
@@ -1655,7 +1661,9 @@ private fun ChatInputBottomBar(
     val waifuPreferences = remember(context) { WaifuPreferences.getInstance(context) }
 
     val userMessage by actualViewModel.userMessage.collectAsState()
-    val composerPrediction by actualViewModel.composerPredictionText.collectAsState()
+    val composerPredictionState by actualViewModel.composerPredictionText.collectAsState()
+    // Orbit's chat never suggests the user's next message.
+    val composerPrediction = if (orbitChat) null else composerPredictionState
     val attachments by actualViewModel.attachments.collectAsState()
     val attachmentPanelState by actualViewModel.attachmentPanelState.collectAsState()
     val replyToMessage by actualViewModel.replyToMessage.collectAsState()

@@ -93,6 +93,8 @@ fun ChatScreenContent(
          actualViewModel: ChatViewModel,
          enableMessageDialogs: Boolean = true,
          readOnlyTranscript: Boolean = false,
+         // Read the chat with its tool details, but offer nothing that rewrites it.
+         lockTranscript: Boolean = false,
          enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
          showChatHistorySelector: Boolean,
         chatHistory: List<ChatMessage>,
@@ -206,8 +208,9 @@ fun ChatScreenContent(
     val isSpeechSessionActive by actualViewModel.isSpeechSessionActive.collectAsState()
     val isSpeechPaused by actualViewModel.isSpeechPaused.collectAsState()
     val isAutoReadEnabled by actualViewModel.isAutoReadEnabled.collectAsState()
-    LaunchedEffect(readOnlyTranscript) {
-        if (readOnlyTranscript) {
+    val transcriptLocked = readOnlyTranscript || lockTranscript
+    LaunchedEffect(transcriptLocked) {
+        if (transcriptLocked) {
             isMultiSelectMode = false
             selectedMessageIndices = emptySet()
             editingMessageIndex.value = null
@@ -255,7 +258,7 @@ fun ChatScreenContent(
     val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
-            if (readOnlyTranscript) null else actualViewModel::submitDynamicUi,
+            if (transcriptLocked) null else actualViewModel::submitDynamicUi,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         if (chatHeaderOverlayMode && chatHeaderTransparent) {
@@ -267,7 +270,7 @@ fun ChatScreenContent(
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
-                        allowTranscriptMutation = !readOnlyTranscript,
+                        allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
                         userMessageColor = userMessageColor,
                         aiMessageColor = aiMessageColor,
@@ -404,7 +407,7 @@ fun ChatScreenContent(
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
-                        allowTranscriptMutation = !readOnlyTranscript,
+                        allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
                         userMessageColor = userMessageColor,
                         aiMessageColor = aiMessageColor,
@@ -510,7 +513,7 @@ fun ChatScreenContent(
 
         // 多选模式底部操作栏
         AnimatedVisibility(
-            visible = isMultiSelectMode && !readOnlyTranscript,
+            visible = isMultiSelectMode && !transcriptLocked,
             enter = fadeIn() + slideInVertically(initialOffsetY = { it }),
             exit = fadeOut() + slideOutVertically(targetOffsetY = { it }),
             modifier = Modifier
