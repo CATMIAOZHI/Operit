@@ -371,7 +371,7 @@ fun ChatArea(
                             thinkingTextColor = thinkingTextColor,
                             onSelectMessageToEdit = onSelectMessageToEdit,
                             onCopyMessage = onCopyMessage,
-                            onDeleteMessage = onDeleteMessage,
+                            onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                             onDeleteCurrentMessageVariant = onDeleteCurrentMessageVariant,
                             onDeleteMessagesFrom = onDeleteMessagesFrom,
                             onRollbackToMessage = onRollbackToMessage,
@@ -418,7 +418,7 @@ fun ChatArea(
                     Surface(
                         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
                         color = aiMessageColor,
-                        modifier = Modifier.padding(start = 8.dp, top = 4.dp).heightIn(min = 44.dp).semantics {
+                        modifier = Modifier.padding(top = 4.dp).heightIn(min = 44.dp).semantics {
                             contentDescription = typing
                             liveRegion = LiveRegionMode.Polite
                         },
@@ -598,7 +598,7 @@ private fun MessageItem(
                 onLongClick = { 
                     if (!isMultiSelectMode && isActionable) {
                         pluginMenuItems =
-                            if (!isHiddenUserMessage) {
+                            if (!isHiddenUserMessage && allowTranscriptMutation) {
                                 ChatMessageMenuItemRegistry.createMenuItems(
                                     buildPluginMenuItemParams()
                                 )
@@ -640,11 +640,11 @@ private fun MessageItem(
                         thinkingTextColor = thinkingTextColor,
                         supportToolMarkup = true,
                         initialThinkingExpanded = false,
-                        onDeleteMessage = onDeleteMessage,
+                        onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                         index = index,
                         enableDialogs = enableDialogs,
                         enableToolDetailDialogs = enableToolDetailDialogs,
-                        onEditSummary = { summaryMessage ->
+                        onEditSummary = if (!allowTranscriptMutation) null else { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
                     )
@@ -673,12 +673,12 @@ private fun MessageItem(
                         bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                         bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         isHidden = isHidden,
-                        onDeleteMessage = onDeleteMessage,
+                        onDeleteMessage = if (allowTranscriptMutation) onDeleteMessage else null,
                         index = index,
                         enableDialogs = enableDialogs,
                         enableToolDetailDialogs = enableToolDetailDialogs,
                         onRoleAvatarLongPress = onMentionRoleFromAvatar,
-                        onEditSummary = { summaryMessage ->
+                        onEditSummary = if (!allowTranscriptMutation) null else { summaryMessage ->
                             onSelectMessageToEdit?.invoke(index, summaryMessage, "summary")
                         }
                     )
@@ -770,7 +770,7 @@ private fun MessageItem(
                 )
             }
 
-            if (isActionable && !isHiddenUserMessage && !orbitLook && pluginMenuItems.isNotEmpty()) {
+            if (allowTranscriptMutation && isActionable && !isHiddenUserMessage && !orbitLook && pluginMenuItems.isNotEmpty()) {
                 pluginMenuItems.forEach { pluginMenuItem ->
                     DropdownMenuItem(
                         text = {

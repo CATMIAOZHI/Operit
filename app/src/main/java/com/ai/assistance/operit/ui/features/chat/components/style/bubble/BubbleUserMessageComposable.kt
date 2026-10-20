@@ -374,7 +374,7 @@ fun BubbleUserMessageComposable(
         }
 
         // Message bubble
-        if (bubbleWideLayoutEnabled) {
+        if (bubbleWideLayoutEnabled || orbitLook) {
             val headerVisible = shouldShowAvatar || (shouldShowResolvedName && !resolvedDisplayName.isNullOrEmpty())
 
             if (headerVisible) {
@@ -427,7 +427,8 @@ fun BubbleUserMessageComposable(
             }
 
             BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-                val maxBubbleWidth = maxWidth
+                // Orbit keeps the user's bubbles from reaching across to the left edge.
+                val maxBubbleWidth = if (orbitLook) maxWidth * 0.8f else maxWidth
                 val bubbleShape =
                     if (bubbleRoundedCornersEnabled) {
                         RoundedCornerShape(20.dp, 4.dp, 20.dp, 20.dp)

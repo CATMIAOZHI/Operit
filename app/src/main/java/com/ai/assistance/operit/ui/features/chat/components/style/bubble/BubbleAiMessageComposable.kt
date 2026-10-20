@@ -27,6 +27,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.data.model.ChatMessage
@@ -76,6 +77,18 @@ private val ExpandedBubbleLayoutNodeTypes =
 
 @SuppressLint("UnusedBoxWithConstraintsScope")
 @OptIn(ExperimentalFoundationApi::class)
+/** A reply that draws a card (an Orbit card or a Dynamic UI) needs the chat's full width. */
+private val OrbitCardFence = Regex("```\\s*(?:a2ui|orbit-card)")
+
+/** Caps the width at [fraction] of what the parent offers, without a subcomposition. */
+private fun Modifier.maxWidthFraction(fraction: Float): Modifier = layout { measurable, constraints ->
+    val cap = if (constraints.hasBoundedWidth) (constraints.maxWidth * fraction).toInt() else constraints.maxWidth
+    val placeable = measurable.measure(
+        constraints.copy(minWidth = minOf(constraints.minWidth, cap), maxWidth = cap)
+    )
+    layout(placeable.width, placeable.height) { placeable.place(0, 0) }
+}
+
 @Composable
 fun BubbleAiMessageComposable(
     message: ChatMessage,
@@ -113,7 +126,8 @@ fun BubbleAiMessageComposable(
     val settings = LocalBubbleAiRenderSettings.current ?: rememberBubbleAiRenderSettings() ?: return
     val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
     val bubbleShowAvatar = settings.layout.avatar && !orbitLook
-    val bubbleWideLayoutEnabled = settings.layout.wide
+    val orbitHasCard = orbitLook && remember(message.content) { OrbitCardFence.containsMatchIn(message.content) }
+    val bubbleWideLayoutEnabled = settings.layout.wide || orbitLook
     val showThinkingProcess = settings.layout.thinking
     val showStatusTags = settings.layout.status
     val effectiveShowThinkingProcess = forceShowThinkingProcess || showThinkingProcess ||
@@ -273,7 +287,8 @@ fun BubbleAiMessageComposable(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(
-                    start = if (bubbleShowAvatar) 0.dp else 8.dp,
+                    // Orbit's replies start right at the chat's edge, mirroring the user's bubbles.
+                    start = if (bubbleShowAvatar || orbitLook) 0.dp else 8.dp,
                     top = if (firstBlock) 4.dp else 0.dp,
                     end = 0.dp,
                     bottom = if (lastBlock) 4.dp else 0.dp,
@@ -355,6 +370,15 @@ fun BubbleAiMessageComposable(
                         }
                     val bubbleModifier =
                         Modifier
+                            .then(
+                                if (orbitLook && timelineSlice == null && !sharedCard && inlineContent == null) {
+                                    // An Orbit text reply leaves room on the right, like a message
+                                    // from a person; replies holding a card keep the full width.
+                                    if (orbitHasCard) Modifier else Modifier.maxWidthFraction(0.8f)
+                                } else {
+                                    Modifier
+                                }
+                            )
                             .then(if (timelineSlice != null || sharedCard || inlineContent != null) Modifier.fillMaxWidth() else Modifier)
                             .defaultMinSize(minHeight = if (timelineSlice == null) 44.dp else 0.dp)
                     val renderContent: @Composable () -> Unit = {

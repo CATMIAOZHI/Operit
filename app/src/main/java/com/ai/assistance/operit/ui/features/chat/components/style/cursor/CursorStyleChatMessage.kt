@@ -75,15 +75,15 @@ fun CursorStyleChatMessage(
                     message = message,
                     backgroundColor = systemMessageColor.copy(alpha = 0.7f),
                     textColor = systemTextColor,
-                    onDelete = {
-                        if (index != -1) {
-                            onDeleteMessage?.invoke(index)
+                    onDelete = onDeleteMessage?.let { delete ->
+                        {
+                            if (index != -1) {
+                                delete(index)
+                            }
                         }
                     },
                     enableDialog = enableDialogs,  // 传递弹窗启用状态
-                    onEdit = { editedMessage ->
-                        onEditSummary?.invoke(editedMessage)
-                    }
+                    onEdit = onEditSummary
             )
         }
     }
