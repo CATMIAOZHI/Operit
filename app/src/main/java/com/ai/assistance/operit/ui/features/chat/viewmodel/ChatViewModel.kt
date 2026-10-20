@@ -2195,9 +2195,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         }
     }
 
-    /** Removes an attachment by its file path */
+    /** Removes an attachment the user took out of the input box, by its file path */
     fun removeAttachment(filePath: String) {
-        attachmentDelegate.removeAttachment(filePath)
+        attachmentDelegate.discardAttachment(filePath)
     }
 
     /** Inserts a reference to an attachment at the current cursor position in the user's message */

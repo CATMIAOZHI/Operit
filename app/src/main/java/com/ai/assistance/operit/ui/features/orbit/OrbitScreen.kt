@@ -250,6 +250,11 @@ private fun OrbitChatPage(
 ) {
     val context = LocalContext.current
     var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
+    // The chat screen's own view model (same owner, same key), for quoting a post above its input box.
+    val chatViewModel: com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel =
+        androidx.lifecycle.viewmodel.compose.viewModel {
+            com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel(context.applicationContext)
+        }
     // Pages pushed over the profile, as names so the stack survives recreation.
     var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
     val stack = remember(stackNames) { stackNames.split(',').filter { it.isNotEmpty() }.map(OrbitSubPage::valueOf) }
@@ -583,6 +588,12 @@ private fun OrbitChatPage(
                             onDraft = { text ->
                                 // The prompt waits in the main chat's input box for the user to finish.
                                 draftToOrbit(context, orbit, text)
+                                talkChatId = orbit.chatId
+                                tab = OrbitTab.CHAT
+                            },
+                            onQuote = { quoted ->
+                                // Quoted above the main chat's input box, like replying to a message.
+                                chatViewModel.setReplyToMessage(quoted)
                                 talkChatId = orbit.chatId
                                 tab = OrbitTab.CHAT
                             },

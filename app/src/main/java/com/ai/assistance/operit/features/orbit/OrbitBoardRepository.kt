@@ -71,6 +71,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val category: String = "",
         /** Ideas only: when Orbit marked it built; a later vote or icon change leaves it alone. 0 if not built. */
         val doneAt: Long = 0,
+        /** Feed only: a Dynamic UI card is saved beside the post (see [readCard]) and shown under its text. */
+        val card: Boolean = false,
     ) {
         val liked get() = vote > 0
         val disliked get() = vote < 0
@@ -86,6 +88,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val MAX_EXTRA = 2000
         const val MAX_NOTE = 1000
         const val MAX_BRIEF = 2000
+        /** A feed post's Dynamic UI card, kept in its own file so the feed list stays small. */
+        const val MAX_CARD = 65_536
         const val MAX_PARTS = 6
         const val MAX_PART_TITLE = 60
         const val MAX_PART_DETAIL = 200
@@ -117,6 +121,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         private val flows = ConcurrentHashMap<String, MutableStateFlow<List<Item>?>>()
 
         fun briefFile(directory: File) = File(directory, "FEED_BRIEF.md")
+
+        private const val CARD_FOLDER = "feed_cards"
+        private fun cardFile(directory: File, id: String) = File(File(directory, CARD_FOLDER), "${File(id).name}.a2ui")
 
         suspend fun readBrief(context: Context, orbitId: String): String = withContext(Dispatchers.IO) {
             briefFile(OrbitPreferences.getInstance(context).orbitDir(orbitId)).takeIf { it.isFile }?.readText().orEmpty()
@@ -154,6 +161,11 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     suspend fun get(id: String): Item? = list().firstOrNull { it.id == id }
 
+    /** A feed post's Dynamic UI card, or null when it has none (or the file is gone). */
+    suspend fun readCard(id: String): String? = withContext(Dispatchers.IO) {
+        cardFile(directory, id).takeIf { it.isFile && it.length() <= MAX_CARD * 4L }?.readText()?.takeIf { it.isNotBlank() }
+    }
+
     suspend fun create(
         title: String,
         body: String,
@@ -164,15 +176,21 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         emoji: String = "",
         parts: List<Part> = emptyList(),
         category: String = "",
+        /** Feed only: a checked Dynamic UI card document shown under the post. */
+        card: String = "",
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
         state?.let { require(it in states()) { "State must be one of ${states()}" } }
         val checkedCategory = checkCategory(category)
+        require(card.isEmpty() || board == Board.FEED) { "Only feed posts take a card" }
+        require(card.length <= MAX_CARD) { "The card is larger than $MAX_CARD characters" }
         val now = System.currentTimeMillis()
         val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),
-            emojiOf(emoji), checkParts(parts), checkedCategory)
+            emojiOf(emoji), checkParts(parts), checkedCategory, card = card.isNotBlank())
+        // The card is written before the post is saved, so a saved post never points at a missing card.
+        if (item.card) atomic(File(directory, CARD_FOLDER), cardFile(directory, id), card)
         val all = listOf(item) + items
         val kept = if (board == Board.IDEAS) keepIdeas(all, now, item.id) else if (all.size <= board.limit) all else {
             // Keep at most `limit` items; finished ones go before open ones, older before newer.
@@ -306,8 +324,14 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     private suspend fun <T> change(block: (List<Item>) -> Pair<List<Item>, T>): T = withContext(Dispatchers.IO) {
         mutex.withLock {
-            val (items, result) = block(readAll())
+            val before = readAll()
+            val (items, result) = block(before)
             atomic(directory, file, JSONArray(items.map(::json)).toString())
+            // A post that left the feed (deleted or past the limit) takes its card with it.
+            if (board == Board.FEED) {
+                val left = items.mapTo(HashSet()) { it.id }
+                before.filter { it.card && it.id !in left }.forEach { cardFile(directory, it.id).delete() }
+            }
             publish(visible(items))
             result
         }
@@ -341,6 +365,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         .put("parts", JSONArray(item.parts.map { JSONObject().put("title", it.title).put("detail", it.detail) }))
         .put("category", item.category)
         .put("doneAt", item.doneAt)
+        .put("card", item.card)
 
     private fun item(value: JSONObject): Item {
         val notes = value.optJSONArray("notes") ?: JSONArray()
@@ -357,6 +382,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             (0 until parts.length()).map { parts.getJSONObject(it).let { p -> Part(p.optString("title"), p.optString("detail")) } },
             value.optString("category"),
             value.optLong("doneAt"),
+            value.optBoolean("card"),
         )
     }
 }

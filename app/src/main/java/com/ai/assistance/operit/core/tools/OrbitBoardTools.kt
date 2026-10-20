@@ -19,11 +19,12 @@ internal object OrbitBoardTools {
     const val IDEA = "orbit_idea"
     const val TRACKING = "orbit_tracking"
     val names = setOf(FEED, IDEA, TRACKING)
+    private val LIVE_SURFACE = Regex("\"surfaceId\"\\s*:\\s*\"live_")
 
     val prompts = listOf(
         ToolPrompt(
             name = FEED,
-            description = "管理用户「动态」标签页里的短文。你是作者，内容由动态简介（brief）引导。" +
+            description = "管理用户「动态」标签页：Orbit 为用户写的信息流。你是作者，内容由动态简介（brief）引导。" +
                 "post 发一条；list 查看已有的；delete 删除；move 调整顺序；brief_get / brief_update 读写简介；" +
                 "generate 马上在后台写一条新的。平时每 12 小时会自动在后台写一条。",
             parametersStructured = listOf(
@@ -33,6 +34,7 @@ internal object OrbitBoardTools {
                 ToolParameterSchema("emoji", description = "post 必填：标题旁显示的一个 emoji，贴合内容，如 📱 🏎️ 🎧", required = false),
                 ToolParameterSchema("body", description = "post：正文，几段短文字，最多6000字符；链接写成 [文字](网址)，只引用你真的打开过的", required = false),
                 ToolParameterSchema("why_for_you", description = "post：一句话说明为什么给这位用户看，必填", required = false),
+                ToolParameterSchema("card", description = "post 可选：先用 dynamic_ui 做好的卡片引用名（如 card-1），显示在正文下面", required = false),
                 ToolParameterSchema("brief", description = "brief_update：新的简介全文，最多2000字符；空字符串表示恢复默认简介", required = false),
                 ToolParameterSchema("direction", description = "move：up 或 down", required = false),
             ),
@@ -41,6 +43,8 @@ internal object OrbitBoardTools {
   - 动态由你的后台任务「动态更新」每 12 小时写一条；用户想改频率时用 orbit_task 改这个任务的时间，不要取消它。
   - 新短文出现在动态页，不会推送，也不会在聊天里说。不要说「已经发好了」，只能说已经开始写。
   - 每条都要写 why_for_you 和 emoji。不要编造链接。
+  - 写之前可以搜网页、打开页面查最新信息。表格、对比、图表、可点的清单这类内容，可以先用 dynamic_ui 做一张卡片（不要用 live），
+    再把它的引用名填进 card；卡片和正文一起显示。不要把 a2ui-ref 写进 body。
   - list 里的 vote 是用户的反馈：liked 多写这类，disliked 少写这类。
 """,
         ),
@@ -97,8 +101,18 @@ internal object OrbitBoardTools {
                 FEED -> {
                     val feed = OrbitBoardRepository(context, orbit.id, Board.FEED)
                     when (args["action"]) {
-                        "post" -> json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId,
-                            emoji = emoji(arg("emoji"))), Board.FEED)
+                        "post" -> {
+                            val card = args["card"]?.takeIf { it.isNotBlank() }?.let { reference ->
+                                val run = runtime?.dynamicUiRunId ?: error("Cards can only be made inside a running turn")
+                                val document = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(run, reference)
+                                    ?: error("Unknown card $reference. Make it with dynamic_ui in this turn first")
+                                // A live card belongs to one chat and updates there; a feed post needs a finished one.
+                                require(!LIVE_SURFACE.containsMatchIn(document)) { "Live cards cannot go in the feed; make a normal card" }
+                                document
+                            }.orEmpty()
+                            json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId,
+                                emoji = emoji(arg("emoji")), card = card), Board.FEED)
+                        }
                         "list" -> JSONArray(feed.list().take(30).map { json(it, Board.FEED, brief = true) })
                         "delete" -> { feed.delete(arg("post_id")); "Deleted" }
                         "move" -> { feed.move(arg("post_id"), arg("direction") == "up"); "Moved" }
@@ -207,7 +221,7 @@ internal object OrbitBoardTools {
             .put("createdAt", item.createdAt)
         when (board) {
             Board.FEED -> value.put("emoji", item.emoji).put("body", body).put("why_for_you", item.extra)
-                .put("vote", voteName(item.vote))
+                .put("vote", voteName(item.vote)).put("has_card", item.card)
             Board.IDEAS -> value.put("emoji", item.emoji).put("description", body).put("plan", item.extra)
                 .put("category", item.category)
                 .put("includes", JSONArray(item.parts.map { "${it.title} | ${it.detail}".trimEnd(' ', '|') }))
