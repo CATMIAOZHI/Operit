@@ -102,6 +102,12 @@ fun SkillConfigScreen(
     groupBySource: Boolean = false,
     /** False when the page around it already has a title, as Orbit's all-skills page does. */
     showHeader: Boolean = true,
+    /** Set for an Orbit: new skills are asked of Orbit in chat, so the add button drafts a prompt. */
+    onDraftNewSkill: ((String) -> Unit)? = null,
+    /** Set when the page around opens a skill's history as its own full page. */
+    onOpenSkillHistory: ((String) -> Unit)? = null,
+    /** Changes when the list should be read again, as after a skill's history page closes. */
+    reloadSignal: Int = 0,
 ) {
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
@@ -209,6 +215,10 @@ fun SkillConfigScreen(
 
     LaunchedEffect(Unit) {
         refreshSkills()
+    }
+    // A restore on a skill's history page may change it: read the list again, quietly.
+    LaunchedEffect(reloadSignal) {
+        if (reloadSignal > 0) runCatching { refreshSkills(quiet = true) }
     }
     // While the page is in the background, Orbit may learn or drop skills, and a sweep may archive
     // them. Coming back re-reads an Orbit's list quietly. The plain skill page only re-reads the
@@ -476,7 +486,10 @@ fun SkillConfigScreen(
                 icon = "plus",
                 color = MaterialTheme.colorScheme.onSurface,
                 contentColor = MaterialTheme.colorScheme.surface,
-            ) { showImportDialog = true }
+            ) {
+                if (onDraftNewSkill != null) onDraftNewSkill(context.getString(R.string.orbit_skill_new_draft))
+                else showImportDialog = true
+            }
         }
 
         if (skills.isEmpty() && (isLoading || isImporting)) {
@@ -620,7 +633,7 @@ fun SkillConfigScreen(
             loadError = skillDetailError,
             deleting = deletingSkill,
             onHistory = if (skillRepository.memorySpaceId != null) ({
-                historySkill = skill.name
+                if (onOpenSkillHistory != null) onOpenSkillHistory(skill.name) else historySkill = skill.name
                 selectedSkill = null
             }) else null,
             onDismiss = {
@@ -654,10 +667,18 @@ fun SkillConfigScreen(
             }
         )
     }
-    historySkill?.let { name ->
-        skillRepository.memorySpaceId?.let { space ->
-            com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(
-                space, onDismiss = { historySkill = null; scope.launch { refreshSkills() } }, initialSkillName = name)
+    // A skill's history is its own page over the list, so back leaves the history, not the list.
+    var shownHistorySkill by remember { mutableStateOf(historySkill) }
+    LaunchedEffect(historySkill) { historySkill?.let { shownHistorySkill = it } }
+    val closeHistory = { historySkill = null; scope.launch { refreshSkills() }; Unit }
+    com.ai.assistance.operit.ui.features.orbit.OrbitCoverPage(visible = historySkill != null, onDismiss = closeHistory) {
+        (historySkill ?: shownHistorySkill)?.let { name ->
+            skillRepository.memorySpaceId?.let { space ->
+                androidx.compose.runtime.key(name) {
+                    com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(
+                        space, onDismiss = closeHistory, initialSkillName = name)
+                }
+            }
         }
     }
 }

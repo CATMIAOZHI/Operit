@@ -149,6 +149,8 @@ class MessageProcessingDelegate(
                     .trim()
                 if (generatedTitle.isNotBlank() && getChatTitle(chatId) == fallbackTitle) {
                     updateChatTitle(chatId, generatedTitle)
+                    // An Orbit side chat opened without a title is listed under this one too.
+                    com.ai.assistance.operit.features.orbit.OrbitCompanion.adoptGeneratedTitle(context, chatId, generatedTitle)
                 }
             } catch (e: Exception) {
                 AppLogger.e(TAG, "生成对话标题失败", e)

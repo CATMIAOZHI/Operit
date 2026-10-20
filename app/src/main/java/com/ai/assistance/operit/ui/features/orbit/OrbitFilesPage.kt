@@ -115,7 +115,7 @@ private fun friendlyName(path: String): String {
 
 /** Orbit's own files: notebooks, people, groups, the daily log, files it made, and the trash. */
 @Composable
-internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
+internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
     val context = LocalContext.current
     val files = remember(orbitId) { OrbitFiles.of(context, orbitId) }
     var reload by remember { mutableIntStateOf(0) }
@@ -127,7 +127,6 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
     var editPath by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
     var showTrash by rememberSaveable(orbitId) { mutableStateOf(false) }
     var showAllDays by rememberSaveable(orbitId) { mutableStateOf(false) }
-    var newFolder by remember { mutableStateOf<String?>(null) }
     var fileActions by remember { mutableStateOf<OrbitFiles.Entry?>(null) }
     val list = result?.getOrNull()
 
@@ -196,7 +195,10 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
             item(key = "title-$folder") {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.weight(1f)) { SectionTitle(stringResource(title)) }
-                    TextButton(onClick = { newFolder = folder }, modifier = Modifier.padding(top = 14.dp)) {
+                    // A person or group is added by asking Orbit; the prompt waits in the chat box.
+                    TextButton(onClick = {
+                        onDraft(context.getString(if (folder.endsWith("people")) R.string.orbit_person_new_draft else R.string.orbit_group_new_draft))
+                    }, modifier = Modifier.padding(top = 14.dp)) {
                         Text(stringResource(R.string.orbit_files_create))
                     }
                 }
@@ -236,39 +238,6 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit) {
 
     fileActions?.let { entry ->
         OrbitMadeFileActions(files, entry, onDismiss = { fileActions = null }, onDeleted = { reload++ })
-    }
-    newFolder?.let { folder ->
-        var name by remember(folder) { mutableStateOf("") }
-        val scope = rememberCoroutineScope()
-        val clean = name.trim().replace(Regex("[/\\\\:*?\"<>|]"), "").trimStart('.').take(60)
-        AlertDialog(
-            onDismissRequest = { newFolder = null },
-            title = { Text(stringResource(if (folder.endsWith("people")) R.string.orbit_files_new_person else R.string.orbit_files_new_group)) },
-            text = {
-                OutlinedTextField(value = name, onValueChange = { name = it.take(60) }, singleLine = true,
-                    label = { Text(stringResource(R.string.orbit_files_new_name)) })
-            },
-            confirmButton = {
-                TextButton(enabled = clean.isNotEmpty(), onClick = {
-                    val path = "$folder/$clean.md"
-                    scope.launch {
-                        try {
-                            if (list?.any { it.path == path } == true) {
-                                toast(context, R.string.orbit_files_exists)
-                            } else {
-                                files.write(path, "# $clean\n\n")
-                                newFolder = null
-                                editPath = path
-                                openPath = path
-                            }
-                        } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                            toast(context, R.string.orbit_trash_failed)
-                        }
-                    }
-                }) { Text(stringResource(R.string.orbit_files_create)) }
-            },
-            dismissButton = { TextButton(onClick = { newFolder = null }) { Text(stringResource(android.R.string.cancel)) } },
-        )
     }
 }
 

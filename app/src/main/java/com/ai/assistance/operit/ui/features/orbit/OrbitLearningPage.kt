@@ -36,6 +36,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -77,24 +78,43 @@ private val learningGroups = listOf(
  * Each row pushes its page from the right, like the other pages under the profile.
  */
 @Composable
-internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit) {
-    var page by rememberSaveable { mutableStateOf<String?>(null) }
+internal fun OrbitLearningPage(spaceId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
+    // The open pages, top last, one per line: a library page, or the skills and a skill's history.
+    var pages by rememberSaveable { mutableStateOf("") }
+    val stack = remember(pages) { pages.split('\n').filter { it.isNotEmpty() } }
+    var skillsReload by remember { mutableIntStateOf(0) }
     // Kept outside the transition so coming back lands where the list was left.
     val homeList = rememberLazyListState()
     // iOS push, with the swipe back following the finger. Opaque, so nothing behind shows through.
     OrbitPushHost(
-        entries = listOfNotNull(page),
-        onPop = { page = null },
+        entries = stack,
+        onPop = {
+            if (stack.lastOrNull()?.startsWith(SKILL_HISTORY) == true) skillsReload++
+            pages = stack.dropLast(1).joinToString("\n")
+        },
         modifier = Modifier.background(MaterialTheme.colorScheme.background),
-        base = { OrbitLearningHome(homeList, onBack) { page = it } },
+        base = { OrbitLearningHome(homeList, onBack) { pages = it } },
     ) { shown ->
-        val close = { page = null }
-        when (shown) {
-            "skills" -> OrbitAllSkillsPage(spaceId, close)
+        val close = {
+            // Only while this page is still on top, so a late call never closes another page.
+            val now = pages.split('\n').filter { it.isNotEmpty() }
+            if (now.lastOrNull() == shown) {
+                if (shown.startsWith(SKILL_HISTORY)) skillsReload++
+                pages = now.dropLast(1).joinToString("\n")
+            }
+        }
+        when {
+            shown == "skills" -> OrbitAllSkillsPage(spaceId, close, onDraft, skillsReload) { name ->
+                pages = (stack + (SKILL_HISTORY + name.replace('\n', ' '))).joinToString("\n")
+            }
+            shown.startsWith(SKILL_HISTORY) -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(
+                spaceId, onDismiss = close, initialSkillName = shown.removePrefix(SKILL_HISTORY))
             else -> com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryDestination(shown, spaceId, close)
         }
     }
 }
+
+private const val SKILL_HISTORY = "skill-history:"
 
 @Composable
 private fun OrbitLearningHome(listState: LazyListState, onBack: () -> Unit, onOpen: (String) -> Unit) {
@@ -184,7 +204,13 @@ private fun LearningRowItem(row: LearningRow, onClick: () -> Unit) {
 
 /** Every skill Orbit can load, in folders by where it came from, under the same header. */
 @Composable
-private fun OrbitAllSkillsPage(spaceId: String, onBack: () -> Unit) {
+private fun OrbitAllSkillsPage(
+    spaceId: String,
+    onBack: () -> Unit,
+    onDraft: (String) -> Unit,
+    reloadSignal: Int,
+    onOpenHistory: (String) -> Unit,
+) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val repository by produceState<SkillRepository?>(null, spaceId) {
@@ -205,6 +231,9 @@ private fun OrbitAllSkillsPage(spaceId: String, onBack: () -> Unit) {
                 } else loaded.let {
                     com.ai.assistance.operit.ui.features.packages.screens.SkillConfigScreen(
                         it, snackbar, groupBySource = true, showHeader = false,
+                        onDraftNewSkill = onDraft,
+                        onOpenSkillHistory = onOpenHistory,
+                        reloadSignal = reloadSignal,
                     )
                 }
             }

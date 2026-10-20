@@ -53,6 +53,8 @@ internal data class OrbitChatTurns(val turns: List<OrbitChatTurn>, val failed: B
 internal object OrbitWork {
     private const val TURNS_PER_CHAT = 60
     private const val TITLE_LENGTH = 60
+    /** Parts of one split reply are saved a few milliseconds apart at most. */
+    private const val BREAK_GAP_MS = 100L
     /** The context the app adds to a user message; anything else the user typed stays. */
     private val contextMarkup = listOf(
         com.ai.assistance.operit.util.ChatMarkupRegex.replyToTag,
@@ -185,12 +187,23 @@ internal object OrbitWork {
                 else askedBy[turn.key]
             val title = if (reaction != null && asked == reaction.first) reaction.second
                 else asked?.let { bodies[it] }?.let { userLine(it.content, attachmentOnly) }.orEmpty()
+            // A reply sent as several messages (message breaks) is saved as rows right after the
+            // first one, a millisecond or so apart; they are all part of this turn's answer.
+            val parts = mutableListOf<Long>()
+            var at = indexOf[turn.finalTimestamp]
+            if (at != null) {
+                var previous = rows[at].timestamp
+                while (++at < rows.size && rows[at].sender == "ai" && rows[at].timestamp - previous in 1..BREAK_GAP_MS) {
+                    previous = rows[at].timestamp
+                    parts += previous
+                }
+            }
             OrbitChatTurn(
                 process = OrbitProcess.ChatTurn(
                     chatId = chatId,
                     // A hidden notice (a tapback, a task coming due) names the turn; its wording
                     // shows in the details only for developers (see [messages]).
-                    timestamps = (listOfNotNull(asked, hiddenBefore[turn.key]) + turn.members).distinct().sorted(),
+                    timestamps = (listOfNotNull(asked, hiddenBefore[turn.key]) + turn.members + parts).distinct().sorted(),
                     title = title,
                     time = turn.key,
                 ),

@@ -2,6 +2,8 @@ package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.text.selection.SelectionContainer
@@ -49,23 +51,22 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
         }
     }
     LaunchedEffect(orbitId, retry) { act {} }
-    fun back() { if (selected != null) selected = null else onBack() }
-    OrbitPageBack(intercept = selected != null) { back() }
+    // An open version is left by the push host below, with the back swipe.
+    OrbitPageBack(onBack = onBack)
     val list = rememberLazyListState()
-    val detailList = key(selected) { rememberLazyListState() }
-    val detail = snapshot?.history?.firstOrNull { it.id == selected }
-    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.orbit_soul_title)) },
-        navigationIcon = { IconButton(onClick = ::back) {
-            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
-        } }) }) { padding ->
-        LazyColumn(Modifier.fillMaxSize().padding(padding), state = if (detail == null) list else detailList,
-            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            error?.let { message -> item {
-                Text(message, color = MaterialTheme.colorScheme.error)
-                TextButton(enabled = !busy, onClick = { retry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
-            } }
-            if (detail == null) {
+    val status: LazyListScope.() -> Unit = {
+        if (busy) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+        error?.let { message -> item {
+            Text(message, color = MaterialTheme.colorScheme.error)
+            TextButton(enabled = !busy, onClick = { retry++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
+        } }
+    }
+    OrbitPushHost(
+        entries = listOfNotNull(selected),
+        onPop = { selected = null },
+        base = {
+            SoulFrame(onBack, list) {
+                status()
                 item { Text(stringResource(R.string.orbit_soul_help)) }
                 items(snapshot?.history.orEmpty().filter { it.state == "approved" }.sortedWith(compareBy<OrbitSoulRepository.Version> {
                     if (it.id == snapshot?.current?.id) 0 else 1
@@ -82,7 +83,14 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
                         }
                     }
                 }
-            } else {
+            }
+        },
+    ) { id ->
+        val detailList = rememberLazyListState()
+        val detail = snapshot?.history?.firstOrNull { it.id == id }
+        SoulFrame({ selected = null }, detailList) {
+            status()
+            if (detail != null) {
                 item {
                     Text(soulReason(detail), style = MaterialTheme.typography.titleMedium)
                     SelectionContainer { Text(detail.body) }
@@ -106,6 +114,19 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
                 restore = null; selected = null
             } }) { Text(stringResource(android.R.string.ok)) } },
             dismissButton = { TextButton(enabled = !busy, onClick = { restore = null }) { Text(stringResource(R.string.cancel)) } })
+    }
+}
+
+/** The Soul history's page: a back button and title over a list. */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SoulFrame(onBack: () -> Unit, state: LazyListState, content: LazyListScope.() -> Unit) {
+    Scaffold(topBar = { TopAppBar(title = { Text(stringResource(R.string.orbit_soul_title)) },
+        navigationIcon = { IconButton(onClick = onBack) {
+            Icon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.back))
+        } }) }) { padding ->
+        LazyColumn(Modifier.fillMaxSize().padding(padding), state = state,
+            contentPadding = PaddingValues(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp), content = content)
     }
 }
 

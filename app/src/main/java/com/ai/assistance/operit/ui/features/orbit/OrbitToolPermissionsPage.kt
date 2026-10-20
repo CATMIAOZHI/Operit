@@ -271,21 +271,26 @@ private fun ToolFolderHeader(folder: ToolFolder, changed: Int, open: Boolean, en
 
 /**
  * Orbit's tool access, the choice in Orbit's settings: the fast automatic review, or full access
- * where every tool runs without a review. Orbit never waits on a prompt in either.
+ * where every tool runs without a review. Orbit never waits on a prompt in either. A page pushed
+ * from the settings, like an iOS choice list, so it leaves with the back swipe.
  */
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun OrbitToolAccessSheet(fullAccess: Boolean, onDismiss: () -> Unit, onPick: (Boolean) -> Unit) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+internal fun OrbitToolAccessPage(onBack: () -> Unit) {
+    OrbitPageBack(onBack = onBack)
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val system = remember { ToolPermissionSystem.getInstance(context) }
+    val stored by system.orbitFullAccessFlow.collectAsState(initial = null)
+    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
-                .padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            Modifier.fillMaxSize().verticalScroll(rememberScrollState()).statusBarsPadding().navigationBarsPadding()
+                .padding(horizontal = 20.dp).padding(top = 8.dp, bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            Text(stringResource(R.string.orbit_access_title), style = MaterialTheme.typography.titleLarge,
-                fontWeight = FontWeight.SemiBold)
+            OrbitPageHeader(stringResource(R.string.orbit_access_title), onBack)
             Text(stringResource(R.string.orbit_access_help), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant)
+                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
+            val fullAccess = stored ?: return@Column
             Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
                 Column {
                     listOf(false, true).forEachIndexed { index, full ->
@@ -296,7 +301,7 @@ internal fun OrbitToolAccessSheet(fullAccess: Boolean, onDismiss: () -> Unit, on
                         val selected = full == fullAccess
                         Row(
                             Modifier.fillMaxWidth().heightIn(min = 64.dp)
-                                .clickable(role = Role.RadioButton) { onPick(full) }
+                                .clickable(role = Role.RadioButton) { scope.launch { system.setOrbitFullAccess(full) } }
                                 .semantics { this.selected = selected }
                                 .padding(horizontal = 16.dp, vertical = 12.dp),
                             verticalAlignment = Alignment.CenterVertically,

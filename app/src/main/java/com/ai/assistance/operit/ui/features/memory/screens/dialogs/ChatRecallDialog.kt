@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.foundation.clickable
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.dao.*
@@ -138,10 +139,10 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) {
         run { load(false) }
     }
-    fullMessage?.let { part ->
+    val fullPage: @Composable (ChatRecallPart) -> Unit = { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
         MemoryLibraryPage(stringResource(R.string.memory_recall_full), profileId,
-            { if (!busy) fullMessage = null }, interceptBack = true) {
+            { if (!busy) fullMessage = null }, interceptBack = busy) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Text("${charOffset+1}–${charOffset+partLength} / ${part.totalChars}",
                     style = MaterialTheme.typography.labelMedium)
@@ -161,8 +162,13 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                 }
             }
         }
-        return
     }
+    // A whole message opens as its own page over the results; the back swipe slides it away.
+    var shownPart by remember { mutableStateOf(fullMessage) }
+    LaunchedEffect(fullMessage) { fullMessage?.let { shownPart = it } }
+    Box(Modifier.fillMaxSize()) {
+    // Hidden from screen readers while a whole message covers it.
+    Box(Modifier.fillMaxSize().then(if (fullMessage != null) Modifier.clearAndSetSemantics { } else Modifier)) {
     MemoryLibraryPage(stringResource(R.string.chat_recall_title), profileId, {
         activeWork?.cancel()
         if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
@@ -256,5 +262,12 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
                 }
             }
         }
+    }
+    }
+    com.ai.assistance.operit.ui.features.orbit.OrbitCoverPage(
+        visible = fullMessage != null, onDismiss = { fullMessage = null }, backEnabled = !busy,
+    ) {
+        (fullMessage ?: shownPart)?.let { fullPage(it) }
+    }
     }
 }

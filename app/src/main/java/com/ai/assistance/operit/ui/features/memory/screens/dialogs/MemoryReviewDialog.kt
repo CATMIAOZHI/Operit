@@ -68,11 +68,19 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
     }
-    MemoryLibraryPage(selected?.title ?: stringResource(R.string.memory_review_title), profileId,
-        { leave(if (selectedId == null) "close" else "back") }, interceptBack = selectedId != null) {
+    // A record opens over the list like an iOS page; in an Orbit the back swipe slides it away.
+    val status: @Composable () -> Unit = {
+        error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+        if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+    }
+    com.ai.assistance.operit.ui.features.orbit.OrbitPushHost(
+        entries = listOfNotNull(selectedId),
+        onPop = { selectedId = null },
+        base = {
+    MemoryLibraryPage(stringResource(R.string.memory_review_title), profileId, { leave("close") }) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (selected == null) {
+                kotlin.run {
                     if (memorySpace?.ownerOrbitId != null) Text(stringResource(R.string.orbit_memory_correction_help),
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     if (!autoSave) Text(stringResource(R.string.memory_auto_master_off), style = MaterialTheme.typography.bodySmall)
@@ -105,8 +113,21 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
                             }
                         }
                     }
+                }
+                status()
+            }
+        }
+    }
+        },
+    ) { shownId ->
+    val record = records.find { it.id == shownId }
+    MemoryLibraryPage(record?.title ?: stringResource(R.string.memory_review_title), profileId,
+        { leave("back") }, interceptBack = dirty || busy) {
+        Box(Modifier.fillMaxSize()) {
+            Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                if (record == null) {
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else {
-                    val record = selected!!
                     val pending = record.status == "pending"
                     val changed = body != record.body || description != record.description
                     Column(Modifier.weight(1f).verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -177,13 +198,13 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
                         }
                     }
                 }
-                error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
-                if (busy) LinearProgressIndicator(Modifier.fillMaxWidth())
+                status()
                 Row {
-                    if (selected != null) TextButton(onClick = { leave("back") }, enabled = !busy) { Text(stringResource(R.string.chat_recall_back)) }
+                    TextButton(onClick = { leave("back") }, enabled = !busy) { Text(stringResource(R.string.chat_recall_back)) }
                 }
             }
         }
+    }
     }
     if (discardTarget != null) AlertDialog(
         onDismissRequest = { discardTarget = null },

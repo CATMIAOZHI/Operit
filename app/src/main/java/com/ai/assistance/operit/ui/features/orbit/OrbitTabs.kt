@@ -30,6 +30,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
@@ -169,16 +170,24 @@ internal fun OrbitTabPage(
     onOpenFile: (String) -> Unit = {},
 ) {
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    // Keeps the task on screen while its page slides away.
+    var shownTaskId by remember(orbit.id) { mutableStateOf(openTaskId) }
+    LaunchedEffect(openTaskId) { openTaskId?.let { shownTaskId = it } }
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        when (tab) {
-            OrbitTab.CHAT -> Unit
-            OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft)
-            OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
-            OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
-            OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile)
+        // A task page over the tab hides the tab from screen readers.
+        Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+            when (tab) {
+                OrbitTab.CHAT -> Unit
+                OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft)
+                OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
+                OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
+                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+            }
         }
-        openTaskId?.let { taskId ->
-            OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId)
+        OrbitCoverPage(visible = openTaskId != null, onDismiss = { openTaskId = null }) {
+            (openTaskId ?: shownTaskId)?.let { taskId ->
+                key(taskId) { OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId) }
+            }
         }
     }
 }
@@ -596,7 +605,6 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
     val notesRepository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.GOAL_NOTES) }
     val goalNotes by remember(notesRepository) { notesRepository.observe().catch { emit(emptyList()) } }
         .collectAsState(initial = null)
-    var loggingGoal by remember { mutableStateOf<String?>(null) }
     var deletingNote by remember { mutableStateOf<String?>(null) }
     var goalSheet by remember { mutableStateOf<String?>(null) }
     var trackingSheet by remember { mutableStateOf<String?>(null) }
@@ -691,7 +699,11 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
                         fontWeight = FontWeight.SemiBold, modifier = Modifier.weight(1f),
                     )
                     if (goal.state != "CANCELLED") {
-                        TextButton(onClick = { loggingGoal = goal.id }) { Text(stringResource(R.string.orbit_goal_note_add)) }
+                        // Progress is logged by telling Orbit; the prompt waits in the chat box.
+                        TextButton(onClick = {
+                            goalSheet = null
+                            onDraft(context.getString(R.string.orbit_goal_note_draft, goal.title))
+                        }) { Text(stringResource(R.string.orbit_goal_note_add)) }
                     }
                 }
                 val notes = goalNotes?.filter { it.extra == goal.id }?.sortedByDescending { it.createdAt }
@@ -714,30 +726,6 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
         }
     }
 
-    loggingGoal?.let { goalId ->
-        var text by rememberSaveable(goalId) { mutableStateOf("") }
-        AlertDialog(
-            onDismissRequest = { loggingGoal = null },
-            title = { Text(stringResource(R.string.orbit_goal_note_add)) },
-            text = {
-                OutlinedTextField(
-                    text, { if (it.length <= OrbitBoardRepository.MAX_BODY) text = it }, minLines = 3, maxLines = 6,
-                    placeholder = { Text(stringResource(R.string.orbit_goal_note_hint)) }, modifier = Modifier.fillMaxWidth(),
-                )
-            },
-            confirmButton = {
-                TextButton(enabled = text.isNotBlank(), onClick = {
-                    val body = text.trim()
-                    loggingGoal = null
-                    action {
-                        notesRepository.create(body.lineSequence().first().take(OrbitBoardRepository.MAX_TITLE), body, goalId,
-                            state = "LOG")
-                    }
-                }) { Text(stringResource(R.string.save)) }
-            },
-            dismissButton = { TextButton(onClick = { loggingGoal = null }) { Text(stringResource(R.string.cancel)) } },
-        )
-    }
     deletingNote?.let { id ->
         AlertDialog(
             onDismissRequest = { deletingNote = null },
@@ -885,6 +873,7 @@ private fun OrbitBuildsPage(
     filesVersion: Int,
     onOpenTask: (String) -> Unit,
     onOpenFile: (String) -> Unit,
+    onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -906,10 +895,11 @@ private fun OrbitBuildsPage(
     val action = rememberAction()
 
     val history = openArtifact?.let { id -> versions.orEmpty().filter { it.artifactId == id }.sortedByDescending { it.createdAt } }
-    if (!history.isNullOrEmpty()) {
-        BuildDetail(orbit, history, onBack = { openArtifact = null }, onOpenTask = onOpenTask)
-        return
-    }
+    // Keeps the work on screen while its page slides away.
+    var shownHistory by remember(orbit.id) { mutableStateOf(history) }
+    SideEffect { if (!history.isNullOrEmpty()) shownHistory = history }
+    // The list stays under an open work's page, hidden from screen readers while covered.
+    Box(Modifier.fillMaxSize().then(if (!history.isNullOrEmpty()) Modifier.clearAndSetSemantics { } else Modifier)) {
     TabList(title = stringResource(R.string.orbit_tab_builds)) {
         val list = versions
         when {
@@ -968,10 +958,21 @@ private fun OrbitBuildsPage(
             }
         }
     }
+    }
     fileActions?.let { entry ->
         val pinned = entry.path in pins
         OrbitMadeFileActions(orbitFiles, entry, onDismiss = { fileActions = null }, onDeleted = { filesReload++ },
             pinned = pinned, onTogglePin = { action { orbitFiles.setPinned(entry.path, !pinned); filesReload++ } })
+    }
+    // A work's page slides in over the list; the back swipe slides it away under the finger.
+    OrbitCoverPage(visible = !history.isNullOrEmpty(), onDismiss = { openArtifact = null }) {
+        (history?.takeIf { it.isNotEmpty() } ?: shownHistory)?.takeIf { it.isNotEmpty() }?.let { shown ->
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                key(shown.first().artifactId) {
+                    BuildDetail(orbit, shown, onBack = { openArtifact = null }, onOpenTask = onOpenTask, onDraft = onDraft)
+                }
+            }
+        }
     }
 }
 
@@ -1073,13 +1074,12 @@ private fun BuildDetail(
     history: List<OrbitArtifactVersionEntity>,
     onBack: () -> Unit,
     onOpenTask: (String) -> Unit,
+    onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
-    val action = rememberAction()
     var versionId by rememberSaveable(history.first().artifactId) { mutableStateOf(history.first().id) }
     val version = history.firstOrNull { it.id == versionId } ?: history.first()
     var offset by rememberSaveable(version.id) { mutableIntStateOf(0) }
-    var revision by rememberSaveable { mutableStateOf<String?>(null) }
     val text by produceState<Result<String>?>(null, version.id) {
         value = try {
             Result.success(OrbitArtifactRepository(context).read(orbit.id, version.id))
@@ -1089,7 +1089,6 @@ private fun BuildDetail(
             Result.failure(e)
         }
     }
-    BackHandler(onBack = onBack)
     LazyColumn(
         modifier = Modifier.fillMaxSize().statusBarsPadding(),
         contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 24.dp),
@@ -1108,7 +1107,10 @@ private fun BuildDetail(
         item {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 PillButton(stringResource(R.string.orbit_artifact_source), "list", { onOpenTask(version.taskId) })
-                PillButton(stringResource(R.string.orbit_artifact_revise), "pencil", { revision = "" }, enabled = text?.isSuccess == true)
+                // Revisions are asked of Orbit in chat; the prompt waits in the chat box.
+                PillButton(stringResource(R.string.orbit_artifact_revise), "pencil", {
+                    onDraft(context.getString(R.string.orbit_build_continue_draft, version.name))
+                })
             }
         }
         if (history.size > 1) {
@@ -1143,32 +1145,6 @@ private fun BuildDetail(
             }
         }
     }
-    revision?.let { request ->
-        AlertDialog(
-            onDismissRequest = { revision = null },
-            title = { Text(stringResource(R.string.orbit_artifact_revise)) },
-            text = {
-                OutlinedTextField(
-                    request, { if (it.length <= 4000) revision = it },
-                    label = { Text(stringResource(R.string.orbit_revision_request)) }, minLines = 3,
-                )
-            },
-            confirmButton = {
-                TextButton(enabled = request.isNotBlank(), onClick = {
-                    revision = null
-                    action {
-                        val current = checkNotNull(OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id })
-                        OrbitTaskRepository(context).create(
-                            current, version.name.take(80), request, "", 60, "ALWAYS",
-                            UUID.randomUUID().toString(), kind = "ASSIST", scheduleMode = "ONCE",
-                            sourceArtifactVersionId = version.id,
-                        )
-                    }
-                }) { Text(stringResource(R.string.orbit_task_continue)) }
-            },
-            dismissButton = { TextButton(onClick = { revision = null }) { Text(stringResource(R.string.cancel)) } },
-        )
-    }
 }
 
 // ---------------------------------------------------------------- Notifications
@@ -1197,7 +1173,7 @@ internal fun OrbitNotificationsPage(orbitId: String, onBack: () -> Unit) {
         policy = dao.notificationPolicy(orbitId)
         OrbitTaskScheduler.reschedule(context)
     }
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
             Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp),
