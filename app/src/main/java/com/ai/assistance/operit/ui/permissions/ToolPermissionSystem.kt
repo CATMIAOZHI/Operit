@@ -172,6 +172,14 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     suspend fun clearOrbitToolPermission(toolName: String) {
         context.toolPermissionsDataStore.edit { it.remove(orbitToolPermissionKey(toolName)) }
     }
+
+    /** Orbit's tool access: false is the fast automatic review, true lets every tool run unreviewed. */
+    val orbitFullAccessFlow: Flow<Boolean> =
+        context.toolPermissionsDataStore.data.map { it[ORBIT_FULL_ACCESS] ?: false }
+
+    suspend fun setOrbitFullAccess(enabled: Boolean) {
+        context.toolPermissionsDataStore.edit { it[ORBIT_FULL_ACCESS] = enabled }
+    }
     
     // Permission request management
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -452,7 +460,7 @@ class ToolPermissionSystem private constructor(private val context: Context) {
             val stored = preferences[orbitToolPermissionKey(toolName)]?.let { PermissionLevel.fromString(it) }
             return orbitPermissionLevel(
                 storedToolLevel = stored,
-                defaultToolLevel = orbitDefaultPermissionLevel(toolName),
+                defaultToolLevel = orbitDefaultPermissionLevel(toolName, preferences[ORBIT_FULL_ACCESS] ?: false),
             )
         }
         val overrideLevel =
@@ -1127,6 +1135,9 @@ internal fun orbitPermissionLevel(
 /** Key prefix of Orbit's own tool levels, kept apart from the main app's "tool_permission_". */
 internal const val ORBIT_TOOL_PERMISSION_PREFIX = "orbit_tool_permission_"
 
+/** Orbit's tool access level, chosen in Orbit's settings; the main app never reads it. */
+private val ORBIT_FULL_ACCESS = androidx.datastore.preferences.core.booleanPreferencesKey("orbit_full_access")
+
 /**
  * Orbit's own tools: they only read and change Orbit's own things (its memory, notes, skills, vault,
  * files, reminders and tasks, its name), so Orbit never waits on a review for them.
@@ -1140,9 +1151,12 @@ internal fun isOrbitInternalTool(toolName: String): Boolean =
         toolName == "use_package" || toolName == "search_chat_history" ||
         defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW) == PermissionLevel.ALLOW
 
-/** The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. */
-internal fun orbitDefaultPermissionLevel(toolName: String): PermissionLevel =
-    if (isOrbitInternalTool(toolName)) PermissionLevel.ALLOW else PermissionLevel.AUTO_REVIEW
+/**
+ * The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. With
+ * [fullAccess] every tool runs unreviewed; otherwise only Orbit's own tools do.
+ */
+internal fun orbitDefaultPermissionLevel(toolName: String, fullAccess: Boolean): PermissionLevel =
+    if (fullAccess || isOrbitInternalTool(toolName)) PermissionLevel.ALLOW else PermissionLevel.AUTO_REVIEW
 
 /**
  * The level a tool takes when the user has not chosen one for it, or null when it simply follows the

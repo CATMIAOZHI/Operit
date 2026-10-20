@@ -9526,6 +9526,13 @@
     <string name="orbit_vault_save">Save</string>
     <string name="orbit_vault_save_failed">Couldn\'t save. The vault holds up to %1$d items and may be full.</string>
     <string name="orbit_vault_title">Password vault</string>
+    <string name="orbit_access_title">Tool permissions</string>
+    <string name="orbit_access_row_desc">How Orbit\'s tool calls are allowed</string>
+    <string name="orbit_access_full">Full access</string>
+    <string name="orbit_access_review">Auto review (fast)</string>
+    <string name="orbit_access_help">Neither option asks you. The difference is whether a quick automatic review checks each call first. Tools you set individually in developer mode keep their own setting.</string>
+    <string name="orbit_access_full_desc">Every tool runs right away with no review. Fastest; only use it if you trust Orbit.</string>
+    <string name="orbit_access_review_desc">Orbit\'s own tools run right away; general tools like terminal, files and browser get a quick automatic review first.</string>
     <string name="orbit_vault_desc">Passwords and keys %1$s uses to sign in for you. Tap one to see what you entered; %1$s itself never sees them.</string>
     <string name="orbit_vault_empty">No passwords or keys saved yet. When one is needed, %1$s shows a secure entry card.</string>
     <string name="orbit_vault_delete_title">Delete this sign-in or key?</string>

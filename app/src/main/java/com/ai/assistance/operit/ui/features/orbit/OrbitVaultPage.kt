@@ -189,14 +189,9 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
     var revealed by remember(entryId) { mutableStateOf(false) }
     var confirming by remember { mutableStateOf(false) }
     var deleting by remember { mutableStateOf(false) }
-    var left by remember { mutableStateOf(false) }
-    // Leaves once: going back is off while a delete runs, and a finished delete leaves by itself.
-    fun leave() {
-        if (left) return
-        left = true
-        onBack()
-    }
-    BackHandler { if (!deleting) leave() }
+    // Going back is off while a delete runs; a finished delete leaves by itself. [onBack] only
+    // leaves while this page is on top, so it is safe to ask twice.
+    BackHandler { if (!deleting) onBack() }
     SecureWindow()
     val copiedText = stringResource(R.string.orbit_vault_copied)
     fun copy(text: String) {
@@ -210,7 +205,7 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
             .verticalScroll(rememberScrollState())
             .padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
     ) {
-        OrbitPageHeader(entry?.site ?: stringResource(R.string.orbit_vault_title), { if (!deleting) leave() })
+        OrbitPageHeader(entry?.site ?: stringResource(R.string.orbit_vault_title), { if (!deleting) onBack() })
         when {
             loaded == null -> OrbitDelayedSpinner()
             loaded.isFailure -> Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -318,7 +313,7 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
                     }
                     deleting = false
                     confirming = false
-                    if (ok) leave()
+                    if (ok) onBack()
                     else Toast.makeText(context, context.getString(R.string.orbit_vault_delete_failed), Toast.LENGTH_SHORT).show()
                 }
             },
