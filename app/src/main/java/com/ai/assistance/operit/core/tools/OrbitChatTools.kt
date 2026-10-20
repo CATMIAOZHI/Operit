@@ -77,7 +77,8 @@ internal object OrbitChatTools {
                 "list" -> JSONArray().apply {
                     put(JSONObject().put("chat_id", orbit.chatId).put("title", "main").put("current", caller == orbit.chatId))
                     orbit.sideChats.forEach {
-                        put(JSONObject().put("chat_id", it.chatId).put("title", it.title).put("current", caller == it.chatId))
+                        put(JSONObject().put("chat_id", it.chatId).put("title", it.title).put("current", caller == it.chatId)
+                            .put("archived", it.archived))
                     }
                 }
                 "create" -> {

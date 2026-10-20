@@ -254,6 +254,9 @@ internal object OrbitWork {
     /** One short line of plain words for a list row, from text that may be Markdown. */
     fun listLine(text: String): String = firstLine(plain(text))
 
+    /** All of a text's words without Markdown marks, for the search page. */
+    fun plainText(text: String): String = plain(text)
+
     /** Markdown reduced to the words a list row can show: link and image labels, no marks. */
     private fun plain(text: String): String = text.lineSequence()
         .filterNot { it.trimStart().startsWith("```") }

@@ -14,6 +14,7 @@ import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.OrbitRunOutcome
 import com.ai.assistance.operit.data.preferences.OrbitSettings
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
+import com.ai.assistance.operit.data.preferences.canAddSideChat
 import com.ai.assistance.operit.services.ChatServiceCore
 import com.ai.assistance.operit.util.FileUtils
 import java.util.Calendar
@@ -143,7 +144,7 @@ object OrbitCompanion {
             val preferences = OrbitPreferences.getInstance(appContext)
             val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
                 ?: error("Orbit no longer exists")
-            check(orbit.sideChats.size < OrbitSettings.MAX_SIDE_CHATS) { "Too many side chats" }
+            check(orbit.canAddSideChat) { "Too many side chats" }
             val chatId = createChat(appContext, null, clean, titled = false)
             preferences.rememberChatOwner(chatId, orbit.id)
             preferences.addSideChat(orbit.id, chatId, clean)
@@ -158,6 +159,13 @@ object OrbitCompanion {
         OrbitPreferences.getInstance(appContext).renameSideChat(orbitId, chatId, clean)
         runCatching { core(appContext).getChatHistoryDelegate().updateChatTitleAndWait(chatId, clean) }
     }
+
+    suspend fun setSideChatPinned(context: Context, orbitId: String, chatId: String, pinned: Boolean) =
+        OrbitPreferences.getInstance(context.applicationContext).setSideChatPinned(orbitId, chatId, pinned)
+
+    /** Archived side chats leave the menu; their history, memory and reminders stay as they are. */
+    suspend fun setSideChatArchived(context: Context, orbitId: String, chatId: String, archived: Boolean) =
+        OrbitPreferences.getInstance(context.applicationContext).setSideChatArchived(orbitId, chatId, archived)
 
     /**
      * A side chat opened without a title takes the one generated from its first message. One

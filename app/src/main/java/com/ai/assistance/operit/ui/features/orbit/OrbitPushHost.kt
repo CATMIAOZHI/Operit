@@ -289,6 +289,8 @@ private fun <T> forget(holder: SaveableStateHolder, before: List<T>, after: List
  * way. The back swipe moves it with the finger and settles it back if let go early, like the pages
  * in [OrbitPushHost]. The page's own plain back is left to this, as it is in the host; a page can
  * still intercept back first. [backEnabled] false leaves back to something on top of it.
+ * [fade] shows it in place instead (a search page over the menu): it fades in, and the back swipe
+ * fades and shrinks it a little under the finger.
  */
 @Composable
 internal fun OrbitCoverPage(
@@ -297,6 +299,7 @@ internal fun OrbitCoverPage(
     fromBottom: Boolean = false,
     backEnabled: Boolean = true,
     dim: Float = 0f,
+    fade: Boolean = false,
     content: @Composable () -> Unit,
 ) {
     // 0: in place; 1: off screen.
@@ -354,7 +357,16 @@ internal fun OrbitCoverPage(
     Box(
         Modifier.fillMaxSize()
             .graphicsLayer {
-                if (fromBottom) translationY = size.height * slide.value else translationX = size.width * slide.value
+                when {
+                    fade -> {
+                        alpha = 1f - slide.value
+                        val scale = 1f - 0.06f * slide.value
+                        scaleX = scale
+                        scaleY = scale
+                    }
+                    fromBottom -> translationY = size.height * slide.value
+                    else -> translationX = size.width * slide.value
+                }
             }
             // The page takes every touch on it, so blank parts never let a tap through underneath.
             .pointerInput(Unit) { awaitPointerEventScope { while (true) awaitPointerEvent() } }

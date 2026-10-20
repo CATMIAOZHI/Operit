@@ -69,7 +69,26 @@ data class OrbitProfile(
     val talkChatIds: List<String> get() = listOf(chatId) + sideChats.map { it.chatId }
 }
 
-data class OrbitSideChat(val chatId: String, val title: String, val createdAt: Long)
+/**
+ * One side chat. [pinnedAt] above zero keeps it at the top of the menu, newest pin first; an
+ * [archived] one leaves the menu for the archive list, like Muse's, and keeps its history.
+ */
+data class OrbitSideChat(
+    val chatId: String,
+    val title: String,
+    val createdAt: Long,
+    val pinnedAt: Long = 0L,
+    val archived: Boolean = false,
+) {
+    val pinned: Boolean get() = pinnedAt > 0L
+}
+
+/** The side chats still in the menu, which the side chat limit counts. */
+val OrbitProfile.openSideChats: List<OrbitSideChat> get() = sideChats.filterNot { it.archived }
+
+/** Whether one more side chat fits: open ones under the limit, archived ones under a larger cap. */
+val OrbitProfile.canAddSideChat: Boolean
+    get() = openSideChats.size < OrbitSettings.MAX_SIDE_CHATS && sideChats.size < OrbitSettings.MAX_ALL_SIDE_CHATS
 
 data class OrbitSettings(
     /** Every Orbit the user has made. */
@@ -111,6 +130,8 @@ data class OrbitSettings(
         const val MAX_FOCUS_NOTES_LENGTH = 1000
         const val MAX_NAME_LENGTH = 24
         const val MAX_SIDE_CHATS = 20
+        /** Archived side chats keep their history; this only keeps the list from growing without end. */
+        const val MAX_ALL_SIDE_CHATS = 100
         const val MAX_SIDE_CHAT_TITLE = 40
     }
 }
@@ -312,9 +333,39 @@ class OrbitPreferences private constructor(context: Context) {
         updateOrbits { orbits ->
             orbits.map {
                 if (it.id != orbitId) return@map it
-                check(it.sideChats.size < OrbitSettings.MAX_SIDE_CHATS) { "Too many side chats" }
+                check(it.canAddSideChat) { "Too many side chats" }
                 it.copy(sideChats = it.sideChats + OrbitSideChat(chatId, title, System.currentTimeMillis()),
                     ownedChatIds = it.ownedChatIds + chatId)
+            }
+        }
+    }
+
+    /** Pins a side chat to the top of the menu, or unpins it. */
+    suspend fun setSideChatPinned(orbitId: String, chatId: String, pinned: Boolean) {
+        updateOrbits { orbits ->
+            orbits.map { orbit ->
+                if (orbit.id != orbitId) orbit
+                else orbit.copy(sideChats = orbit.sideChats.map {
+                    if (it.chatId == chatId) it.copy(pinnedAt = if (pinned) System.currentTimeMillis() else 0L) else it
+                })
+            }
+        }
+    }
+
+    /**
+     * Moves a side chat to the archive, or back to the menu. Archiving drops its pin. Bringing one
+     * back fails when the menu already holds as many side chats as it may.
+     */
+    suspend fun setSideChatArchived(orbitId: String, chatId: String, archived: Boolean) {
+        updateOrbits { orbits ->
+            orbits.map { orbit ->
+                if (orbit.id != orbitId) return@map orbit
+                val side = orbit.sideChats.firstOrNull { it.chatId == chatId } ?: return@map orbit
+                if (side.archived == archived) return@map orbit
+                if (!archived) check(orbit.openSideChats.size < OrbitSettings.MAX_SIDE_CHATS) { "Too many side chats" }
+                orbit.copy(sideChats = orbit.sideChats.map {
+                    if (it.chatId == chatId) it.copy(archived = archived, pinnedAt = 0L) else it
+                })
             }
         }
     }
@@ -485,7 +536,11 @@ class OrbitPreferences private constructor(context: Context) {
                             (0 until list.length()).mapNotNull { i ->
                                 list.optJSONObject(i)?.let { side ->
                                     side.optString("chatId").takeIf { it.isNotBlank() }?.let {
-                                        OrbitSideChat(it, side.optString("title"), side.optLong("createdAt"))
+                                        OrbitSideChat(
+                                            it, side.optString("title"), side.optLong("createdAt"),
+                                            pinnedAt = side.optLong("pinnedAt", 0L),
+                                            archived = side.optBoolean("archived", false),
+                                        )
                                     }
                                 }
                             }
@@ -512,6 +567,7 @@ class OrbitPreferences private constructor(context: Context) {
                             put("deleting", orbit.deleting)
                             put("sideChats", JSONArray(orbit.sideChats.map {
                                 JSONObject().put("chatId", it.chatId).put("title", it.title).put("createdAt", it.createdAt)
+                                    .put("pinnedAt", it.pinnedAt).put("archived", it.archived)
                             }))
                             put("browserSharesMainLogin", orbit.browserSharesMainLogin)
                         }

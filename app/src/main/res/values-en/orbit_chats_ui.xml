@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_chats_pin">Pin</string>
+    <string name="orbit_chats_unpin">Unpin</string>
+    <string name="orbit_chats_pinned">Pinned</string>
+    <string name="orbit_chats_archive">Archive</string>
+    <string name="orbit_chats_unarchive">Unarchive</string>
+    <string name="orbit_chats_archived_open">Archived side chats</string>
+    <string name="orbit_chats_archived_title">Archived side chats</string>
+    <string name="orbit_chats_archived_empty">No archived side chats</string>
+    <string name="orbit_chats_archived_empty_hint">Long press a side chat and choose Archive to keep it here. Its messages stay.</string>
+    <string name="orbit_chats_unarchive_limit">You already have %1$d side chats. Archive or delete one first.</string>
+    <string name="orbit_chats_limit_all">You have %1$d side chats counting archived ones. Delete some to make another.</string>
+    <string name="orbit_search_title">Search</string>
+    <string name="orbit_search_hint">Search what was said in the main chat and side chats</string>
+    <string name="orbit_search_empty">No matching messages</string>
+    <string name="orbit_search_failed">Search didn\'t work. Try again later.</string>
+    <string name="orbit_search_clear">Clear</string>
+    <string name="orbit_search_close">Close search</string>
+    <string name="orbit_search_today">Today</string>
+    <string name="orbit_search_yesterday">Yesterday</string>
+    <string name="orbit_search_more_failed">Couldn\'t load more results</string>
+    <string name="orbit_search_retry">Retry</string>
+</resources>
