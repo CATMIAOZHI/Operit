@@ -1,12 +1,17 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.horizontalScroll
@@ -14,6 +19,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
@@ -22,21 +28,41 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.util.VelocityTracker
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.LinkAnnotation
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDecoration
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withLink
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
@@ -57,6 +83,8 @@ import com.ai.assistance.operit.util.AppLogger
 import java.text.DateFormat
 import java.util.Date
 import java.util.UUID
+import kotlin.math.abs
+import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.launch
@@ -318,6 +346,164 @@ private fun rememberAction(): (suspend () -> Unit) -> Unit {
     }
 }
 
+// ---------------------------------------------------------------- Feed and Ideas: shared parts
+
+/** Lets a row run edge to edge past the page's side padding, for its divider and the swipe colour. */
+private fun Modifier.bleed(horizontal: Dp): Modifier = layout { measurable, constraints ->
+    val extra = (horizontal * 2).roundToPx()
+    val width = constraints.maxWidth + extra
+    val placeable = measurable.measure(constraints.copy(minWidth = width, maxWidth = width))
+    layout(constraints.maxWidth, placeable.height) { placeable.place(-extra / 2, 0) }
+}
+
+/** The emoji beside a post or an idea, drawn large like Muse's little pictures. */
+@Composable
+private fun BoardEmoji(emoji: String, fallback: String) {
+    Box(Modifier.size(52.dp), contentAlignment = Alignment.Center) {
+        Text(emoji.ifBlank { fallback }, fontSize = 36.sp, lineHeight = 42.sp, maxLines = 1)
+    }
+}
+
+// A Markdown link's address runs to its closing bracket: any letters (Chinese paths too) and
+// balanced brackets like Wikipedia's "Formula_One_(video_game)". A bare address in running Chinese
+// text has no clear end, so it stops at the first character that is not plain URL ASCII.
+private const val BARE_URL = """https?://(?:[A-Za-z0-9\-._~:/?#@!$&'*+,;=%]|\([A-Za-z0-9\-._~:/?#@!$&'*+,;=%]*\))+"""
+private val linkPattern = Regex("""\[([^\]\n]+)]\((https?://(?:[^\s()]|\([^\s()]*\))+)\)|($BARE_URL)""")
+
+/** Body text with Markdown links and bare web addresses made tappable. */
+private fun linkify(text: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
+    val style = TextLinkStyles(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
+    var last = 0
+    for (match in linkPattern.findAll(text)) {
+        append(text.substring(last, match.range.first))
+        val label = match.groupValues[1]
+        if (label.isNotEmpty()) {
+            withLink(LinkAnnotation.Url(match.groupValues[2], style)) { append(label) }
+        } else {
+            // A bare address keeps the punctuation that ends the sentence as plain text.
+            val raw = match.groupValues[3]
+            val url = raw.trimEnd('.', ',', ';', ':', '!', '?', '\'')
+            withLink(LinkAnnotation.Url(url, style)) { append(url) }
+            append(raw.substring(url.length))
+        }
+        last = match.range.last + 1
+    }
+    append(text.substring(last))
+}
+
+private fun ago(time: Long): String = DateUtils.getRelativeTimeSpanString(
+    time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS, DateUtils.FORMAT_ABBREV_RELATIVE,
+).toString()
+
+private val LikeGreen = Color(0xFF34C759)
+private val DislikeRed = Color(0xFFFF3B30)
+
+/**
+ * A row the user can swipe like iOS mail: right uncovers a green thumbs up, left a red thumbs
+ * down. Let go past the mark and [onVote] gets 1 or -1; the row always springs back.
+ */
+@Composable
+private fun SwipeVoteRow(onVote: (Int) -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+    val scope = rememberCoroutineScope()
+    val haptic = LocalHapticFeedback.current
+    val density = LocalDensity.current
+    val offset = remember { Animatable(0f) }
+    // Where the finger has taken the row; the animation follows it.
+    val target = remember { floatArrayOf(0f) }
+    var width by remember { mutableIntStateOf(0) }
+    val threshold = with(density) { maxOf(88.dp.toPx(), width * 0.25f) }
+    var armed by remember { mutableIntStateOf(0) }
+    val currentOnVote by rememberUpdatedState(onVote)
+    val drag by rememberUpdatedState { delta: Float ->
+        val now = target[0]
+        // Past the mark the row pulls back like a rubber band.
+        val next = now + if (abs(now) > threshold && sign(delta) == sign(now)) delta * 0.35f else delta
+        target[0] = next
+        scope.launch { offset.snapTo(next) }
+        val direction = when {
+            next >= threshold -> 1
+            next <= -threshold -> -1
+            else -> 0
+        }
+        if (direction != armed) {
+            if (direction != 0) haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+            armed = direction
+        }
+    }
+    // A finished swipe past the mark votes; a touch the system takes away only springs back.
+    fun settle(vote: Boolean, velocity: Float) {
+        val direction = armed
+        armed = 0
+        target[0] = 0f
+        if (vote && direction != 0) currentOnVote(direction)
+        scope.launch {
+            offset.animateTo(0f, spring(dampingRatio = 0.82f, stiffness = Spring.StiffnessMediumLow), initialVelocity = velocity)
+        }
+    }
+    val currentSettle by rememberUpdatedState(::settle)
+    Box(modifier.fillMaxWidth().onSizeChanged { width = it.width }) {
+        // What the swipe uncovers. Read while drawing, so a drag never recomposes the row.
+        Box(
+            Modifier.matchParentSize().drawBehind {
+                val x = offset.value
+                if (x != 0f) {
+                    val progress = (abs(x) / threshold).coerceIn(0f, 1f)
+                    drawRect((if (x > 0) LikeGreen else DislikeRed).copy(alpha = 0.16f + 0.22f * progress))
+                }
+            }
+        )
+        for (direction in listOf(1, -1)) {
+            Icon(
+                orbitIcon(if (direction > 0) "thumbs-up" else "thumbs-down"), null,
+                Modifier.align(if (direction > 0) Alignment.CenterStart else Alignment.CenterEnd)
+                    .padding(horizontal = 36.dp).size(26.dp)
+                    .graphicsLayer {
+                        val shown = (offset.value * direction / threshold).coerceIn(0f, 1f)
+                        alpha = shown
+                        val scale = if (armed == direction) 1.18f else 0.8f + 0.2f * shown
+                        scaleX = scale
+                        scaleY = scale
+                    },
+            )
+        }
+        Box(
+            Modifier
+                // Read before the row moves, so the finger's positions are not shifted by the slide.
+                .pointerInput(Unit) {
+                    val tracker = VelocityTracker()
+                    detectHorizontalDragGestures(
+                        onDragStart = {
+                            tracker.resetTracking()
+                            target[0] = offset.value
+                        },
+                        onDragEnd = { currentSettle(true, tracker.calculateVelocity().x) },
+                        onDragCancel = { currentSettle(false, 0f) },
+                        onHorizontalDrag = { change, amount ->
+                            change.consume()
+                            tracker.addPosition(change.uptimeMillis, change.position)
+                            drag(amount)
+                        },
+                    )
+                }
+                .graphicsLayer {
+                    translationX = offset.value
+                    shape = RoundedCornerShape(28.dp)
+                    clip = offset.value != 0f
+                },
+        ) { content() }
+    }
+}
+
+@Composable
+private fun VoteButton(icon: String, label: String, active: Boolean, onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.semantics { selected = active }) {
+        Icon(
+            orbitIcon(icon), label, Modifier.size(22.dp),
+            tint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        )
+    }
+}
+
 // ---------------------------------------------------------------- Feed
 
 @Composable
@@ -343,26 +529,28 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
         title = stringResource(R.string.orbit_tab_feed),
         action = {
             if (!brief.isNullOrBlank()) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    OrbitCircleButton(orbitIcon("pencil"), stringResource(R.string.orbit_feed_brief_edit), { editingBrief = true })
-                    OrbitCircleButton(orbitIcon("sparkles"), stringResource(R.string.orbit_feed_write_now), {
-                        action { if (OrbitFeedGenerator.writeOne(context, orbit.id)) showToast(context, started) }
-                    })
-                }
+                OrbitCircleButton(orbitIcon("sparkles"), stringResource(R.string.orbit_feed_write_now), {
+                    action { if (OrbitFeedGenerator.writeOne(context, orbit.id)) showToast(context, started) }
+                })
             }
         },
     ) {
-        if (brief != null && brief.isNullOrBlank()) {
+        val currentBrief = brief
+        if (currentBrief != null) {
             item(key = "brief") {
-                SoftCard {
-                    Icon(orbitIcon("newspaper"), null, Modifier.size(28.dp))
-                    Text(
-                        stringResource(R.string.orbit_feed_brief_title), style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    Text(stringResource(R.string.orbit_feed_brief_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(Modifier.height(4.dp))
-                    PillButton(stringResource(R.string.orbit_feed_brief_write), "pencil", { editingBrief = true })
+                if (currentBrief.isBlank()) {
+                    SoftCard {
+                        Icon(orbitIcon("newspaper"), null, Modifier.size(28.dp))
+                        Text(
+                            stringResource(R.string.orbit_feed_brief_title), style = MaterialTheme.typography.titleLarge,
+                            fontWeight = FontWeight.SemiBold,
+                        )
+                        Text(stringResource(R.string.orbit_feed_brief_hint), color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        PillButton(stringResource(R.string.orbit_feed_brief_write), "pencil", { editingBrief = true })
+                    }
+                } else {
+                    BriefPill(currentBrief) { editingBrief = true }
                 }
             }
         }
@@ -371,11 +559,12 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
             list == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
             list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_feed_posts_empty)) }
             else -> items(list, key = { it.id }) { post ->
-                FeedPostCard(
+                FeedPostRow(
                     post = post,
                     isFirst = post.id == list.first().id,
                     isLast = post.id == list.last().id,
-                    onLike = { action { repository.update(post.id, liked = !post.liked) } },
+                    // Tapping the chosen answer again takes it back.
+                    onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
                     onDiscuss = {
                         onDraft(context.getString(R.string.orbit_feed_discuss_message, post.title, post.body.take(1500)))
                     },
@@ -405,99 +594,179 @@ private fun OrbitFeedPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     }
 }
 
+/** The feed's instructions in one line; tapping it opens them for editing. */
 @Composable
-private fun BriefDialog(initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
-    var text by rememberSaveable { mutableStateOf(initial) }
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.orbit_feed_brief)) },
-        text = {
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text(
-                    stringResource(R.string.orbit_feed_brief_hint), style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                OutlinedTextField(
-                    text, { if (it.length <= OrbitBoardRepository.MAX_BRIEF) text = it },
-                    minLines = 4, maxLines = 10, modifier = Modifier.fillMaxWidth(),
-                )
-            }
-        },
-        confirmButton = { TextButton(onClick = { onSave(text) }) { Text(stringResource(R.string.save)) } },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
-    )
+private fun BriefPill(brief: String, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(50),
+        color = colors.onSurface.copy(alpha = 0.045f),
+        border = BorderStroke(1.dp, colors.outlineVariant.copy(alpha = 0.5f)),
+        modifier = Modifier.fillMaxWidth().semantics { contentDescription = brief },
+    ) {
+        Text(
+            brief.replace(Regex("\\s+"), " "), style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant,
+            maxLines = 1, overflow = TextOverflow.Ellipsis,
+            modifier = Modifier.padding(horizontal = 20.dp, vertical = 15.dp),
+        )
+    }
 }
 
 @Composable
-private fun FeedPostCard(
-    post: OrbitBoardRepository.Item,
-    isFirst: Boolean,
-    isLast: Boolean,
-    onLike: () -> Unit,
-    onDiscuss: () -> Unit,
-    onMove: (Boolean) -> Unit,
-    onDelete: () -> Unit,
-) {
-    var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
-    var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
-    SoftCard(Modifier.animateContentSize().clip(RoundedCornerShape(24.dp)).clickable { expanded = !expanded }) {
-        Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text(shortDate(post.createdAt), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        Text(
-            post.body, style = MaterialTheme.typography.bodyLarge,
-            maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
-        )
-        if (showWhy && post.extra.isNotBlank()) {
-            Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surface) {
-                Column(Modifier.padding(12.dp)) {
-                    Text(stringResource(R.string.orbit_feed_why), style = MaterialTheme.typography.labelLarge)
-                    Text(post.extra, style = MaterialTheme.typography.bodyMedium)
-                }
-            }
-        }
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            IconButton(onClick = onLike) {
-                Icon(
-                    orbitIcon("heart"), stringResource(R.string.orbit_feed_like),
-                    tint = if (post.liked) Color(0xFFE5484D) else MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            TextButton(onClick = onDiscuss) {
-                Icon(orbitIcon("message-circle"), null, Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.orbit_feed_discuss))
-            }
-            Spacer(Modifier.weight(1f))
-            if (post.extra.isNotBlank()) {
-                IconButton(onClick = { showWhy = !showWhy }) {
-                    Icon(orbitIcon("info"), stringResource(R.string.orbit_feed_why), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-            Box {
-                IconButton(onClick = { menu = true }) {
-                    Icon(orbitIcon("ellipsis"), stringResource(R.string.more), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    if (!isFirst) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_up)) }, onClick = { menu = false; onMove(true) })
+private fun BriefDialog(initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+    var text by rememberSaveable { mutableStateOf(initial) }
+    val colors = MaterialTheme.colorScheme
+    val changed = text.trim() != initial.trim()
+    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = 20.dp).imePadding(),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            // With the keyboard up the card gives way and scrolls; the two buttons always keep their room.
+            Surface(
+                shape = RoundedCornerShape(32.dp), color = colors.surfaceContainerHigh,
+                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
+            ) {
+                Column(Modifier.verticalScroll(rememberScrollState())) {
+                    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 16.dp)) {
+                        Text(
+                            stringResource(R.string.orbit_feed_brief_dialog_title),
+                            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                        )
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            stringResource(if (initial.isBlank()) R.string.orbit_feed_brief_hint else R.string.orbit_feed_brief_dialog_hint),
+                            style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                        )
                     }
-                    if (!isLast) {
-                        DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_down)) }, onClick = { menu = false; onMove(false) })
-                    }
-                    DropdownMenuItem(
-                        text = { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) },
-                        onClick = { menu = false; onDelete() },
+                    HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.5f))
+                    TextField(
+                        text, { if (it.length <= OrbitBoardRepository.MAX_BRIEF) text = it },
+                        textStyle = MaterialTheme.typography.bodyLarge,
+                        minLines = 6, maxLines = 12,
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
                     )
                 }
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                DialogPill(stringResource(R.string.cancel), enabled = true, onClick = onDismiss, modifier = Modifier.weight(1f))
+                DialogPill(stringResource(R.string.save), enabled = changed, onClick = { onSave(text) }, modifier = Modifier.weight(1f))
             }
         }
     }
 }
 
-// ---------------------------------------------------------------- Ideas
+@Composable
+private fun DialogPill(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50), color = colors.surfaceContainerHigh,
+        modifier = modifier.height(56.dp),
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Text(
+                text, style = MaterialTheme.typography.titleMedium,
+                color = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f),
+            )
+        }
+    }
+}
 
 @OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun FeedPostRow(
+    post: OrbitBoardRepository.Item,
+    isFirst: Boolean,
+    isLast: Boolean,
+    onVote: (Int) -> Unit,
+    onDiscuss: () -> Unit,
+    onMove: (Boolean) -> Unit,
+    onDelete: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
+    var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
+    var menu by remember { mutableStateOf(false) }
+    val body = remember(post.body, colors.primary) { linkify(post.body, colors.primary) }
+    Column(Modifier.bleed(20.dp)) {
+        Box {
+            Row(
+                Modifier.fillMaxWidth()
+                    .combinedClickable(onClick = { expanded = !expanded }, onLongClick = { menu = true })
+                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
+            ) {
+                BoardEmoji(post.emoji, "📰")
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f).animateContentSize()) {
+                    Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        body, style = MaterialTheme.typography.bodyLarge,
+                        maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
+                    )
+                    if (showWhy && post.extra.isNotBlank()) {
+                        Spacer(Modifier.height(10.dp))
+                        Surface(shape = RoundedCornerShape(16.dp), color = colors.onSurface.copy(alpha = 0.05f)) {
+                            Column(Modifier.padding(12.dp)) {
+                                Text(stringResource(R.string.orbit_feed_why), style = MaterialTheme.typography.labelLarge)
+                                Text(post.extra, style = MaterialTheme.typography.bodyMedium)
+                            }
+                        }
+                    }
+                    // The buttons line up with the text; their touch area reaches past it to the left.
+                    Row(Modifier.fillMaxWidth().offset(x = (-12).dp), verticalAlignment = Alignment.CenterVertically) {
+                        VoteButton("thumbs-up", stringResource(R.string.orbit_feed_like), post.liked) { onVote(1) }
+                        VoteButton("thumbs-down", stringResource(R.string.orbit_feed_dislike), post.disliked) { onVote(-1) }
+                        // With large text the label shortens before the ⓘ button is squeezed.
+                        TextButton(
+                            onClick = onDiscuss, colors = ButtonDefaults.textButtonColors(contentColor = colors.onSurface),
+                            modifier = Modifier.weight(1.5f, fill = false),
+                        ) {
+                            Icon(orbitIcon("message-circle"), null, Modifier.size(20.dp))
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                stringResource(R.string.orbit_feed_discuss), style = MaterialTheme.typography.bodyLarge,
+                                maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        // The time takes what room is left, so the ⓘ button always keeps its full size.
+                        Text(
+                            ago(post.createdAt), style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis, textAlign = TextAlign.End,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (post.extra.isNotBlank()) {
+                            IconButton(onClick = { showWhy = !showWhy }, modifier = Modifier.offset(x = 12.dp)) {
+                                Icon(orbitIcon("info"), stringResource(R.string.orbit_feed_why), Modifier.size(22.dp))
+                            }
+                        }
+                    }
+                }
+            }
+            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                if (!isFirst) {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_up)) }, onClick = { menu = false; onMove(true) })
+                }
+                if (!isLast) {
+                    DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_down)) }, onClick = { menu = false; onMove(false) })
+                }
+                DropdownMenuItem(
+                    text = { Text(stringResource(R.string.delete), color = colors.error) },
+                    onClick = { menu = false; onDelete() },
+                )
+            }
+        }
+        HorizontalDivider(Modifier.padding(top = 8.dp), color = colors.outlineVariant.copy(alpha = 0.5f))
+    }
+}
+
+// ---------------------------------------------------------------- Ideas
+
 @Composable
 private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val context = LocalContext.current
@@ -505,7 +774,11 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.IDEAS) }
     val ideas by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
     var dismissing by remember { mutableStateOf<OrbitBoardRepository.Item?>(null) }
+    var openedId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     val askIdeas = { onDraft(context.getString(R.string.orbit_ideas_ask_message)) }
+    // Tapping the chosen answer again takes it back.
+    fun vote(idea: OrbitBoardRepository.Item, vote: Int) =
+        action { repository.update(idea.id, vote = if (idea.vote == vote) 0 else vote) }
 
     TabList(title = stringResource(R.string.orbit_tab_ideas)) {
         val list = ideas
@@ -527,40 +800,15 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
         } else {
             item(key = "hint") {
                 Text(
-                    stringResource(R.string.orbit_idea_dismiss_hint), style = MaterialTheme.typography.bodySmall,
+                    stringResource(R.string.orbit_idea_swipe_hint), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
             items(open, key = { it.id }) { idea ->
-                val days = ((idea.expiresAt - System.currentTimeMillis()) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.045f),
-                    modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))
-                        .combinedClickable(onClick = {}, onLongClick = { dismissing = idea }),
-                ) {
-                    Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                        Text(idea.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                        Text(idea.body, style = MaterialTheme.typography.bodyLarge)
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            if (idea.expiresAt > 0) {
-                                Text(
-                                    stringResource(R.string.orbit_idea_expires, days),
-                                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            Spacer(Modifier.weight(1f))
-                            // Only fills the chat input. The card stays open until Orbit has
-                            // really done it, so a test tap changes nothing.
-                            Button(onClick = {
-                                onDraft(context.getString(R.string.orbit_idea_build_message, idea.title, idea.extra.ifBlank { idea.body }))
-                            }) { Text(stringResource(R.string.orbit_idea_build)) }
-                        }
-                    }
-                }
+                IdeaRow(idea, onOpen = { openedId = idea.id }, onVote = { vote(idea, it) })
             }
             item(key = "more") {
-                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(top = 8.dp), contentAlignment = Alignment.Center) {
                     PillButton(stringResource(R.string.orbit_ideas_ask), "sparkles", askIdeas)
                 }
             }
@@ -571,6 +819,26 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
                 OrbitListRow(orbitIcon("check"), idea.title, idea.body, shortDate(idea.updatedAt), onClick = {})
             }
         }
+    }
+
+    // The sheet follows the saved idea, so a vote shows at once; an idea that is gone closes it.
+    val opened = openedId?.let { id -> ideas?.firstOrNull { it.id == id && it.state == "OPEN" } }
+    LaunchedEffect(ideas, openedId) { if (openedId != null && ideas != null && opened == null) openedId = null }
+    if (opened != null) {
+        IdeaSheet(
+            idea = opened,
+            onDismiss = { openedId = null },
+            // Only fills the chat input. The idea stays open until Orbit has really done it.
+            onStart = {
+                openedId = null
+                onDraft(context.getString(R.string.orbit_idea_build_message, opened.title, opened.extra.ifBlank { opened.body }))
+            },
+            onVote = { vote(opened, it) },
+            onClose = {
+                openedId = null
+                dismissing = opened
+            },
+        )
     }
 
     dismissing?.let { idea ->
@@ -586,6 +854,167 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
             },
             dismissButton = { TextButton(onClick = { dismissing = null }) { Text(stringResource(R.string.cancel)) } },
         )
+    }
+}
+
+@Composable
+private fun IdeaRow(idea: OrbitBoardRepository.Item, onOpen: () -> Unit, onVote: (Int) -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    val likeLabel = stringResource(R.string.orbit_feed_like)
+    val dislikeLabel = stringResource(R.string.orbit_feed_dislike)
+    Column(Modifier.bleed(20.dp)) {
+        SwipeVoteRow(onVote = onVote) {
+            Row(
+                Modifier.fillMaxWidth().background(colors.background).clickable(onClick = onOpen)
+                    // Screen readers get the two swipes as actions on the row they focus.
+                    .semantics {
+                        customActions = listOf(
+                            CustomAccessibilityAction(likeLabel) { onVote(1); true },
+                            CustomAccessibilityAction(dislikeLabel) { onVote(-1); true },
+                        )
+                    }
+                    .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 16.dp)
+                    // An idea the user does not want fades back, so the rest stand out.
+                    .graphicsLayer { alpha = if (idea.disliked) 0.5f else 1f },
+            ) {
+                BoardEmoji(idea.emoji, "💡")
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.Top) {
+                        Text(
+                            idea.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        if (idea.vote != 0) {
+                            Icon(
+                                orbitIcon(if (idea.liked) "thumbs-up" else "thumbs-down"),
+                                if (idea.liked) likeLabel else dislikeLabel,
+                                Modifier.padding(start = 8.dp, top = 4.dp).size(18.dp),
+                                tint = if (idea.liked) LikeGreen else colors.onSurfaceVariant,
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        idea.body, style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant,
+                        maxLines = 5, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+        HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.5f))
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun IdeaSheet(
+    idea: OrbitBoardRepository.Item,
+    onDismiss: () -> Unit,
+    onStart: () -> Unit,
+    onVote: (Int) -> Unit,
+    onClose: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    val scope = rememberCoroutineScope()
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var menu by remember { mutableStateOf(false) }
+    val body = remember(idea.body, colors.primary) { linkify(idea.body, colors.primary) }
+    // The sheet slides down before the next thing happens.
+    fun hideThen(block: () -> Unit) {
+        scope.launch {
+            runCatching { sheetState.hide() }
+            block()
+        }
+    }
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
+        Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
+            Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
+                Column(Modifier.padding(horizontal = 24.dp)) {
+                    Text(idea.title, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(12.dp))
+                    Text(body, style = MaterialTheme.typography.bodyLarge)
+                    if (idea.expiresAt > 0) {
+                        val days = ((idea.expiresAt - System.currentTimeMillis()) / (24L * 60 * 60 * 1000)).toInt().coerceAtLeast(1)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            stringResource(R.string.orbit_idea_expires, days), style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant,
+                        )
+                    }
+                }
+                if (idea.parts.isNotEmpty()) {
+                    HorizontalDivider(Modifier.padding(top = 20.dp), color = colors.outlineVariant.copy(alpha = 0.5f))
+                    Column(Modifier.padding(horizontal = 24.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(18.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                stringResource(R.string.orbit_idea_includes), style = MaterialTheme.typography.titleLarge,
+                                modifier = Modifier.weight(1f),
+                            )
+                            Icon(orbitIcon("clipboard-list"), null, Modifier.size(26.dp), tint = colors.onSurfaceVariant)
+                        }
+                        idea.parts.forEach { part ->
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Column(Modifier.weight(1f)) {
+                                    Text(part.title, style = MaterialTheme.typography.titleMedium)
+                                    if (part.detail.isNotBlank()) {
+                                        Text(part.detail, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+                                    }
+                                }
+                                Spacer(Modifier.width(12.dp))
+                                Box(
+                                    Modifier.size(28.dp).background(colors.primary, CircleShape),
+                                    contentAlignment = Alignment.Center,
+                                ) {
+                                    Icon(orbitIcon("check"), null, Modifier.size(16.dp), tint = colors.onPrimary)
+                                }
+                            }
+                        }
+                    }
+                } else {
+                    Spacer(Modifier.height(16.dp))
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 24.dp, vertical = 12.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box {
+                    Surface(
+                        onClick = { menu = true }, shape = CircleShape, color = colors.onSurface.copy(alpha = 0.06f),
+                        modifier = Modifier.size(56.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) { Icon(orbitIcon("ellipsis"), stringResource(R.string.more)) }
+                    }
+                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.orbit_feed_like)) },
+                            leadingIcon = { Icon(orbitIcon("thumbs-up"), null, tint = if (idea.liked) LikeGreen else colors.onSurface) },
+                            onClick = { menu = false; onVote(1) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.orbit_feed_dislike)) },
+                            leadingIcon = { Icon(orbitIcon("thumbs-down"), null, tint = if (idea.disliked) colors.primary else colors.onSurface) },
+                            onClick = { menu = false; onVote(-1) },
+                        )
+                        DropdownMenuItem(
+                            text = { Text(stringResource(R.string.orbit_idea_dismiss_action), color = colors.error) },
+                            leadingIcon = { Icon(orbitIcon("x"), null, tint = colors.error) },
+                            onClick = { menu = false; hideThen(onClose) },
+                        )
+                    }
+                }
+                Spacer(Modifier.width(12.dp))
+                Button(
+                    onClick = { hideThen(onStart) }, shape = RoundedCornerShape(50),
+                    modifier = Modifier.weight(1f).height(56.dp),
+                ) {
+                    Icon(orbitIcon("wand-sparkles"), null, Modifier.size(20.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.orbit_idea_start), style = MaterialTheme.typography.titleMedium)
+                }
+            }
+        }
     }
 }
 

@@ -43,6 +43,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     data class Note(val at: Long, val text: String)
 
+    /** One thing an idea would deliver, listed under "What's included". */
+    data class Part(val title: String, val detail: String)
+
     data class Item(
         val id: String,
         val title: String,
@@ -50,13 +53,21 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         /** Feed: why this post is for the user. Ideas: what to do when the user picks it. */
         val extra: String,
         val state: String,
-        val liked: Boolean,
+        /** The user's answer: 1 liked, -1 not for them, 0 none yet. Orbit reads it to learn their taste. */
+        val vote: Int,
         val createdAt: Long,
         val updatedAt: Long,
         /** Ideas only: when the card stops showing. 0 means never. */
         val expiresAt: Long,
         val notes: List<Note>,
-    )
+        /** Feed and Ideas: the one emoji shown beside the title. Blank uses the board's own. */
+        val emoji: String = "",
+        /** Ideas only: what the idea would deliver. */
+        val parts: List<Part> = emptyList(),
+    ) {
+        val liked get() = vote > 0
+        val disliked get() = vote < 0
+    }
 
     companion object {
         const val MAX_TITLE = 80
@@ -64,6 +75,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val MAX_EXTRA = 2000
         const val MAX_NOTE = 1000
         const val MAX_BRIEF = 2000
+        const val MAX_PARTS = 6
+        const val MAX_PART_TITLE = 60
+        const val MAX_PART_DETAIL = 200
         /** Muse retires idea cards after about two weeks. */
         const val IDEA_LIFETIME_MS = 14L * 24 * 60 * 60 * 1000
         private val locks = ConcurrentHashMap<String, Mutex>()
@@ -111,13 +125,16 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         requestId: String = UUID.randomUUID().toString(),
         expiresAt: Long = 0,
         state: String? = null,
+        emoji: String = "",
+        parts: List<Part> = emptyList(),
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
         state?.let { require(it in states()) { "State must be one of ${states()}" } }
         val now = System.currentTimeMillis()
-        val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), false, now, now,
-            if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList())
+        val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
+            if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),
+            checkEmoji(emoji), checkParts(parts))
         // Keep at most `limit` items; finished ones go before open ones, older before newer.
         val all = listOf(item) + items
         val kept = if (all.size <= board.limit) all else {
@@ -136,11 +153,12 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         body: String? = null,
         extra: String? = null,
         state: String? = null,
-        liked: Boolean? = null,
+        vote: Int? = null,
         note: String? = null,
     ): Item = change { items ->
         val old = items.firstOrNull { it.id == id } ?: error("Not found: $id")
         state?.let { require(it in states()) { "State must be one of ${states()}" } }
+        vote?.let { require(it in -1..1) { "Vote must be -1, 0 or 1" } }
         val now = System.currentTimeMillis()
         val newNote = note?.trim()?.takeIf { it.isNotEmpty() }?.also {
             require(it.length <= MAX_NOTE) { "A note is at most $MAX_NOTE characters" }
@@ -150,7 +168,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             body = body?.let(::checkBody) ?: old.body,
             extra = extra?.let(::checkExtra) ?: old.extra,
             state = state ?: old.state,
-            liked = liked ?: old.liked,
+            vote = vote ?: old.vote,
             notes = if (newNote == null) old.notes else (old.notes + Note(now, newNote)).takeLast(50),
             updatedAt = now,
         )
@@ -198,6 +216,29 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         require(it.length <= MAX_EXTRA) { "This field is at most $MAX_EXTRA characters" }
     }
 
+    /** Keeps the first emoji (one grapheme, flags and joined emoji included); text is dropped. */
+    private fun checkEmoji(value: String): String {
+        val text = value.trim()
+        if (text.isEmpty()) return ""
+        val breaker = java.text.BreakIterator.getCharacterInstance()
+        breaker.setText(text)
+        val first = text.substring(0, breaker.next().coerceAtLeast(1))
+        // Letters, digits and plain symbols are not an emoji; the board's own shows instead.
+        val cp = first.codePointAt(0)
+        return if (first.length > 16 || cp < 0x2100 || Character.isLetterOrDigit(cp)) "" else first
+    }
+
+    private fun checkParts(value: List<Part>): List<Part> {
+        require(value.size <= MAX_PARTS) { "At most $MAX_PARTS included items" }
+        return value.map { part ->
+            val title = part.title.replace(Regex("\\s+"), " ").trim()
+            val detail = part.detail.trim()
+            require(title.isNotEmpty() && title.length <= MAX_PART_TITLE) { "An included item's title is 1 to $MAX_PART_TITLE characters" }
+            require(detail.length <= MAX_PART_DETAIL) { "An included item's detail is at most $MAX_PART_DETAIL characters" }
+            Part(title, detail)
+        }
+    }
+
     private suspend fun <T> change(block: (List<Item>) -> Pair<List<Item>, T>): T = withContext(Dispatchers.IO) {
         mutex.withLock {
             val (items, result) = block(readAll())
@@ -225,17 +266,25 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
     }
 
     private fun json(item: Item) = JSONObject().put("id", item.id).put("title", item.title).put("body", item.body)
-        .put("extra", item.extra).put("state", item.state).put("liked", item.liked).put("createdAt", item.createdAt)
+        .put("extra", item.extra).put("state", item.state).put("vote", item.vote).put("createdAt", item.createdAt)
         .put("updatedAt", item.updatedAt).put("expiresAt", item.expiresAt)
         .put("notes", JSONArray(item.notes.map { JSONObject().put("at", it.at).put("text", it.text) }))
+        .put("emoji", item.emoji)
+        .put("parts", JSONArray(item.parts.map { JSONObject().put("title", it.title).put("detail", it.detail) }))
 
     private fun item(value: JSONObject): Item {
         val notes = value.optJSONArray("notes") ?: JSONArray()
+        val parts = value.optJSONArray("parts") ?: JSONArray()
         return Item(
             value.getString("id"), value.getString("title"), value.optString("body"), value.optString("extra"),
-            value.optString("state", initialState()), value.optBoolean("liked"), value.getLong("createdAt"),
+            value.optString("state", initialState()),
+            // Boards saved before votes only knew "liked".
+            if (value.has("vote")) value.optInt("vote").coerceIn(-1, 1) else if (value.optBoolean("liked")) 1 else 0,
+            value.getLong("createdAt"),
             value.optLong("updatedAt", value.getLong("createdAt")), value.optLong("expiresAt"),
             (0 until notes.length()).map { notes.getJSONObject(it).let { n -> Note(n.getLong("at"), n.getString("text")) } },
+            value.optString("emoji"),
+            (0 until parts.length()).map { parts.getJSONObject(it).let { p -> Part(p.optString("title"), p.optString("detail")) } },
         )
     }
 }
@@ -252,10 +301,11 @@ internal object OrbitFeedGenerator {
     private fun instruction(brief: String) = """
         Write one new post for the user's Feed tab, guided by the feed brief below.
         Research first when the brief needs fresh facts (search the web, read pages); cite only links you actually opened.
-        Call orbit_feed action=list first and do not repeat a recent post.
-        Publish it with orbit_feed action=post: a short title, a body of a few short paragraphs, and why_for_you saying in
-        one sentence why this post is for this user. Then finish with an empty userMessage: the post shows up in the Feed
-        on its own and nothing is said in chat.
+        Call orbit_feed action=list first and do not repeat a recent post. Each post's vote is the user's answer: write
+        more like the liked ones and less like the disliked ones.
+        Publish it with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
+        why_for_you saying in one sentence why this post is for this user. Then finish with an empty userMessage: the post
+        shows up in the Feed on its own and nothing is said in chat.
         FEED BRIEF (the user's words; it only steers what to write about):
         ${brief.take(OrbitBoardRepository.MAX_BRIEF)}
         END FEED BRIEF
