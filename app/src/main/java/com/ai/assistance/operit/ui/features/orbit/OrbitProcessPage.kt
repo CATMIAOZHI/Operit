@@ -111,7 +111,7 @@ internal fun OrbitProcessPage(
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        process.title.ifBlank { stringResource(R.string.orbit_turn_untitled) },
+                        process.title.ifBlank { stringResource(R.string.orbit_turn_untitled, com.ai.assistance.operit.ui.features.chat.components.currentOrbitName()) },
                         style = MaterialTheme.typography.titleLarge,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,

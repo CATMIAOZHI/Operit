@@ -118,6 +118,7 @@ private fun friendlyName(path: String): String {
 internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
     val context = LocalContext.current
     val files = remember(orbitId) { OrbitFiles.of(context, orbitId) }
+    val who = rememberOrbitName(orbitId)
     var reload by remember { mutableIntStateOf(0) }
     val result by produceState<Result<List<OrbitFiles.Entry>>?>(null, orbitId, reload) {
         value = try { Result.success(files.list()) } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
@@ -132,15 +133,15 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
 
     openPath?.let { path ->
         if (path.startsWith("files/")) {
-            OrbitMadeFilePage(files, path, onBack = { openPath = null; reload++ }, interceptBack = true)
+            OrbitMadeFilePage(files, path, who, onBack = { openPath = null; reload++ }, interceptBack = true)
             return
         }
         val notebook = notebooks.firstOrNull { it.path == path }
         val note = when {
-            notebook != null -> stringResource(notebook.note)
-            path.startsWith("memory/people/") -> stringResource(R.string.orbit_file_person_note)
-            path.startsWith("memory/groups/") -> stringResource(R.string.orbit_file_group_note)
-            else -> stringResource(R.string.orbit_file_daily_note)
+            notebook != null -> stringResource(notebook.note, who)
+            path.startsWith("memory/people/") -> stringResource(R.string.orbit_file_person_note, who)
+            path.startsWith("memory/groups/") -> stringResource(R.string.orbit_file_group_note, who)
+            else -> stringResource(R.string.orbit_file_daily_note, who)
         }
         // A notebook that is still its empty template has nothing to delete.
         val exists = list?.firstOrNull { it.path == path }?.let { it.size >= 0 } ?: (notebook == null)
@@ -171,13 +172,13 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
 
     OrbitListPage(stringResource(R.string.orbit_files_title), onBack) {
         item(key = "help") {
-            Text(stringResource(R.string.orbit_files_help), style = MaterialTheme.typography.bodyMedium,
+            Text(stringResource(R.string.orbit_files_help, who), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
         item(key = "notebooks") { SectionTitle(stringResource(R.string.orbit_files_notebooks)) }
         items(notebooks, key = { it.path }) { book ->
             val entry = list?.firstOrNull { it.path == book.path }
-            OrbitListRow(orbitIcon(book.icon), stringResource(book.title), stringResource(book.note).substringBefore("。").substringBefore(". "),
+            OrbitListRow(orbitIcon(book.icon), stringResource(book.title), stringResource(book.note, who).substringBefore("。").substringBefore(". "),
                 entry?.takeIf { it.size >= 0 }?.let { shortTime(it.modifiedAt) }, onClick = { openPath = book.path }, showChevron = true)
         }
         if (result == null) {
@@ -204,7 +205,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                 }
             }
             val inFolder = list.filter { it.path.startsWith("$folder/") && !it.path.endsWith("/INDEX.md") }
-            if (inFolder.isEmpty()) item(key = "empty-$folder") { SectionEmpty(stringResource(empty)) }
+            if (inFolder.isEmpty()) item(key = "empty-$folder") { SectionEmpty(stringResource(empty, who)) }
             items(inFolder, key = { it.path }) { entry ->
                 OrbitListRow(orbitIcon(if (folder.endsWith("people")) "user-round" else "users-round"), entry.title,
                     null, shortTime(entry.modifiedAt), onClick = { openPath = entry.path }, showChevron = true)
@@ -220,9 +221,9 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
         if (!showAllDays && days.size > 7) item(key = "daily-more") {
             TextButton(onClick = { showAllDays = true }) { Text(stringResource(R.string.orbit_files_show_all)) }
         }
-        item(key = "made-title") { SectionTitle(stringResource(R.string.orbit_files_made)) }
+        item(key = "made-title") { SectionTitle(stringResource(R.string.orbit_files_made, who)) }
         val made = list.filter { it.path.startsWith("files/") }.sortedByDescending { it.modifiedAt }
-        if (made.isEmpty()) item(key = "made-empty") { SectionEmpty(stringResource(R.string.orbit_builds_files_empty)) }
+        if (made.isEmpty()) item(key = "made-empty") { SectionEmpty(stringResource(R.string.orbit_builds_files_empty, who)) }
         items(made, key = { it.path }) { entry ->
             OrbitMadeFileRow(entry) {
                 if (OrbitFiles.isText(entry.path)) openPath = entry.path else fileActions = entry
@@ -258,11 +259,11 @@ internal fun OrbitMadeFileRow(entry: OrbitFiles.Entry, onClick: () -> Unit) {
 
 /** A text file Orbit made for the user: read, edit, share or move to the trash. */
 @Composable
-internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, onBack: () -> Unit, interceptBack: Boolean = false) {
+internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean = false) {
     val context = LocalContext.current
     OrbitFilePage(
         title = path.substringAfterLast('/'),
-        note = stringResource(R.string.orbit_user_file_note),
+        note = stringResource(R.string.orbit_user_file_note, who),
         load = { files.read(path) },
         save = { files.write(path, it) },
         onBack = onBack,

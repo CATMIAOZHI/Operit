@@ -570,6 +570,7 @@ private fun OrbitFeedPage(
     onDraft: (String) -> Unit,
     onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit,
 ) {
+    val who = orbitName(orbit)
     val context = LocalContext.current
     val action = rememberAction()
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.FEED) }
@@ -606,7 +607,7 @@ private fun OrbitFeedPage(
         val list = posts
         when {
             list == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_feed_posts_empty)) }
+            list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_feed_posts_empty, who)) }
             else -> items(list, key = { it.id }) { post ->
                 FeedPostRow(
                     post = post,
@@ -627,7 +628,7 @@ private fun OrbitFeedPage(
                     onCardSubmit = { text ->
                         sendToOrbit(context, orbit, context.getString(R.string.orbit_feed_card_message, post.title, text)).also { sent ->
                             // The card stays open to try again when Orbit is still answering.
-                            if (!sent) showToast(context, context.getString(R.string.orbit_feed_card_busy))
+                            if (!sent) showToast(context, context.getString(R.string.orbit_feed_card_busy, who))
                         }
                     },
                     cardOwner = "orbit-feed:" + orbit.id,
@@ -641,12 +642,13 @@ private fun OrbitFeedPage(
     if (showIntro) {
         TabIntroSheet(
             "📰", stringResource(R.string.orbit_feed_intro_title),
-            listOf(stringResource(R.string.orbit_feed_intro_1), stringResource(R.string.orbit_feed_intro_2)),
+            listOf(stringResource(R.string.orbit_feed_intro_1, who), stringResource(R.string.orbit_feed_intro_2)),
         ) { showIntro = false }
     }
 
     if (editingBrief) {
         BriefDialog(
+            who = who,
             initial = brief.orEmpty(),
             onDismiss = { editingBrief = false },
             onSave = { text ->
@@ -691,7 +693,7 @@ private fun BriefPill(brief: String, onClick: () -> Unit) {
 }
 
 @Composable
-private fun BriefDialog(initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
+private fun BriefDialog(who: String, initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf(initial) }
     val colors = MaterialTheme.colorScheme
     val changed = text.trim() != initial.trim()
@@ -713,7 +715,7 @@ private fun BriefDialog(initial: String, onDismiss: () -> Unit, onSave: (String)
                         )
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            stringResource(R.string.orbit_feed_brief_hint),
+                            stringResource(R.string.orbit_feed_brief_hint, who),
                             style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
                         )
                     }
@@ -946,6 +948,7 @@ private const val RECENT_IDEAS = 5
  */
 @Composable
 private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
+    val who = orbitName(orbit)
     val context = LocalContext.current
     val action = rememberAction()
     val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.IDEAS) }
@@ -974,7 +977,7 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     if (showIntro) {
         TabIntroSheet(
             "💡", stringResource(R.string.orbit_ideas_intro_title),
-            listOf(stringResource(R.string.orbit_ideas_intro_1), stringResource(R.string.orbit_ideas_intro_2)),
+            listOf(stringResource(R.string.orbit_ideas_intro_1, who), stringResource(R.string.orbit_ideas_intro_2)),
         ) { showIntro = false }
     }
 
@@ -985,6 +988,7 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
             OrbitCoverPage(visible = category != null, onDismiss = { category = null }) {
                 (category ?: shownCategory)?.let { shown ->
                     IdeaCategoryPage(
+                        who = who,
                         category = shown,
                         ideas = byCategory[shown].orEmpty(),
                         top = top,
@@ -1004,7 +1008,7 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
             item(key = "empty") {
                 SoftCard {
                     Icon(orbitIcon("lightbulb"), null, Modifier.size(28.dp))
-                    Text(stringResource(R.string.orbit_ideas_empty), style = MaterialTheme.typography.bodyLarge)
+                    Text(stringResource(R.string.orbit_ideas_empty, who), style = MaterialTheme.typography.bodyLarge)
                     Spacer(Modifier.height(4.dp))
                     PillButton(stringResource(R.string.orbit_ideas_ask), "sparkles", askIdeas)
                 }
@@ -1141,6 +1145,7 @@ private fun DoneIdeaRow(idea: OrbitBoardRepository.Item, onClick: () -> Unit) {
 /** One category's ideas, pushed over the Ideas tab under Orbit's header. */
 @Composable
 private fun IdeaCategoryPage(
+    who: String,
     category: String,
     ideas: List<OrbitBoardRepository.Item>,
     top: Dp,
@@ -1165,7 +1170,7 @@ private fun IdeaCategoryPage(
                 }
             }
             if (ideas.isEmpty()) {
-                item(key = "empty") { Hint(stringResource(R.string.orbit_idea_category_empty)) }
+                item(key = "empty") { Hint(stringResource(R.string.orbit_idea_category_empty, who)) }
             } else {
                 items(ideas, key = { it.id }) { idea ->
                     IdeaRow(idea, onOpen = { onOpen(idea) }, onVote = { onVote(idea, it) })
@@ -1375,6 +1380,7 @@ private fun IdeaSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, onDraft: (String) -> Unit) {
+    val who = orbitName(orbit)
     val context = LocalContext.current
     val action = rememberAction()
     val dao = remember(context) { OrbitTaskRepository(context).dao }
@@ -1420,7 +1426,7 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
         val active = trackList.orEmpty().filter { it.state == "ACTIVE" }
         val done = trackList.orEmpty().filter { it.state == "DONE" }.take(20)
         if (trackList != null && active.isEmpty()) {
-            item(key = "trackingEmpty") { Hint(stringResource(R.string.orbit_tracking_empty)) }
+            item(key = "trackingEmpty") { Hint(stringResource(R.string.orbit_tracking_empty, who)) }
         }
         items(active, key = { "t-" + it.id }) { item ->
             OrbitListRow(
@@ -1457,13 +1463,13 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
                         action {
                             OrbitGoalRepository(context).update(goal, goal.title, goal.plan, if (goal.state == "ACTIVE") "PAUSED" else "ACTIVE")
                         }
-                    }) { Text(stringResource(if (goal.state == "ACTIVE") R.string.orbit_pause else R.string.orbit_resume)) }
+                    }) { Text(stringResource(if (goal.state == "ACTIVE") R.string.pause else R.string.orbit_resume)) }
                 }
                 val steps = tasks.orEmpty().filter { it.goalId == goal.id }
                 Text(stringResource(R.string.orbit_goal_steps), style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
                 if (steps.isEmpty()) {
                     Text(
-                        stringResource(R.string.orbit_goal_steps_help), style = MaterialTheme.typography.bodySmall,
+                        stringResource(R.string.orbit_goal_steps_help, who), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1492,7 +1498,7 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
                     LinearProgressIndicator(Modifier.fillMaxWidth())
                 } else if (notes.isEmpty()) {
                     Text(
-                        stringResource(R.string.orbit_goal_notes_empty), style = MaterialTheme.typography.bodySmall,
+                        stringResource(R.string.orbit_goal_notes_empty, who), style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
@@ -1676,6 +1682,7 @@ private fun OrbitBuildsPage(
     onOpenFile: (String) -> Unit,
     onDraft: (String) -> Unit,
 ) {
+    val who = orbitName(orbit)
     val context = LocalContext.current
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val versions by remember(orbit.id) { dao.observeArtifacts(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
@@ -1734,7 +1741,7 @@ private fun OrbitBuildsPage(
                         TextButton(onClick = { filesReload++ }) { Text(stringResource(R.string.orbit_memory_retry)) }
                     }
                 }
-                if (entries.isEmpty() && files.isSuccess) item(key = "empty") { Hint(stringResource(R.string.orbit_builds_made_empty)) }
+                if (entries.isEmpty() && files.isSuccess) item(key = "empty") { Hint(stringResource(R.string.orbit_builds_made_empty, who)) }
                 items(entries, key = { it.key }) { entry ->
                     when (entry) {
                         is BuildEntry.Work -> BuildRow(
@@ -1812,8 +1819,8 @@ private fun OrbitBuildsPage(
                     }
                 }
                 else -> {
-                    item(key = "uploads-usage") { UploadsUsage(list.sumOf { it.size }) }
-                    if (list.isEmpty()) item(key = "uploads-empty") { Hint(stringResource(R.string.orbit_uploads_empty)) }
+                    item(key = "uploads-usage") { UploadsUsage(who, list.sumOf { it.size }) }
+                    if (list.isEmpty()) item(key = "uploads-empty") { Hint(stringResource(R.string.orbit_uploads_empty, who)) }
                     items(list, key = { "upload:" + it.file.absolutePath }) { upload ->
                         val isImage = com.ai.assistance.operit.features.orbit.OrbitFiles.kindOf(upload.name) ==
                             com.ai.assistance.operit.features.orbit.OrbitFiles.Kind.IMAGE
@@ -1905,7 +1912,7 @@ private fun BuildSections(selected: Int, onSelect: (Int) -> Unit) {
 
 /** How much of the Library's room is used, and what happens when it is full. */
 @Composable
-private fun UploadsUsage(used: Long) {
+private fun UploadsUsage(who: String, used: Long) {
     val context = LocalContext.current
     val limit = com.ai.assistance.operit.features.orbit.OrbitUploads.LIMIT_BYTES
     SoftCard {
@@ -1919,7 +1926,7 @@ private fun UploadsUsage(used: Long) {
         )
         LinearProgressIndicator(progress = { (used.toDouble() / limit).toFloat().coerceIn(0f, 1f) }, modifier = Modifier.fillMaxWidth())
         Text(
-            stringResource(R.string.orbit_uploads_hint), style = MaterialTheme.typography.bodySmall,
+            stringResource(R.string.orbit_uploads_hint, who), style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }

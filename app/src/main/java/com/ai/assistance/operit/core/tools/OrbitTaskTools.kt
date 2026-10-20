@@ -130,7 +130,7 @@ internal object OrbitTaskTools {
                             .put("error", it.error).put("finishedAt", it.finishedAt)
                             .put("decision", when (it.decision) {
                                 OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
-                                OrbitRunEntity.IN_CHAT -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_in_chat)
+                                OrbitRunEntity.IN_CHAT -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_in_chat, orbit.name.ifBlank { context.getString(com.ai.assistance.operit.R.string.nav_orbit) })
                                 OrbitRunEntity.SKIPPED -> com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, task)
                                 else -> it.decision
                             })

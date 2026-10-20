@@ -266,7 +266,7 @@ internal fun OrbitIdentityFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     OrbitFilePage(
         title = OrbitPromptFiles.IDENTITY_FILE,
-        note = stringResource(R.string.orbit_identity_note),
+        note = stringResource(R.string.orbit_identity_note, rememberOrbitName(orbitId)),
         load = { OrbitPromptFiles.identity(context, orbitId) },
         save = { OrbitPromptFiles.saveIdentity(context, orbitId, it) },
         onBack = onBack,
@@ -299,7 +299,7 @@ internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     }
     OrbitFilePage(
         title = UserProfileDocumentRepository.USER_FILE_NAME,
-        note = stringResource(R.string.orbit_user_note),
+        note = stringResource(R.string.orbit_user_note, orbitName(orbit)),
         load = { repository().load().also { loaded = it } },
         save = { body ->
             val expected = checkNotNull(loaded)
@@ -324,7 +324,7 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     suspend fun spaceId() = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
     OrbitFilePage(
         title = "memory.md",
-        note = stringResource(R.string.orbit_memory_note),
+        note = stringResource(R.string.orbit_memory_note, orbitName(orbit)),
         load = {
             com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, spaceId()).load()
                 .also { loaded = it }.markdown
@@ -354,7 +354,7 @@ internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit, onOpenHistor
     val reason = stringResource(R.string.orbit_soul_user_edit)
     OrbitFilePage(
         title = "SOUL.md",
-        note = stringResource(R.string.orbit_soul_note),
+        note = stringResource(R.string.orbit_soul_note, rememberOrbitName(orbitId)),
         load = { repository.snapshot().current.body },
         save = { body ->
             val current = repository.snapshot().current

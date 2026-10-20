@@ -54,7 +54,7 @@ fun LearnedSkillsDialog(profileId: String, onDismiss: () -> Unit) {
                     Modifier.heightIn(max = controlsMaxHeight).verticalScroll(rememberScrollState()),
                     verticalArrangement = Arrangement.spacedBy(10.dp),
                 ) {
-                    Text(stringResource(if (orbitSpace) R.string.memory_learned_hint_orbit else R.string.memory_learned_hint),
+                    Text(if (orbitSpace) stringResource(R.string.memory_learned_hint_orbit, com.ai.assistance.operit.ui.features.orbit.rememberOrbitNameForSpace(profileId) ?: stringResource(R.string.nav_orbit)) else stringResource(R.string.memory_learned_hint),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(horizontal = 4.dp))
                     if (!masterEnabled && !orbitSpace) Surface(

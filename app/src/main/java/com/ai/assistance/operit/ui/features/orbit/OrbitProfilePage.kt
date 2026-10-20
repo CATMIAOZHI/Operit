@@ -121,6 +121,7 @@ internal fun OrbitProfilePage(
     onDraft: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val who = orbitName(orbit)
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val running by OrbitCompanion.running.collectAsState()
     var tabIndex by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
@@ -203,7 +204,7 @@ internal fun OrbitProfilePage(
                         onClick = onOpenRawChat,
                     )
                 }
-                activitySection(activity, chatTurns, onOpenProcess)
+                activitySection(who, activity, chatTurns, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask, onOpenAllTasks)
@@ -281,7 +282,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
             }
         }
     }
-    if (showSheet) OrbitAvatarSheet(onDraft = onDraft, onDismiss = { showSheet = false })
+    if (showSheet) OrbitAvatarSheet(orbitName(orbit), onDraft = onDraft, onDismiss = { showSheet = false })
 }
 
 /**
@@ -291,7 +292,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitAvatarSheet(onDraft: (String) -> Unit, onDismiss: () -> Unit) {
+private fun OrbitAvatarSheet(who: String, onDraft: (String) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -340,7 +341,7 @@ private fun OrbitAvatarSheet(onDraft: (String) -> Unit, onDismiss: () -> Unit) {
                 modifier = Modifier.padding(bottom = 4.dp),
             )
             Text(
-                stringResource(R.string.orbit_avatar_sheet_note),
+                stringResource(R.string.orbit_avatar_sheet_note, who),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 16.dp),
@@ -642,6 +643,7 @@ private sealed interface OrbitWorkRow {
 }
 
 private fun LazyListScope.activitySection(
+    who: String,
     runs: List<OrbitActivityRow>?,
     chat: OrbitChatTurns?,
     onOpenProcess: (OrbitProcess) -> Unit,
@@ -679,7 +681,7 @@ private fun LazyListScope.activitySection(
                                 else -> "sparkles"
                             }
                         ),
-                        title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled) },
+                        title = OrbitWork.listLine(run.title).ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
                         detail = runDetail(run),
                         meta = clockTime(run.startedAt),
                         iconTint = if (failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -694,7 +696,7 @@ private fun LazyListScope.activitySection(
                     val turn = row.turn
                     OrbitListRow(
                         icon = orbitIcon("message-circle"),
-                        title = turn.process.title.ifBlank { stringResource(R.string.orbit_turn_untitled) },
+                        title = turn.process.title.ifBlank { stringResource(R.string.orbit_turn_untitled, who) },
                         detail = turn.reply.ifBlank { stringResource(R.string.orbit_turn_no_reply) },
                         meta = clockTime(turn.process.time),
                         showChevron = true,
@@ -916,7 +918,7 @@ private fun IdentitySection(
             modifier = Modifier.padding(bottom = 6.dp),
         )
         Text(
-            stringResource(R.string.orbit_profile_identity_help),
+            stringResource(R.string.orbit_profile_identity_help, orbitName(orbit)),
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(bottom = 12.dp),
@@ -1005,7 +1007,7 @@ private fun OrbitExportRow(orbit: OrbitProfile) {
     if (confirming) {
         androidx.compose.material3.AlertDialog(
             onDismissRequest = { confirming = false },
-            title = { Text(stringResource(R.string.orbit_export_confirm_title)) },
+            title = { Text(stringResource(R.string.orbit_export_confirm_title, orbitName(orbit))) },
             text = { Text(stringResource(R.string.orbit_export_confirm_message)) },
             confirmButton = {
                 androidx.compose.material3.TextButton(onClick = {

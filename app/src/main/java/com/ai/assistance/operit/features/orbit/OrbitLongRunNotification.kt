@@ -52,7 +52,8 @@ internal object OrbitLongRunNotification {
         return false
     }
 
-    fun foregroundInfo(context: Context, title: String): ForegroundInfo {
+    /** [orbitName] is the name the user gave the Orbit; blank falls back to "Orbit". */
+    fun foregroundInfo(context: Context, orbitName: String, title: String): ForegroundInfo {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager?.createNotificationChannel(NotificationChannel(CHANNEL,
             context.getString(R.string.orbit_long_task_channel), NotificationManager.IMPORTANCE_LOW))
@@ -61,7 +62,7 @@ internal object OrbitLongRunNotification {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
         val notification = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
-            .setContentTitle(context.getString(R.string.orbit_long_task_running))
+            .setContentTitle(context.getString(R.string.orbit_long_task_running, orbitName.ifBlank { context.getString(R.string.nav_orbit) }))
             .setContentText(title)
             .setContentIntent(open)
             .setOngoing(true)

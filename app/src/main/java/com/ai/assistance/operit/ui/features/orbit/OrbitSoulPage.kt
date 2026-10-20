@@ -67,7 +67,7 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
         base = {
             SoulFrame(onBack, list) {
                 status()
-                item { Text(stringResource(R.string.orbit_soul_help)) }
+                item { Text(stringResource(R.string.orbit_soul_help, rememberOrbitName(orbitId))) }
                 items(snapshot?.history.orEmpty().filter { it.state == "approved" }.sortedWith(compareBy<OrbitSoulRepository.Version> {
                     if (it.id == snapshot?.current?.id) 0 else 1
                 }.thenByDescending { it.createdAt }), key = { it.id }) { version ->

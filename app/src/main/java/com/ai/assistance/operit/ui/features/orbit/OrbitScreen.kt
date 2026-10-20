@@ -233,12 +233,15 @@ fun OrbitScreen(
                 AppLogger.w(TAG, "Could not install the bundled Orbit skills: ${it.message}")
             }
     }
-    OrbitChatPage(
-        orbit = orbit,
-        settings = loadedSettings,
-        hasBackgroundImage = hasBackgroundImage,
-        chatContent = chatContent,
-    )
+    // The name the user gave it, for words about the companion inside its chat and pages.
+    CompositionLocalProvider(com.ai.assistance.operit.ui.features.chat.components.LocalOrbitName provides orbitName(orbit)) {
+        OrbitChatPage(
+            orbit = orbit,
+            settings = loadedSettings,
+            hasBackgroundImage = hasBackgroundImage,
+            chatContent = chatContent,
+        )
+    }
 }
 
 @Composable
@@ -632,7 +635,7 @@ private fun OrbitChatPage(
         ) {
             (editingFile ?: shownFile)?.let { path ->
                 val files = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
-                OrbitMadeFilePage(files, path, onBack = { editingFile = null; filesVersion++ })
+                OrbitMadeFilePage(files, path, orbitName(orbit), onBack = { editingFile = null; filesVersion++ })
             }
         }
         // The profile rises from the bottom; the back swipe lowers it with the finger. Under the
@@ -913,7 +916,7 @@ internal fun OrbitHeader(
             OrbitAvatar(
                 orbit = orbit,
                 size = 76,
-                onClickLabel = stringResource(R.string.orbit_profile_open),
+                onClickLabel = stringResource(R.string.orbit_profile_open, orbitName(orbit)),
                 onClick = onOpenProfile,
             )
             // The name pill sits over the bottom edge of the picture, like Muse.
@@ -1256,7 +1259,7 @@ private fun OrbitSettingsPage(
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
-                    title = stringResource(R.string.orbit_pause),
+                    title = stringResource(R.string.orbit_pause, orbitName(orbit)),
                     subtitle = stringResource(R.string.orbit_pause_desc),
                     icon = lucide("pause"),
                     searchable = false,
@@ -1675,7 +1678,7 @@ private fun FocusNotesField(initialNotes: String, onSave: suspend (String) -> Un
     OutlinedTextField(
         value = notes,
         onValueChange = { value -> notes = value.take(OrbitSettings.MAX_FOCUS_NOTES_LENGTH) },
-        label = { Text(stringResource(R.string.orbit_focus_label)) },
+        label = { Text(stringResource(R.string.orbit_focus_label, stringResource(R.string.nav_orbit))) },
         placeholder = { Text(stringResource(R.string.orbit_focus_placeholder)) },
         minLines = 3,
         maxLines = 8,
