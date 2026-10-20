@@ -85,6 +85,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         internal const val MAX_SCREENSHOT_DIMENSION_PX = 32_768
         internal const val MAX_SCREENSHOT_PIXEL_COUNT = 16_777_216L
         private const val DEVTOOLS_INLINE_CHARS = 20_000
+        private const val DOWNLOAD_LIST_PAGE_SIZE = 20
         private const val DEVTOOLS_PRETTY_LIMIT_CHARS = 200_000
         private val DEVTOOLS_METHOD = Regex("^[A-Z][A-Za-z]*\\.[a-z][A-Za-z]*$")
         /**
@@ -147,7 +148,17 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         @Volatile internal var desktopModeEnabled: Boolean = true
         @Volatile internal var desktopModeInitialized: Boolean = false
         @Volatile internal var pendingExternalOpenRequest: PendingExternalOpenRequest? = null
+        /** Tabs whose page process died, newest last, so they can be reopened instead of silently lost. */
+        internal val crashedTabs = java.util.concurrent.CopyOnWriteArrayList<CrashedTab>()
     }
+
+    internal data class CrashedTab(
+        val url: String,
+        val title: String,
+        val profileName: String,
+        val at: Long,
+        val crashed: Boolean
+    )
 
     internal val historyStore by lazy { WebSessionHistoryStore.getInstance(context.applicationContext) }
     private val userscriptRepository by lazy { UserscriptRepository.getInstance(context.applicationContext) }
@@ -208,8 +219,17 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         @Volatile var canGoBack: Boolean = false
         @Volatile var canGoForward: Boolean = false
         @Volatile var hasSslError: Boolean = false
+        /** Why the last certificate was refused, for the AI; null when there was no problem. */
+        @Volatile var sslErrorDetail: String? = null
+        @Volatile var sslErrorUrl: String? = null
         @Volatile var pendingFileChooserCallback: ValueCallback<Array<Uri>>? = null
         @Volatile var lastFileChooserRequestAt: Long = 0L
+        /** What the open file picker accepts, so the AI knows a picker is waiting and for what. */
+        @Volatile var pendingFileChooserAccept: List<String> = emptyList()
+        @Volatile var pendingFileChooserMultiple: Boolean = false
+        @Volatile var pendingFileChooserCapture: Boolean = false
+        /** The latest camera/microphone/location request and its answer, shown to the AI. */
+        @Volatile var lastPermissionNote: String? = null
         @Volatile var lastDownloadEvent: WebDownloadEvent? = null
         @Volatile var lastDownloadEventAt: Long = 0L
         @Volatile var pendingDialog: PendingDialog? = null
@@ -256,6 +276,12 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         return try {
             val profile = BrowserProfiles.forCurrentCaller(context, tool)
             BrowserProfiles.withScope(profile) {
+            // Downloads and saved site permissions do not touch a tab, so a long wait for a
+            // download must not hold up other agents' page actions in the shared queue.
+            when (tool.name) {
+                "browser_downloads" -> return@withScope browserDownloads(tool)
+                "browser_permissions" -> return@withScope browserPermissions(tool)
+            }
             com.ai.assistance.operit.features.orbit.OrbitBrowserControl.aiCall { when (tool.name) {
                 "browser_click" -> browserClick(tool)
                 "browser_close" -> browserClose(tool)
@@ -281,6 +307,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 "browser_type" -> browserType(tool)
                 "browser_mouse_click_xy" -> browserMouseClickXy(tool)
                 "browser_devtools" -> browserDevtools(tool)
+                "browser_clipboard" -> browserClipboard(tool)
                 else -> error(tool.name, "Unsupported browser session tool: ${tool.name}")
             } }
             }
@@ -432,7 +459,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         waitForTimeSeconds = 0.5
                     )
             )
-        val downloadEvent = latestBrowserDownloadEventAfter(settlement.downloadMarker)
+        val downloadEvent = latestProfileDownloadEventAfter(settlement.downloadMarker, settlement.session.profileName)
         if (downloadEvent?.status == "failed") {
             return pageError(
                 tool.name,
@@ -955,6 +982,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
                 val callback = session.pendingFileChooserCallback
                     ?: return@runOnMainSync "No file chooser is active"
+                if (!shouldCancel && files.size > 1 && !session.pendingFileChooserMultiple) {
+                    return@runOnMainSync "This file picker accepts only one file; pass a single path."
+                }
 
                 return@runOnMainSync try {
                     if (shouldCancel) {
@@ -1008,8 +1038,14 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val timeSeconds = parsedTimeSeconds?.takeIf { it > 0.0 }
         val text = param(tool, "text")?.takeIf { it.isNotBlank() }
         val textGone = param(tool, "textGone")?.takeIf { it.isNotBlank() }
-        if (timeSeconds == null && text == null && textGone == null) {
-            return error(tool.name, "One of time, text, or textGone is required")
+        val selector = param(tool, "selector")?.trim()?.takeIf { it.isNotBlank() }
+        val state = param(tool, "state")?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotBlank() } ?: "visible"
+        if (state !in setOf("visible", "hidden", "attached", "detached")) {
+            return error(tool.name, "state must be visible, hidden, attached or detached")
+        }
+        val timeoutSeconds = param(tool, "timeout")?.trim()?.toDoubleOrNull()?.coerceIn(1.0, 60.0) ?: 10.0
+        if (timeSeconds == null && text == null && textGone == null && selector == null) {
+            return error(tool.name, "One of time, text, textGone or selector is required")
         }
 
         runOnMainSync<Unit> {
@@ -1019,11 +1055,24 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         timeSeconds?.let { seconds ->
             Thread.sleep(((seconds * 1000.0).toLong()).coerceAtLeast(0L).coerceAtMost(30_000L))
         }
-        if (textGone != null && !waitForTextState(session, textGone = textGone)) {
-            return error(tool.name, "Timeout waiting for the requested condition")
-        }
-        if (text != null && !waitForTextState(session, text = text)) {
-            return error(tool.name, "Timeout waiting for the requested condition")
+        if (text != null || textGone != null || selector != null) {
+            val deadline = System.currentTimeMillis() + (timeoutSeconds * 1000).toLong()
+            var lastProblem: String? = null
+            while (true) {
+                val check = checkWaitCondition(session, text, textGone, selector, state)
+                if (check.badSelector != null) return error(tool.name, check.badSelector)
+                if (check.met) break
+                lastProblem = check.problem
+                if (System.currentTimeMillis() >= deadline) {
+                    return pageError(
+                        tool.name,
+                        sessionById(session.id) ?: session,
+                        "Timed out after ${timeoutSeconds}s waiting for the condition" +
+                            (lastProblem?.let { " ($it)" } ?: "") + "."
+                    )
+                }
+                Thread.sleep(250L)
+            }
         }
         val finalSession = sessionById(session.id) ?: session
         runOnMainSync<Unit> {
@@ -1040,21 +1089,119 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
 
         val summary =
-            when {
-                text != null && textGone != null -> "Waited until \"$text\" appeared and \"$textGone\" disappeared."
-                text != null -> "Waited until \"$text\" appeared."
-                textGone != null -> "Waited until \"$textGone\" disappeared."
-                else -> "Waited for ${timeSeconds ?: 0.0} second(s)."
-            }
+            listOfNotNull(
+                text?.let { "\"$it\" appeared" },
+                textGone?.let { "\"$it\" disappeared" },
+                selector?.let { "$it is $state" }
+            ).takeIf { it.isNotEmpty() }?.let { "Waited until " + it.joinToString(" and ") + "." }
+                ?: "Waited for ${timeSeconds ?: 0.0} second(s)."
 
         return ok(
             tool.name,
             buildSettledBrowserResponse(
                 settlement = settlement,
-                code = buildWaitForCode(timeSeconds, text, textGone),
+                code =
+                    buildWaitForCode(timeSeconds, text, textGone) +
+                        (selector?.let { "\nawait page.locator(${quoteJsCode(it)}).waitFor({ state: '$state' });" } ?: ""),
                 result = summary
             )
         )
+    }
+
+    private data class WaitCheck(val met: Boolean, val problem: String? = null, val badSelector: String? = null)
+
+    /**
+     * One look at the page for browser_wait_for: text of the page, its same-origin frames and open
+     * shadow roots, and the selector's state. A page that cannot be read counts as not ready.
+     */
+    private fun checkWaitCondition(
+        session: WebSession,
+        text: String?,
+        textGone: String?,
+        selector: String?,
+        state: String
+    ): WaitCheck {
+        val script =
+            """
+            (function() {
+                // Every document and open shadow root, at any depth, including frames that sit
+                // inside shadow roots. Each root's querySelectorAll stops at nested shadow roots,
+                // so every element is visited once.
+                const roots = [document];
+                const seen = new Set([document]);
+                for (let i = 0; i < roots.length; i++) {
+                    let all = [];
+                    try { all = roots[i].querySelectorAll("*"); } catch (_) {}
+                    for (const el of all) {
+                        if (el.shadowRoot && !seen.has(el.shadowRoot)) { seen.add(el.shadowRoot); roots.push(el.shadowRoot); }
+                        const tag = el.tagName;
+                        if (tag === "IFRAME" || tag === "FRAME") {
+                            let fd = null;
+                            try { fd = el.contentDocument; } catch (_) {}
+                            if (fd && !seen.has(fd)) { seen.add(fd); roots.push(fd); }
+                        }
+                    }
+                }
+                const needText = ${if (text != null || textGone != null) "true" else "false"};
+                const selector = ${selector?.let(JSONObject::quote) ?: "null"};
+                let pageText = "";
+                let attached = false;
+                let visible = false;
+                {
+                    for (const root of roots) {
+                        const d = root.nodeType === 9 ? root : null;
+                        if (needText) {
+                            try {
+                                pageText += "\n" + (d ? ((d.body && d.body.innerText) || "") : (root.textContent || ""));
+                            } catch (_) {}
+                        }
+                        if (selector && !visible) {
+                            let found;
+                            try { found = root.querySelectorAll(selector); }
+                            catch (e) { return JSON.stringify({ ok: false, badSelector: String(e && e.message ? e.message : e) }); }
+                            for (const el of found) {
+                                attached = true;
+                                try {
+                                    const style = el.ownerDocument.defaultView.getComputedStyle(el);
+                                    const rect = el.getBoundingClientRect();
+                                    if (style.visibility !== "hidden" && style.display !== "none" && (rect.width > 0 || rect.height > 0)) {
+                                        visible = true;
+                                        break;
+                                    }
+                                } catch (_) {}
+                            }
+                        }
+                    }
+                }
+                return JSON.stringify({ ok: true, text: pageText, attached: attached, visible: visible });
+            })();
+            """.trimIndent()
+        val json = runJsonScript(session.webView, script, "wait_check_error") ?: return WaitCheck(false, "the page could not be read")
+        json.optString("badSelector").takeIf { it.isNotBlank() }?.let {
+            return WaitCheck(false, badSelector = "selector is not valid: $it")
+        }
+        if (!json.optBoolean("ok", false)) return WaitCheck(false, "the page could not be read")
+        val pageText = json.optString("text")
+        val textOk = text == null || pageText.contains(text)
+        val goneOk = textGone == null || !pageText.contains(textGone)
+        val attached = json.optBoolean("attached", false)
+        val visible = json.optBoolean("visible", false)
+        val selectorOk =
+            selector == null ||
+                when (state) {
+                    "visible" -> visible
+                    "hidden" -> !visible
+                    "attached" -> attached
+                    else -> !attached
+                }
+        val problem =
+            when {
+                !textOk -> "\"$text\" not found"
+                !goneOk -> "\"$textGone\" still shown"
+                !selectorOk -> "$selector is not $state yet"
+                else -> null
+            }
+        return WaitCheck(textOk && goneOk && selectorOk, problem)
     }
 
     private fun browserSnapshot(tool: AITool): ToolResult {
@@ -1155,18 +1302,29 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
         }
         val markers = captureActionMarkers(session)
-        val jsResult = dispatchHoverByRef(session.webView, ref)
-        if (jsResult?.optBoolean("ok", false) != true) {
-            return if (jsResult?.optString("error") == "ref_not_found") {
-                pageError(
+        val geometry =
+            elementGeometry(session.webView, ref, "center")
+                ?: return pageError(
                     tool.name,
                     session,
                     "Ref $ref was not found in the current snapshot. Capture a new snapshot and retry."
                 )
+        val connection = BrowserCdp.connection(this, session)
+        val hoverResult =
+            if (connection != null) {
+                if (cdpHoverElement(connection, session.webView, ref, geometry) != null) {
+                    "Hovered ref=$ref with the mouse; the page shows it as hovered."
+                } else {
+                    "Moved the mouse over ref=$ref, but the page does not show it as hovered. " +
+                        "Another element may cover it; check the snapshot or screenshot."
+                }
             } else {
-                error(tool.name, "Hover failed: ${jsResult?.optString("error") ?: "unknown"}")
+                val jsResult = dispatchHoverByRef(session.webView, ref)
+                if (jsResult?.optBoolean("ok", false) != true) {
+                    return error(tool.name, "Hover failed: ${jsResult?.optString("error") ?: "unknown"}")
+                }
+                "Sent hover events to ref=$ref. DevTools is unavailable, so CSS :hover styles may not apply."
             }
-        }
         val settlement = settleBrowserAction(session, markers)
 
         return ok(
@@ -1174,7 +1332,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             buildSettledBrowserResponse(
                 settlement = settlement,
                 code = "await ${locatorExpressionForRef(session, ref)}.hover();",
-                result = "Hovered ref=$ref"
+                result = hoverResult
             )
         )
     }
@@ -1204,24 +1362,17 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             )
         }
         val markers = captureActionMarkers(session)
-        val jsResult = dispatchDragByRef(session.webView, startRef, endRef)
-        if (jsResult?.optBoolean("ok", false) != true) {
-            return when (jsResult?.optString("error")) {
-                "start_ref_not_found" ->
-                    pageError(
-                        tool.name,
-                        session,
-                        "Ref $startRef was not found in the current snapshot. Capture a new snapshot and retry."
-                    )
-                "end_ref_not_found" ->
-                    pageError(
-                        tool.name,
-                        session,
-                        "Ref $endRef was not found in the current snapshot. Capture a new snapshot and retry."
-                    )
-                else -> error(tool.name, "Drag failed: ${jsResult?.optString("error") ?: "unknown"}")
-            }
+        val requestedMode = param(tool, "mode")?.trim()?.lowercase(Locale.ROOT)?.ifBlank { null } ?: "auto"
+        if (requestedMode !in setOf("auto", "mouse", "touch", "html5")) {
+            return error(tool.name, "mode must be auto, mouse, touch or html5")
         }
+        val dragResult =
+            performDrag(session, startRef, endRef, requestedMode)
+                ?: return pageError(
+                    tool.name,
+                    session,
+                    "Ref $startRef or $endRef was not found in the current snapshot. Capture a new snapshot and retry."
+                )
         val settlement = settleBrowserAction(session, markers)
         val startLocator = locatorExpressionForRef(session, startRef)
         val endLocator = locatorExpressionForRef(session, endRef)
@@ -1231,9 +1382,76 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             buildSettledBrowserResponse(
                 settlement = settlement,
                 code = "await $startLocator.dragTo($endLocator);",
-                result = "Dragged ref=$startRef to ref=$endRef"
+                result = dragResult
             )
         )
+    }
+
+    /**
+     * Drags like a person: press on the start element, move along an eased path, release on the
+     * end element. Sliders and puzzle checks need this; elements marked draggable="true" use the
+     * page's HTML drag events instead. Null when either ref is gone.
+     */
+    private fun performDrag(session: WebSession, startRef: String, endRef: String, requestedMode: String): String? {
+        val webView = session.webView
+        val start = elementGeometry(webView, startRef, "center") ?: return null
+        val end = elementGeometry(webView, endRef, null) ?: return null
+        val connection = if (requestedMode == "auto" || requestedMode == "mouse") BrowserCdp.connection(this, session) else null
+        val mode =
+            when {
+                requestedMode == "html5" -> "html5"
+                requestedMode == "touch" -> "touch"
+                requestedMode == "auto" && start.explicitDraggable -> "html5"
+                connection != null -> "mouse"
+                else -> "touch"
+            }
+        val endHidden = !end.isPointVisible(end.centerX, end.centerY)
+        val steps = 24
+        val path = easedPath(start.centerX, start.centerY, end.centerX, end.centerY, steps)
+        when (mode) {
+            "html5" -> {
+                val jsResult = dispatchDragByRef(webView, startRef, endRef)
+                if (jsResult?.optBoolean("ok", false) != true) {
+                    return if (jsResult?.optString("error")?.endsWith("ref_not_found") == true) null
+                    else throw BrowserInputException("Drag failed: ${jsResult?.optString("error") ?: "unknown"}")
+                }
+            }
+            "mouse" -> {
+                val cdp = connection ?: throw BrowserInputException("DevTools is unavailable for a mouse drag. Use mode=touch.")
+                val scaled = cdpHoverElement(cdp, webView, startRef, start) ?: true
+                val jitter = java.util.Random()
+                cdpMouse(cdp, "mousePressed", start.cdpX(start.centerX, scaled), start.cdpY(start.centerY, scaled), "left", 1, 1)
+                Thread.sleep(80L)
+                path.drop(1).forEachIndexed { index, (x, y) ->
+                    val wobble = if (index in 1 until steps - 1) jitter.nextGaussian() * 0.6 else 0.0
+                    cdpMouse(cdp, "mouseMoved", start.cdpX(x, scaled), start.cdpY(y + wobble, scaled), "left", 1)
+                    Thread.sleep(16L + jitter.nextInt(10))
+                }
+                Thread.sleep(60L)
+                cdpMouse(cdp, "mouseReleased", start.cdpX(end.centerX, scaled), start.cdpY(end.centerY, scaled), "left", 0, 1)
+            }
+            else -> {
+                val viewSize = runOnMainSync { webView.width to webView.height }
+                if (viewSize.first <= 0 || viewSize.second <= 0) {
+                    throw BrowserInputException("The page is not laid out yet. Take a snapshot and try again.")
+                }
+                val points = path.map { (x, y) -> start.toViewX(x, viewSize.first) to start.toViewY(y, viewSize.second) }
+                dispatchTouchPath(webView, points, stepDelayMs = 18L, holdBeforeMoveMs = 120L)
+            }
+        }
+        val how =
+            when (mode) {
+                "html5" -> "with HTML drag-and-drop events"
+                "mouse" -> "with a real mouse press, move and release"
+                else -> "with a real finger drag"
+            }
+        return "Dragged ref=$startRef to ref=$endRef $how." +
+            if (endHidden && mode != "html5") {
+                " The target was outside the visible area, so the drop point may be wrong; scroll and check."
+            } else {
+                ""
+            } +
+            " Check the page to confirm it took effect; if not, try another mode (mouse, touch or html5)."
     }
 
     private fun browserEvaluate(tool: AITool): ToolResult {
@@ -1277,7 +1495,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             buildSettledBrowserResponse(
                 settlement = settlement,
                 code = code,
-                result = value
+                result = inlineOrSaved(value, "evaluate_result", "txt")
             )
         )
     }
@@ -1378,7 +1596,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             if (filename != null) {
                 "Saved console messages to ${writeBrowserTextOutput(filename, rendered, "console_messages", "log")}"
             } else {
-                rendered
+                inlineOrSaved(rendered, "console_messages", "log", keepTail = true)
             }
         return ok(
             tool.name,
@@ -1402,7 +1620,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             if (filename != null) {
                 "Saved network requests to ${writeBrowserTextOutput(filename, rendered, "network_requests", "log")}"
             } else {
-                rendered
+                inlineOrSaved(rendered, "network_requests", "log", keepTail = true)
             }
         return ok(
             tool.name,
@@ -1420,18 +1638,30 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         if (key.isNullOrBlank()) {
             return error(tool.name, "key is required")
         }
+        val combo = BrowserKeys.parse(key)
 
         runOnMainSync<Unit> {
             ensureSessionAttachedOnMain(session.id)
         }
         val markers = captureActionMarkers(session)
-        val result = pressKeyOnPage(session.webView, key)
+        val connection = BrowserCdp.connection(this, session)
+        val result =
+            if (connection != null) {
+                cdpPressKey(connection, combo)
+                "Pressed ${combo.label}"
+            } else {
+                // DevTools unavailable: only page-level key events, so the browser's own default
+                // actions (moving the caret, Tab focus, Control+A) may not happen.
+                pressKeyOnPage(session.webView, combo.label) +
+                    "\nNote: sent as page key events only; check the page state, because default " +
+                    "actions such as caret movement or Tab focus may not have happened."
+            }
         val settlement =
             settleBrowserAction(
                 initialSession = session,
                 markers = markers,
                 policy =
-                    if (key.equals("Enter", ignoreCase = true)) {
+                    if (combo.key.key == "Enter") {
                         BrowserActionSettlementPolicy(
                             waitForDocumentReady = true,
                             waitForTimeSeconds = 0.5
@@ -1444,7 +1674,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             tool.name,
             buildSettledBrowserResponse(
                 settlement = settlement,
-                code = "await page.keyboard.press(${quoteJsCode(key)});",
+                code = "await page.keyboard.press(${quoteJsCode(combo.label)});",
                 result = result
             )
         )
@@ -1529,7 +1759,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             buildSettledBrowserResponse(
                 settlement = settlement,
                 code = code,
-                result = result
+                result = inlineOrSaved(result, "run_code_result", "txt")
             )
         )
     }
@@ -1606,6 +1836,34 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 )
             }
 
+            "restore" -> {
+                ensureOverlayPermission(tool.name)?.let { return it }
+                val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
+                val crashed =
+                    crashedTabs.lastOrNull { it.profileName == profile }
+                        ?: return error(tool.name, "No crashed tab to restore.")
+                crashedTabs.remove(crashed)
+                val session =
+                    runOnMainSync {
+                        createSessionTabOnMain(context.applicationContext, initialUrl = crashed.url)
+                    }
+                val settlement =
+                    settleBrowserAction(
+                        session,
+                        captureActionMarkers(session),
+                        BrowserActionSettlementPolicy(waitForDocumentReady = true)
+                    )
+                ok(
+                    tool.name,
+                    buildSettledBrowserResponse(
+                        settlement = settlement,
+                        result =
+                            "Reopened ${crashed.url} in tab ${currentTabIndex(session.id)}. " +
+                                "Anything typed before the crash is gone; check the page before continuing."
+                    )
+                )
+            }
+
             "select" -> {
                 val index = intParam(tool, "index", -1)
                 if (index < 0) {
@@ -1654,15 +1912,15 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 )
             }
 
-            else -> error(tool.name, "action must be one of: list, create, select, close")
+            else -> error(tool.name, "action must be one of: list, create, select, close, restore")
         }
     }
 
     private fun browserTakeScreenshot(tool: AITool): ToolResult {
         val session = getSession(null) ?: return error(tool.name, "No active browser tab")
         val type = param(tool, "type")?.trim()?.lowercase(Locale.ROOT).orEmpty().ifBlank { "png" }
-        if (type !in setOf("png", "jpeg", "jpg")) {
-            return error(tool.name, "type must be png or jpeg")
+        if (type !in setOf("png", "jpeg", "jpg", "pdf")) {
+            return error(tool.name, "type must be png, jpeg or pdf")
         }
         val element = param(tool, "element")?.trim()?.takeIf { it.isNotBlank() }
         val ref = param(tool, "ref")?.trim()?.takeIf { it.isNotBlank() }
@@ -1673,14 +1931,18 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         if (fullPage && ref != null) {
             return error(tool.name, "fullPage cannot be used with element screenshots")
         }
+        if (type == "pdf" && ref != null) {
+            return error(tool.name, "type=pdf saves the whole page; leave out ref and element")
+        }
         val filename = param(tool, "filename")?.trim()?.takeIf { it.isNotBlank() }
-        val savedPath = takeScreenshot(session, filename, type, fullPage, ref)
+        val shot =
+            if (type == "pdf") savePageAsPdf(session, filename) else takeScreenshot(session, filename, type, fullPage, ref)
         return ok(
             tool.name,
             buildBrowserResponse(
                 openTabs = renderOpenTabs(),
                 pageState = renderPageState(session),
-                result = "Saved screenshot to $savedPath"
+                result = "Saved ${if (type == "pdf") "PDF" else "screenshot"} to ${shot.path}" + (shot.note?.let { "\nNote: $it" } ?: "")
             )
         )
     }
@@ -1696,6 +1958,20 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val y = param(tool, "y")?.trim()?.toDoubleOrNull()
             ?: return error(tool.name, "y is required, in pixels of the page screenshot")
         val doubleClick = boolParam(tool, "doubleClick", false)
+        val holdMs = param(tool, "holdMs")?.trim()?.toDoubleOrNull()?.toLong()?.coerceIn(0L, 10_000L) ?: 0L
+        val endX = param(tool, "endX")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            it.toDoubleOrNull() ?: return error(tool.name, "endX must be a number")
+        }
+        val endY = param(tool, "endY")?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            it.toDoubleOrNull() ?: return error(tool.name, "endY must be a number")
+        }
+        val button = param(tool, "button")?.trim()?.lowercase(Locale.ROOT)?.takeIf { it.isNotEmpty() } ?: "left"
+        if (button !in setOf("left", "right", "middle")) return error(tool.name, "button must be left, right or middle")
+        if ((endX == null) != (endY == null)) return error(tool.name, "endX and endY must be given together")
+        if (endX != null && button != "left") return error(tool.name, "A drag to endX/endY uses the left button only")
+        if (holdMs > 0L || endX != null || button != "left") {
+            return gestureAtScreenshotPoint(tool, session, x, y, endX, endY, holdMs, button, doubleClick)
+        }
         val markers = captureActionMarkers(session)
         val problem =
             runOnMainSync<String?> {
@@ -1745,12 +2021,266 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         )
     }
 
+    /**
+     * Long press, drag/swipe to a second point, or a right/middle click, all in screenshot pixels.
+     * Touches go through Android like a finger; other mouse buttons go through DevTools.
+     */
+    private fun gestureAtScreenshotPoint(
+        tool: AITool,
+        session: WebSession,
+        x: Double,
+        y: Double,
+        endX: Double?,
+        endY: Double?,
+        holdMs: Long,
+        button: String,
+        doubleClick: Boolean
+    ): ToolResult {
+        data class Mapping(val viewWidth: Int, val viewHeight: Int, val imageWidth: Int, val imageHeight: Int)
+        val mapping =
+            runOnMainSync {
+                ensureSessionAttachedOnMain(session.id)
+                val webView = session.webView
+                Mapping(
+                    webView.width,
+                    webView.height,
+                    session.viewportWidthPx ?: webView.width,
+                    session.viewportHeightPx ?: webView.height
+                )
+            }
+        if (mapping.viewWidth <= 0 || mapping.viewHeight <= 0 || mapping.imageWidth <= 0 || mapping.imageHeight <= 0) {
+            return pageError(tool.name, session, "The page is not laid out yet. Take a screenshot and try again.")
+        }
+        fun outside(px: Double, py: Double) = px < 0 || py < 0 || px >= mapping.imageWidth || py >= mapping.imageHeight
+        if (outside(x, y) || (endX != null && endY != null && outside(endX, endY))) {
+            return pageError(
+                tool.name,
+                session,
+                "A point is outside the page screenshot, which is ${mapping.imageWidth}x${mapping.imageHeight}."
+            )
+        }
+        fun viewX(px: Double) = (px * mapping.viewWidth / mapping.imageWidth).toFloat()
+        fun viewY(py: Double) = (py * mapping.viewHeight / mapping.imageHeight).toFloat()
+        val markers = captureActionMarkers(session)
+        val result: String
+        if (button != "left") {
+            val connection =
+                BrowserCdp.connection(this, session)
+                    ?: return error(tool.name, "DevTools is unavailable, so only left-button taps work right now.")
+            val density = context.resources.displayMetrics.density.toDouble().takeIf { it > 0.0 } ?: 1.0
+            val cx = viewX(x) / density
+            val cy = viewY(y) / density
+            val buttonsMask = if (button == "right") 2 else 4
+            cdpMouse(connection, "mouseMoved", cx, cy)
+            repeat(if (doubleClick) 2 else 1) { index ->
+                cdpMouse(connection, "mousePressed", cx, cy, button, buttonsMask, index + 1)
+                if (holdMs > 0L) Thread.sleep(holdMs)
+                cdpMouse(connection, "mouseReleased", cx, cy, button, 0, index + 1)
+            }
+            result = "Clicked the $button mouse button at (${x.toInt()}, ${y.toInt()})${if (doubleClick) " twice" else ""}."
+        } else if (endX != null && endY != null) {
+            val path = easedPath(x, y, endX, endY, 20).map { (px, py) -> viewX(px) to viewY(py) }
+            dispatchTouchPath(session.webView, path, stepDelayMs = 18L, holdBeforeMoveMs = holdMs.coerceAtLeast(80L))
+            result = "Dragged a finger from (${x.toInt()}, ${y.toInt()}) to (${endX.toInt()}, ${endY.toInt()})."
+        } else {
+            dispatchTouchPath(session.webView, listOf(viewX(x) to viewY(y)), holdBeforeMoveMs = holdMs)
+            result = "Pressed and held (${x.toInt()}, ${y.toInt()}) for ${holdMs} ms."
+        }
+        val settlement =
+            settleBrowserAction(
+                initialSession = session,
+                markers = markers,
+                policy = BrowserActionSettlementPolicy(waitForDocumentReady = true, waitForTimeSeconds = 0.5)
+            )
+        return ok(tool.name, buildSettledBrowserResponse(settlement = settlement, result = result))
+    }
+
+    /** Lists, checks, waits for, cancels or retries this caller's own downloads. */
+    private fun browserDownloads(tool: AITool): ToolResult {
+        val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
+        val manager = browserDownloadManager()
+        val action = param(tool, "action")?.trim()?.lowercase(Locale.ROOT)?.ifBlank { null } ?: "list"
+        val downloadId = param(tool, "downloadId")?.trim()?.takeIf { it.isNotBlank() }
+        fun owned(): BrowserDownloadTaskRecord? =
+            downloadId?.let { id -> manager.task(id)?.takeIf { it.profileName == profile } }
+        val missing = "No download with that downloadId. Use action=list to see download IDs."
+        return when (action) {
+            "list" -> {
+                // Ordered by start time so pages stay put while downloads progress.
+                val tasks = manager.tasksFor(profile).sortedByDescending { it.createdAt }
+                val offset = param(tool, "offset")?.trim()?.toIntOrNull()?.coerceAtLeast(0) ?: 0
+                val page = tasks.drop(offset).take(DOWNLOAD_LIST_PAGE_SIZE)
+                val text =
+                    when {
+                        tasks.isEmpty() -> "No downloads yet."
+                        page.isEmpty() -> "No downloads at offset $offset; there are ${tasks.size} in total."
+                        else -> {
+                            val rest = tasks.size - offset - page.size
+                            "Downloads ${offset + 1}-${offset + page.size} of ${tasks.size}, newest first:\n\n" +
+                                page.joinToString("\n\n") { manager.renderTask(it) } +
+                                if (rest > 0) "\n\n($rest older downloads; call again with offset=${offset + page.size})" else ""
+                        }
+                    }
+                ok(tool.name, buildBrowserResponse(downloads = text))
+            }
+            "status" -> {
+                if (downloadId == null) return error(tool.name, "downloadId is required for action=status")
+                val task = owned() ?: return error(tool.name, missing)
+                ok(tool.name, buildBrowserResponse(downloads = manager.renderTask(task)))
+            }
+            "wait" -> {
+                if (downloadId == null) return error(tool.name, "downloadId is required for action=wait")
+                val timeoutSeconds = param(tool, "timeout")?.trim()?.toDoubleOrNull()?.coerceIn(1.0, 120.0) ?: 60.0
+                val task =
+                    manager.awaitFinished(downloadId, profile, (timeoutSeconds * 1000).toLong())
+                        ?: return error(tool.name, missing)
+                val note = if (task.activeOrPending()) "Still downloading after ${timeoutSeconds}s; wait again or check later." else null
+                ok(tool.name, buildBrowserResponse(downloads = manager.renderTask(task), result = note))
+            }
+            "cancel", "retry" -> {
+                if (downloadId == null) return error(tool.name, "downloadId is required for action=$action")
+                owned() ?: return error(tool.name, missing)
+                manager.performAction(downloadId, if (action == "cancel") BrowserDownloadAction.CANCEL else BrowserDownloadAction.RETRY)
+                val task = owned() ?: return error(tool.name, missing)
+                ok(tool.name, buildBrowserResponse(downloads = manager.renderTask(task), result = "Requested $action."))
+            }
+            else -> error(tool.name, "action must be list, status, wait, cancel or retry")
+        }
+    }
+
+    /**
+     * Copy and paste between the page and Android's clipboard. Paste is first offered to the page
+     * as a paste event, so editors and split code boxes handle it their own way.
+     */
+    private fun browserClipboard(tool: AITool): ToolResult {
+        val session = getSession(null) ?: return error(tool.name, "No active browser tab")
+        val action = param(tool, "action")?.trim()?.lowercase(Locale.ROOT).orEmpty()
+        fun shown(text: String) = if (text.length <= 4_000) text else text.take(4_000) + "\n... (${text.length - 4_000} more characters)"
+        runOnMainSync<Unit> { ensureSessionAttachedOnMain(session.id) }
+        return when (action) {
+            "read" -> {
+                val (selection, _) = readPageSelection(session.webView)
+                val clip = readAndroidClipboard()
+                ok(
+                    tool.name,
+                    buildBrowserResponse(
+                        result =
+                            "Selected in the page: " + (selection.takeIf { it.isNotEmpty() }?.let { "\n" + shown(it) } ?: "(nothing)") +
+                                "\nClipboard: " + (clip?.let { "\n" + shown(it) } ?: "(empty, or Android did not allow reading it right now)")
+                    )
+                )
+            }
+            "copy" -> {
+                val (selection, _) = readPageSelection(session.webView)
+                if (selection.isEmpty()) return pageError(tool.name, session, "Nothing is selected in the page. Select text first, for example with Control+A.")
+                writeAndroidClipboard(selection)
+                ok(tool.name, buildBrowserResponse(result = "Copied ${selection.length} characters to the clipboard:\n" + shown(selection)))
+            }
+            "write" -> {
+                val text = param(tool, "text") ?: return error(tool.name, "text is required for action=write")
+                writeAndroidClipboard(text)
+                ok(tool.name, buildBrowserResponse(result = "Put ${text.length} characters on the clipboard."))
+            }
+            "paste" -> {
+                val text =
+                    param(tool, "text")
+                        ?: readAndroidClipboard()
+                        ?: return error(tool.name, "The clipboard is empty or cannot be read now; pass text to paste.")
+                val markers = captureActionMarkers(session)
+                val how =
+                    if (offerPasteEvent(session.webView, text)) {
+                        "the page handled the paste itself"
+                    } else {
+                        // Inserting needs a focused, writable text field; otherwise nothing lands.
+                        val (_, editable) = readPageSelection(session.webView)
+                        if (!editable) {
+                            return pageError(
+                                tool.name,
+                                session,
+                                "Nothing was pasted: no writable text field has focus. Click the text field first, then paste again."
+                            )
+                        }
+                        val connection = BrowserCdp.connection(this, session)
+                        if (connection != null) {
+                            connection.send("Input.insertText", JSONObject().put("text", text), 5_000L)
+                            "inserted at the cursor"
+                        } else {
+                            val inserted =
+                                runJsonScript(
+                                    session.webView,
+                                    "(function(){ let ok = false; try { ok = document.execCommand('insertText', false, ${JSONObject.quote(text)}); } catch (_) {} return JSON.stringify({ ok: true, inserted: ok }); })();",
+                                    "paste_error"
+                                )?.optBoolean("inserted", false) == true
+                            if (!inserted) return pageError(tool.name, session, "Could not paste: click a text field first.")
+                            "inserted at the cursor"
+                        }
+                    }
+                val settlement = settleBrowserAction(session, markers)
+                ok(tool.name, buildSettledBrowserResponse(settlement = settlement, result = "Pasted ${text.length} characters ($how)."))
+            }
+            else -> error(tool.name, "action must be read, copy, write or paste")
+        }
+    }
+
+    /** Saved camera, microphone and location answers per site, for this caller's login profile. */
+    private fun browserPermissions(tool: AITool): ToolResult {
+        val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
+        val action = param(tool, "action")?.trim()?.lowercase(Locale.ROOT)?.ifBlank { null } ?: "list"
+        if (action == "list") {
+            val rules = BrowserSitePermissions.list(context, profile)
+            val text =
+                if (rules.isEmpty()) {
+                    "No saved site permissions. Sites without one get the normal Android permission prompt."
+                } else {
+                    rules.joinToString("\n") { (origin, kind, allowed) -> "- $origin $kind: ${if (allowed) "allowed" else "blocked"}" }
+                }
+            return ok(tool.name, buildBrowserResponse(result = text))
+        }
+        val rawOrigin =
+            param(tool, "origin")?.trim()?.takeIf { it.isNotBlank() }
+                ?: getSession(null)?.currentUrl
+                ?: return error(tool.name, "origin is required, for example https://example.com")
+        val origin =
+            BrowserSitePermissions.originOf(rawOrigin)
+                ?: return error(tool.name, "origin must be an http or https address, for example https://example.com")
+        val kind = param(tool, "permission")?.trim()?.lowercase(Locale.ROOT)?.ifBlank { null } ?: "all"
+        if (kind != "all" && kind !in BrowserSitePermissions.KINDS) {
+            return error(tool.name, "permission must be all or one of: ${BrowserSitePermissions.KINDS.joinToString(", ")}")
+        }
+        val allow =
+            when (action) {
+                "allow" -> true
+                "block" -> false
+                "reset" -> null
+                else -> return error(tool.name, "action must be list, allow, block or reset")
+            }
+        BrowserSitePermissions.set(context, profile, origin, kind, allow)
+        val what = if (kind == "all") "all permissions" else kind
+        val result =
+            when (allow) {
+                true -> "Allowed $what for $origin. Android may still ask the user once for the phone permission."
+                false -> "Blocked $what for $origin. Reload the page if it already has access."
+                null -> "Forgot the saved answer for $what on $origin; the site will be asked again."
+            }
+        return ok(tool.name, buildBrowserResponse(result = result))
+    }
+
     /** Sends one Chrome DevTools Protocol command to the current tab and returns its result. */
     private fun browserDevtools(tool: AITool): ToolResult {
         val session = getSession(null) ?: return error(tool.name, "No active browser tab")
         val method = param(tool, "method")?.trim().orEmpty()
+        val readEvents = boolParam(tool, "events", false)
+        if (method.isEmpty() && readEvents) {
+            val connection =
+                BrowserCdp.connection(this, session)
+                    ?: return error(tool.name, "DevTools is not available for this tab right now. Try again after the page loads.")
+            return ok(tool.name, buildBrowserResponse(result = renderDevtoolsEvents(connection)))
+        }
         if (!DEVTOOLS_METHOD.matches(method)) {
-            return error(tool.name, "method must look like Domain.command, for example Runtime.evaluate")
+            return error(
+                tool.name,
+                "method must look like Domain.command, for example Runtime.evaluate (or pass events=true alone to read events)"
+            )
         }
         val domain = method.substringBefore('.')
         if (domain !in DEVTOOLS_DOMAINS) {
@@ -1786,7 +2316,20 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                         "\n... (${text.length - DEVTOOLS_INLINE_CHARS} more characters; pass filename to save all)"
                 else -> text
             }
-        return ok(tool.name, buildBrowserResponse(code = "await cdp.send('$method')", result = shown))
+        val eventsText = if (readEvents) "\n\n" + renderDevtoolsEvents(connection) else ""
+        return ok(tool.name, buildBrowserResponse(code = "await cdp.send('$method')", result = shown + eventsText))
+    }
+
+    /** Events the tab sent since the last read, for domains the AI enabled (Debugger, Runtime, ...). */
+    private fun renderDevtoolsEvents(connection: CdpConnection): String {
+        val (events, dropped) = connection.drainEvents()
+        if (events.isEmpty()) {
+            return "Events: none since the last read. Events only arrive for domains you enabled, for example Debugger.enable or Runtime.enable."
+        }
+        val body =
+            "Events since the last read (oldest first; time in ms):\n" + events.joinToString("\n") +
+                if (dropped > 0) "\n($dropped older events were dropped because there were too many)" else ""
+        return inlineOrSaved(body, "devtools_events", "log", keepTail = true)
     }
 
     private fun browserType(tool: AITool): ToolResult {
@@ -1939,8 +2482,11 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val latch = CountDownLatch(1)
         var result: T? = null
         var error: Throwable? = null
+        // 0 waiting, 1 running, 2 given up: a late runnable must not act after the caller was told it failed.
+        val state = java.util.concurrent.atomic.AtomicInteger(0)
 
         mainHandler.post {
+            if (!state.compareAndSet(0, 1)) return@post
             try {
                 com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
                 result = BrowserProfiles.withScope(profileScope, block)
@@ -1952,11 +2498,21 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         }
 
         if (!latch.await(timeoutMs, TimeUnit.MILLISECONDS)) {
-            throw RuntimeException("Main-thread operation timeout (${timeoutMs}ms)")
+            if (state.compareAndSet(0, 2)) {
+                throw RuntimeException(
+                    "The app was busy for ${timeoutMs / 1000.0}s, so this browser step was cancelled before it ran. " +
+                        "Nothing was changed; try again."
+                )
+            }
+            throw RuntimeException(
+                "A browser step took longer than ${timeoutMs / 1000.0}s and may still finish in the background. " +
+                    "Take a snapshot to see the current state before retrying."
+            )
         }
 
         if (error != null) {
-            throw RuntimeException(error)
+            val failure = error!!
+            throw (failure as? BrowserInputException) ?: RuntimeException(failure)
         }
 
         @Suppress("UNCHECKED_CAST")

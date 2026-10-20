@@ -523,8 +523,11 @@ fun getJsToolsDefinition(): String {
                     }
                     const params = { ...options };
                     params.method = String(params.method || "").trim();
-                    if (!params.method) {
-                        throw new Error("browserDevtools requires method");
+                    if (params.events !== undefined) {
+                        params.events = !!params.events;
+                    }
+                    if (!params.method && !params.events) {
+                        throw new Error("browserDevtools requires method, or events: true");
                     }
                     if (params.params !== undefined && params.params !== null && typeof params.params !== 'string') {
                         params.params = JSON.stringify(params.params);
@@ -533,6 +536,39 @@ fun getJsToolsDefinition(): String {
                         params.filename = String(params.filename);
                     }
                     return toolCall("browser_devtools", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserDownloads: (options) => {
+                    const params = { ...(options || {}) };
+                    if (params.action !== undefined && params.action !== null) {
+                        params.action = String(params.action).trim();
+                    }
+                    if (params.downloadId !== undefined && params.downloadId !== null) {
+                        params.downloadId = String(params.downloadId).trim();
+                    }
+                    return toolCall("browser_downloads", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserClipboard: (options) => {
+                    if (!options || typeof options !== 'object' || Array.isArray(options)) {
+                        throw new Error("browserClipboard only accepts one options object");
+                    }
+                    const params = { ...options };
+                    params.action = String(params.action || "").trim();
+                    if (!params.action) {
+                        throw new Error("browserClipboard requires action");
+                    }
+                    if (params.text !== undefined && params.text !== null) {
+                        params.text = String(params.text);
+                    }
+                    return toolCall("browser_clipboard", Tools.Memory._withHostChat({ ...(params) }));
+                },
+                browserPermissions: (options) => {
+                    const params = { ...(options || {}) };
+                    ["action", "origin", "permission"].forEach((key) => {
+                        if (params[key] !== undefined && params[key] !== null) {
+                            params[key] = String(params[key]).trim();
+                        }
+                    });
+                    return toolCall("browser_permissions", Tools.Memory._withHostChat({ ...(params) }));
                 },
                 browserType: (options) => {
                     if (!options || typeof options !== 'object' || Array.isArray(options)) {
@@ -568,9 +604,10 @@ fun getJsToolsDefinition(): String {
                     if (
                         params.time === undefined &&
                         params.text === undefined &&
-                        params.textGone === undefined
+                        params.textGone === undefined &&
+                        params.selector === undefined
                     ) {
-                        throw new Error("browserWaitFor requires one of: time, text, textGone");
+                        throw new Error("browserWaitFor requires one of: time, text, textGone, selector");
                     }
                     if (params.text !== undefined && params.text !== null) {
                         params.text = String(params.text);

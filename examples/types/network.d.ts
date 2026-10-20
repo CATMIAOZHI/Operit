@@ -113,6 +113,8 @@ export namespace Net {
         startRef: string;
         endElement: string;
         endRef: string;
+        /** auto (default), mouse, touch or html5 drag-and-drop events. */
+        mode?: "auto" | "mouse" | "touch" | "html5";
     }): Promise<string>;
 
     /**
@@ -218,7 +220,7 @@ export namespace Net {
     }): Promise<string>;
 
     /**
-     * Capture the current browser page or a snapshot element as an image.
+     * Capture the current browser page or a snapshot element as an image, or the whole page as a PDF with type "pdf".
      * Supplying `ref` requires its matching snapshot `element` description.
      */
     function browserTakeScreenshot(options: {
@@ -229,21 +231,58 @@ export namespace Net {
     }): Promise<string>;
 
     /**
-     * Tap the page at pixel coordinates of a plain page screenshot.
+     * Tap, long-press, swipe or right-click at pixel coordinates of a plain page screenshot.
      */
     function browserMouseClickXy(options: {
         x: number;
         y: number;
         doubleClick?: boolean;
+        /** Milliseconds to hold before release, for a long press (max 10000). */
+        holdMs?: number;
+        /** Swipe end point; give endX and endY together. */
+        endX?: number;
+        endY?: number;
+        button?: "left" | "right" | "middle";
     }): Promise<string>;
 
     /**
      * Send one Chrome DevTools Protocol command to the current tab. Only page-scoped domains work.
+     * With `events: true`, recently received events are returned too; `method` may then be omitted.
      */
     function browserDevtools(options: {
-        method: string;
+        method?: string;
+        events?: boolean;
         params?: Record<string, unknown> | string;
         filename?: string;
+    }): Promise<string>;
+
+    /**
+     * List, check, wait for, cancel or retry downloads of the current login profile.
+     */
+    function browserDownloads(options?: {
+        action?: "list" | "status" | "wait" | "cancel" | "retry";
+        downloadId?: string;
+        /** Seconds for action "wait", 1 to 120. */
+        timeout?: number;
+        /** For action "list": skip this many newest downloads to page back. */
+        offset?: number;
+    }): Promise<string>;
+
+    /**
+     * Copy and paste between the page and the Android clipboard.
+     */
+    function browserClipboard(options: {
+        action: "read" | "copy" | "write" | "paste";
+        text?: string;
+    }): Promise<string>;
+
+    /**
+     * Save per-site camera, microphone, location and similar permission answers.
+     */
+    function browserPermissions(options?: {
+        action?: "list" | "allow" | "block" | "reset";
+        origin?: string;
+        permission?: string;
     }): Promise<string>;
 
     /**
@@ -264,6 +303,10 @@ export namespace Net {
         time?: number;
         text?: string;
         textGone?: string;
+        selector?: string;
+        state?: "visible" | "hidden" | "attached" | "detached";
+        /** Maximum seconds to wait, 1 to 60. */
+        timeout?: number;
     }): Promise<string>;
 
     /**

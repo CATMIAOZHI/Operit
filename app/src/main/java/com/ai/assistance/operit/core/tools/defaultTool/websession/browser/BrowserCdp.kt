@@ -189,6 +189,13 @@ internal object BrowserCdp {
                     synchronized(methods) { methods.remove(requestId) }
                     connection.urlFor(requestId)
                 }
+                else -> {
+                    // Request events are already summarized by browser_network_requests; keep the rest
+                    // (debugger pauses, WebSocket frames, console calls...) for browser_devtools to read.
+                    if (!method.startsWith("Network.") || method.startsWith("Network.webSocket")) {
+                        connection.recordEvent(method, params)
+                    }
+                }
             }
         }
         // Small buffers: bodies are only kept for a short look through the DevTools tool.
@@ -230,6 +237,33 @@ internal class CdpConnection private constructor(
 
     /** The URL a request was sent to, forgotten once read. */
     fun urlFor(requestId: String): String? = synchronized(urls) { urls.remove(requestId) }
+
+    private val recentEvents = ArrayDeque<String>()
+    private var droppedEvents = 0
+
+    /** Keeps the latest events, each shortened, until browser_devtools reads them. */
+    fun recordEvent(method: String, params: JSONObject) {
+        val raw = params.toString()
+        val shown = if (raw.length > 2_000) raw.take(2_000) + "...(${raw.length} chars)" else raw
+        val line = "${System.currentTimeMillis()} $method $shown"
+        synchronized(recentEvents) {
+            recentEvents.addLast(line)
+            while (recentEvents.size > 200) {
+                recentEvents.removeFirst()
+                droppedEvents++
+            }
+        }
+    }
+
+    /** Events since the last read, oldest first, and how many were dropped because there were too many. */
+    fun drainEvents(): Pair<List<String>, Int> =
+        synchronized(recentEvents) {
+            val events = recentEvents.toList()
+            val dropped = droppedEvents
+            recentEvents.clear()
+            droppedEvents = 0
+            events to dropped
+        }
 
     /** Sends one command and waits for its answer; a DevTools error becomes [CdpException]. */
     fun send(method: String, params: JSONObject = JSONObject(), timeoutMs: Long = 10_000L): JSONObject {

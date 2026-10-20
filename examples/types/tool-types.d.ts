@@ -82,6 +82,9 @@ export interface ToolResultMap {
     'browser_take_screenshot': string;
     'browser_mouse_click_xy': string;
     'browser_devtools': string;
+    'browser_downloads': string;
+    'browser_clipboard': string;
+    'browser_permissions': string;
     'browser_type': string;
     'browser_tabs': string;
     'multipart_request': HttpResponseData;

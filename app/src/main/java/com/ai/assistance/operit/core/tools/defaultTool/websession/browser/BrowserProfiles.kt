@@ -100,6 +100,7 @@ internal object BrowserProfiles {
      */
     fun deleteOrbitData(context: Context, orbitId: String) {
         val name = orbitProfileName(orbitId)
+        BrowserSitePermissions.clearProfile(context.applicationContext, name)
         val prefs = context.applicationContext.getSharedPreferences(PENDING_PREFS, Context.MODE_PRIVATE)
         // Written down even when this WebView cannot handle profiles: a later one may have the data.
         prefs.edit().putStringSet(PENDING_KEY, pendingNames(prefs) + name).apply()
