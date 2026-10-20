@@ -214,6 +214,15 @@ internal fun StandardBrowserSessionTools.configureWebView(
 
                 session.pendingFileChooserCallback?.onReceiveValue(null)
                 session.pendingFileChooserCallback = filePathCallback
+                session.pendingFileChooserAccept =
+                    fileChooserParams?.acceptTypes.orEmpty()
+                        .flatMap { it.split(',') }
+                        .map { it.trim() }
+                        .filter { it.isNotEmpty() }
+                        .distinct()
+                session.pendingFileChooserMultiple =
+                    fileChooserParams?.mode == WebChromeClient.FileChooserParams.MODE_OPEN_MULTIPLE
+                session.pendingFileChooserCapture = fileChooserParams?.isCaptureEnabled == true
                 session.lastFileChooserRequestAt = System.currentTimeMillis()
                 notifySessionStateChanged(session)
 
@@ -229,7 +238,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 if (request == null) {
                     return
                 }
-                handleWebPermissionRequest(request)
+                handleWebPermissionRequest(session, request)
             }
 
             override fun onGeolocationPermissionsShowPrompt(
@@ -240,7 +249,7 @@ internal fun StandardBrowserSessionTools.configureWebView(
                     callback?.invoke(origin.orEmpty(), false, false)
                     return
                 }
-                handleGeolocationPermissionRequest(origin, callback)
+                handleGeolocationPermissionRequest(session, origin, callback)
             }
 
             override fun onJsAlert(
@@ -310,7 +319,13 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 session.currentUrl = url
                 session.pageLoaded = false
                 session.isLoading = true
-                session.hasSslError = false
+                // The error page shown after a refused certificate starts with the same URL; keep its reason.
+                if (url != session.sslErrorUrl) {
+                    session.hasSslError = false
+                    session.sslErrorDetail = null
+                    session.sslErrorUrl = null
+                }
+                session.lastPermissionNote = null
                 session.lastSnapshot = null
                 clearEventLogs(session)
                 session.pendingDialog = null
@@ -393,14 +408,26 @@ internal fun StandardBrowserSessionTools.configureWebView(
             ) {
                 AppLogger.w(
                     WEBVIEW_SUPPORT_TAG,
-                    "web_session SSL error, proceeding anyway. " +
+                    "web_session SSL error, refusing the connection. " +
                         "session=${session.id}, url=${error.url}, primaryError=${error.primaryError}"
                 )
+                val reason =
+                    when (error.primaryError) {
+                        android.net.http.SslError.SSL_EXPIRED -> "the certificate has expired"
+                        android.net.http.SslError.SSL_NOTYETVALID -> "the certificate is not valid yet"
+                        android.net.http.SslError.SSL_IDMISMATCH -> "the certificate is for a different site"
+                        android.net.http.SslError.SSL_UNTRUSTED -> "the certificate is not from a trusted authority"
+                        android.net.http.SslError.SSL_DATE_INVALID -> "the certificate date is invalid"
+                        else -> "the certificate is invalid"
+                    }
                 session.hasSslError = true
+                session.sslErrorDetail = "$reason (${error.url})"
+                session.sslErrorUrl = error.url
                 notifySessionStateChanged(session)
                 updateNavigationState(session)
                 refreshSessionUiOnMain(session.id)
-                handler.proceed()
+                // Proceeding would let anyone on the network read or change the page, logins included.
+                handler.cancel()
             }
 
             override fun onRenderProcessGone(
@@ -421,6 +448,20 @@ internal fun StandardBrowserSessionTools.configureWebView(
                 session.pendingFileChooserCallback?.onReceiveValue(null)
                 session.pendingFileChooserCallback = null
                 notifySessionStateChanged(session)
+                session.currentUrl.takeIf { it.isNotBlank() && it != "about:blank" }?.let { url ->
+                    StandardBrowserSessionTools.crashedTabs.add(
+                        StandardBrowserSessionTools.CrashedTab(
+                            url = url,
+                            title = session.pageTitle,
+                            profileName = session.profileName,
+                            at = System.currentTimeMillis(),
+                            crashed = detail.didCrash()
+                        )
+                    )
+                    while (StandardBrowserSessionTools.crashedTabs.size > 10) {
+                        StandardBrowserSessionTools.crashedTabs.removeAt(0)
+                    }
+                }
                 closeSession(session.id)
                 showToast(
                     if (detail.didCrash()) {
@@ -750,6 +791,8 @@ internal fun StandardBrowserSessionTools.navigateSessionOnMain(
     session.isLoading = true
     session.currentUrl = targetUrl
     session.hasSslError = false
+    session.sslErrorDetail = null
+    session.sslErrorUrl = null
     session.lastSnapshot = null
     updateNavigationState(session)
     refreshSessionUiOnMain(session.id)
@@ -1198,10 +1241,26 @@ private fun PendingExternalOpenRequest.toUiState(): ExternalOpenPromptState =
         target = target
     )
 
-internal fun StandardBrowserSessionTools.handleWebPermissionRequest(request: PermissionRequest) {
-    val requestedResources = request.resources?.distinct().orEmpty()
+internal fun StandardBrowserSessionTools.handleWebPermissionRequest(
+    session: BrowserToolSession,
+    request: PermissionRequest
+) {
+    val origin = BrowserSitePermissions.originOf(request.origin?.toString().orEmpty())
+    val allResources = request.resources?.distinct().orEmpty()
+    // A saved "deny" for this site wins over the Android prompt.
+    val refused =
+        allResources.filter { resource ->
+            val kind = BrowserSitePermissions.kindForResource(resource)
+            origin != null && kind != null &&
+                BrowserSitePermissions.decision(context, session.profileName, origin, kind) == false
+        }
+    val requestedResources = allResources - refused.toSet()
+    val kindsText = allResources.mapNotNull(BrowserSitePermissions::kindForResource).distinct().joinToString(", ")
     if (requestedResources.isEmpty()) {
         request.deny()
+        if (kindsText.isNotEmpty()) {
+            session.lastPermissionNote = "${origin ?: "the page"} asked for $kindsText: refused by a saved site setting"
+        }
         return
     }
 
@@ -1212,6 +1271,7 @@ internal fun StandardBrowserSessionTools.handleWebPermissionRequest(request: Per
 
     if (requiredPermissions.isEmpty()) {
         request.grant(requestedResources.toTypedArray())
+        if (kindsText.isNotEmpty()) session.lastPermissionNote = "${origin ?: "the page"} asked for $kindsText: allowed"
         return
     }
 
@@ -1228,8 +1288,12 @@ internal fun StandardBrowserSessionTools.handleWebPermissionRequest(request: Per
         StandardBrowserSessionTools.mainHandler.post {
             if (grantableResources.isNotEmpty()) {
                 request.grant(grantableResources)
+                session.lastPermissionNote =
+                    "${origin ?: "the page"} asked for $kindsText: allowed " +
+                        grantableResources.mapNotNull(BrowserSitePermissions::kindForResource).joinToString(", ")
             } else {
                 request.deny()
+                session.lastPermissionNote = "${origin ?: "the page"} asked for $kindsText: refused (Android permission not given)"
                 showToast(context.getString(R.string.web_session_permission_denied))
             }
         }
@@ -1237,9 +1301,16 @@ internal fun StandardBrowserSessionTools.handleWebPermissionRequest(request: Per
 }
 
 internal fun StandardBrowserSessionTools.handleGeolocationPermissionRequest(
+    session: BrowserToolSession,
     origin: String,
     callback: GeolocationPermissions.Callback
 ) {
+    val site = BrowserSitePermissions.originOf(origin)
+    if (site != null && BrowserSitePermissions.decision(context, session.profileName, site, "location") == false) {
+        callback.invoke(origin, false, false)
+        session.lastPermissionNote = "$site asked for location: refused by a saved site setting"
+        return
+    }
     ioScope.launch {
         val permissionResults =
             ensureAndroidPermissions(
@@ -1254,6 +1325,7 @@ internal fun StandardBrowserSessionTools.handleGeolocationPermissionRequest(
 
         StandardBrowserSessionTools.mainHandler.post {
             callback.invoke(origin, granted, false)
+            session.lastPermissionNote = "${site ?: origin} asked for location: ${if (granted) "allowed" else "refused"}"
             if (!granted) {
                 showToast(context.getString(R.string.web_session_location_permission_denied))
             }

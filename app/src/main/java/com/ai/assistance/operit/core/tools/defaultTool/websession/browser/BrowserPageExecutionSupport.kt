@@ -1994,23 +1994,55 @@ internal fun StandardBrowserSessionTools.buildSettledBrowserResponse(
         consoleMessages = consoleMessages,
         modalState = modalState,
         downloads = downloads,
-        result = result,
+        result =
+            if (settlement.timedOut) {
+                listOfNotNull(
+                    result,
+                    "Note: the page had not settled when waiting stopped (it may still be loading, or the " +
+                        "expected change did not happen). The action was sent; check the state above before continuing."
+                ).joinToString("\n")
+            } else {
+                result
+            },
         error = error
     )
 
 internal fun StandardBrowserSessionTools.renderOpenTabs(
     registry: BrowserPageRegistry = buildPageRegistry()
 ): String {
+    val crashNote = renderRecentCrashes()
     val activeId = registry.activeSessionId
     val ordered = registry.orderedSessionIds.mapNotNull(::sessionById)
     if (ordered.isEmpty()) {
-        return "No open tabs."
+        return "No open tabs." + crashNote
     }
-    return ordered.mapIndexed { index, session ->
-        val active = if (session.id == activeId) " [active]" else ""
-        val title = sessionDisplayTitle(session).ifBlank { "about:blank" }
-        "- [$index] $title$active\n  ${session.currentUrl.ifBlank { "about:blank" }}"
-    }.joinToString("\n")
+    // Many tabs: list the first ones and always the active one, keeping indexes real.
+    val maxListed = 20
+    val lines =
+        ordered.mapIndexedNotNull { index, session ->
+            if (index >= maxListed && session.id != activeId) return@mapIndexedNotNull null
+            val active = if (session.id == activeId) " [active]" else ""
+            val title = sessionDisplayTitle(session).ifBlank { "about:blank" }.take(200)
+            val url = session.currentUrl.ifBlank { "about:blank" }.let { if (it.length > 300) it.take(300) + "..." else it }
+            "- [$index] $title$active\n  $url"
+        }
+    val hidden = ordered.size - lines.size
+    return lines.joinToString("\n") +
+        (if (hidden > 0) "\n- ... $hidden more tabs not listed (indexes $maxListed+)" else "") +
+        crashNote
+}
+
+/** Tabs of this caller's profile that crashed in the last half hour. */
+private fun renderRecentCrashes(): String {
+    val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
+    val since = System.currentTimeMillis() - 30 * 60_000L
+    val recent = StandardBrowserSessionTools.crashedTabs.filter { it.profileName == profile && it.at >= since }.takeLast(3)
+    if (recent.isEmpty()) return ""
+    return "\nRecently closed because the page crashed (reopen the newest with browser_tabs action=restore):\n" +
+        recent.asReversed().joinToString("\n") { tab ->
+            val minutes = ((System.currentTimeMillis() - tab.at) / 60_000L).coerceAtLeast(0L)
+            "- ${tab.title.ifBlank { tab.url }.take(200)} (${minutes} min ago)\n  ${tab.url.take(300)}"
+        }
 }
 
 internal fun StandardBrowserSessionTools.renderPageState(session: BrowserToolSession): String {
@@ -2026,6 +2058,13 @@ internal fun StandardBrowserSessionTools.renderPageState(session: BrowserToolSes
         appendLine("- Loading: ${if (session.isLoading) "yes" else "no"}")
         appendLine("- Can go back: ${if (session.canGoBack) "yes" else "no"}")
         appendLine("- Can go forward: ${if (session.canGoForward) "yes" else "no"}")
+        session.sslErrorDetail?.let {
+            appendLine(
+                "- Certificate problem: a connection was refused because $it. It was blocked to protect " +
+                    "logins and data; do not enter anything there, and tell the user if they need this site."
+            )
+        }
+        session.lastPermissionNote?.let { appendLine("- Site permission: $it (change with browser_permissions)") }
         append("- Viewport: ${viewport.first}x${viewport.second}")
     }
 }
@@ -2385,17 +2424,76 @@ internal fun StandardBrowserSessionTools.resolveBrowserOutputFile(
     return File(baseDir, "${defaultPrefix}_$timestamp.$extension")
 }
 
+internal data class BrowserScreenshotResult(val path: String, val note: String? = null)
+
+/**
+ * The whole page as a PDF of A4-shaped pages. WebView cannot print to a file on its own, so the
+ * pages are pictures of the page: they look right, but their text cannot be selected or searched.
+ */
+internal fun StandardBrowserSessionTools.savePageAsPdf(session: BrowserToolSession, filename: String?): BrowserScreenshotResult {
+    val shot = takeScreenshot(session, null, "png", fullPage = true, ref = null)
+    val image = File(shot.path)
+    try {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(image.absolutePath, bounds)
+        if (bounds.outWidth <= 0 || bounds.outHeight <= 0) throw RuntimeException("Could not capture the page for the PDF")
+        val bitmap =
+            android.graphics.BitmapFactory.decodeFile(
+                image.absolutePath,
+                android.graphics.BitmapFactory.Options().apply { inPreferredConfig = Bitmap.Config.RGB_565 }
+            ) ?: throw RuntimeException("Could not read the page capture for the PDF")
+        val output = resolveBrowserOutputFile(filename, "page", "pdf")
+        output.parentFile?.mkdirs()
+        val document = android.graphics.pdf.PdfDocument()
+        try {
+            val pageWidthPt = 595
+            val pageHeightPt = 842
+            val scale = pageWidthPt.toFloat() / bitmap.width
+            val sliceHeightPx = (pageHeightPt / scale).toInt().coerceAtLeast(1)
+            var top = 0
+            var number = 1
+            val paint = android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+            while (top < bitmap.height) {
+                val bottom = minOf(bitmap.height, top + sliceHeightPx)
+                val page = document.startPage(android.graphics.pdf.PdfDocument.PageInfo.Builder(pageWidthPt, pageHeightPt, number).create())
+                page.canvas.drawColor(android.graphics.Color.WHITE)
+                page.canvas.drawBitmap(
+                    bitmap,
+                    Rect(0, top, bitmap.width, bottom),
+                    android.graphics.RectF(0f, 0f, pageWidthPt.toFloat(), (bottom - top) * scale),
+                    paint
+                )
+                document.finishPage(page)
+                top = bottom
+                number++
+            }
+            FileOutputStream(output).use { document.writeTo(it) }
+            return BrowserScreenshotResult(
+                output.absolutePath,
+                "Saved ${number - 1} PDF page(s). The pages are pictures of the page, so their text cannot be selected or searched."
+            )
+        } finally {
+            document.close()
+            bitmap.recycle()
+        }
+    } finally {
+        image.delete()
+    }
+}
+
 internal fun StandardBrowserSessionTools.takeScreenshot(
     session: BrowserToolSession,
     filename: String?,
     type: String,
     fullPage: Boolean,
     ref: String?
-): String {
+): BrowserScreenshotResult {
     if (!fullPage && ref == null) {
-        captureViewportWithDevtools(session, filename, type)?.let { return it }
+        captureViewportWithDevtools(session, filename, type)?.let { return BrowserScreenshotResult(it) }
     }
-    return runOnMainSync {
+    if (ref != null) return captureElementScreenshot(session, filename, type, ref)
+    if (fullPage) captureFullPageWithDevtools(session, filename, type)?.let { return BrowserScreenshotResult(it) }
+    val path = runOnMainSync {
         ensureSessionAttachedOnMain(session.id)
         val resolvedType = if (type == "jpg") "jpeg" else type
         val output = resolveBrowserOutputFile(filename, "page", if (resolvedType == "png") "png" else "jpg")
@@ -2408,13 +2506,6 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
                         session.viewportWidthPx,
                         session.viewportHeightPx
                     )
-                ref != null ->
-                    captureElementBitmap(
-                        session.webView,
-                        ref,
-                        session.viewportWidthPx,
-                        session.viewportHeightPx
-                    )
                 else ->
                     captureViewportBitmap(
                         session.webView,
@@ -2422,16 +2513,151 @@ internal fun StandardBrowserSessionTools.takeScreenshot(
                         session.viewportHeightPx
                     )
             }
-        FileOutputStream(output).use { stream ->
-            bitmap.compress(
-                if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
-                92,
-                stream
-            )
+        try {
+            FileOutputStream(output).use { stream ->
+                bitmap.compress(
+                    if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
+                    92,
+                    stream
+                )
+            }
+        } finally {
+            bitmap.recycle()
         }
-        bitmap.recycle()
         output.absolutePath
     }
+    return BrowserScreenshotResult(
+        path,
+        if (fullPage) "Captured by temporarily enlarging the page; layouts that adapt to window size may look different." else null
+    )
+}
+
+/** A region of the page through DevTools, in page CSS pixels; null when DevTools cannot capture it. */
+private fun StandardBrowserSessionTools.captureClipWithDevtools(
+    session: BrowserToolSession,
+    filename: String?,
+    type: String,
+    prefix: String,
+    x: Double,
+    y: Double,
+    width: Double,
+    height: Double
+): String? {
+    if (!BrowserCdp.screenshotsWork(session.id)) return null
+    val connection = BrowserCdp.connection(this, session) ?: return null
+    val density = context.resources.displayMetrics.density.toDouble().takeIf { it.isFinite() && it > 0.0 } ?: 1.0
+    // DevTools draws at screen density; keep the image inside the screenshot budget.
+    val devicePixels = width * height * density * density
+    val budgetScale = kotlin.math.sqrt(StandardBrowserSessionTools.MAX_SCREENSHOT_PIXEL_COUNT / devicePixels.coerceAtLeast(1.0))
+    val sideScale = StandardBrowserSessionTools.MAX_SCREENSHOT_DIMENSION_PX / (maxOf(width, height) * density).coerceAtLeast(1.0)
+    val scale = minOf(1.0, budgetScale, sideScale)
+    val resolvedType = if (type == "jpg") "jpeg" else type
+    val params =
+        org.json.JSONObject()
+            .put("format", if (resolvedType == "png") "png" else "jpeg")
+            .put("captureBeyondViewport", true)
+            .put(
+                "clip",
+                org.json.JSONObject().put("x", x).put("y", y).put("width", width).put("height", height).put("scale", scale)
+            )
+    if (resolvedType != "png") params.put("quality", 92)
+    val bytes =
+        runCatching {
+            val result = connection.send("Page.captureScreenshot", params, 20_000L)
+            android.util.Base64.decode(result.getString("data"), android.util.Base64.DEFAULT)
+        }.getOrNull() ?: return null
+    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+    android.graphics.BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
+    if (bounds.outWidth <= 0 || bounds.outHeight <= 0) return null
+    val output = resolveBrowserOutputFile(filename, prefix, if (resolvedType == "png") "png" else "jpg")
+    output.parentFile?.mkdirs()
+    output.writeBytes(bytes)
+    return output.absolutePath
+}
+
+/** Whole page without resizing the WebView, so pages that adapt to the window keep their layout. */
+private fun StandardBrowserSessionTools.captureFullPageWithDevtools(
+    session: BrowserToolSession,
+    filename: String?,
+    type: String
+): String? {
+    val connection = BrowserCdp.connection(this, session) ?: return null
+    val metrics = runCatching { connection.send("Page.getLayoutMetrics", org.json.JSONObject(), 5_000L) }.getOrNull() ?: return null
+    val content = metrics.optJSONObject("cssContentSize") ?: metrics.optJSONObject("contentSize") ?: return null
+    val width = content.optDouble("width", 0.0)
+    val height = content.optDouble("height", 0.0)
+    if (width <= 0.0 || height <= 0.0) return null
+    return captureClipWithDevtools(session, filename, type, "page", 0.0, 0.0, width, height)
+}
+
+/**
+ * One element. Its position is read off the main thread (reading it on the main thread would wait
+ * on itself), then DevTools captures it even past the visible area; the fallback crops the visible
+ * page and says when the element was cut off.
+ */
+private fun StandardBrowserSessionTools.captureElementScreenshot(
+    session: BrowserToolSession,
+    filename: String?,
+    type: String,
+    ref: String
+): BrowserScreenshotResult {
+    runOnMainSync<Unit> { ensureSessionAttachedOnMain(session.id) }
+    val geometry =
+        elementGeometry(session.webView, ref, "center")
+            ?: throw BrowserInputException("Ref $ref was not found in the current snapshot. Capture a new snapshot and retry.")
+    if (geometry.width < 1.0 || geometry.height < 1.0) {
+        throw BrowserInputException("Ref $ref has no visible size, so there is nothing to capture.")
+    }
+    captureClipWithDevtools(
+        session, filename, type, "element",
+        geometry.left + geometry.scrollX, geometry.top + geometry.scrollY, geometry.width, geometry.height
+    )?.let { return BrowserScreenshotResult(it) }
+
+    val right = geometry.left + geometry.width
+    val bottom = geometry.top + geometry.height
+    val cutOff =
+        geometry.left < geometry.visualLeft || geometry.top < geometry.visualTop ||
+            right > geometry.visualLeft + geometry.visualWidth || bottom > geometry.visualTop + geometry.visualHeight
+    val path = runOnMainSync {
+        ensureSessionAttachedOnMain(session.id)
+        val webView = session.webView
+        val bitmap = captureViewportBitmap(webView, session.viewportWidthPx, session.viewportHeightPx)
+        try {
+            val viewWidth = webView.width.coerceAtLeast(1)
+            val viewHeight = webView.height.coerceAtLeast(1)
+            val sx = bitmap.width.toFloat() / viewWidth
+            val sy = bitmap.height.toFloat() / viewHeight
+            val left = (geometry.toViewX(geometry.left, viewWidth) * sx).toInt().coerceIn(0, bitmap.width)
+            val top = (geometry.toViewY(geometry.top, viewHeight) * sy).toInt().coerceIn(0, bitmap.height)
+            val rightPx = kotlin.math.ceil(geometry.toViewX(right, viewWidth) * sx).toInt().coerceIn(0, bitmap.width)
+            val bottomPx = kotlin.math.ceil(geometry.toViewY(bottom, viewHeight) * sy).toInt().coerceIn(0, bitmap.height)
+            if (rightPx - left < 1 || bottomPx - top < 1) {
+                throw BrowserInputException("Ref $ref is outside the visible part of the page; scroll to it and retry.")
+            }
+            val cropped = Bitmap.createBitmap(bitmap, left, top, rightPx - left, bottomPx - top)
+            val resolvedType = if (type == "jpg") "jpeg" else type
+            val output = resolveBrowserOutputFile(filename, "element", if (resolvedType == "png") "png" else "jpg")
+            output.parentFile?.mkdirs()
+            try {
+                FileOutputStream(output).use { stream ->
+                    cropped.compress(
+                        if (resolvedType == "png") Bitmap.CompressFormat.PNG else Bitmap.CompressFormat.JPEG,
+                        92,
+                        stream
+                    )
+                }
+            } finally {
+                if (cropped !== bitmap) cropped.recycle()
+            }
+            output.absolutePath
+        } finally {
+            bitmap.recycle()
+        }
+    }
+    return BrowserScreenshotResult(
+        path,
+        if (cutOff) "The element is larger than the visible area, so only its visible part was captured." else null
+    )
 }
 
 /**
@@ -2689,25 +2915,6 @@ internal fun StandardBrowserSessionTools.createBrowserScreenshotBitmap(width: In
     return Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
 }
 
-internal fun StandardBrowserSessionTools.captureElementBitmap(
-    webView: WebView,
-    ref: String,
-    viewportWidthCssPx: Int? = null,
-    viewportHeightCssPx: Int? = null
-): Bitmap {
-    val rect = resolveElementRect(webView, ref) ?: throw RuntimeException("ref_not_found")
-    val bitmap = captureViewportBitmap(webView, viewportWidthCssPx, viewportHeightCssPx)
-    val left = rect.left.coerceIn(0, bitmap.width - 1)
-    val top = rect.top.coerceIn(0, bitmap.height - 1)
-    val width = rect.width().coerceAtLeast(1).coerceAtMost(bitmap.width - left)
-    val height = rect.height().coerceAtLeast(1).coerceAtMost(bitmap.height - top)
-    val cropped = Bitmap.createBitmap(bitmap, left, top, width, height)
-    if (cropped !== bitmap) {
-        bitmap.recycle()
-    }
-    return cropped
-}
-
 internal fun StandardBrowserSessionTools.resolveElementRect(
     webView: WebView,
     ref: String
@@ -2814,6 +3021,86 @@ internal fun StandardBrowserSessionTools.runPlaywrightLikeCode(
             const findByRole = (role, name) => Array.from(document.querySelectorAll("*"))
                 .filter((el) => isVisible(el) && roleFor(el) === String(role))
                 .find((el) => name == null || nameFor(el) === String(name));
+            // Sets a value through the element's own setter, so frameworks such as React notice it.
+            const setFieldValue = (el, value) => {
+                if (el.isContentEditable) {
+                    el.focus();
+                    el.textContent = value;
+                } else {
+                    const proto = el instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype
+                        : el instanceof HTMLSelectElement ? HTMLSelectElement.prototype
+                        : HTMLInputElement.prototype;
+                    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+                    try { el.focus({ preventScroll: true }); } catch (_) {}
+                    if (descriptor && descriptor.set) descriptor.set.call(el, value); else el.value = value;
+                }
+                let inputEvent;
+                try { inputEvent = new InputEvent("input", { bubbles: true, inputType: "insertText", data: value }); }
+                catch (_) { inputEvent = new Event("input", { bubbles: true }); }
+                el.dispatchEvent(inputEvent);
+                el.dispatchEvent(new Event("change", { bubbles: true }));
+            };
+            // Key events plus what the key would do: type a character, delete one, or submit with Enter.
+            const pressInPage = (key) => {
+                let target = document.activeElement || document.body || document.documentElement;
+                while (target && target.shadowRoot && target.shadowRoot.activeElement) target = target.shadowRoot.activeElement;
+                if (!target) throw new Error("No active element");
+                const down = new KeyboardEvent("keydown", { key: key, bubbles: true, cancelable: true, composed: true });
+                const allowed = target.dispatchEvent(down);
+                const isField = target.tagName === "TEXTAREA" ||
+                    (target.tagName === "INPUT" && !/^(button|submit|reset|checkbox|radio|file|image|range|color|hidden)$/i.test(target.type || ""));
+                const writable = isField && !target.readOnly && !target.disabled;
+                const hasRange = writable && typeof target.selectionStart === "number";
+                const setValue = (value) => {
+                    const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+                    const descriptor = Object.getOwnPropertyDescriptor(proto, "value");
+                    if (descriptor && descriptor.set) descriptor.set.call(target, value); else target.value = value;
+                };
+                const inputEvent = (inputType, data) => {
+                    try { return new InputEvent("input", { bubbles: true, composed: true, inputType: inputType, data: data }); }
+                    catch (_) { return new Event("input", { bubbles: true }); }
+                };
+                const single = Array.from(key).length === 1;
+                if (allowed && key === "Enter") {
+                    if (target.tagName === "TEXTAREA" && hasRange) {
+                        target.setRangeText("\n", target.selectionStart, target.selectionEnd, "end");
+                        target.dispatchEvent(inputEvent("insertLineBreak", null));
+                    } else if (target.tagName === "INPUT" && target.form) {
+                        if (typeof target.form.requestSubmit === "function") target.form.requestSubmit(); else target.form.submit();
+                    } else if (target.isContentEditable) {
+                        try { document.execCommand("insertParagraph"); } catch (_) {}
+                    }
+                } else if (allowed && single) {
+                    if (hasRange) {
+                        target.setRangeText(key, target.selectionStart, target.selectionEnd, "end");
+                        target.dispatchEvent(inputEvent("insertText", key));
+                    } else if (writable) {
+                        // number, email and similar fields have no cursor API: add at the end.
+                        setValue(String(target.value || "") + key);
+                        target.dispatchEvent(inputEvent("insertText", key));
+                    } else if (target.isContentEditable) {
+                        try { document.execCommand("insertText", false, key); } catch (_) {}
+                    }
+                } else if (allowed && key === "Backspace") {
+                    if (hasRange) {
+                        const start = target.selectionStart;
+                        const end = target.selectionEnd;
+                        if (start > 0 || end > start) {
+                            target.setRangeText("", end > start ? start : start - 1, end, "end");
+                            target.dispatchEvent(inputEvent("deleteContentBackward", null));
+                        }
+                    } else if (writable) {
+                        const value = String(target.value || "");
+                        if (value) {
+                            setValue(value.slice(0, -1));
+                            target.dispatchEvent(inputEvent("deleteContentBackward", null));
+                        }
+                    } else if (target.isContentEditable) {
+                        try { document.execCommand("delete"); } catch (_) {}
+                    }
+                }
+                target.dispatchEvent(new KeyboardEvent("keyup", { key: key, bubbles: true, cancelable: true, composed: true }));
+            };
             const makeLocator = (resolver, description) => ({
                 async click() {
                     const el = resolver();
@@ -2841,9 +3128,7 @@ internal fun StandardBrowserSessionTools.runPlaywrightLikeCode(
                 async fill(value) {
                     const el = resolver();
                     if (!el) throw new Error(description + " not found");
-                    el.value = String(value ?? "");
-                    el.dispatchEvent(new Event("input", { bubbles: true }));
-                    el.dispatchEvent(new Event("change", { bubbles: true }));
+                    setFieldValue(el, String(value ?? ""));
                     return null;
                 },
                 async selectOption(values) {
@@ -2883,21 +3168,34 @@ internal fun StandardBrowserSessionTools.runPlaywrightLikeCode(
                 },
                 keyboard: {
                     async press(key) {
-                        const target = document.activeElement || document.body || document.documentElement;
-                        if (!target) throw new Error("No active element");
-                        target.dispatchEvent(new KeyboardEvent("keydown", { key: String(key), bubbles: true, cancelable: true }));
-                        target.dispatchEvent(new KeyboardEvent("keyup", { key: String(key), bubbles: true, cancelable: true }));
+                        pressInPage(String(key));
+                        return null;
+                    },
+                    async type(text) {
+                        const value = String(text ?? "");
+                        let target = document.activeElement;
+                        while (target && target.shadowRoot && target.shadowRoot.activeElement) target = target.shadowRoot.activeElement;
+                        const noCursor = !!target && target.tagName === "INPUT" && !target.readOnly && !target.disabled &&
+                            !/^(button|submit|reset|checkbox|radio|file|image|range|color|hidden)$/i.test(target.type || "") &&
+                            typeof target.selectionStart !== "number";
+                        if (noCursor) {
+                            // number, email and date fields drop half-typed values such as "-" or "1.",
+                            // so add the whole text in one go instead of one character at a time.
+                            setFieldValue(target, String(target.value || "") + value);
+                            return null;
+                        }
+                        for (const ch of Array.from(value)) pressInPage(ch);
                         return null;
                     }
                 },
                 async goto() {
-                    throw new Error("page.goto is not supported in Android WebView browser_run_code. Use browser.goto instead.");
+                    throw new Error("page.goto is not supported in browser_run_code. Use the browser goto tool (browser_navigate) instead.");
                 },
                 async goBack() {
-                    throw new Error("page.goBack is not supported in Android WebView browser_run_code. Use browser.back instead.");
+                    throw new Error("page.goBack is not supported in browser_run_code. Use the browser back tool (browser_navigate_back) instead.");
                 },
                 async setViewportSize() {
-                    throw new Error("page.setViewportSize is not supported in browser_run_code. Use browser.resize instead.");
+                    throw new Error("page.setViewportSize is not supported in browser_run_code. Use the browser resize tool (browser_resize) instead.");
                 }
             };
 $runner

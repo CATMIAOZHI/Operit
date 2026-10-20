@@ -1487,6 +1487,33 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     )
 
     handler.registerTool(
+            name = "browser_downloads",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
+                "Manage browser downloads with action ${action.ifBlank { "list" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_clipboard",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: ""
+                "Use the browser clipboard with action ${action.ifBlank { "(missing action)" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
+            name = "browser_permissions",
+            descriptionGenerator = { tool ->
+                val action = tool.parameters.find { it.name == "action" }?.value ?: "list"
+                "Manage browser site permissions with action ${action.ifBlank { "list" }}"
+            },
+            executor = { tool -> ToolGetter.getBrowserSessionTools(context).invoke(tool) }
+    )
+
+    handler.registerTool(
             name = "browser_tabs",
             descriptionGenerator = { tool ->
                 val action = tool.parameters.find { it.name == "action" }?.value ?: ""

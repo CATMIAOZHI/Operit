@@ -40,6 +40,7 @@ private const val DOWNLOAD_SUPPORT_TAG = "BrowserDownloadSupport"
 private const val BROWSER_DOWNLOAD_STATE_FILE = "browser_download_tasks.json"
 private const val DEFAULT_BROWSER_DOWNLOAD_THREADS = 4
 private const val DOWNLOAD_TYPE_HTTP = "http"
+private const val MAX_RENDERED_DOWNLOADS = 10
 
 internal enum class BrowserDownloadStatus(val wireName: String) {
     QUEUED("queued"),
@@ -99,6 +100,8 @@ internal data class BrowserDownloadSegmentRecord(
 internal data class BrowserDownloadTaskRecord(
     val id: String,
     val sessionId: String?,
+    /** Whose logins started it, so one Orbit never sees another's downloads. */
+    val profileName: String = BrowserProfiles.MAIN,
     val type: String,
     val sourceUrl: String?,
     val destinationPath: String,
@@ -137,6 +140,7 @@ internal data class BrowserDownloadTaskRecord(
         JSONObject()
             .put("id", id)
             .put("session_id", sessionId)
+            .put("profile_name", profileName)
             .put("type", type)
             .put("source_url", sourceUrl)
             .put("destination_path", destinationPath)
@@ -183,6 +187,7 @@ internal data class BrowserDownloadTaskRecord(
             return BrowserDownloadTaskRecord(
                 id = json.optString("id"),
                 sessionId = json.optString("session_id").ifBlank { null },
+                profileName = json.optString("profile_name").ifBlank { BrowserProfiles.MAIN },
                 type = json.optString("type", DOWNLOAD_TYPE_HTTP),
                 sourceUrl = json.optString("source_url").ifBlank { null },
                 destinationPath = json.optString("destination_path"),
@@ -245,8 +250,8 @@ internal class BrowserDownloadManager private constructor(
     @Volatile private var uiRefreshListener: (() -> Unit)? = null
     @Volatile private var lastUiDispatchAt: Long = 0L
     @Volatile private var lastPersistAt: Long = 0L
-    @Volatile private var lastEventAt: Long = 0L
-    @Volatile private var lastEvent: WebDownloadEvent? = null
+    /** Latest event per login profile. */
+    private val lastEvents = ConcurrentHashMap<String, Pair<Long, WebDownloadEvent>>()
 
     init {
         loadState()
@@ -277,17 +282,17 @@ internal class BrowserDownloadManager private constructor(
                 ?: 0L
         }
 
-    fun latestEventAt(): Long = lastEventAt
+    fun latestEventAt(profileName: String): Long = lastEvents[profileName]?.first ?: 0L
 
-    fun latestEventAfter(marker: Long): WebDownloadEvent? =
-        if (lastEventAt > marker) {
-            lastEvent
-        } else {
-            null
-        }
+    fun latestEventAfter(marker: Long, profileName: String): Pair<Long, WebDownloadEvent>? =
+        lastEvents[profileName]?.takeIf { it.first > marker }
+
+    fun task(taskId: String): BrowserDownloadTaskRecord? =
+        synchronized(tasks) { tasks[taskId]?.snapshot() }
 
     fun startHttpDownload(
         sessionId: String?,
+        profileName: String,
         url: String,
         suggestedFileName: String,
         mimeType: String?,
@@ -300,6 +305,7 @@ internal class BrowserDownloadManager private constructor(
             BrowserDownloadTaskRecord(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
+                profileName = profileName,
                 type = DOWNLOAD_TYPE_HTTP,
                 sourceUrl = url,
                 destinationPath = destination.absolutePath,
@@ -329,6 +335,7 @@ internal class BrowserDownloadManager private constructor(
 
     fun startInlineDownload(
         sessionId: String?,
+        profileName: String,
         type: String,
         suggestedFileName: String,
         mimeType: String?,
@@ -342,6 +349,7 @@ internal class BrowserDownloadManager private constructor(
             BrowserDownloadTaskRecord(
                 id = UUID.randomUUID().toString(),
                 sessionId = sessionId,
+                profileName = profileName,
                 type = type,
                 sourceUrl = sourceUrl,
                 destinationPath = destination.absolutePath,
@@ -391,36 +399,55 @@ internal class BrowserDownloadManager private constructor(
         }
     }
 
-    fun renderDownloads(marker: Long = 0L, includeAll: Boolean = false): String? {
+    fun renderDownloads(profileName: String, marker: Long = 0L, includeAll: Boolean = false): String? {
         if (storageUnavailable) return appContext.getString(R.string.web_session_download_storage_unavailable)
         val visibleTasks =
             snapshotTasks()
+                .filter { it.profileName == profileName }
                 .filter { includeAll || it.updatedAt > marker || it.activeOrPending() }
         if (visibleTasks.isEmpty()) {
             return null
         }
-        return visibleTasks.joinToString("\n\n") { task ->
-            buildString {
-                appendLine("- File: ${task.fileName}")
-                appendLine("- Status: ${task.status.wireName}")
-                appendLine("- Type: ${task.type}")
-                if (!task.sourceUrl.isNullOrBlank()) {
-                    appendLine("- URL: ${task.sourceUrl}")
-                }
-                if (task.totalBytes > 0L) {
-                    appendLine("- Progress: ${formatTaskProgress(task)}")
-                } else if (task.downloadedBytes > 0L) {
-                    appendLine("- Downloaded: ${formatBytes(task.downloadedBytes)}")
-                }
-                if (task.speedBytesPerSecond > 0L) {
-                    appendLine("- Speed: ${formatBytes(task.speedBytesPerSecond)}/s")
-                }
-                appendLine("- Saved path: ${task.destinationPath}")
-                appendLine("- Resume supported: ${if (task.supportsResume) "yes" else "no"}")
-                if (!task.errorMessage.isNullOrBlank()) {
-                    append("- Error: ${task.errorMessage}")
-                }
-            }.trim()
+        val shown = visibleTasks.take(MAX_RENDERED_DOWNLOADS)
+        val body = shown.joinToString("\n\n") { task -> renderTask(task) }
+        val hidden = visibleTasks.size - shown.size
+        return if (hidden > 0) "$body\n\n- $hidden older downloads not shown. Use browser_downloads with action=list and offset to see them." else body
+    }
+
+    fun renderTask(task: BrowserDownloadTaskRecord): String =
+        buildString {
+            appendLine("- Download ID: ${task.id}")
+            appendLine("- File: ${task.fileName}")
+            appendLine("- Status: ${task.status.wireName}")
+            appendLine("- Type: ${task.type}")
+            if (!task.sourceUrl.isNullOrBlank()) {
+                appendLine("- URL: ${task.sourceUrl.take(500)}")
+            }
+            if (task.totalBytes > 0L) {
+                appendLine("- Progress: ${formatTaskProgress(task)}")
+            } else if (task.downloadedBytes > 0L) {
+                appendLine("- Downloaded: ${formatBytes(task.downloadedBytes)}")
+            }
+            if (task.speedBytesPerSecond > 0L) {
+                appendLine("- Speed: ${formatBytes(task.speedBytesPerSecond)}/s")
+            }
+            appendLine("- Saved path: ${task.destinationPath}")
+            appendLine("- Resume supported: ${if (task.supportsResume) "yes" else "no"}")
+            if (!task.errorMessage.isNullOrBlank()) {
+                append("- Error: ${task.errorMessage}")
+            }
+        }.trim()
+
+    fun tasksFor(profileName: String): List<BrowserDownloadTaskRecord> =
+        snapshotTasks().filter { it.profileName == profileName }
+
+    /** Blocks until the task stops running or [timeoutMs] passes. Null: no such task in this profile. */
+    fun awaitFinished(taskId: String, profileName: String, timeoutMs: Long): BrowserDownloadTaskRecord? {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (true) {
+            val task = task(taskId)?.takeIf { it.profileName == profileName } ?: return null
+            if (!task.activeOrPending() || System.currentTimeMillis() >= deadline) return task
+            Thread.sleep(250L)
         }
     }
 
@@ -948,8 +975,7 @@ internal class BrowserDownloadManager private constructor(
         forceUi: Boolean
     ) {
         if (event != null) {
-            lastEvent = event
-            lastEventAt = System.currentTimeMillis()
+            lastEvents[task.profileName] = System.currentTimeMillis() to event
             taskListener?.invoke(task.snapshot(), event)
         }
         dispatchUiRefresh(
@@ -983,6 +1009,7 @@ internal class BrowserDownloadManager private constructor(
             url = task.sourceUrl,
             mimeType = task.mimeType,
             savedPath = task.destinationPath,
+            downloadId = task.id,
             error = task.errorMessage
         )
 
@@ -1118,6 +1145,7 @@ internal fun StandardBrowserSessionTools.startBrowserManagedDownload(
     }
     runCatching { browserDownloadManager().startHttpDownload(
         sessionId = session.id,
+        profileName = session.profileName,
         url = url,
         suggestedFileName = fileName,
         mimeType = mimeType,
@@ -1142,6 +1170,7 @@ internal fun StandardBrowserSessionTools.startInlineManagedDownload(
     val bytes = decodeInlineDownloadBytes(base64Data)
     runCatching { browserDownloadManager().startInlineDownload(
         sessionId = session.id,
+        profileName = session.profileName,
         type = type,
         suggestedFileName = resolvedFileName,
         mimeType = normalizedMimeType,
@@ -1221,14 +1250,32 @@ internal fun StandardBrowserSessionTools.renderManagedDownloads(
     session: StandardBrowserSessionTools.WebSession,
     marker: Long,
     includeAll: Boolean = false
-): String? = browserDownloadManager().renderDownloads(marker, includeAll)
+): String? = browserDownloadManager().renderDownloads(session.profileName, marker, includeAll)
 
-internal fun StandardBrowserSessionTools.latestBrowserDownloadEventAt(): Long =
-    browserDownloadManager().latestEventAt()
+/**
+ * Latest download event for one login profile: managed downloads plus downloads that failed
+ * before they could start, which are only recorded on their tab.
+ */
+internal fun StandardBrowserSessionTools.latestProfileDownloadEventAt(profileName: String): Long {
+    val tabLatest =
+        StandardBrowserSessionTools.sessions.values
+            .filter { it.profileName == profileName }
+            .maxOfOrNull { it.lastDownloadEventAt } ?: 0L
+    return maxOf(browserDownloadManager().latestEventAt(profileName), tabLatest)
+}
 
-internal fun StandardBrowserSessionTools.latestBrowserDownloadEventAfter(
-    marker: Long
-): WebDownloadEvent? = browserDownloadManager().latestEventAfter(marker)
+internal fun StandardBrowserSessionTools.latestProfileDownloadEventAfter(
+    marker: Long,
+    profileName: String
+): WebDownloadEvent? {
+    val managed = browserDownloadManager().latestEventAfter(marker, profileName)
+    val tab =
+        StandardBrowserSessionTools.sessions.values
+            .filter { it.profileName == profileName && it.lastDownloadEventAt > marker }
+            .maxByOrNull { it.lastDownloadEventAt }
+            ?.let { session -> session.lastDownloadEvent?.let { session.lastDownloadEventAt to it } }
+    return listOfNotNull(managed, tab).maxByOrNull { it.first }?.second
+}
 
 internal fun StandardBrowserSessionTools.performBrowserDownloadAction(
     taskId: String,
