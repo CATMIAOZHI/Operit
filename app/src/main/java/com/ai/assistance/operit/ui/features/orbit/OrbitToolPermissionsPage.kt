@@ -86,6 +86,7 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
     val system = remember { ToolPermissionSystem.getInstance(context) }
     val toolHandler = remember { AIToolHandler.getInstance(context) }
     val stored by system.orbitToolPermissionOverridesFlow.collectAsState(initial = null)
+    val fullAccess by system.orbitFullAccessFlow.collectAsState(initial = false)
     var query by remember { mutableStateOf("") }
     // The internal folder starts open: it is what this page is mostly about.
     var opened by remember { mutableStateOf(setOf("internal")) }
@@ -107,7 +108,7 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
             .filter { it.tools.isNotEmpty() }
     }
     fun levelOf(name: String): PermissionLevel =
-        orbitPermissionLevel(stored?.get(name), orbitDefaultPermissionLevel(name))
+        orbitPermissionLevel(stored?.get(name), orbitDefaultPermissionLevel(name, fullAccess))
 
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
@@ -172,7 +173,7 @@ internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
     }
 
     picking?.let { name ->
-        val default = orbitDefaultPermissionLevel(name)
+        val default = orbitDefaultPermissionLevel(name, fullAccess)
         LevelSheet(
             toolName = name,
             current = levelOf(name),
@@ -268,6 +269,62 @@ private fun ToolFolderHeader(folder: ToolFolder, changed: Int, open: Boolean, en
         }
     }
 }
+
+/**
+ * Orbit's tool access, the choice in Orbit's settings: the fast automatic review, or full access
+ * where every tool runs without a review. Orbit never waits on a prompt in either.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+internal fun OrbitToolAccessSheet(fullAccess: Boolean, onDismiss: () -> Unit, onPick: (Boolean) -> Unit) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
+                .padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(stringResource(R.string.orbit_access_title), style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold)
+            Text(stringResource(R.string.orbit_access_help), style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
+                Column {
+                    listOf(false, true).forEachIndexed { index, full ->
+                        if (index > 0) HorizontalDivider(
+                            modifier = Modifier.padding(horizontal = 16.dp),
+                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+                        )
+                        val selected = full == fullAccess
+                        Row(
+                            Modifier.fillMaxWidth().heightIn(min = 64.dp)
+                                .clickable(role = Role.RadioButton) { onPick(full) }
+                                .semantics { this.selected = selected }
+                                .padding(horizontal = 16.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                                Text(stringResource(orbitAccessLabel(full)), style = MaterialTheme.typography.bodyLarge,
+                                    fontWeight = FontWeight.Medium)
+                                Text(
+                                    stringResource(if (full) R.string.orbit_access_full_desc else R.string.orbit_access_review_desc),
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            if (selected) {
+                                Icon(orbitIcon("check"), contentDescription = null, modifier = Modifier.size(20.dp),
+                                    tint = MaterialTheme.colorScheme.primary)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+internal fun orbitAccessLabel(fullAccess: Boolean): Int =
+    if (fullAccess) R.string.orbit_access_full else R.string.orbit_access_review
 
 /** The level choice for one tool, as an iOS-style sheet: three choices and, if changed, a reset. */
 @OptIn(ExperimentalMaterial3Api::class)

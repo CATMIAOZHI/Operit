@@ -9503,6 +9503,13 @@
     <string name="orbit_vault_save">保存</string>
     <string name="orbit_vault_save_failed">没能保存。保险箱最多存 %1$d 条，可能已经满了。</string>
     <string name="orbit_vault_title">密码保险箱</string>
+    <string name="orbit_access_title">工具权限</string>
+    <string name="orbit_access_row_desc">Orbit 用工具时怎么放行</string>
+    <string name="orbit_access_full">完全访问</string>
+    <string name="orbit_access_review">自动审核（快速）</string>
+    <string name="orbit_access_help">两种档位都不会弹窗问你，区别是要不要先让审核检查一下。在开发者模式里单独设过的工具，仍按单独的设置。</string>
+    <string name="orbit_access_full_desc">所有工具直接执行，不经过审核。最快，但请确认你信任它。</string>
+    <string name="orbit_access_review_desc">Orbit 自己的工具直接执行；终端、文件、浏览器等通用工具先自动审核再执行。</string>
     <string name="orbit_vault_desc">%1$s 替你登录网站时用的密码和密钥。点进去可以查看你填的账号和密码，%1$s 自己永远看不到。</string>
     <string name="orbit_vault_empty">还没有保存的密码或密钥。需要时，%1$s 会弹出安全录入卡。</string>
     <string name="orbit_vault_delete_title">删除这条登录信息或密钥？</string>

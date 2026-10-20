@@ -121,7 +121,7 @@ object OrbitEmojiCatalog {
  * favourites. Shared by every Orbit; kept on the phone only.
  */
 /** The tapback a double tap on one of Orbit's messages puts on. */
-const val OrbitQuickLike = "👍"
+const val OrbitQuickLike = "❤️"
 
 object OrbitEmojiUsage {
     private const val PREFS = "orbit_emoji_usage"

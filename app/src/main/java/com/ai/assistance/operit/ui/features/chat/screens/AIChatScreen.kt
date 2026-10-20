@@ -33,6 +33,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -219,21 +220,34 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val cursorUserBubbleWaterGlass = chatAppearance.cursorUserBubbleWaterGlass
     val bubbleUserBubbleLiquidGlass = chatAppearance.bubbleUserBubbleLiquidGlass
     val bubbleUserBubbleWaterGlass = chatAppearance.bubbleUserBubbleWaterGlass
-    val bubbleAiBubbleLiquidGlass = chatAppearance.bubbleAiBubbleLiquidGlass
-    val bubbleAiBubbleWaterGlass = chatAppearance.bubbleAiBubbleWaterGlass
+    // Orbit replies are plain gray bubbles, like a messaging app; no glass effects.
+    val bubbleAiBubbleLiquidGlass = !orbitLook && chatAppearance.bubbleAiBubbleLiquidGlass
+    val bubbleAiBubbleWaterGlass = !orbitLook && chatAppearance.bubbleAiBubbleWaterGlass
     // Orbit's bubbles are always round, like a messaging app's.
     val bubbleUserRoundedCornersEnabled = orbitLook || chatAppearance.bubbleUserRoundedCornersEnabled
     val bubbleAiRoundedCornersEnabled = orbitLook || chatAppearance.bubbleAiRoundedCornersEnabled
     val userMessageColor = chatAppearance.userMessageColor
-    val aiMessageColor = chatAppearance.aiMessageColor
+    val orbitDarkBackground =
+        androidx.compose.material3.MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val aiMessageColor =
+        if (orbitLook) {
+            if (orbitDarkBackground) Color(0xFF2C2C2E) else Color(0xFFE9E9EB)
+        } else {
+            chatAppearance.aiMessageColor
+        }
     val userTextColor = chatAppearance.userTextColor
-    val aiTextColor = chatAppearance.aiTextColor
+    val aiTextColor =
+        if (orbitLook) {
+            if (orbitDarkBackground) Color(0xFFF2F2F7) else Color(0xFF1C1C1E)
+        } else {
+            chatAppearance.aiTextColor
+        }
     val systemMessageColor = chatAppearance.systemMessageColor
     val systemTextColor = chatAppearance.systemTextColor
     val thinkingBackgroundColor = chatAppearance.thinkingBackgroundColor
     val thinkingTextColor = chatAppearance.thinkingTextColor
     val bubbleUserImageStyle = chatAppearance.bubbleUserImageStyle
-    val bubbleAiImageStyle = chatAppearance.bubbleAiImageStyle
+    val bubbleAiImageStyle = if (orbitLook) null else chatAppearance.bubbleAiImageStyle
     val bubbleUserContentPaddingLeft = chatAppearance.bubbleUserContentPaddingLeft
     val bubbleUserContentPaddingRight = chatAppearance.bubbleUserContentPaddingRight
     val bubbleAiContentPaddingLeft = chatAppearance.bubbleAiContentPaddingLeft

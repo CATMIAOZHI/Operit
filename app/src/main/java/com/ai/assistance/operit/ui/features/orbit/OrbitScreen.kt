@@ -563,7 +563,14 @@ private fun OrbitChatPage(
                         })
                         OrbitSubPage.VAULT_ENTRY -> {
                             val id = openVaultEntryId
-                            if (id != null) OrbitVaultEntryPage(orbit, id, onBack = back)
+                            // Leaves only while this page is still on top, read when it is asked:
+                            // a delete that finishes after the user went back must not pop the list.
+                            if (id != null) OrbitVaultEntryPage(orbit, id, onBack = {
+                                val now = stackNames.split(',').filter { it.isNotEmpty() }
+                                if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
+                                    stackNames = now.dropLast(1).joinToString(",")
+                                }
+                            })
                             else LaunchedEffect(Unit) { pop() }
                         }
                         OrbitSubPage.TOOL_PERMISSIONS -> {
@@ -953,6 +960,9 @@ private fun OrbitSettingsSheet(
     val running by OrbitCompanion.running.collectAsState()
     val cardColor = settingsCardColor(hasBackgroundImage)
     var showTimePicker by remember { mutableStateOf(false) }
+    val toolPermissions = remember { com.ai.assistance.operit.ui.permissions.ToolPermissionSystem.getInstance(context) }
+    val fullAccess by toolPermissions.orbitFullAccessFlow.collectAsState(initial = null)
+    var showAccessSheet by remember { mutableStateOf(false) }
     var runRequestedAt by remember { mutableStateOf<Long?>(null) }
     var notificationsAllowed by remember {
         mutableStateOf(NotificationManagerCompat.from(context).areNotificationsEnabled())
@@ -1147,6 +1157,23 @@ private fun OrbitSettingsSheet(
                 )
                 SettingsCard(backgroundColor = cardColor) {
                     SettingsNavRow(
+                        title = stringResource(R.string.orbit_access_title),
+                        subtitle = stringResource(R.string.orbit_access_row_desc),
+                        icon = lucide("shield"),
+                        searchable = false,
+                        onClick = { if (fullAccess != null) showAccessSheet = true },
+                        trailing = {
+                            fullAccess?.let { full ->
+                                Text(
+                                    text = stringResource(orbitAccessLabel(full)),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                )
+                            }
+                        },
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
                         title = stringResource(R.string.orbit_vault_row),
                         subtitle = stringResource(R.string.orbit_vault_row_desc),
                         icon = lucide("key-round"),
@@ -1227,6 +1254,16 @@ private fun OrbitSettingsSheet(
         }
     }
 
+    if (showAccessSheet) {
+        OrbitToolAccessSheet(
+            fullAccess = fullAccess == true,
+            onDismiss = { showAccessSheet = false },
+            onPick = { full ->
+                showAccessSheet = false
+                scope.launch { toolPermissions.setOrbitFullAccess(full) }
+            },
+        )
+    }
     if (showTimePicker) {
         CheckInTimeDialog(
             minuteOfDay = settings.checkInMinuteOfDay,
