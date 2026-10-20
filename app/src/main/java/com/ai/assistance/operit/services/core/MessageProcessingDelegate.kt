@@ -289,7 +289,23 @@ class MessageProcessingDelegate(
     private suspend fun persistAssistantMessage(chatId: String, message: ChatMessage) {
         val runtime = runtimeFor(chatId)
         runtime.transcriptMutex.withLock {
-            runtime.steeredTranscript.project(message).forEach { addMessageToChat(chatId, it) }
+            runtime.steeredTranscript.project(message).forEach { row ->
+                sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) }
+            }
+        }
+    }
+
+    /** In an Orbit chat a finished reply with message breaks is saved as separate messages. */
+    private suspend fun sentAsMessages(chatId: String, row: ChatMessage): List<ChatMessage> {
+        if (row.contentStream != null || !row.content.contains("message_break", ignoreCase = true)) return listOf(row)
+        val orbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId)
+        if (orbit?.talkChatIds?.contains(chatId) != true) return listOf(row)
+        return OrbitMessageBreaks.split(row) { timestamps ->
+            withContext(Dispatchers.IO) {
+                com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).chatContentDao()
+                    .getMessagesByTimestamps(chatId, timestamps)
+                    .associate { it.timestamp to (it.sender to it.content) }
+            }
         }
     }
     private val lastScrollEmitMsByChatKey = ConcurrentHashMap<String, AtomicLong>()
@@ -1241,7 +1257,7 @@ class MessageProcessingDelegate(
                             chatRuntime.steeredTranscript.project(snapshotMessage.copy(
                                 content = boundary.displayContent.toString(), contentStream = null,
                                 displayMode = ChatMessageDisplayMode.ASSISTANT_INTERMEDIATE,
-                            )).forEach { addMessageToChat(chatId, it) }
+                            )).forEach { row -> sentAsMessages(chatId, row).forEach { addMessageToChat(chatId, it) } }
                             texts.forEach { input ->
                                 addMessageToChat(chatId, ChatMessage(
                                     sender = "user", content = input.text,

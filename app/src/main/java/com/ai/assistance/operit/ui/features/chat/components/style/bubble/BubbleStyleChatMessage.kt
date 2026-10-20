@@ -119,12 +119,14 @@ fun BubbleStyleChatMessage(
                     bubble(message, heightMemory)
                 } else {
                     // Always the same stack, even for one bubble: a reply that grows a second bubble
-                    // while streaming keeps the first one as it is drawn.
+                    // while streaming keeps the first one as it is drawn. The gap matches the one
+                    // between saved messages, so nothing moves when the parts are saved apart.
                     Column(
                         Modifier.fillMaxWidth().then(
                             if (heightMemory == null || isHidden) Modifier
                             else Modifier.onSizeChanged { heightMemory.updateMeasured(message.timestamp, it.height) }
                         ),
+                        verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                     ) {
                         pieces.forEachIndexed { i, piece -> key(i) { bubble(message.copy(content = piece), null) } }
                     }

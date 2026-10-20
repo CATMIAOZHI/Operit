@@ -186,6 +186,7 @@ object OrbitWake {
                 quiet.first { it }
                 delay(500)
                 found = withContext(Dispatchers.IO) { dao.aiSaidAfter(chatId, before) }
+                    .takeIf { it.isNotEmpty() }?.joinToString("\n\n")
                     ?.takeIf { quietNow() }
                 if (found == null) delay(1_000)
             }

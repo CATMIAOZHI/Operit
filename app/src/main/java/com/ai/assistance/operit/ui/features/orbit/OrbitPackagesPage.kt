@@ -319,7 +319,7 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
 }
 
 @Composable
-private fun SearchPill(query: String, onChange: (String) -> Unit) {
+internal fun SearchPill(query: String, onChange: (String) -> Unit, placeholder: String = stringResource(R.string.orbit_packages_search)) {
     Surface(
         shape = RoundedCornerShape(50),
         color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
@@ -331,7 +331,7 @@ private fun SearchPill(query: String, onChange: (String) -> Unit) {
             Spacer(Modifier.width(10.dp))
             Box(Modifier.weight(1f)) {
                 if (query.isEmpty()) {
-                    Text(stringResource(R.string.orbit_packages_search), style = MaterialTheme.typography.bodyLarge,
+                    Text(placeholder, style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 BasicTextField(
@@ -381,7 +381,7 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
 
 /** A slice of a folder's gray card: the header on top, packages below, round corners at both ends. */
 @Composable
-private fun FolderSlice(first: Boolean, last: Boolean, content: @Composable () -> Unit) {
+internal fun FolderSlice(first: Boolean, last: Boolean, content: @Composable () -> Unit) {
     Surface(
         shape = RoundedCornerShape(
             topStart = if (first) 20.dp else 0.dp, topEnd = if (first) 20.dp else 0.dp,

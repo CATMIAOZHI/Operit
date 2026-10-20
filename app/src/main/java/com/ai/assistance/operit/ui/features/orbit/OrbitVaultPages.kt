@@ -75,7 +75,7 @@ import kotlinx.coroutines.launch
 
 /** Keeps the window out of screenshots and the recent-apps preview while a secret is on screen. */
 @Composable
-private fun SecureWindow() {
+internal fun SecureWindow() {
     val activity = LocalContext.current as? Activity ?: return
     DisposableEffect(activity) {
         activity.window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
@@ -217,98 +217,6 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 Text(stringResource(R.string.cancel), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
             }
         }
-    }
-}
-
-/** What is in the vault: sites and masked user names only, never a saved value. */
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-internal fun OrbitVaultSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
-    val context = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var reload by remember { mutableStateOf(0) }
-    val saved by OrbitVault.version.collectAsState()
-    var deleting by remember { mutableStateOf<OrbitVault.Entry?>(null) }
-    var busy by remember { mutableStateOf(false) }
-    // null while loading; a failure is kept apart from an empty vault.
-    val entries by produceState<Result<List<OrbitVault.Entry>>?>(null, reload, saved) {
-        value = runCatching { OrbitVault.entries(context, orbit.id) }
-    }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
-        Column(
-            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
-                .padding(horizontal = 20.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp),
-        ) {
-            Text(stringResource(R.string.orbit_vault_title), style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
-            Text(stringResource(R.string.orbit_vault_desc, orbit.name), style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
-            val loaded = entries
-            val list = loaded?.getOrNull()
-            when {
-                loaded == null -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
-                list == null -> Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Text(stringResource(R.string.orbit_vault_load_failed), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { reload++ }) { Text(stringResource(R.string.orbit_vault_retry)) }
-                }
-                else -> if (list.isEmpty()) {
-                    Text(stringResource(R.string.orbit_vault_empty, orbit.name), style = MaterialTheme.typography.bodyMedium,
-                        modifier = Modifier.padding(vertical = 16.dp))
-                } else list.sortedByDescending { it.savedAt }.forEach { entry ->
-                    Row(
-                        Modifier.fillMaxWidth().heightIn(min = 64.dp).padding(horizontal = 4.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
-                            contentAlignment = Alignment.Center) {
-                            Icon(orbitIcon(if (entry.kind == OrbitVault.LOGIN) "key-round" else "plug"), null, Modifier.size(22.dp),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                        Spacer(Modifier.width(14.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text(entry.site, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                            Text(
-                                listOf(
-                                    if (entry.kind == OrbitVault.LOGIN) OrbitVault.masked(entry.username)
-                                    else stringResource(R.string.orbit_vault_api_key),
-                                    DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(entry.savedAt)),
-                                ).filter { it.isNotBlank() }.joinToString(" · "),
-                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1, overflow = TextOverflow.Ellipsis,
-                            )
-                        }
-                        IconButton(onClick = { deleting = entry }) {
-                            Icon(orbitIcon("trash-2"), stringResource(R.string.delete) + " " + entry.site,
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-            }
-        }
-    }
-    deleting?.let { entry ->
-        AlertDialog(
-            onDismissRequest = { if (!busy) deleting = null },
-            title = { Text(stringResource(R.string.orbit_vault_delete_title)) },
-            text = { Text(stringResource(R.string.orbit_vault_delete_confirm, entry.site)) },
-            confirmButton = {
-                TextButton(enabled = !busy, onClick = {
-                    busy = true
-                    scope.launch {
-                        try {
-                            OrbitVault.delete(context, orbit.id, entry.id)
-                        } catch (e: kotlinx.coroutines.CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Toast.makeText(context, context.getString(R.string.orbit_vault_delete_failed), Toast.LENGTH_SHORT).show()
-                        } finally {
-                            busy = false; deleting = null; reload++
-                        }
-                    }
-                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
-            },
-            dismissButton = { TextButton(enabled = !busy, onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
-        )
     }
 }
 
