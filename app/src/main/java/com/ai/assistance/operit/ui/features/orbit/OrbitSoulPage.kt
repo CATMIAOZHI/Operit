@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -51,7 +50,7 @@ internal fun OrbitSoulPage(orbitId: String, onBack: () -> Unit) {
     }
     LaunchedEffect(orbitId, retry) { act {} }
     fun back() { if (selected != null) selected = null else onBack() }
-    BackHandler { back() }
+    OrbitPageBack(intercept = selected != null) { back() }
     val list = rememberLazyListState()
     val detailList = key(selected) { rememberLazyListState() }
     val detail = snapshot?.history?.firstOrNull { it.id == selected }

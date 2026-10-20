@@ -22,10 +22,15 @@ fun MemoryLibraryPage(
     title: String,
     profileId: String,
     onBack: () -> Unit,
+    /**
+     * In an Orbit, a plain back is left to the page stack, which slides the page away with the
+     * swipe; true keeps it here while the page has its own inner view or unsaved work to handle.
+     */
+    interceptBack: Boolean = false,
     content: @Composable () -> Unit
 ) {
     if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
-        BackHandler(onBack = onBack)
+        com.ai.assistance.operit.ui.features.orbit.OrbitPageBack(intercept = interceptBack, onBack = onBack)
         Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
                 com.ai.assistance.operit.ui.features.orbit.OrbitPageHeader(

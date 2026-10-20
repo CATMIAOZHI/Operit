@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +43,7 @@ import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 
 /** What the process page has read: the messages, whether reading failed, whether work goes on. */
 private data class ProcessRecord(val messages: List<ChatMessage>, val failed: Boolean, val running: Boolean)
@@ -60,7 +60,9 @@ internal fun OrbitProcessPage(
     developer: Boolean = false,
 ) {
     val context = LocalContext.current
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
+    // Covered by a page opened from here, it stops reading until it is on top again.
+    val active = androidx.compose.runtime.rememberUpdatedState(LocalOrbitPageActive.current)
     // A background run still working is read again every few seconds until it ends.
     val record by produceState<ProcessRecord?>(null, process, developer) {
         var running = (process as? OrbitProcess.TaskRun)?.running == true
@@ -75,6 +77,7 @@ internal fun OrbitProcessPage(
             }
             if (!running || process !is OrbitProcess.TaskRun) break
             delay(5_000)
+            androidx.compose.runtime.snapshotFlow { active.value }.first { it }
             running = try {
                 OrbitTaskRepository(context).dao.run(process.runId)?.state == "RUNNING"
             } catch (e: CancellationException) {

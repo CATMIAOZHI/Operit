@@ -1,6 +1,5 @@
 package com.ai.assistance.operit.ui.features.orbit
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -80,7 +79,7 @@ private val OrbitLevels = listOf(PermissionLevel.ALLOW, PermissionLevel.AUTO_REV
  */
 @Composable
 internal fun OrbitToolPermissionsPage(onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val system = remember { ToolPermissionSystem.getInstance(context) }

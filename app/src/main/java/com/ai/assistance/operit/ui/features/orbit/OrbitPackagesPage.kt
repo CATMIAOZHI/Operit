@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.widget.Toast
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
@@ -96,7 +95,7 @@ private fun categoryIcon(category: String) = when (category) {
  */
 @Composable
 internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val packageManager = remember { PackageManager.getInstance(context, AIToolHandler.getInstance(context)) }

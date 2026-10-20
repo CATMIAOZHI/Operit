@@ -69,7 +69,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
         catch (e: Exception) { error = reviewErrorFormat.format(e.message.orEmpty()) }
     }
     MemoryLibraryPage(selected?.title ?: stringResource(R.string.memory_review_title), profileId,
-        { leave(if (selectedId == null) "close" else "back") }) {
+        { leave(if (selectedId == null) "close" else "back") }, interceptBack = selectedId != null) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (selected == null) {

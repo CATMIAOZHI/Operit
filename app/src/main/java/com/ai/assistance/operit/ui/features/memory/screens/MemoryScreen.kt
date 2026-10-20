@@ -823,7 +823,7 @@ internal fun MemoryLibraryDestination(page: String, profileId: String, onBack: (
             }
             repository?.let { com.ai.assistance.operit.ui.features.settings.screens.UserPreferencesSettingsScreen(onBack, it) }
         }
-        "automation" -> MemoryAutomationPage(profileId, onBack)
+        "automation" -> MemoryAutomationPage(profileId, onBack = onBack)
         "notes" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryNotesDialog(profileId, onBack)
         "review" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.MemoryReviewDialog(profileId, onBack)
         "history" -> com.ai.assistance.operit.ui.features.memory.screens.dialogs.ChatRecallDialog(profileId, onBack)

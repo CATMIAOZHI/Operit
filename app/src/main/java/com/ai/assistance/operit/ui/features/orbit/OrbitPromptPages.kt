@@ -1,7 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.text.format.Formatter
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -82,6 +81,8 @@ internal fun OrbitFilePage(
     actions: List<OrbitFileAction> = emptyList(),
     maxChars: Int = OrbitPromptFiles.MAX_CHARS,
     startEditing: Boolean = false,
+    /** For a page inside another page (a file in the files list): back returns to that page. */
+    interceptBack: Boolean = false,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -119,7 +120,7 @@ internal fun OrbitFilePage(
             finally { busy = false }
         }
     }
-    BackHandler { back() }
+    OrbitPageBack(intercept = editing || interceptBack) { back() }
 
     // The empty tap handler keeps taps on the title or blank areas from reaching what is underneath.
     Column(
