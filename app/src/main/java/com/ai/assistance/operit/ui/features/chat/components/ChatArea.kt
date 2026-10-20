@@ -143,6 +143,8 @@ internal fun cleanMessageContentForCopy(content: String): String {
         .let(ChatMarkupRegex::removeOpenAiResponsesReasoningMeta)
         // Keep copy cleanup aligned with the renderer and executable-markup visibility grammar.
         .let(ChatUtils::removeThinkingContent)
+        // Orbit's break between messages it sends one after another copies as a new line.
+        .replace(OrbitSpeech.messageBreak, "\n")
         // 移除状态标签
         .replace(ChatMarkupRegex.statusTag, "")
         .replace(ChatMarkupRegex.statusSelfClosingTag, "")

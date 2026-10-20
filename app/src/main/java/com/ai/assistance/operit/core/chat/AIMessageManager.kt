@@ -123,7 +123,7 @@ object AIMessageManager {
         ChatMarkupRegex.emotionTag,
     )
     private val anyTag = Regex("<[^>]*>")
-    private val cardFence = Regex("```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+    private val cardFence = Regex("```(?:a2ui(?:-ref)?|orbit-card)[^\\n]*\\n[\\s\\S]*?(?:```|$)")
 
     private fun replyQuote(message: ChatMessage): String {
         var text = ChatUtils.removeThinkingContent(message.content)

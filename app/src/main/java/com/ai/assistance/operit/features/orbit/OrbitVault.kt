@@ -2,14 +2,12 @@ package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
 import android.net.Uri
-import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -17,15 +15,15 @@ import java.util.concurrent.ConcurrentHashMap
 
 /**
  * Muse's Secure Vault for one Orbit: saved logins and API keys, kept encrypted outside backups.
- * Values are typed by the user into a secure entry sheet and go straight into the store; Orbit only
- * ever sees the site, the field names and a masked user name. Using a value happens on the host,
- * which fills it into a page of the same site or adds it to a request for one of its hosts.
+ * Orbit asks with a card in the chat; the user taps it and types the value into a secure entry
+ * sheet, and it goes straight into the store. Orbit only ever sees the site, the field names and
+ * a masked user name. Using a value happens on the host, which fills it into a page of the same
+ * site or adds it to a request for one of its hosts.
  */
 internal object OrbitVault {
     const val LOGIN = "login"
     const val API_KEY = "api_key"
     const val MAX_ENTRIES = 100
-    private const val WAIT_MS = 5 * 60_000L
 
     data class Entry(
         val id: String,
@@ -41,25 +39,25 @@ internal object OrbitVault {
         val savedAt: Long,
     )
 
-    /** One secure entry sheet waiting for the user. The value never passes through the request. */
-    class Request(
+    /** What one card asks the user for. The value never passes through the request. */
+    data class Request(
         val orbitId: String,
+        /** The chat the card is in; Orbit hears there once the user saves. */
+        val chatId: String,
         val kind: String,
         val site: String,
         val pageUrl: String,
         val usernameHint: String,
         val apiHosts: List<String>,
         val placement: String,
-    ) {
-        internal val result = CompletableDeferred<String?>()
-        /** Set when the user did not answer in time, so the sheet can say why it closed. */
-        @Volatile var expired = false
-            internal set
-    }
+    )
 
     private val pending = MutableStateFlow<Request?>(null)
-    /** The sheet the Orbit page shows. Only one at a time, like Muse's one card per turn. */
+    /** The entry sheet the Orbit page shows, opened from a card in the chat. */
     val request: StateFlow<Request?> = pending
+    private val changes = MutableStateFlow(0)
+    /** Bumped on every save or delete, so cards and lists read the vault again. */
+    val version: StateFlow<Int> = changes
     private val locks = ConcurrentHashMap<String, Mutex>()
 
     private fun store(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "vault")
@@ -123,6 +121,7 @@ internal object OrbitVault {
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, orbitId, next)
+                changes.value++
                 entry.id
             }
         }
@@ -132,32 +131,24 @@ internal object OrbitVault {
             val current = read(context, orbitId)
             if (current.none { it.id == id }) return@withLock false
             write(context, orbitId, current.filterNot { it.id == id })
+            changes.value++
             true
         }
     }
 
-    /**
-     * Shows the secure entry sheet on the Orbit page and waits for the user. Returns the saved
-     * entry's id, or null when the user closed the sheet or did not answer within five minutes.
-     */
-    suspend fun ask(request: Request): String? {
-        // A newer card replaces an older one the user walked away from, so a turn is never stuck behind it.
-        pending.value?.let { finish(it, null) }
-        check(pending.compareAndSet(null, request)) { "Another secure entry card is already waiting for the user" }
-        return try {
-            withTimeoutOrNull(WAIT_MS) { request.result.await() }.also {
-                if (!request.result.isCompleted) request.expired = true
-            }
-        } finally {
-            pending.compareAndSet(request, null)
-        }
+    /** A tap on a card in the chat: shows its entry sheet. */
+    fun open(request: Request) {
+        pending.value = request
     }
 
-    /** Called by the sheet: [id] of the saved entry, or null when the user closed it. */
-    fun finish(request: Request, id: String?) {
-        request.result.complete(id)
+    /** The sheet closed, saved or not. */
+    fun close(request: Request) {
         pending.compareAndSet(request, null)
     }
+
+    /** True when a login for [site], or the key for that provider, is already saved. */
+    fun has(entries: List<Entry>, kind: String, site: String): Boolean =
+        entries.any { it.kind == kind && it.site.equals(site, true) }
 
     /** True when [text] carries any saved value, so it must not be sent or stored. */
     suspend fun containsSecret(context: Context, orbitId: String, text: String): Boolean =

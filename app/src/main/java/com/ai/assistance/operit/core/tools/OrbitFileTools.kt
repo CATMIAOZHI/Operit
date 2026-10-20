@@ -26,8 +26,8 @@ internal object OrbitFileTools {
         description = "读写你自己文件夹里的文件：人物和群组笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
             "删除的文件进回收站，30 天内可以恢复。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export", required = true),
-            ToolParameterSchema("path", description = "相对路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；read/write/append/delete/export 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
+            ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
+            ToolParameterSchema("path", description = "相对路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
             ToolParameterSchema("text", description = "write：完整新内容；append/daily：要追加的一段或一行", required = false),
             ToolParameterSchema("trash_id", description = "restore：trash 返回的编号", required = false),
             ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如绘图工具返回的 file_path", required = false),
@@ -44,7 +44,8 @@ internal object OrbitFileTools {
   - files/：给用户做的文件，会出现在「构建」页的文件里。
   - write 会覆盖整个文件，先 read 再改。delete 后告诉用户可以在回收站恢复。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
-  - import：把应用里别处的文件收进 files/（比如绘图工具画好的图），用户就能在构建页的文件里看到。图片和音频会返回 markdown，可以直接放进回复里展示。
+  - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点一下就存进相册；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
+  - import：把应用里别处的文件收进 files/（比如绘图工具画好的图），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
   - export：把 files/ 里的 Markdown 文件导出成 html（网页）、docx（Word）或 pdf，存在同一个文件夹，返回新文件路径（同名文件已存在时会自动改名）。要交给用户一份正式文档时先写 Markdown 再导出。支持标题、段落、列表、引用、代码、分割线和粗体斜体；表格会变成对齐的等宽文字，图片只留下名字。
 """,
     )
@@ -73,6 +74,26 @@ internal object OrbitFileTools {
                     JSONObject().put("trash_id", it.id).put("path", it.path).put("deleted_at", it.deletedAt)
                 }).toString()
                 "restore" -> "Restored to " + files.restore(arg("trash_id"))
+                "send" -> {
+                    check(OrbitPreferences.getInstance(context).current().orbitForChat(runtime?.callerChatId) != null) {
+                        "send only works in a chat with the user"
+                    }
+                    val path = arg("path").trim().removePrefix("/")
+                    require(path.startsWith("files/")) { "Only files under files/ can be sent" }
+                    val file = files.fileFor(path)
+                    require(file.isFile) { "No such file: $path" }
+                    // A picture's shape, read without decoding it, so the chat sizes it before it loads.
+                    val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    if (file.extension.lowercase() in com.ai.assistance.operit.features.orbit.OrbitChatCards.imageTypes) {
+                        runCatching { android.graphics.BitmapFactory.decodeFile(file.path, bounds) }
+                    }
+                    JSONObject().put("sent", true).put("path", path)
+                        .put("note", "The file is in the chat now as an attachment. Do not paste its path.")
+                        .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
+                            com.ai.assistance.operit.features.orbit.OrbitChatCards.attachment(
+                                orbit.id, path, file.name, file.length(), bounds.outWidth, bounds.outHeight))
+                        .toString()
+                }
                 "import" -> {
                     val source = importable(context, arg("source"))
                     val target = args["path"]?.takeIf { it.isNotBlank() } ?: "files/${source.name}"

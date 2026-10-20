@@ -9570,6 +9570,23 @@
     <string name="orbit_vault_load_failed">没能打开保险箱。</string>
     <string name="orbit_vault_retry">重试</string>
     <string name="orbit_vault_delete_failed">没能删除，请再试一次</string>
+    <string name="orbit_vault_sheet_title">安全凭证存储库</string>
+    <string name="orbit_vault_sheet_add_login">添加密码</string>
+    <string name="orbit_vault_sheet_add_key">添加 API 密钥</string>
+    <string name="orbit_vault_sheet_for">用于</string>
+    <string name="orbit_vault_add">添加</string>
+    <string name="orbit_vault_card_login_title">安全存储</string>
+    <string name="orbit_vault_card_login_sub">登录 %1$s</string>
+    <string name="orbit_vault_card_key_sub">API 密钥</string>
+    <string name="orbit_vault_card_saved">已存进保险箱</string>
+    <string name="orbit_vault_card_update">更新</string>
+    <string name="orbit_vault_card_link">关联</string>
+    <string name="orbit_chat_image_desc">图片 %1$s，轻点保存到相册</string>
+    <string name="orbit_chat_image_saved">已保存到相册</string>
+    <string name="orbit_chat_image_save_failed">没能保存到相册</string>
+    <string name="orbit_chat_file_desc">文件 %1$s，轻点用其他应用打开</string>
+    <string name="orbit_chat_file_open">轻点打开</string>
+    <string name="orbit_chat_file_missing">文件已经不在了</string>
     <string name="orbit_import_paste_label">别的 AI 的回答</string>
     <string name="orbit_import_too_long">%1$d / %2$d 字，太长了，请分几次导入</string>
 </resources>

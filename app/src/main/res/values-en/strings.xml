@@ -9593,6 +9593,23 @@
     <string name="orbit_vault_load_failed">Couldn\'t open the vault.</string>
     <string name="orbit_vault_retry">Retry</string>
     <string name="orbit_vault_delete_failed">Couldn\'t delete. Try again.</string>
+    <string name="orbit_vault_sheet_title">Secure Credential Vault</string>
+    <string name="orbit_vault_sheet_add_login">Add password</string>
+    <string name="orbit_vault_sheet_add_key">Add API key</string>
+    <string name="orbit_vault_sheet_for">For</string>
+    <string name="orbit_vault_add">Add</string>
+    <string name="orbit_vault_card_login_title">Secure storage</string>
+    <string name="orbit_vault_card_login_sub">Sign in to %1$s</string>
+    <string name="orbit_vault_card_key_sub">API key</string>
+    <string name="orbit_vault_card_saved">Saved in the vault</string>
+    <string name="orbit_vault_card_update">Update</string>
+    <string name="orbit_vault_card_link">Connect</string>
+    <string name="orbit_chat_image_desc">Picture %1$s, tap to save to the gallery</string>
+    <string name="orbit_chat_image_saved">Saved to the gallery</string>
+    <string name="orbit_chat_image_save_failed">Couldn\'t save to the gallery</string>
+    <string name="orbit_chat_file_desc">File %1$s, tap to open in another app</string>
+    <string name="orbit_chat_file_open">Tap to open</string>
+    <string name="orbit_chat_file_missing">This file is gone</string>
     <string name="orbit_import_paste_label">The other AI\'s answer</string>
     <string name="orbit_import_too_long">%1$d / %2$d characters. Too long; import it in parts.</string>
 </resources>

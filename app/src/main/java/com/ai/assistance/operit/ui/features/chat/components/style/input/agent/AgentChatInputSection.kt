@@ -750,6 +750,8 @@ fun AgentChatInputSection(
 
                         val previewText =
                             message.content
+                                .replace(Regex("```(?:a2ui|orbit-card)[^\\n]*\\n[\\s\\S]*?(?:```|$)"),
+                                    "[" + context.getString(R.string.ai_message_quoted_card) + "]")
                                 .replace(Regex("<[^>]*>"), "")
                                 .trim()
                                 .let { if (it.length > 50) it.take(50) + "..." else it }

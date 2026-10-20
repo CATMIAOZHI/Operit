@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
@@ -26,6 +27,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -35,9 +37,12 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.TextField
+import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -48,6 +53,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -56,11 +62,13 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitVault
+import com.ai.assistance.operit.features.orbit.OrbitVaultNotice
 import java.text.DateFormat
 import java.util.Date
 import kotlinx.coroutines.launch
@@ -76,8 +84,9 @@ private fun SecureWindow() {
 }
 
 /**
- * Muse's secure entry card. Orbit asked for a login or an API key; what the user types here goes
- * straight into the encrypted vault and never into the chat, so Orbit cannot see it.
+ * Muse's secure entry sheet, opened from a card in the chat. What the user types goes straight
+ * into the encrypted vault and never into the chat, so Orbit cannot see it. Saving tells Orbit in
+ * a hidden note so it can carry on; closing tells it nothing.
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -90,113 +99,122 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     var visible by remember(request) { mutableStateOf(false) }
     var saving by remember(request) { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    val colors = MaterialTheme.colorScheme
     SecureWindow()
-    // The card closes by itself when the user did not answer within five minutes; say why.
-    DisposableEffect(request) {
-        onDispose {
-            if (request.expired) {
-                Toast.makeText(context.applicationContext, context.getString(R.string.orbit_vault_expired), Toast.LENGTH_LONG).show()
-            }
-        }
-    }
-    fun close(id: String?) {
+    fun dismiss() {
         scope.launch {
             runCatching { sheetState.hide() }
-            OrbitVault.finish(request, id)
+            OrbitVault.close(request)
         }
     }
+    val fieldColors = TextFieldDefaults.colors(
+        focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+        disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
+        unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent,
+    )
     ModalBottomSheet(
-        onDismissRequest = { if (!saving) OrbitVault.finish(request, null) },
+        onDismissRequest = { if (!saving) OrbitVault.close(request) },
         sheetState = sheetState,
+        containerColor = colors.surfaceContainerHigh,
     ) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().imePadding()
-                .padding(horizontal = 20.dp).padding(bottom = 20.dp),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
+                .padding(horizontal = 24.dp).padding(bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(44.dp).clip(CircleShape).background(MaterialTheme.colorScheme.surfaceVariant),
-                    contentAlignment = Alignment.Center) {
-                    Icon(orbitIcon("lock-keyhole"), null, Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text(stringResource(R.string.orbit_vault_entry_title), style = MaterialTheme.typography.titleLarge,
-                        fontWeight = FontWeight.SemiBold)
-                    Text(request.site, style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Surface(shape = RoundedCornerShape(18.dp), color = colors.surface, shadowElevation = 1.dp, modifier = Modifier.size(64.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(orbitIcon("shield-check"), null, Modifier.size(30.dp), tint = colors.onSurface)
                 }
             }
-            Text(
-                stringResource(if (login) R.string.orbit_vault_entry_login_desc else R.string.orbit_vault_entry_key_desc, orbit.name, request.site),
-                style = MaterialTheme.typography.bodyMedium,
-            )
-            if (login) {
-                OutlinedTextField(
-                    username, { if (it.length <= 200) username = it }, singleLine = true, enabled = !saving,
-                    label = { Text(stringResource(R.string.orbit_vault_username)) }, modifier = Modifier.fillMaxWidth(),
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrect = false),
-                )
-            }
-            OutlinedTextField(
-                secret, { if (it.length <= 4000) secret = it }, singleLine = true, enabled = !saving,
-                label = { Text(stringResource(if (login) R.string.orbit_vault_password else R.string.orbit_vault_api_key)) },
-                visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
-                trailingIcon = {
-                    IconButton(onClick = { visible = !visible }) {
-                        Icon(orbitIcon(if (visible) "eye-off" else "eye"),
-                            stringResource(if (visible) R.string.orbit_vault_hide else R.string.orbit_vault_show))
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
-            )
-            if (!login) {
-                Text(stringResource(R.string.orbit_vault_entry_hosts, request.apiHosts.joinToString(", ")),
-                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)) {
-                Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Icon(orbitIcon("shield-check"), null, Modifier.size(18.dp), tint = MaterialTheme.colorScheme.primary)
-                    Spacer(Modifier.width(10.dp))
+            Spacer(Modifier.height(16.dp))
+            Text(stringResource(R.string.orbit_vault_sheet_title), style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
+            Spacer(Modifier.height(4.dp))
+            Text(stringResource(if (login) R.string.orbit_vault_sheet_add_login else R.string.orbit_vault_sheet_add_key),
+                style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            Spacer(Modifier.height(24.dp))
+            // What it is for: the site a login fills in, or the hosts a key is sent to.
+            Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                    Text(stringResource(R.string.orbit_vault_sheet_for), style = MaterialTheme.typography.labelMedium,
+                        color = colors.onSurfaceVariant)
                     Text(
-                        if (login) stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
-                        else stringResource(R.string.orbit_vault_entry_promise_key, orbit.name),
-                        style = MaterialTheme.typography.bodySmall,
+                        if (login) request.pageUrl.ifBlank { "https://${request.site}" }.substringBefore('?')
+                        else "${request.site} · ${request.apiHosts.joinToString(", ")}",
+                        style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                OutlinedButton(onClick = { close(null) }, enabled = !saving, modifier = Modifier.weight(1f)) {
-                    Text(stringResource(R.string.cancel))
-                }
-                Button(
-                    enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()),
-                    modifier = Modifier.weight(1f),
-                    onClick = {
-                        saving = true
-                        scope.launch {
-                            // The card already timed out or was replaced; the AI was told nothing arrived.
-                            if (request.expired || request.result.isCompleted) return@launch
-                            try {
-                                val id = OrbitVault.save(context, orbit.id, request, username, secret)
-                                runCatching { sheetState.hide() }
-                                OrbitVault.finish(request, id)
-                            } catch (e: kotlinx.coroutines.CancellationException) {
-                                throw e
-                            } catch (e: Exception) {
-                                saving = false
-                                Toast.makeText(context, context.getString(R.string.orbit_vault_save_failed, OrbitVault.MAX_ENTRIES), Toast.LENGTH_SHORT).show()
-                            }
-                        }
-                    },
-                ) {
-                    if (saving) {
-                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        Spacer(Modifier.width(8.dp))
+            Spacer(Modifier.height(12.dp))
+            Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                Column {
+                    if (login) {
+                        TextField(
+                            username, { if (it.length <= 200) username = it }, singleLine = true, enabled = !saving,
+                            label = { Text(stringResource(R.string.orbit_vault_username)) }, colors = fieldColors,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrect = false),
+                        )
+                        HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = colors.outlineVariant.copy(alpha = 0.6f))
                     }
-                    Text(stringResource(R.string.orbit_vault_save))
+                    TextField(
+                        secret, { if (it.length <= 4000) secret = it }, singleLine = true, enabled = !saving,
+                        label = { Text(stringResource(if (login) R.string.orbit_vault_password else R.string.orbit_vault_api_key)) },
+                        visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+                        colors = fieldColors,
+                        trailingIcon = {
+                            IconButton(onClick = { visible = !visible }) {
+                                Icon(orbitIcon(if (visible) "eye-off" else "eye"),
+                                    stringResource(if (visible) R.string.orbit_vault_hide else R.string.orbit_vault_show))
+                            }
+                        },
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    )
                 }
+            }
+            Spacer(Modifier.height(14.dp))
+            Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.Top) {
+                Icon(orbitIcon("shield-check"), null, Modifier.size(16.dp).padding(top = 2.dp), tint = colors.primary)
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    if (login) stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
+                    else stringResource(R.string.orbit_vault_entry_promise_key, orbit.name),
+                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(28.dp))
+            Button(
+                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()),
+                shape = RoundedCornerShape(50),
+                modifier = Modifier.fillMaxWidth().height(52.dp),
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        try {
+                            val id = OrbitVault.save(context, orbit.id, request, username, secret)
+                            secret = ""
+                            runCatching { sheetState.hide() }
+                            OrbitVault.close(request)
+                            OrbitVaultNotice.send(context, orbit, request, id)
+                        } catch (e: kotlinx.coroutines.CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            saving = false
+                            Toast.makeText(context, context.getString(R.string.orbit_vault_save_failed, OrbitVault.MAX_ENTRIES), Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                },
+            ) {
+                if (saving) {
+                    CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
+                    Spacer(Modifier.width(8.dp))
+                }
+                Text(stringResource(R.string.orbit_vault_add), style = MaterialTheme.typography.titleMedium)
+            }
+            TextButton(onClick = { dismiss() }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) {
+                Text(stringResource(R.string.cancel), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)
             }
         }
     }
@@ -208,11 +226,12 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
 internal fun OrbitVaultSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    var version by remember { mutableStateOf(0) }
+    var reload by remember { mutableStateOf(0) }
+    val saved by OrbitVault.version.collectAsState()
     var deleting by remember { mutableStateOf<OrbitVault.Entry?>(null) }
     var busy by remember { mutableStateOf(false) }
     // null while loading; a failure is kept apart from an empty vault.
-    val entries by produceState<Result<List<OrbitVault.Entry>>?>(null, version) {
+    val entries by produceState<Result<List<OrbitVault.Entry>>?>(null, reload, saved) {
         value = runCatching { OrbitVault.entries(context, orbit.id) }
     }
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
@@ -230,7 +249,7 @@ internal fun OrbitVaultSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
                 loaded == null -> Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) { CircularProgressIndicator() }
                 list == null -> Column(Modifier.padding(vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Text(stringResource(R.string.orbit_vault_load_failed), style = MaterialTheme.typography.bodyMedium)
-                    OutlinedButton(onClick = { version++ }) { Text(stringResource(R.string.orbit_vault_retry)) }
+                    OutlinedButton(onClick = { reload++ }) { Text(stringResource(R.string.orbit_vault_retry)) }
                 }
                 else -> if (list.isEmpty()) {
                     Text(stringResource(R.string.orbit_vault_empty, orbit.name), style = MaterialTheme.typography.bodyMedium,
@@ -283,7 +302,7 @@ internal fun OrbitVaultSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
                         } catch (e: Exception) {
                             Toast.makeText(context, context.getString(R.string.orbit_vault_delete_failed), Toast.LENGTH_SHORT).show()
                         } finally {
-                            busy = false; deleting = null; version++
+                            busy = false; deleting = null; reload++
                         }
                     }
                 }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
