@@ -396,6 +396,8 @@ private fun TaskDetail(
                 Text(
                     when {
                         routine && task.source == OrbitRoutines.GOALS_SOURCE -> stringResource(R.string.orbit_routine_goal_briefing_desc)
+                        routine && task.source == OrbitRoutines.FEED_SOURCE -> stringResource(R.string.orbit_routine_feed_desc)
+                        routine && task.source == OrbitRoutines.IDEAS_SOURCE -> stringResource(R.string.orbit_routine_ideas_desc)
                         routine -> stringResource(R.string.orbit_routine_self_review_desc)
                         else -> task.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
                     },
@@ -580,7 +582,8 @@ private fun TaskDetail(
                         color = MaterialTheme.colorScheme.onSurfaceVariant, textAlign = TextAlign.Center,
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp))
                 }
-                if (task.kind != "DAILY") TextButton(
+                // The Feed and Ideas routines only pause; the tabs live on them.
+                if (task.kind != "DAILY" && !OrbitRoutines.isProtected(task)) TextButton(
                     enabled = !busy, onClick = { onCancel(task) },
                     modifier = Modifier.align(Alignment.CenterHorizontally).heightIn(min = 48.dp),
                 ) { Text(stringResource(R.string.orbit_task_cancel), color = com.ai.assistance.operit.ui.common.readableErrorColor()) }
@@ -628,6 +631,8 @@ private fun StatePill(task: OrbitTaskEntity) {
 /** Routines get their own picture; everything else uses the icon of its schedule. */
 private fun taskIconName(task: OrbitTaskEntity, scheduleIcon: String): String = when {
     OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.GOALS_SOURCE -> "target"
+    OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.FEED_SOURCE -> "newspaper"
+    OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.IDEAS_SOURCE -> "lightbulb"
     OrbitRoutines.isRoutine(task) -> "moon-star"
     task.kind == "DAILY" -> "heart-handshake"
     else -> scheduleIcon
@@ -761,6 +766,8 @@ internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (tas
 internal fun watchLabel(task: OrbitTaskEntity): String {
     when (task.source) {
         com.ai.assistance.operit.features.orbit.OrbitRoutines.CHAT_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
+        com.ai.assistance.operit.features.orbit.OrbitRoutines.IDEAS_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
+        com.ai.assistance.operit.features.orbit.OrbitRoutines.FEED_SOURCE -> return stringResource(R.string.orbit_routine_source_feed)
         com.ai.assistance.operit.features.orbit.OrbitRoutines.GOALS_SOURCE -> return stringResource(R.string.orbit_routine_source_goals)
     }
     if (task.kind != com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND) return task.source

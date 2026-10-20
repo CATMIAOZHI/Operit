@@ -83,6 +83,10 @@ class OrbitTaskRepository(private val context: Context) {
         require(state in setOf("ACTIVE", "PAUSED", "CANCELLED"))
         val task = dao.task(taskId) ?: error("Task not found")
         check(task.orbitId == orbitId)
+        // The Feed and Ideas tabs live on their routines: they pause, they are never cancelled.
+        check(state != "CANCELLED" || !OrbitRoutines.isProtected(task)) {
+            "This routine can only be paused, not cancelled"
+        }
         check(task.state != "CANCELLED" || state == "CANCELLED") { "A cancelled task cannot be resumed" }
         check(state != "ACTIVE" || task.state != "WAITING_USER") {
             "Open task details and complete the user request before continuing"
@@ -116,30 +120,49 @@ class OrbitTaskRepository(private val context: Context) {
     suspend fun edit(task: OrbitTaskEntity, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute,
         calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes,
-        useSubagent: Boolean = task.useSubagent): Boolean {
+        useSubagent: Boolean = task.useSubagent, scheduleMode: String = task.scheduleMode): Boolean {
         check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND) && task.state != "CANCELLED")
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
+        }
+        if (scheduleMode != task.scheduleMode) {
+            // Only a repeating task changes how it repeats; one-off and chained tasks keep theirs.
+            val repeating = setOf("INTERVAL", "DAILY") + OrbitCalendarSchedule.modes
+            require(task.scheduleMode in repeating && scheduleMode in repeating) {
+                "schedule_mode can only change between INTERVAL, DAILY, WEEKLY, MONTHLY and YEARLY"
+            }
+        }
+        val protected = OrbitRoutines.isProtected(task)
+        if (protected) {
+            // Only when it runs can change; what it does stays as Orbit made it.
+            require(title == task.title && instruction == task.instruction && source == task.source &&
+                useSubagent == task.useSubagent && notifyPolicy == task.notifyPolicy &&
+                timeoutMinutes == task.timeoutMinutes) {
+                "Only the schedule of this routine can change (schedule_mode, interval_minutes, daily_time, repeat_on)"
+            }
         }
         require(title.isNotBlank() && title.length <= 80 && instruction.length in 1..4000)
         require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
         require(dailyMinute in 0 until 24 * 60)
         checkTimeout(timeoutMinutes)
-        require(runAt == null || task.scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
-        val rule = checkedRule(task.scheduleMode, calendarRule)
+        require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
+        // Only the calendar modes keep a day rule.
+        val rule = checkedRule(scheduleMode, if (scheduleMode in OrbitCalendarSchedule.modes) calendarRule else "")
         checkSource(task.kind, source)
         val now = System.currentTimeMillis()
-        val nextRun = when (task.scheduleMode) {
+        val nextRun = when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
-            in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(task.scheduleMode, rule, dailyMinute, now)
+            in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
+            // A routine that runs more often starts on its new rhythm instead of running at once.
+            "INTERVAL" -> if (protected) minOf(maxOf(task.nextRunAt, now), now + intervalMinutes * 60_000L) else now
             else -> now
         }
         val changed = OrbitExecutionGate.serialized {
             dao.replaceDefinition(task.copy(title = title, instruction = instruction, source = source,
                 intervalMinutes = intervalMinutes, notifyPolicy = notifyPolicy, nextRunAt = nextRun,
                 dailyMinute = dailyMinute, calendarRule = rule, timeoutMinutes = timeoutMinutes,
-                useSubagent = useSubagent,
+                useSubagent = useSubagent, scheduleMode = scheduleMode,
                 lastFingerprint = if (source == task.source) task.lastFingerprint else "",
                 lastObservation = if (source == task.source) task.lastObservation else "",
                 updatedAt = now), task.version)
@@ -162,27 +185,29 @@ class OrbitTaskRepository(private val context: Context) {
         }
     }
 
-    /** Idempotent migration of the old daily settings; changing focus/time invalidates old work. */
+    /**
+     * Keeps an Orbit's old daily check-in in step with its settings. New Orbits no longer get one:
+     * only a check-in that already exists is kept up to date.
+     */
     suspend fun syncDaily(): OrbitTaskEntity? = OrbitExecutionGate.serialized {
         val settings = OrbitPreferences.getInstance(context).current()
         val orbit = settings.active?.takeUnless { it.deleting } ?: return@serialized null
         val id = "daily-${orbit.id}"
         val now = System.currentTimeMillis()
-        val old = dao.task(id)
+        val old = dao.task(id) ?: return@serialized null
         val state = when {
             !settings.proactiveEnabled -> "PAUSED"
-            old?.state in setOf("WAITING_USER", "VERIFY") -> old!!.state
-            old?.state == "PAUSED" && dao.latestRun(id)?.state == "INTERRUPTED" -> "PAUSED"
+            old.state in setOf("WAITING_USER", "VERIFY") -> old.state
+            old.state == "PAUSED" && dao.latestRun(id)?.state == "INTERRUPTED" -> "PAUSED"
             else -> "ACTIVE"
         }
         val title = context.getString(com.ai.assistance.operit.R.string.orbit_daily_task)
         val proposed = OrbitTaskEntity(id, orbit.id, orbit.chatId, title, settings.focusNotes,
             "DAILY", "", 1440, settings.checkInMinuteOfDay, "CHANGES", state,
-            old?.version ?: 1, now + OrbitCompanion.delayUntilNextCheckIn(now, settings.checkInMinuteOfDay),
-            old?.lastObservation.orEmpty(), "", old?.createdAt ?: now, now,
-            timeoutMinutes = old?.timeoutMinutes ?: 0, useSubagent = old?.useSubagent ?: false)
-        if (old == null) dao.insertTask(proposed)
-        else if (old.instruction != proposed.instruction || old.dailyMinute != proposed.dailyMinute ||
+            old.version, now + OrbitCompanion.delayUntilNextCheckIn(now, settings.checkInMinuteOfDay),
+            old.lastObservation, "", old.createdAt, now,
+            timeoutMinutes = old.timeoutMinutes, useSubagent = old.useSubagent)
+        if (old.instruction != proposed.instruction || old.dailyMinute != proposed.dailyMinute ||
             old.state != proposed.state || old.chatId != proposed.chatId) {
             dao.replaceDefinition(proposed, old.version)
         }

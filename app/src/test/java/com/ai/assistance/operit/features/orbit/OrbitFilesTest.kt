@@ -132,7 +132,41 @@ class OrbitFilesTest {
     @Test fun routineSourcesAreOnlyForAssistTasks() {
         OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.CHAT_SOURCE)
         OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.GOALS_SOURCE)
+        OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.FEED_SOURCE)
+        OrbitTaskRepository.checkSource("ASSIST", OrbitRoutines.IDEAS_SOURCE)
         assertTrue(runCatching { OrbitTaskRepository.checkSource("URL_CHANGE", OrbitRoutines.CHAT_SOURCE) }.isFailure)
         assertTrue(runCatching { OrbitTaskRepository.checkSource("WATCH", OrbitRoutines.GOALS_SOURCE) }.isFailure)
+    }
+
+    @Test fun answeredIdeasOutlastTheRest() = runBlocking {
+        val board = OrbitBoardRepository(folder.newFolder("ideas"), OrbitBoardRepository.Board.IDEAS)
+        val liked = board.create("Liked", "b", "p", "liked", emoji = "📦", category = "money")
+        board.update(liked.id, vote = 1)
+        val disliked = board.create("Disliked", "b", "p", "disliked")
+        board.update(disliked.id, vote = -1)
+        repeat(OrbitBoardRepository.IDEA_PLAIN_LIMIT + 10) { board.create("Plain $it", "b", "p", "plain-$it") }
+        val all = board.listAll()
+        // The answered ones stay; only the newest unanswered ones are kept.
+        assertTrue(all.any { it.id == liked.id } && all.any { it.id == disliked.id })
+        assertEquals(OrbitBoardRepository.IDEA_PLAIN_LIMIT, all.count { !it.valued })
+        assertTrue(all.none { it.title == "Plain 0" })
+        assertEquals("money", all.first { it.id == liked.id }.category)
+        assertEquals("📦", all.first { it.id == liked.id }.emoji)
+        // Only the six categories, and only a real emoji, can be set.
+        assertTrue(runCatching { board.update(liked.id, category = "travel") }.isFailure)
+        assertTrue(runCatching { board.update(liked.id, emoji = "ab") }.isFailure)
+        assertEquals("🎁", board.update(liked.id, emoji = "🎁").emoji)
+    }
+
+    @Test fun aLikedIdeaDoesNotRetire() = runBlocking {
+        val board = OrbitBoardRepository(folder.newFolder("expired"), OrbitBoardRepository.Board.IDEAS)
+        val soon = System.currentTimeMillis() + 50
+        val liked = board.create("Liked", "b", "p", "a", expiresAt = soon)
+        val plain = board.create("Plain", "b", "p", "b", expiresAt = soon)
+        board.update(liked.id, vote = 1)
+        Thread.sleep(120)
+        val shown = board.list().map { it.id }
+        assertTrue(liked.id in shown)
+        assertFalse(plain.id in shown)
     }
 }

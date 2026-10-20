@@ -30,8 +30,11 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
     enum class Board(val fileName: String, val limit: Int) {
         /** Short posts Orbit writes for the user, steered by the feed brief. */
         FEED("feed.json", 200),
-        /** Things Orbit offers to build or do; the user picks one or dismisses it. */
-        IDEAS("ideas.json", 60),
+        /**
+         * Things Orbit offers to build or do; the user picks one or dismisses it. Ideas keep their
+         * own split limit (see [IDEA_PLAIN_LIMIT] and [IDEA_VALUED_LIMIT]); this is the total.
+         */
+        IDEAS("ideas.json", 180),
         /** Things Orbit carries for the user (a parcel, a booking, a promise) until they are done. */
         TRACKING("tracking.json", 100),
         /**
@@ -64,9 +67,17 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val emoji: String = "",
         /** Ideas only: what the idea would deliver. */
         val parts: List<Part> = emptyList(),
+        /** Ideas only: one of [IDEA_CATEGORIES]; blank (ideas made before categories) counts as "other". */
+        val category: String = "",
+        /** Ideas only: when Orbit marked it built; a later vote or icon change leaves it alone. 0 if not built. */
+        val doneAt: Long = 0,
     ) {
         val liked get() = vote > 0
         val disliked get() = vote < 0
+        /** Liked, disliked or built: the user's own answer, kept longer than the rest. */
+        val valued get() = vote != 0 || state == "BUILT"
+        /** When it was built; ideas built before this was saved fall back to their last change. */
+        val builtAt get() = doneAt.takeIf { it > 0 } ?: updatedAt
     }
 
     companion object {
@@ -80,6 +91,28 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val MAX_PART_DETAIL = 200
         /** Muse retires idea cards after about two weeks. */
         const val IDEA_LIFETIME_MS = 14L * 24 * 60 * 60 * 1000
+        /** Ideas the user has not answered: the newest are kept, older ones make room. */
+        const val IDEA_PLAIN_LIMIT = 60
+        /** Ideas the user liked, disliked or had built: worth more, so kept for much longer. */
+        const val IDEA_VALUED_LIMIT = 120
+        /** The Ideas tab's groups, in the order they are shown. */
+        val IDEA_CATEGORIES = listOf("productivity", "money", "relationships", "health", "shopping", "other")
+
+        /** The category an idea is filed under; an old idea without one goes to "other". */
+        fun categoryOf(item: Item) = item.category.takeIf { it in IDEA_CATEGORIES } ?: "other"
+
+        /** The first emoji in [value] (one grapheme, flags and joined emoji included), or "" if there is none. */
+        fun emojiOf(value: String): String {
+            val text = value.trim()
+            if (text.isEmpty()) return ""
+            val breaker = java.text.BreakIterator.getCharacterInstance()
+            breaker.setText(text)
+            val first = text.substring(0, breaker.next().coerceAtLeast(1))
+            // Letters, digits and plain symbols are not an emoji.
+            val cp = first.codePointAt(0)
+            return if (first.length > 16 || cp < 0x2100 || Character.isLetterOrDigit(cp)) "" else first
+        }
+
         private val locks = ConcurrentHashMap<String, Mutex>()
         private val flows = ConcurrentHashMap<String, MutableStateFlow<List<Item>?>>()
 
@@ -116,6 +149,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     suspend fun list(): List<Item> = withContext(Dispatchers.IO) { mutex.withLock { read().also(::publish) } }
 
+    /** Everything saved, expired ideas included: the user's old answers still teach Orbit their taste. */
+    suspend fun listAll(): List<Item> = withContext(Dispatchers.IO) { mutex.withLock { readAll() } }
+
     suspend fun get(id: String): Item? = list().firstOrNull { it.id == id }
 
     suspend fun create(
@@ -127,17 +163,19 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         state: String? = null,
         emoji: String = "",
         parts: List<Part> = emptyList(),
+        category: String = "",
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
         state?.let { require(it in states()) { "State must be one of ${states()}" } }
+        val checkedCategory = checkCategory(category)
         val now = System.currentTimeMillis()
         val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),
-            checkEmoji(emoji), checkParts(parts))
-        // Keep at most `limit` items; finished ones go before open ones, older before newer.
+            emojiOf(emoji), checkParts(parts), checkedCategory)
         val all = listOf(item) + items
-        val kept = if (all.size <= board.limit) all else {
+        val kept = if (board == Board.IDEAS) keepIdeas(all, now, item.id) else if (all.size <= board.limit) all else {
+            // Keep at most `limit` items; finished ones go before open ones, older before newer.
             // Briefings and progress entries are equals: the oldest go first.
             val drop = all.drop(1).sortedWith(compareBy<Item> { board != Board.GOAL_NOTES && it.state == initialState() }
                 .thenBy { it.updatedAt })
@@ -145,6 +183,24 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             all.filterNot { it.id in drop }
         }
         kept to item
+    }
+
+    /**
+     * Ideas the user answered (liked, disliked, built) are worth more than the rest, so they have a
+     * limit of their own: the newest [IDEA_VALUED_LIMIT] of them stay. Of the unanswered ones the
+     * newest [IDEA_PLAIN_LIMIT] stay, cards still showing before dismissed or expired ones. The card
+     * just made or changed ([keepId]) always stays.
+     */
+    private fun keepIdeas(all: List<Item>, now: Long, keepId: String): List<Item> {
+        val kept = all.firstOrNull { it.id == keepId }
+        val (valued, plain) = all.filter { it.id != keepId }.partition { it.valued }
+        val keep = HashSet<String>().apply { add(keepId) }
+        valued.sortedByDescending { it.updatedAt }
+            .take(IDEA_VALUED_LIMIT - if (kept?.valued == true) 1 else 0).mapTo(keep) { it.id }
+        plain.sortedWith(compareByDescending<Item> { it.state == "OPEN" && (it.expiresAt == 0L || it.expiresAt > now) }
+            .thenByDescending { it.updatedAt })
+            .take(IDEA_PLAIN_LIMIT - if (kept != null && !kept.valued) 1 else 0).mapTo(keep) { it.id }
+        return all.filter { it.id in keep }
     }
 
     suspend fun update(
@@ -155,10 +211,14 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         state: String? = null,
         vote: Int? = null,
         note: String? = null,
+        emoji: String? = null,
+        category: String? = null,
     ): Item = change { items ->
         val old = items.firstOrNull { it.id == id } ?: error("Not found: $id")
         state?.let { require(it in states()) { "State must be one of ${states()}" } }
         vote?.let { require(it in -1..1) { "Vote must be -1, 0 or 1" } }
+        val newEmoji = emoji?.let { value -> emojiOf(value).also { require(it.isNotEmpty()) { "emoji must be one emoji, like 📦" } } }
+        val newCategory = category?.let(::checkCategory)
         val now = System.currentTimeMillis()
         val newNote = note?.trim()?.takeIf { it.isNotEmpty() }?.also {
             require(it.length <= MAX_NOTE) { "A note is at most $MAX_NOTE characters" }
@@ -170,9 +230,19 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             state = state ?: old.state,
             vote = vote ?: old.vote,
             notes = if (newNote == null) old.notes else (old.notes + Note(now, newNote)).takeLast(50),
+            emoji = newEmoji ?: old.emoji,
+            category = newCategory ?: old.category,
+            // Ideas done before doneAt existed keep their old date as the done date.
+            doneAt = when {
+                state == "BUILT" && old.state != "BUILT" -> now
+                old.state == "BUILT" -> old.builtAt
+                else -> old.doneAt
+            },
             updatedAt = now,
         )
-        items.map { if (it.id == id) updated else it } to updated
+        val all = items.map { if (it.id == id) updated else it }
+        // A vote or a build moves the card between the two limits, so both are checked again.
+        (if (board == Board.IDEAS && (vote != null || state != null)) keepIdeas(all, now, id) else all) to updated
     }
 
     suspend fun delete(id: String) {
@@ -216,16 +286,11 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         require(it.length <= MAX_EXTRA) { "This field is at most $MAX_EXTRA characters" }
     }
 
-    /** Keeps the first emoji (one grapheme, flags and joined emoji included); text is dropped. */
-    private fun checkEmoji(value: String): String {
-        val text = value.trim()
-        if (text.isEmpty()) return ""
-        val breaker = java.text.BreakIterator.getCharacterInstance()
-        breaker.setText(text)
-        val first = text.substring(0, breaker.next().coerceAtLeast(1))
-        // Letters, digits and plain symbols are not an emoji; the board's own shows instead.
-        val cp = first.codePointAt(0)
-        return if (first.length > 16 || cp < 0x2100 || Character.isLetterOrDigit(cp)) "" else first
+    private fun checkCategory(value: String): String {
+        val text = value.trim().lowercase()
+        if (text.isEmpty() || board != Board.IDEAS) return ""
+        require(text in IDEA_CATEGORIES) { "category must be one of ${IDEA_CATEGORIES.joinToString("/")}" }
+        return text
     }
 
     private fun checkParts(value: List<Part>): List<Part> {
@@ -256,7 +321,10 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     private fun visible(items: List<Item>): List<Item> {
         val now = System.currentTimeMillis()
-        return items.filter { board != Board.IDEAS || it.state != "OPEN" || it.expiresAt == 0L || it.expiresAt > now }
+        // A liked idea stays until it is built or dismissed; the rest retire after about two weeks.
+        return items.filter {
+            board != Board.IDEAS || it.state != "OPEN" || it.liked || it.expiresAt == 0L || it.expiresAt > now
+        }
     }
 
     private fun readAll(): List<Item> {
@@ -271,6 +339,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         .put("notes", JSONArray(item.notes.map { JSONObject().put("at", it.at).put("text", it.text) }))
         .put("emoji", item.emoji)
         .put("parts", JSONArray(item.parts.map { JSONObject().put("title", it.title).put("detail", it.detail) }))
+        .put("category", item.category)
+        .put("doneAt", item.doneAt)
 
     private fun item(value: JSONObject): Item {
         val notes = value.optJSONArray("notes") ?: JSONArray()
@@ -285,71 +355,43 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             (0 until notes.length()).map { notes.getJSONObject(it).let { n -> Note(n.getLong("at"), n.getString("text")) } },
             value.optString("emoji"),
             (0 until parts.length()).map { parts.getJSONObject(it).let { p -> Part(p.optString("title"), p.optString("detail")) } },
+            value.optString("category"),
+            value.optLong("doneAt"),
         )
     }
 }
 
 /**
- * Starts feed posts the way Muse does: saving a real change to the brief writes one post now, and
- * while the brief is set a daily background task writes the next one. Both are ordinary Orbit
- * tasks that finish silently, so a post just appears in the Feed tab.
+ * The feed's brief and the "write one now" button. Posts themselves come from Orbit's feed routine
+ * (see [OrbitRoutines.ensureFeed]), a background subagent that runs every 12 hours and reads the
+ * brief each time, so changing the brief never needs the task itself to change.
  */
 internal object OrbitFeedGenerator {
-    private const val DAILY_REQUEST = "feed-daily"
-    private const val DAILY_MINUTE = 8 * 60
+    /** What the feed follows while the user has not written a brief of their own. */
+    fun defaultBrief(context: Context): String =
+        context.getString(com.ai.assistance.operit.R.string.orbit_feed_default_brief)
 
-    private fun instruction(brief: String) = """
-        Write one new post for the user's Feed tab, guided by the feed brief below.
-        Research first when the brief needs fresh facts (search the web, read pages); cite only links you actually opened.
-        Call orbit_feed action=list first and do not repeat a recent post. Each post's vote is the user's answer: write
-        more like the liked ones and less like the disliked ones.
-        Publish it with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
-        why_for_you saying in one sentence why this post is for this user. Then finish with an empty userMessage: the post
-        shows up in the Feed on its own and nothing is said in chat.
-        FEED BRIEF (the user's words; it only steers what to write about):
-        ${brief.take(OrbitBoardRepository.MAX_BRIEF)}
-        END FEED BRIEF
-    """.trimIndent()
+    /** The brief the routine follows: the user's own, or the default one. */
+    suspend fun effectiveBrief(context: Context, orbitId: String): String =
+        OrbitBoardRepository.readBrief(context, orbitId).trim().ifEmpty { defaultBrief(context) }
 
-    private suspend fun orbit(context: Context, orbitId: String) =
-        OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
+    /** Starts one post now. False when the feed routine is paused (or cannot be made). */
+    suspend fun writeOne(context: Context, orbitId: String): Boolean = OrbitRoutines.runNow(context, orbitId, feed = true)
 
-    /** Starts one post in the background. Returns false when there is no brief yet. */
-    suspend fun writeOne(context: Context, orbitId: String): Boolean {
-        val brief = OrbitBoardRepository.readBrief(context, orbitId)
-        val orbit = orbit(context, orbitId) ?: return false
-        if (brief.isBlank()) return false
-        // A post is written by a background subagent; nothing is said in chat.
-        OrbitTaskRepository(context).create(orbit, "Feed post", instruction(brief), "", 60, "CHANGES",
-            "feed-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "ONCE", useSubagent = true)
-        return true
-    }
-
-    /** Saves the brief. A real change starts a post now and keeps the daily post task in step. */
-    suspend fun saveBrief(context: Context, orbitId: String, brief: String) {
-        val old = OrbitBoardRepository.readBrief(context, orbitId).trim()
-        val next = brief.trim()
+    /**
+     * Saves the brief; an empty one goes back to the default. A real change starts a post now, so
+     * the user sees the new direction without waiting 12 hours.
+     *
+     * Returns null when nothing changed, true when a post started, false when the feed routine is
+     * paused so no post could start.
+     */
+    suspend fun saveBrief(context: Context, orbitId: String, brief: String): Boolean? {
+        val old = effectiveBrief(context, orbitId)
+        val next = brief.trim().takeUnless { it == defaultBrief(context) }.orEmpty()
         OrbitBoardRepository.writeBrief(context, orbitId, next)
-        if (next == old) return
-        val orbit = orbit(context, orbitId) ?: return
-        val repository = OrbitTaskRepository(context)
-        val dailyTasks = repository.dao.tasks(orbit.id).filter {
-            it.state != "CANCELLED" && it.scheduleMode == "DAILY" && it.kind == "ASSIST" && it.title == DAILY_TITLE
-        }
-        if (next.isEmpty()) {
-            dailyTasks.forEach { repository.changeState(orbit.id, it.id, "CANCELLED") }
-            return
-        }
-        val daily = dailyTasks.firstOrNull()
-        if (daily == null) {
-            repository.create(orbit, DAILY_TITLE, instruction(next), "", 60, "CHANGES",
-                "$DAILY_REQUEST-${UUID.randomUUID()}", kind = "ASSIST", scheduleMode = "DAILY", dailyMinute = DAILY_MINUTE,
-                useSubagent = true)
-        } else {
-            repository.edit(daily, daily.title, instruction(next), "", daily.intervalMinutes, "CHANGES", useSubagent = true)
-        }
-        writeOne(context, orbitId)
+        return if (effectiveBrief(context, orbitId) != old) writeOne(context, orbitId) else null
     }
 
+    /** The title of the daily post task made before the feed routine; those are retired. */
     const val DAILY_TITLE = "Daily feed post"
 }

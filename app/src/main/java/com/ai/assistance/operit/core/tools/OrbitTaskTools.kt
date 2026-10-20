@@ -17,7 +17,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型；WATCH：盯通知、短信、日历或小脚本，内容没变就不叫醒你", required = false),
             ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；script（同时填 script）", required = false),
             ToolParameterSchema("script", description = "watch=script 时的 shell 脚本全文（最多8000字符），不要同时填别的 watch 来源。以 Operit 当前的 shell 权限运行（开了 root/Shizuku 就是那个身份；只有无障碍权限时不能运行脚本），只能做只读检查：不改文件、不发送数据。每次检查运行它，输出就是要盯的内容，输出变了才叫醒你；运行超过25秒算失败。输出要短，自己截断（如 | head -c 4000）。不要放密码", required = false),
-            ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行", required = false),
+            ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
             ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
             ToolParameterSchema("repeat_on", description = "WEEKLY/MONTHLY/YEARLY 必填。WEEKLY：星期几，逗号分隔，1=周一…7=周日，如 1,3,5；MONTHLY：每月几号 1-31，如 15（小月取最后一天）；YEARLY：月-日，如 12-03（2月29日在平年取2月28日）", required = false),
@@ -41,6 +41,9 @@ internal object OrbitTaskTools {
             "到点时默认在安排它的聊天里给你一条隐藏的“到点了”消息，你带着完整的聊天上下文自己处理，用户只看到你说的话；提醒就直接用自己的话提醒，不需要额外设置。" +
             "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多5分钟，按需调大 timeout_minutes，最多1440分钟；超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟），结果交回给你后再由你告诉用户。" +
             "子代理与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
+            "「动态更新」（每12小时写一条动态）和「每日点子」（每天上午9点想点子）是你自己的后台任务，动态页和点子页靠它们更新：" +
+            "只能 pause/resume/run 或用 update 改时间（schedule_mode、interval_minutes、daily_time、repeat_on），不能 cancel，也不能改标题、内容或执行方式。" +
+            "用户说“点子多一点/少一点”“动态更勤/更少”时就改它们的时间，比如点子改成 INTERVAL+interval_minutes=720 就是一天两次。" +
             "用户在聊天里回答后，调用 resume 转达 user_note。中断过的操作先看 detail 核实，不能盲目重做。" +
             "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
@@ -97,7 +100,16 @@ internal object OrbitTaskTools {
                 val id = arguments["task_id"] ?: error("Missing task_id")
                 val task = repository.dao.task(id)?.takeIf { it.orbitId == orbit.id } ?: error("Task not found")
                 when (action) {
-                    "update" -> JSONObject().put("updated", repository.edit(task,
+                    "update" -> {
+                        val mode = arguments["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
+                        val timed = mode == "DAILY" || mode in OrbitCalendarSchedule.modes
+                        val wasTimed = task.scheduleMode == "DAILY" || task.scheduleMode in OrbitCalendarSchedule.modes
+                        val dailyTime = arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime)
+                        if (timed && !wasTimed && dailyTime == null) error("$mode needs daily_time (HH:mm)")
+                        // A day rule belongs to its own mode: a new calendar mode needs its own.
+                        val rule = arguments["repeat_on"]?.takeIf { it.isNotBlank() }
+                            ?: if (mode == task.scheduleMode) task.calendarRule else ""
+                        JSONObject().put("updated", repository.edit(task,
                         arguments["title"] ?: task.title, arguments["instruction"] ?: task.instruction,
                         if (task.kind == OrbitWatchSources.KIND &&
                             (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
@@ -106,10 +118,12 @@ internal object OrbitTaskTools {
                         arguments["interval_minutes"]?.toInt() ?: task.intervalMinutes,
                         arguments["notify_policy"] ?: task.notifyPolicy,
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
-                        arguments["daily_time"]?.takeIf { it.isNotBlank() }?.let(::parseDailyTime) ?: task.dailyMinute,
-                        arguments["repeat_on"]?.takeIf { it.isNotBlank() } ?: task.calendarRule,
+                        dailyTime ?: task.dailyMinute,
+                        rule,
                         parseTimeout(arguments["timeout_minutes"]) ?: task.timeoutMinutes,
-                        parseFlag(arguments["use_subagent"]) ?: task.useSubagent))
+                        parseFlag(arguments["use_subagent"]) ?: task.useSubagent,
+                        scheduleMode = mode))
+                    }
                     "detail" -> json(task).put("executionRecord", repository.executionRecord(id))
                         .put("lastRun", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
@@ -227,6 +241,8 @@ internal object OrbitTaskTools {
     private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
         .put("kind", task.kind)
         .put("use_subagent", task.useSubagent)
+        // The Feed and Ideas routines: pause or reschedule only.
+        .put("can_cancel", !OrbitRoutines.isProtected(task))
         .put("schedule_mode", task.scheduleMode).put("goal_id", task.goalId).put("trigger_task_id", task.triggerTaskId)
         .put("state", task.state).put("url", task.source).put("instruction", task.instruction)
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
