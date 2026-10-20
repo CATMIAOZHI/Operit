@@ -95,6 +95,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.drawscope.draw
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.input.pointer.pointerInput
+import kotlinx.coroutines.withContext
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -270,23 +276,84 @@ private fun OrbitChatPage(
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
-    // Leaving the developer view: 0 is in place, 1 is shrunk to the right and faded out. The back
-    // swipe drives it with the finger; once out of sight the chat switches back to Orbit's look and
-    // grows back in.
+    // Leaving the developer view slides it off to the right like any pushed page: 0 is in place,
+    // 1 is off screen. As the back starts, what the developer view shows is recorded and the live
+    // chat underneath turns back into Orbit's look, so the recording slides away over the real,
+    // current Orbit chat. Let go early and it slides back and the developer view returns.
     val devLeave = remember(orbit.id) { androidx.compose.animation.core.Animatable(0f) }
     var devLeaving by remember(orbit.id) { mutableStateOf(false) }
+    var devGesture by remember(orbit.id) { mutableStateOf(false) }
+    var devSettling by remember(orbit.id) { mutableStateOf(false) }
+    var devPicture by remember(orbit.id) { mutableStateOf<android.graphics.Picture?>(null) }
+    var devPictureWanted by remember(orbit.id) { mutableStateOf(false) }
+    val devRecorded = remember(orbit.id) { arrayOfNulls<android.graphics.Picture>(1) }
+    var devSwap by remember(orbit.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     val devScope = rememberCoroutineScope()
+    // Records the developer view on the next frame, then shows the recording in its place.
+    suspend fun swapToPicture() {
+        // Recordings take image bitmaps only from Android 9; before that the view moves itself.
+        if (devPicture != null || !devChatView || android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.P) {
+            devPictureWanted = false
+            return
+        }
+        devPictureWanted = true
+        try {
+            androidx.compose.runtime.withFrameNanos { }
+            androidx.compose.runtime.withFrameNanos { }
+            val picture = devRecorded[0]
+            if (picture != null && devChatView) {
+                devPicture = picture
+                devChatView = false
+            }
+        } finally {
+            // Cancelled or done, nothing recorded is kept past this point.
+            devPictureWanted = false
+            devRecorded[0] = null
+        }
+    }
     fun leaveDevView() {
-        if (devLeaving) return
+        // A swipe still settling back owns the view until it is done; the button waits for it.
+        if (devLeaving || devSettling) return
         devLeaving = true
         devScope.launch {
             try {
-                val rest = (OrbitMotion.PUSH_MS * (1f - devLeave.value)).toInt().coerceAtLeast(120)
-                devLeave.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
+                devSwap?.join()
+                swapToPicture()
+                // Without a recording there is nothing to slide; it goes straight to the Orbit chat.
+                if (devPicture != null) {
+                    val rest = (OrbitMotion.PUSH_MS * (1f - devLeave.value)).toInt().coerceAtLeast(120)
+                    devLeave.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
+                }
                 devChatView = false
-                devLeave.animateTo(0f, tween(260, easing = OrbitMotion.Easing))
             } finally {
+                devPicture = null
                 devLeaving = false
+                withContext(kotlinx.coroutines.NonCancellable) { devLeave.snapTo(0f) }
+            }
+        }
+    }
+    // A back swipe let go early: the recording slides back, then the developer view returns under it.
+    fun settleDevView() {
+        devSettling = true
+        devScope.launch {
+            try {
+                // Cancelled at once, so it can no longer swap the recording in behind this.
+                val swap = devSwap
+                swap?.cancel()
+                if (devPicture == null) {
+                    // Let go before the recording took over: the view never moved, so it stays put.
+                    devLeave.snapTo(0f)
+                    swap?.join()
+                } else {
+                    swap?.join()
+                    devLeave.animateTo(0f, tween(220, easing = OrbitMotion.Easing))
+                    devChatView = true
+                    androidx.compose.runtime.withFrameNanos { }
+                    androidx.compose.runtime.withFrameNanos { }
+                }
+            } finally {
+                devPicture = null
+                devSettling = false
             }
         }
     }
@@ -410,45 +477,63 @@ private fun OrbitChatPage(
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     Box(Modifier.fillMaxSize()) {
         BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) { tab = OrbitTab.CHAT }
-        // The back swipe shrinks the developer view to the right under the finger, like leaving a page.
-        // Stays on while the view is leaving, so a second back is swallowed here instead of leaving Orbit.
+        // The back swipe slides the developer view to the right under the finger, like leaving a page.
+        // Stays on while the view moves, so a second back is swallowed here instead of leaving Orbit.
         androidx.activity.compose.PredictiveBackHandler(
-            enabled = devLeaving || (devView && !showProfile && !showChats && stack.isEmpty())
+            enabled = devLeaving || devGesture || devSettling ||
+                (devView && !showProfile && !showChats && stack.isEmpty())
         ) { events ->
-            if (devLeaving) {
+            if (devLeaving || devSettling) {
                 events.collect { }
                 return@PredictiveBackHandler
             }
+            devGesture = true
+            // Held in place until the recording takes over, so no bare page shows beside it.
+            if (devChatView && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) devPictureWanted = true
+            devSwap = devScope.launch { swapToPicture() }
             try {
                 events.collect { devLeave.snapTo(it.progress) }
                 leaveDevView()
+                devGesture = false
             } catch (e: kotlinx.coroutines.CancellationException) {
                 // Let go before the edge: it settles back in place.
-                if (!devLeaving) devScope.launch { devLeave.animateTo(0f, tween(220, easing = OrbitMotion.Easing)) }
+                if (!devLeaving) settleDevView()
+                devGesture = false
                 throw e
             }
         }
-        // What shows around the shrinking view. Read only while drawing, so the swipe never recomposes.
-        val leaveBackdrop = MaterialTheme.colorScheme.surfaceContainerHighest
-        Box(Modifier.fillMaxSize().drawBehind { if (devLeave.value > 0f) drawRect(leaveBackdrop) })
+        val pageColor = MaterialTheme.colorScheme.background
         // While the menu is open, screen readers only see the menu, not the page behind it.
         Column(
             Modifier.fillMaxSize().graphicsLayer {
                 // A page opened from the settings over the chat moves it a little to the left, like iOS.
-                val leave = devLeave.value
+                // Leaving the developer view, the Orbit chat waits a little to the left under its
+                // recording. The developer view itself never moves: without a recording (Android 8,
+                // or a swipe let go before it was ready) it simply stays, so no bare page shows.
                 translationX = (if (showProfile) 0f else -size.width * 0.3f * pushState.baseCover()) +
-                    size.width * 0.12f * leave
-                if (leave > 0f) {
-                    val scale = 1f - 0.08f * leave
-                    scaleX = scale
-                    scaleY = scale
-                    alpha = 1f - leave
-                    shape = RoundedCornerShape(28.dp)
-                    clip = true
+                    (if (devPicture != null) -size.width * 0.3f * (1f - devLeave.value) else 0f)
+            }.drawWithContent {
+                if (devPictureWanted && devView) {
+                    // Recording the developer view once for its way out; drawn from the recording too.
+                    val picture = devRecorded[0] ?: android.graphics.Picture().also { picture ->
+                        val pictureCanvas = androidx.compose.ui.graphics.Canvas(
+                            picture.beginRecording(size.width.toInt().coerceAtLeast(1), size.height.toInt().coerceAtLeast(1))
+                        )
+                        draw(this, layoutDirection, pictureCanvas, size) {
+                            drawRect(pageColor)
+                            this@drawWithContent.drawContent()
+                        }
+                        picture.endRecording()
+                        devRecorded[0] = picture
+                    }
+                    drawIntoCanvas { it.nativeCanvas.drawPicture(picture) }
+                } else {
+                    drawContent()
                 }
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
-                if (showChats || stack.isNotEmpty() || showProfile || editingFile != null) Modifier.clearAndSetSemantics { }
+                // The recording on its way out covers it too, until the Orbit chat is fully shown.
+                if (showChats || stack.isNotEmpty() || showProfile || editingFile != null || devPicture != null) Modifier.clearAndSetSemantics { }
                 else Modifier
             )
         ) {
@@ -506,6 +591,26 @@ private fun OrbitChatPage(
                     tab = it
                 }, modifier = Modifier.tuckUnderKeyboard(androidx.compose.foundation.layout.WindowInsets.ime))
             }
+        }
+        // The recorded developer view sliding off the Orbit chat, with the usual dim over the chat.
+        // It takes every touch while it moves. The recording is played into its own layer once and
+        // only the layer moves, so the swipe does not replay the whole page each frame.
+        devPicture?.let { picture ->
+            Box(
+                Modifier.fillMaxSize()
+                    .pointerInput(Unit) {
+                        awaitPointerEventScope { while (true) awaitPointerEvent().changes.forEach { it.consume() } }
+                    }
+                    .drawBehind {
+                        val dim = 0.1f * (1f - devLeave.value)
+                        if (dim > 0f) drawRect(Color.Black.copy(alpha = dim))
+                    }
+            )
+            Box(
+                Modifier.fillMaxSize()
+                    .graphicsLayer { translationX = size.width * devLeave.value }
+                    .drawBehind { drawIntoCanvas { it.nativeCanvas.drawPicture(picture) } }
+            )
         }
         // Orbit's own menu, opened only by the round button at the top left.
         OrbitSideMenu(
