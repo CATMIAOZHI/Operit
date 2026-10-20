@@ -266,6 +266,9 @@ fun ChatArea(
     val responseProcessState =
         rememberResponseProcessState(chatHistory, currentChatId, !isMultiSelectMode && !orbitLook, processMetadata, onLoadProcess)
     val lastMessage = chatHistory.lastOrNull()
+    // While a reply is being written it is the newest of the assistant's rows. The rows an Orbit
+    // chat shows are cleaned copies without a stream, so this is the only way to tell.
+    val lastAiIndex = remember(chatHistory) { chatHistory.indexOfLast { it.sender == "ai" } }
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
     }
@@ -391,6 +394,7 @@ fun ChatArea(
                             bubbleAiBubbleLiquidGlass = bubbleAiBubbleLiquidGlass,
                             bubbleAiBubbleWaterGlass = bubbleAiBubbleWaterGlass,
                             isHidden = shouldHideLastAiMessage && renderIndex == messagesCount - 1,
+                            isWriting = isLoading && renderIndex == lastAiIndex,
                             isMultiSelectMode = isMultiSelectMode,
                             isSelected = selectedMessageIndices.contains(renderIndex),
                             onToggleSelection = { onToggleMessageSelection?.invoke(renderIndex) },
@@ -475,6 +479,7 @@ private fun MessageItem(
     bubbleAiBubbleLiquidGlass: Boolean = false,
     bubbleAiBubbleWaterGlass: Boolean = false,
     isHidden: Boolean = false, // 新增参数控制隐藏
+    isWriting: Boolean = false, // 正在生成的那条回复
     isMultiSelectMode: Boolean = false, // 是否处于多选模式
     isSelected: Boolean = false, // 是否被选中
     onToggleSelection: (() -> Unit)? = null, // 切换选中状态的回调
@@ -514,6 +519,20 @@ private fun MessageItem(
         com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false &&
         OrbitSpeech.of(message.content).isBlank()
     var showEmojiPicker by remember { mutableStateOf(false) }
+    val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
+    // Double-tapping one of Orbit's messages likes it, like a quick tapback.
+    val quickLike: (() -> Unit)? =
+        if (orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
+            !isMultiSelectMode && !isWriting && message.contentStream == null
+        ) {
+            {
+                if (orbitUserReactions.byMessage[message.timestamp] != OrbitQuickLike) {
+                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+                    OrbitEmojiUsage.record(context, OrbitQuickLike)
+                    orbitUserReactions.toggle(message.timestamp, OrbitQuickLike)
+                }
+            }
+        } else null
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
@@ -589,6 +608,7 @@ private fun MessageItem(
                         showContextMenu = true
                     }
                 },
+                onDoubleClick = quickLike,
             ),
     ) {
         OrbitSwipeToReply(

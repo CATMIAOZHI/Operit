@@ -377,9 +377,9 @@ interface OrbitTaskDao {
     @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId AND sender = 'ai'")
     suspend fun latestAiTimestamp(chatId: String): Long?
 
-    /** Orbit's newest message in [chatId] written after [after], or null when it has not answered. */
-    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp DESC LIMIT 1")
-    suspend fun aiSaidAfter(chatId: String, after: Long): String?
+    /** Orbit's messages in [chatId] written after [after], oldest first; one reply can be several. */
+    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp ASC")
+    suspend fun aiSaidAfter(chatId: String, after: Long): List<String>
 
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
     suspend fun lastFinishedRun(taskId: String): OrbitRunEntity?

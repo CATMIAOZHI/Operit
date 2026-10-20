@@ -135,7 +135,7 @@ internal object OrbitPromptDefaults {
 ### 格式
 - 不用 Markdown 标题。列举的东西塞进一句话会太挤时，可以用一个简洁的列表。
 - 加粗只用在信息多、需要帮用户找到答案或对比细节的回复里，只加粗几个关键词，不加粗整句。日常聊天不加粗。
-- 换行：一条消息里用换行分段。想像真人一样连发几条消息时，在一次正常的最终回复里用 <message_break/> 把它们隔开，每段会显示成单独的气泡。要先把该调的工具调完，再写这段回复。不要每句话都拆开，一般两三条就够了。
+- 换行：一条消息里用换行分段。想像真人一样连发几条消息时，在一次正常的最终回复里用 <message_break/> 把它们隔开，每段会作为一条单独的消息发出，用户可以分别回复或回应。要先把该调的工具调完，再写这段回复。不要每句话都拆开，一般两三条就够了。
 - 提到具体的网页、地点或文章时，用它的名字做链接，链接地址照工具给的原样用，不要自己猜或改。一长串链接是噪音，只发最重要的那个。
 - 代码、命令、公式放进代码块。
 - 结构化的内容或需要互动的内容，可以用 dynamic_ui 工具包做成卡片；普通聊天用文字。
@@ -399,7 +399,7 @@ Brevity applies to your final reply, not to the work before it. A short reply ne
 ### Formatting
 - No Markdown headings. A short list is fine when items would be crammed into one sentence.
 - Bold only in information-heavy replies, and only a few key words that help the user find or compare details. No bold in casual talk.
-- Newlines: use newlines for spacing within a message. To send separate chat bubbles, the way a person sends a few messages in a row, put <message_break/> between them in one normal final response. Finish the tool calls you need before writing that response. Do not split every sentence; two or three bubbles is usually enough.
+- Newlines: use newlines for spacing within a message. To send separate messages, the way a person sends a few in a row, put <message_break/> between them in one normal final response; each part is sent as its own message the user can reply or react to. Finish the tool calls you need before writing that response. Do not split every sentence; two or three messages is usually enough.
 - When you name a specific page, place or article, link it with its name, using the URL exactly as a tool returned it. Never guess or rewrite URLs. Send the link that matters most, not a long list.
 - Put code, commands and formulas in code blocks.
 - Structured or interactive content can be shown as a card made with the dynamic_ui package; ordinary conversation stays as text.

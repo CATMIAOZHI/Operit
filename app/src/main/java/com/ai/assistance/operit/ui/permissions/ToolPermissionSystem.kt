@@ -143,6 +143,8 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     
     // 工具权限存储：使用 "tool_permission_<tool_name>" 作为key
     private fun toolPermissionKey(toolName: String) = stringPreferencesKey("tool_permission_$toolName")
+    // Orbit keeps its own list, apart from the main app's: "orbit_tool_permission_<tool_name>".
+    private fun orbitToolPermissionKey(toolName: String) = stringPreferencesKey("$ORBIT_TOOL_PERMISSION_PREFIX$toolName")
 
     val toolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
         context.toolPermissionsDataStore.data.map { preferences ->
@@ -152,6 +154,24 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 else null
             }.toMap()
         }
+
+    /** The levels the user set for tools in Orbit chats. The main app's own list never reads these. */
+    val orbitToolPermissionOverridesFlow: Flow<Map<String, PermissionLevel>> =
+        context.toolPermissionsDataStore.data.map { preferences ->
+            preferences.asMap().entries.mapNotNull { (key, value) ->
+                if (key.name.startsWith(ORBIT_TOOL_PERMISSION_PREFIX) && value is String)
+                    key.name.removePrefix(ORBIT_TOOL_PERMISSION_PREFIX) to PermissionLevel.fromString(value)
+                else null
+            }.toMap()
+        }
+
+    suspend fun saveOrbitToolPermission(toolName: String, level: PermissionLevel) {
+        context.toolPermissionsDataStore.edit { it[orbitToolPermissionKey(toolName)] = level.name }
+    }
+
+    suspend fun clearOrbitToolPermission(toolName: String) {
+        context.toolPermissionsDataStore.edit { it.remove(orbitToolPermissionKey(toolName)) }
+    }
     
     // Permission request management
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -417,9 +437,9 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
 
     /**
-     * The level [toolName] runs at. In an Orbit's own chat the level is fixed to the fast automatic
-     * review and the user cannot change it there; a tool the user always allows or forbids keeps
-     * that choice.
+     * The level [toolName] runs at. An Orbit's chats use Orbit's own list, which the main app's list
+     * never changes: Orbit's internal tools are always allowed, everything else goes through the fast
+     * automatic review, unless the user changed that tool in Orbit's developer settings.
      */
     suspend fun getEffectivePermissionLevel(
         toolName: String,
@@ -429,10 +449,10 @@ class ToolPermissionSystem private constructor(private val context: Context) {
         val masterSwitch = PermissionLevel.fromString(preferences[MASTER_SWITCH] ?: DEFAULT_MASTER_SWITCH)
         val key = toolPermissionKey(toolName)
         if (isOrbitChat(callerChatId)) {
-            val stored = preferences[key]?.let { PermissionLevel.fromString(it) }
+            val stored = preferences[orbitToolPermissionKey(toolName)]?.let { PermissionLevel.fromString(it) }
             return orbitPermissionLevel(
                 storedToolLevel = stored,
-                defaultToolLevel = defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW),
+                defaultToolLevel = orbitDefaultPermissionLevel(toolName),
             )
         }
         val overrideLevel =
@@ -1103,6 +1123,26 @@ internal fun orbitPermissionLevel(
         PermissionLevel.FORBID -> PermissionLevel.FORBID
         else -> PermissionLevel.AUTO_REVIEW
     }
+
+/** Key prefix of Orbit's own tool levels, kept apart from the main app's "tool_permission_". */
+internal const val ORBIT_TOOL_PERMISSION_PREFIX = "orbit_tool_permission_"
+
+/**
+ * Orbit's own tools: they only read and change Orbit's own things (its memory, notes, skills, vault,
+ * files, reminders and tasks, its name), so Orbit never waits on a review for them.
+ */
+internal fun isOrbitInternalTool(toolName: String): Boolean =
+    // A package's tools are named "package:tool"; only the built-in memory review package counts,
+    // so a package that merely calls itself "orbit_…" is reviewed like any other.
+    if (':' in toolName) toolName.startsWith("memory_review:")
+    else toolName.startsWith("orbit_") ||
+        toolName == "memory_review" ||
+        toolName == "use_package" || toolName == "search_chat_history" ||
+        defaultPermissionLevelFor(toolName, PermissionLevel.AUTO_REVIEW) == PermissionLevel.ALLOW
+
+/** The level a tool takes in Orbit's chats when the user has not changed it in Orbit's list. */
+internal fun orbitDefaultPermissionLevel(toolName: String): PermissionLevel =
+    if (isOrbitInternalTool(toolName)) PermissionLevel.ALLOW else PermissionLevel.AUTO_REVIEW
 
 /**
  * The level a tool takes when the user has not chosen one for it, or null when it simply follows the

@@ -248,6 +248,7 @@ private fun OrbitChatPage(
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
+    var openVaultEntryId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Not saved across process death; the page then just closes back to the profile.
     var openProcess by remember(orbit.id) { mutableStateOf<OrbitProcess?>(null) }
     // Which of Orbit's chats is shown: the main chat or a side chat. A deleted side chat falls back to main.
@@ -258,7 +259,6 @@ private fun OrbitChatPage(
     val currentChatId = talkChatId.takeIf { it in orbit.talkChatIds || it == justCreatedChatId } ?: orbit.chatId
     val currentSide = orbit.sideChats.firstOrNull { it.chatId == currentChatId }
     var showChats by remember { mutableStateOf(false) }
-    var showVault by remember { mutableStateOf(false) }
     var showImport by remember { mutableStateOf(false) }
     // Developer option: the same chat drawn as a normal Operit chat (thinking, tools, hidden turns,
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
@@ -311,7 +311,7 @@ private fun OrbitChatPage(
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !showProfile &&
-        !showSettings && !showVault && !showImport &&
+        !showSettings && subPage == null && !showImport &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     LaunchedEffect(currentChatId, unreadChats, chatOnScreen) {
         if (chatOnScreen && currentChatId in unreadChats) com.ai.assistance.operit.features.orbit.OrbitDelivery.markSeen(currentChatId)
@@ -557,6 +557,19 @@ private fun OrbitChatPage(
                             onOpenUser = { push(OrbitSubPage.USER) },
                         )
                         OrbitSubPage.PACKAGES -> OrbitPackagesPage(orbit, onBack = back)
+                        OrbitSubPage.VAULT -> OrbitVaultPage(orbit, onBack = back, onOpenEntry = { id ->
+                            openVaultEntryId = id
+                            push(OrbitSubPage.VAULT_ENTRY)
+                        })
+                        OrbitSubPage.VAULT_ENTRY -> {
+                            val id = openVaultEntryId
+                            if (id != null) OrbitVaultEntryPage(orbit, id, onBack = back)
+                            else LaunchedEffect(Unit) { pop() }
+                        }
+                        OrbitSubPage.TOOL_PERMISSIONS -> {
+                            if (settings.developerMode) OrbitToolPermissionsPage(onBack = back)
+                            else LaunchedEffect(Unit) { back() }
+                        }
                         OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                         OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back)
                         // No id opens the grouped list of every task.
@@ -615,9 +628,13 @@ private fun OrbitChatPage(
                 showSettings = false
                 push(OrbitSubPage.PACKAGES)
             },
+            onOpenToolPermissions = {
+                showSettings = false
+                push(OrbitSubPage.TOOL_PERMISSIONS)
+            },
             onOpenVault = {
                 showSettings = false
-                showVault = true
+                push(OrbitSubPage.VAULT)
             },
             onOpenImport = {
                 showSettings = false
@@ -628,7 +645,6 @@ private fun OrbitChatPage(
             },
         )
     }
-    if (showVault) OrbitVaultSheet(orbit = orbit, onDismiss = { showVault = false })
     if (showImport) {
         OrbitImportMemorySheet(
             orbit = orbit,
@@ -647,7 +663,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES }
+private enum class OrbitSubPage { TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, VAULT, VAULT_ENTRY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -926,6 +942,7 @@ private fun OrbitSettingsSheet(
     onOpenNotifications: () -> Unit,
     onOpenPrompts: () -> Unit,
     onOpenPackages: () -> Unit,
+    onOpenToolPermissions: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
     onPause: () -> Unit,
@@ -1179,6 +1196,16 @@ private fun OrbitSettingsSheet(
                         searchable = false,
                         onCheckedChange = { enabled -> scope.launch { preferences.setDeveloperMode(enabled) } },
                     )
+                    if (settings.developerMode) {
+                        SettingsRowDivider(inset = false)
+                        SettingsNavRow(
+                            title = stringResource(R.string.orbit_tools_row),
+                            subtitle = stringResource(R.string.orbit_tools_row_desc),
+                            icon = lucide("shield-check"),
+                            searchable = false,
+                            onClick = onOpenToolPermissions,
+                        )
+                    }
                 }
             }
 
