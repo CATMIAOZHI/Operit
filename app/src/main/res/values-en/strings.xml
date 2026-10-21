@@ -9073,7 +9073,7 @@
     <string name="orbit_memory_retry">Retry</string>
     <string name="orbit_daily_task">Daily check-in</string>
     <string name="orbit_tasks_title">Orbit tasks</string>
-    <string name="orbit_tasks_help">Delegate in chat and %1$s will continue using existing tools. View progress and execution records, pause or cancel here. Phone shutdown or system restrictions can delay work.</string>
+    <string name="orbit_tasks_help">Delegate in chat and %1$s will continue using existing tools. View progress and execution records here; to pause, resume or cancel, the button puts the request in the chat box for you to send. Phone shutdown or system restrictions can delay work.</string>
     <string name="orbit_tasks_empty">No tasks yet. Ask %1$s in chat to continue something later.</string>
     <string name="orbit_tasks_daily_default">Offer a useful check-in or update based on recent conversations. Stay quiet when there is nothing new.</string>
     <string name="orbit_task_submit">Save task results</string>
@@ -9105,6 +9105,15 @@
     <string name="orbit_focus_placeholder">For example: remind me to back up on Fridays; tell me to sleep early before exams</string>
     <string name="orbit_run_now">Try it now</string>
     <string name="orbit_task_run_now_draft">Run the "%1$s" task once now.</string>
+    <string name="orbit_task_pause_draft">Pause the "%1$s" task.</string>
+    <string name="orbit_task_resume_draft">Resume the "%1$s" task.</string>
+    <string name="orbit_task_cancel_draft">Cancel the "%1$s" task.</string>
+    <string name="orbit_task_last_run_line">Last %1$s · %2$s</string>
+    <string name="orbit_run_history_open">View execution record</string>
+    <string name="orbit_run_history_title">Execution record</string>
+    <string name="orbit_run_history_empty">Not run yet</string>
+    <string name="orbit_run_record_none">This run did not work in the background, so there is no step-by-step record.</string>
+    <string name="orbit_run_record_in_chat">This run woke %1$s in the chat; what it did is in that chat.</string>
     <string name="orbit_show_all">Show all</string>
     <string name="orbit_running">Orbit is thinking…</string>
     <string name="orbit_last_run_never">Has not run yet</string>

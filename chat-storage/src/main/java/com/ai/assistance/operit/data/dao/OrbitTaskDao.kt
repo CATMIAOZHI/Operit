@@ -430,6 +430,22 @@ interface OrbitTaskDao {
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId ORDER BY startedAt DESC LIMIT 1")
     fun observeLatestRun(taskId: String): Flow<OrbitRunEntity?>
 
+    /** A task's runs, newest first, for its execution history. */
+    @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId ORDER BY startedAt DESC LIMIT :limit")
+    fun observeRuns(taskId: String, limit: Int): Flow<List<OrbitRunEntity>>
+
+    @Query("SELECT * FROM orbit_runs WHERE id = :id AND taskId = :taskId")
+    suspend fun runOfTask(taskId: String, id: String): OrbitRunEntity?
+
+    /**
+     * Each task's newest run in one Orbit, so the task list shows how each last went. Driven by the
+     * tasks, so each task's runs are looked at once through the taskId index.
+     */
+    @Query("SELECT r.* FROM orbit_tasks t JOIN orbit_runs r ON r.id = " +
+        "(SELECT r2.id FROM orbit_runs r2 WHERE r2.taskId = t.id ORDER BY r2.startedAt DESC LIMIT 1) " +
+        "WHERE t.orbitId = :orbitId")
+    fun observeLatestRuns(orbitId: String): Flow<List<OrbitRunEntity>>
+
     @Query("SELECT * FROM orbit_deliveries WHERE orbitId = :orbitId AND state = 'PENDING' ORDER BY createdAt")
     suspend fun pendingDeliveries(orbitId: String): List<OrbitDeliveryEntity>
 

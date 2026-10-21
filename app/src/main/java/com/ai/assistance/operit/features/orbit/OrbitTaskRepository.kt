@@ -13,6 +13,14 @@ class OrbitTaskRepository(private val context: Context) {
 
     suspend fun executionRecord(taskId: String, excludeRun: String = ""): String {
         val run = dao.previousRun(taskId, excludeRun) ?: return ""
+        return runRecord(run)
+    }
+
+    /** One run's transcript: the hidden chat it ran in and any subagents it started; empty when it used none. */
+    suspend fun runRecord(taskId: String, runId: String): String =
+        dao.runOfTask(taskId, runId)?.let { runRecord(it) }.orEmpty()
+
+    private suspend fun runRecord(run: com.ai.assistance.operit.data.model.OrbitRunEntity): String {
         val bindings = dao.bindings(run.id, run.generation).sortedWith(
             compareBy<com.ai.assistance.operit.data.model.OrbitTaskChatEntity> { it.chatId != it.rootChatId }.thenBy { it.chatId })
         if (bindings.isEmpty()) return ""
