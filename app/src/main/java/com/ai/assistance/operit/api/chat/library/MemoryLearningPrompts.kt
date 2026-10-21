@@ -23,7 +23,10 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             A long message can span batches. Do not treat a fragment as a complete result.
             Included assistant thinking contains tentative plans, not proof that an action succeeded.
             Other batches are reviewed separately; focus on this batch instead of re-reading the entire history.
-            Use history with session_id=$chatId and a query or offset to verify missing details.
+            When something here depends on earlier talk (a name, "that plan", a decision made before), look it up
+            with history (session_id=$chatId with a query, or a query alone to search the user's other chats)
+            instead of guessing. Use history with a query or offset to verify missing details too.
+            When more of this chat follows, leave carry_over notes on $finish for the next batch.
             Do not invent facts or remove existing facts just because excerpts omit them.
             You have scoped learning tools only. Do not execute scripts or perform external actions.
             Do not retain credentials or transient task status.
@@ -106,7 +109,7 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             that input is blocked until a successful read or edit. Read the latest staged content, correct
             the input (including capacity), or skip that change. Other corrected operations remain available.
             Call $finish after reviewing all provided source, even when no changes qualify. This is mandatory.
-            $finish is a separate tool called without arguments, never an action inside the action tool.
+            $finish is a separate tool, never an action inside the action tool; its only argument is the optional carry_over.
             A final summary alone does not confirm completion. At most $LEARNING_ROUND_LIMIT model rounds and $LEARNING_TOOL_CALL_LIMIT tool calls.
             Once within two rounds of that limit, stop exploring: submit the best complete change you
             already have and call $finish, because an unfinished batch is discarded and reviewed again later.

@@ -701,6 +701,20 @@ object AIMessageManager {
             return null
         }
 
+        // An Orbit chat is summarized by Orbit's own template (Muse's compaction), and the summary
+        // is followed by a note that the next reply checks state first.
+        val orbitChat = chatId != null && try {
+            com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            false
+        }
+        val orbitEnglish = LocaleUtils.usesEnglishPrompt(context)
+        val effectiveSummaryConfig =
+            if (orbitChat) com.ai.assistance.operit.features.orbit.OrbitSummary.config(summaryConfig, orbitEnglish) else summaryConfig
+        val orbitTime = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
+
         val memoryTagRegex = Regex("<memory>.*?</memory>", RegexOption.DOT_MATCHES_ALL)
         val conversationReviewEntries = mutableListOf<Pair<String, String>>()
         // The summary is shown in the chat, so a card in it reads in the user's language.
@@ -1045,7 +1059,9 @@ object AIMessageManager {
                         }
                     conversationReviewEntries.add(speakerLabel to displayContent)
                 }
-                Pair(role, "#${index + 1}: $cleanedContent")
+                // In an Orbit chat the date goes with the number, so the summary can point back to the message.
+                val label = if (orbitChat) "#${index + 1} ${orbitTime.format(java.util.Date(message.timestamp))}" else "#${index + 1}"
+                Pair(role, "$label: $cleanedContent")
             }
         }
 
@@ -1055,7 +1071,7 @@ object AIMessageManager {
                 enhancedAiService.generateSummary(
                     conversationToSummarize,
                     previousSummary,
-                    summaryConfig
+                    effectiveSummaryConfig
                 )
             AppLogger.d(TAG, "AI生成总结完成: ${summary.take(50)}...")
 
@@ -1085,6 +1101,10 @@ object AIMessageManager {
                     if (packageWarmupBlock.isNotBlank()) {
                         append("\n\n")
                         append(packageWarmupBlock)
+                    }
+                    if (orbitChat) {
+                        append("\n\n")
+                        append(com.ai.assistance.operit.features.orbit.OrbitSummary.reconcileNote(orbitEnglish))
                     }
                 }.trimEnd()
 

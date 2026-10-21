@@ -62,6 +62,13 @@ internal class MemoryLearningJournal(
     fun cursor(path: String) = LearningCursor.parse(state.optJSONObject(path))
     fun pending(path: String) = state.optBoolean("pending_$path")
     fun horizon() = state.optLong("horizon")
+    /**
+     * What the previous batch of this chat left for the next one: its own notes, not evidence.
+     * Notes written before memory was corrected (another [generation]) may hold what was forgotten,
+     * so they are not handed on.
+     */
+    fun carry(generation: Long): String =
+        if (state.optLong("carry_generation", 0) == generation) state.optString("carry") else ""
     fun rewind(messageId: Long) {
         synchronized(lock) {
             reload()
@@ -90,6 +97,8 @@ internal class MemoryLearningJournal(
             if (restart) {
                 if (notes) state.put("notes",LearningCursor().json())
                 if (skills) state.put("skills",LearningCursor().json())
+                state.remove("carry")
+                state.remove("carry_generation")
             }
             // The age of the oldest pending marker is what lets a chatty device dispatch a range that
             // has waited far too long, so it is set only when the range first becomes pending.
@@ -119,7 +128,12 @@ internal class MemoryLearningJournal(
             return System.currentTimeMillis()-since >= millis
         }
     }
-    fun complete(paths: List<String>, next: LearningCursor, more: Boolean, changes: List<MemoryReviewChange>) {
+    /**
+     * [carry] null keeps the notes already left, e.g. for a batch with nothing to read;
+     * [carryGeneration] is the memory correction generation the batch read under.
+     */
+    fun complete(paths: List<String>, next: LearningCursor, more: Boolean, changes: List<MemoryReviewChange>,
+        carry: String? = null, carryGeneration: Long = 0) {
         synchronized(lock) {
             val reviewedGeneration = state.optInt("generation",0)
             reload()
@@ -130,6 +144,7 @@ internal class MemoryLearningJournal(
             paths.forEach {
                 state.put(it,next.json()).put("pending_$it",more || (newerEnqueued && state.optBoolean("pending_$it")))
             }
+            if (carry != null) state.put("carry",carry).put("carry_generation",carryGeneration)
             state.put("export",JSONArray().apply { changes.forEach { put(reviews.toJson(it)) } })
             save()
         }
