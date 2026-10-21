@@ -816,10 +816,12 @@ class ToolPermissionSystem private constructor(private val context: Context) {
     }
 
     /**
-     * Whether [tool] only touches the chat's bound workspace or, in an Orbit's chat, only reads that
-     * Orbit's own folder. Orbit keeps its notes, files, uploads and skills there and reads them all the
-     * time, so reviewing each read only costs tokens. Writes stay reviewed: the folder also holds state
-     * the app trusts (packages.json, approvals.json, learning-boundary.json). Its vault lives elsewhere.
+     * Whether [tool] only touches the chat's bound workspace or, in an Orbit's chat, that Orbit's own
+     * folder. Orbit reads its folder all the time, so reviewing each read only costs tokens. Writes run
+     * unreviewed only on Orbit's own notes and files ([OrbitFiles.allowed]); the rest of the folder is
+     * state the app keeps (packages.json, approvals.json, the learning boundary, reactions) or documents
+     * with a history of their own (Soul, identity, memory.md, skills), and a write there is reviewed.
+     * This guards against slips, not against a determined model. Its vault lives elsewhere.
      */
     private suspend fun isInsideApprovedScope(tool: AITool, reviewContext: ToolPermissionReviewContext): Boolean {
         if (WorkspaceToolPermissionPolicy.isAutoApproved(
@@ -829,18 +831,29 @@ class ToolPermissionSystem private constructor(private val context: Context) {
                 workspaceEnv = reviewContext.workspaceEnv,
                 callerChatId = reviewContext.callerChatId,
             )) return true
-        if (tool.name.lowercase() !in ORBIT_FOLDER_READ_TOOLS) return false
+        val name = tool.name.lowercase()
+        val writes = name in ORBIT_FOLDER_WRITE_TOOLS
+        if (name !in ORBIT_FOLDER_READ_TOOLS && !writes) return false
+        // Cheap refusals before reading the Orbit settings.
+        val target = tool.parameters.firstOrNull { it.name == "path" }?.value?.takeIf { it.isNotBlank() }
+        if (writes && target == null) return false
         val chatId = reviewContext.callerChatId?.takeIf { it.isNotBlank() } ?: return false
         val preferences = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
         val orbit = preferences.current().ownerForChat(chatId) ?: return false
         val orbitRoot = runCatching { preferences.orbitDir(orbit.id).canonicalPath }.getOrNull() ?: return false
-        return WorkspaceToolPermissionPolicy.isAutoApproved(
-            context = context,
-            tool = tool,
-            workspacePath = orbitRoot,
-            workspaceEnv = "android",
-            callerChatId = chatId,
-        )
+        if (!WorkspaceToolPermissionPolicy.isAutoApproved(
+                context = context,
+                tool = tool,
+                workspacePath = orbitRoot,
+                workspaceEnv = "android",
+                callerChatId = chatId,
+            )) return false
+        if (!writes) return true
+        // Inside the folder; a write is free only on one of Orbit's own notes or files.
+        val relative = runCatching { java.io.File(target!!).canonicalFile.relativeTo(java.io.File(orbitRoot)).invariantSeparatorsPath }
+            .getOrNull() ?: return false
+        return com.ai.assistance.operit.features.orbit.OrbitFiles.allowed(relative) &&
+            !com.ai.assistance.operit.features.orbit.OrbitFiles.isIndex(relative)
     }
 
     private suspend fun resolveCurrentPermissionRoute(
@@ -1148,6 +1161,14 @@ internal fun orbitPermissionLevel(
 private val ORBIT_FOLDER_READ_TOOLS = setOf(
     "read_file", "read_file_part", "read_file_full", "read_file_binary",
     "list_files", "grep_code", "file_exists", "file_info",
+)
+
+/**
+ * Generic file tools that write one path; in an Orbit's chat they run unreviewed only on its own notes
+ * and files. A recursive delete is never free (the workspace policy refuses it).
+ */
+private val ORBIT_FOLDER_WRITE_TOOLS = setOf(
+    "write_file", "write_file_binary", "create_file", "edit_file", "apply_file", "delete_file",
 )
 
 /** Key prefix of Orbit's own tool levels, kept apart from the main app's "tool_permission_". */
