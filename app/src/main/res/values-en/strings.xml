@@ -9486,10 +9486,10 @@
     <string name="orbit_watch_notifications_stuck">The notification service still isn\'t connected, so notifications can\'t be read. In system settings, turn notification access for Operit off and on again.</string>
     <string name="orbit_decision_notifications_stuck">The notification service never connected, so this check did not run</string>
     <string name="orbit_routine_self_review">Nightly self-review</string>
-    <string name="orbit_routine_goal_briefing">Goal briefing</string>
+    <string name="orbit_routine_goal_briefing">Goal alignment</string>
     <string name="orbit_goal_notes">Briefings and progress</string>
     <string name="orbit_goal_note_add">Log progress</string>
-    <string name="orbit_goal_notes_empty">No briefings or progress yet. While a goal is active, %1$s writes a briefing each morning.</string>
+    <string name="orbit_goal_notes_empty">No briefings or progress yet. Each morning %1$s checks active goals and writes a briefing when something moved.</string>
     <string name="orbit_goal_note_hint">For example: I handed in the form</string>
     <string name="orbit_goal_note_delete_confirm">Delete this entry?</string>
     <string name="orbit_goal_note_briefing">Briefing</string>
@@ -9511,7 +9511,7 @@
     <string name="orbit_export_confirm_title">Export %1$s\'s data?</string>
     <string name="orbit_export_confirm_message">Files, memory, task records and chat history will be packed into one zip. It may contain private content, so check before sharing.</string>
     <string name="orbit_export_confirm">Export</string>
-    <string name="orbit_decision_no_active_goals">No active goals, so no briefing this time</string>
+    <string name="orbit_decision_no_active_goals">No active goals, so nothing to align this time</string>
     <string name="orbit_decision_no_new_talk">No new chats since the last review, so nothing to review</string>
     <string name="orbit_item_told">%1$s told you: %2$s</string>
     <string name="orbit_item_skipped">%1$s didn\'t interrupt you: %2$s</string>
@@ -9530,7 +9530,7 @@
     <string name="orbit_routine_source_chat">Reads the recent Orbit conversation</string>
     <string name="orbit_routine_source_goals">Reads your active goals</string>
     <string name="orbit_routine_self_review_desc">Made by %1$s. On nights after new conversation, it quietly tidies memory, people, lessons and skills without messaging you.</string>
-    <string name="orbit_routine_goal_briefing_desc">Made by %1$s. Each morning it writes a briefing for every active goal and puts it on the Goals tab; it skips days with no active goal.</string>
+    <string name="orbit_routine_goal_briefing_desc">Made by %1$s. Each morning it checks your active goals in the background and writes a briefing on the Goals tab when something moved; it only comes to you for a deadline or a decision that waits on you. It skips days with no active goal.</string>
     <string name="orbit_library_long_press_hint">Long press a file to pin, share or delete it</string>
     <string name="orbit_library_more_actions">More actions</string>
     <string name="orbit_goal_notes_recent">Showing the latest 20</string>

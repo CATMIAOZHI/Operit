@@ -9463,10 +9463,10 @@
     <string name="orbit_watch_notifications_stuck">通知服务一直没连上，读不到通知。请在系统设置里把 Operit 的「通知使用权」关掉再打开一次。</string>
     <string name="orbit_decision_notifications_stuck">通知服务一直没连上，这次检查没成功</string>
     <string name="orbit_routine_self_review">夜间自我整理</string>
-    <string name="orbit_routine_goal_briefing">目标简报</string>
+    <string name="orbit_routine_goal_briefing">目标对齐</string>
     <string name="orbit_goal_notes">简报与进展</string>
     <string name="orbit_goal_note_add">记一条进展</string>
-    <string name="orbit_goal_notes_empty">还没有简报和进展。有进行中的目标时，%1$s 每天早上会写一封简报。</string>
+    <string name="orbit_goal_notes_empty">还没有简报和进展。%1$s 每天早上会对一遍进行中的目标，有进展就写简报。</string>
     <string name="orbit_goal_note_hint">比如：报名表交上去了</string>
     <string name="orbit_goal_note_delete_confirm">删除这条记录？</string>
     <string name="orbit_goal_note_briefing">简报</string>
@@ -9488,7 +9488,7 @@
     <string name="orbit_export_confirm_title">导出 %1$s 的数据？</string>
     <string name="orbit_export_confirm_message">会把文件、记忆、任务记录和聊天记录打包成一个压缩包，里面可能有隐私内容，分享前请先确认。</string>
     <string name="orbit_export_confirm">导出</string>
-    <string name="orbit_decision_no_active_goals">没有进行中的目标，这次没写简报</string>
+    <string name="orbit_decision_no_active_goals">没有进行中的目标，这次不用对齐</string>
     <string name="orbit_decision_no_new_talk">上次复盘后没有新的聊天，这次不用复盘</string>
     <string name="orbit_item_told">%1$s 告诉了你：%2$s</string>
     <string name="orbit_item_skipped">%1$s 没有打扰你：%2$s</string>
@@ -9507,7 +9507,7 @@
     <string name="orbit_routine_source_chat">读取最近的 Orbit 对话</string>
     <string name="orbit_routine_source_goals">读取进行中的目标</string>
     <string name="orbit_routine_self_review_desc">%1$s 自动创建。每晚有新对话时，安静地整理记忆、人物、心得和技能，不会打扰你。</string>
-    <string name="orbit_routine_goal_briefing_desc">%1$s 自动创建。每天早上为进行中的目标写一封简报，放在目标页；没有进行中的目标就跳过。</string>
+    <string name="orbit_routine_goal_briefing_desc">%1$s 自动创建。每天早上在后台把进行中的目标对一遍，有进展就写简报放在目标页；只有快到期或等你拍板的事，才会来找你。没有进行中的目标就跳过。</string>
     <string name="orbit_library_long_press_hint">长按文件可以置顶、分享或删除</string>
     <string name="orbit_library_more_actions">更多操作</string>
     <string name="orbit_goal_notes_recent">只显示最近 20 条</string>

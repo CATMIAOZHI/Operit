@@ -19,7 +19,9 @@ import kotlinx.coroutines.flow.first
  * Orbit's own background routines, like Muse's: the Feed (a new post every 12 hours) and the Ideas
  * (new ideas every morning at 9), both written by a background subagent, the nightly alignment
  * review (Muse's dream: how working with the user went, written into the alignment synthesis every
- * chat carries), plus a morning briefing on the user's goals. An older nightly self-review is still
+ * chat carries), plus a morning goal alignment: a background subagent checks each active goal against
+ * its steps, writes a briefing on the Goals tab and drafts a proactive item only when something needs
+ * the user (Muse's research worker; the chat decides whether it is sent). An older nightly self-review is still
  * kept for Orbits that have it. They are ordinary Orbit tasks shown in the schedule list. The Feed,
  * Ideas and alignment routines can be paused or rescheduled (also from the chat) but never
  * cancelled. Each routine is made once per Orbit; a cancelled one is not brought back.
@@ -78,9 +80,20 @@ internal object OrbitRoutines {
 
     suspend fun ensureGoalBriefing(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, GOAL_BRIEFING, R.string.orbit_routine_goal_briefing, GOALS_SOURCE, "DAILY", GOAL_BRIEFING_MINUTE,
-            background = false) {
-            if (it) GOAL_BRIEFING_EN else GOAL_BRIEFING_ZH
+            background = true, upgrade = ::upgradeGoalBriefing) {
+            if (it) GOAL_ALIGN_EN else GOAL_ALIGN_ZH
         }
+    }
+
+    /**
+     * The goal briefing used to wake the main chat each morning. It now runs in the background as the
+     * goal alignment; an untouched old one gets the new title and instruction with the lane switch.
+     */
+    private fun upgradeGoalBriefing(context: Context, old: OrbitTaskEntity): OrbitTaskEntity {
+        if (old.instruction.trim() !in setOf(GOAL_BRIEFING_ZH, GOAL_BRIEFING_EN)) return old
+        val english = old.instruction.trim() == GOAL_BRIEFING_EN
+        return old.copy(title = context.getString(R.string.orbit_routine_goal_briefing),
+            instruction = if (english) GOAL_ALIGN_EN else GOAL_ALIGN_ZH)
     }
 
     /**
@@ -148,10 +161,16 @@ internal object OrbitRoutines {
         return true
     }
 
-    /** Makes the briefing for an Orbit that already has goals, e.g. ones made before the briefing existed. */
+    /**
+     * Makes the goal alignment for an Orbit that already has goals, e.g. ones made before it existed,
+     * and moves an old morning briefing to the background.
+     */
     suspend fun ensureGoalBriefingIfGoals(context: Context, orbit: OrbitProfile) {
         val dao = OrbitTaskRepository(context).dao
-        if (dao.task(goalBriefingId(orbit.id)) != null) return
+        dao.task(goalBriefingId(orbit.id))?.let { old ->
+            if (old.state != "CANCELLED" && !old.useSubagent) ensureGoalBriefing(context, orbit)
+            return
+        }
         if (dao.goals(orbit.id).any { it.state != "CANCELLED" }) ensureGoalBriefing(context, orbit)
     }
 
@@ -179,16 +198,17 @@ internal object OrbitRoutines {
     private suspend fun ensure(
         context: Context, orbit: OrbitProfile, request: String, title: Int, source: String, scheduleMode: String,
         minute: Int, interval: Int = 1440, background: Boolean,
+        upgrade: (Context, OrbitTaskEntity) -> OrbitTaskEntity = { _, it -> it },
         instruction: (english: Boolean) -> String,
     ) {
         val repository = OrbitTaskRepository(context)
-        // The self-review, the Feed and the Ideas work quietly: a background subagent does them, so
-        // Orbit's chat is never woken. The goal briefing is Orbit's own morning message.
+        // Every routine works quietly: a background subagent does it, so Orbit's chat is never woken.
+        // What it drafts for the user goes through the proactive handoff, where the chat decides.
         repository.dao.task(taskId(orbit.id, request))?.let { old ->
             // Switching lanes replaces the definition, which would cancel a run in progress; it
             // waits for the run to end, checked in the same transaction as the switch.
             if (old.useSubagent != background && old.state != "CANCELLED") OrbitExecutionGate.serialized {
-                repository.dao.replaceDefinitionIfIdle(old.copy(useSubagent = background), old.version)
+                repository.dao.replaceDefinitionIfIdle(upgrade(context, old).copy(useSubagent = background), old.version)
             }
             return
         }
@@ -221,15 +241,17 @@ internal object OrbitRoutines {
         if (goals.isEmpty()) return ""
         val tasks = dao.tasks(task.orbitId)
         val notes = OrbitBoardRepository(context, task.orbitId, OrbitBoardRepository.Board.GOAL_NOTES).list()
-        return goals.joinToString("\n\n") { goal ->
+        val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        return "today: ${day.format(Date())}\n\n" + goals.joinToString("\n\n") { goal ->
             val steps = tasks.filter { it.goalId == goal.id }
             val latest = notes.filter { it.extra == goal.id }.take(3)
             buildString {
                 append("GOAL ${goal.id}: ${goal.title}\n")
+                append("Last changed: ${day.format(Date(goal.updatedAt))}\n")
                 if (goal.plan.isNotBlank()) append("Plan: ${goal.plan.take(1500)}\n")
                 append("Steps: ${steps.count { it.state == "DONE" }}/${steps.size} done")
                 steps.take(10).forEach { append("\n- [${it.state}] ${it.title}: ${it.lastObservation.take(200)}") }
-                latest.forEach { append("\nEarlier ${it.state.lowercase()} (${it.createdAt}): ${it.title} ${it.body.take(300)}") }
+                latest.forEach { append("\nEarlier ${it.state.lowercase()} (${day.format(Date(it.createdAt))}): ${it.title} ${it.body.take(300)}") }
             }
         }.take(20_000)
     }
@@ -484,5 +506,31 @@ internal object OrbitRoutines {
         - Save each with orbit_goal_note action=brief (goal_id from SOURCE, title a one-line note, text the briefing).
         Briefings appear quietly on the Goals tab. Do not message the user: leave userMessage empty and say in decision
         which briefings you wrote.
+    """.trimIndent()
+
+    private val GOAL_ALIGN_ZH = """
+        目标对齐（后台）。SOURCE 里是今天的日期、用户进行中的目标、计划、步骤（任务）的状态和最近结果，以及以前的简报。在后台安静地对一遍：
+        1. 对账：逐个目标看步骤的真实状态，找出计划和实际对不上的地方：做完了但计划里还挂着、步骤失败或卡住、在等用户、很久没动。拿不准用户最近有没有改主意，用 search_chat_history 搜他说过的话，或用 orbit_file 读 memory.md，不要猜。
+        2. 需要新信息时先查（搜网页、读页面），只引用你真的打开过的链接。
+        3. 简报：和上一封比有新东西的目标，用 orbit_goal_note action=brief 写一封（goal_id 填 SOURCE 里的编号，title 一句话，text 写进展、卡在哪、下一步最值得做什么、你能帮上什么）。没变化的目标跳过。
+        4. 只有真需要用户本人的事（快到期的、等他拍板的、卡住只有他能解决的）才备一条主动消息：userMessage 用你平时和他说话的语气写一两句，opportunityKey 用 goal:<目标编号>:<事由>。发不发由主聊天再判断。其他情况 userMessage 留空。
+        decision 写一句这次对齐的结论。
+    """.trimIndent()
+
+    private val GOAL_ALIGN_EN = """
+        Goal alignment (background). SOURCE holds today's date, the user's active goals, their plans, the state and
+        latest results of their steps (tasks), and earlier briefings. Check them quietly in the background:
+        1. Reconcile: for each goal, compare the plan with what really happened. Point out steps done but still open in
+           the plan, steps that failed or are stuck, steps waiting on the user, and goals that have not moved for a long
+           time. When unsure whether the user changed their mind, search what they said with search_chat_history or
+           read memory.md with orbit_file instead of guessing.
+        2. Research first when you need fresh facts (search the web, read pages); cite only links you actually opened.
+        3. Briefing: for a goal with something new since its last briefing, save one with orbit_goal_note action=brief
+           (goal_id from SOURCE, title one line, text: what moved, where it is stuck, the most useful next step, where
+           you can help). Skip goals with nothing new.
+        4. Draft a proactive item only for what truly needs the user (a deadline coming up, a decision waiting on them,
+           a block only they can clear): a sentence or two in your usual voice as userMessage, with opportunityKey
+           goal:<goal id>:<matter>. The chat decides whether it is sent. Otherwise leave userMessage empty.
+        Say the conclusion of this alignment in decision in one sentence.
     """.trimIndent()
 }

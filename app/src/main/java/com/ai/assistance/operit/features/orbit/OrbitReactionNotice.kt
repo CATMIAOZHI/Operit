@@ -20,13 +20,15 @@ object OrbitReactionNotice {
                 "The user reacted $emoji to this message of yours. This is not a new message; they typed nothing.\n" +
                 "“$quote”\n" +
                 "Decide how to follow up yourself: if it answers an offer or question of yours, go ahead and do it; " +
+                "it picks this message among several options only when you clearly asked them to choose one; " +
                 "if it only shows they are pleased, call $NOTHING_TO_DO and stay quiet; say something short only when it calls for it."
         } else {
             "$MARKER $emoji\n" +
                 "用户给你的这条消息点了 $emoji。这不是新消息，用户没有打字。\n" +
                 "「$quote」\n" +
-                "你自己决定怎么接：如果是在回答你的提议或问题，就直接照着做；如果只是表示满意、喜欢，" +
-                "调用 $NOTHING_TO_DO 保持安静；确实需要时才简短回一句。"
+                "你自己决定怎么接：如果是在回答你的提议或问题，就直接照着做；" +
+                "只有你明确让用户从几条里选一个时，才算选了这一条；" +
+                "如果只是表示满意、喜欢，调用 $NOTHING_TO_DO 保持安静；确实需要时才简短回一句。"
         }
     }
 

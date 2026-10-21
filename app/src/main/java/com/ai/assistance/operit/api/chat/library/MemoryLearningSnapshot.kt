@@ -93,7 +93,7 @@ internal object MemoryLearningSnapshot {
     /** Share of the model window one batch's source may take. */
     private const val SOURCE_WINDOW_SHARE = 3
     /** Upper bound for one batch's source, so a huge advertised window cannot ask for one giant prompt. */
-    private const val SOURCE_CEILING_BYTES = 96_000
+    private const val SOURCE_CEILING_BYTES = 160_000
     /** Share of the model window a batch may spend in total before it is stopped. */
     internal const val EVIDENCE_WINDOW_FRACTION = 0.75
 
