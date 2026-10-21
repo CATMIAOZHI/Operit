@@ -9712,6 +9712,14 @@
     <string name="orbit_vault_add">Add</string>
     <string name="orbit_vault_card_login_title">Secure storage</string>
     <string name="orbit_vault_card_login_sub">Sign in to %1$s</string>
+    <string name="orbit_vault_card_new_password_sub">New password for %1$s</string>
+    <string name="orbit_vault_sheet_new_password">Set a new password</string>
+    <string name="orbit_vault_password_confirm">Enter it again</string>
+    <string name="orbit_vault_password_mismatch">The two passwords do not match</string>
+    <string name="orbit_vault_generate">Generate a strong password</string>
+    <string name="orbit_vault_set">Set</string>
+    <string name="orbit_vault_reset">Set again</string>
+    <string name="orbit_vault_card_new_password_saved">New password saved to the vault</string>
     <string name="orbit_vault_card_key_sub">API key</string>
     <string name="orbit_vault_card_saved">Saved in the vault</string>
     <string name="orbit_vault_card_update">Update</string>

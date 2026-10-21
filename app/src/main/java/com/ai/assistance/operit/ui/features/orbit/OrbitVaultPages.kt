@@ -83,6 +83,18 @@ internal fun SecureWindow() {
     }
 }
 
+/** 20 characters from letters, digits and a few symbols that every site accepts, from a secure source. */
+private fun strongPassword(): String {
+    val chars = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789-_.!@#"
+    val random = java.security.SecureRandom()
+    while (true) {
+        val made = String(CharArray(20) { chars[random.nextInt(chars.length)] })
+        // Most sign-up forms ask for each kind at least once.
+        if (made.any { it.isUpperCase() } && made.any { it.isLowerCase() } && made.any { it.isDigit() } &&
+            made.any { !it.isLetterOrDigit() }) return made
+    }
+}
+
 /**
  * Muse's secure entry sheet, opened from a card in the chat. What the user types goes straight
  * into the encrypted vault and never into the chat, so Orbit cannot see it. Saving tells Orbit in
@@ -94,8 +106,11 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val login = request.kind == OrbitVault.LOGIN
+    // Signing up or resetting: the password is new, so it is typed twice (or generated).
+    val fresh = login && request.newPassword
     var username by remember(request) { mutableStateOf(request.usernameHint) }
     var secret by remember(request) { mutableStateOf("") }
+    var again by remember(request) { mutableStateOf("") }
     var visible by remember(request) { mutableStateOf(false) }
     var saving by remember(request) { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -131,7 +146,11 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
             Text(stringResource(R.string.orbit_vault_sheet_title), style = MaterialTheme.typography.titleLarge,
                 fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
-            Text(stringResource(if (login) R.string.orbit_vault_sheet_add_login else R.string.orbit_vault_sheet_add_key),
+            Text(stringResource(when {
+                    fresh -> R.string.orbit_vault_sheet_new_password
+                    login -> R.string.orbit_vault_sheet_add_login
+                    else -> R.string.orbit_vault_sheet_add_key
+                }),
                 style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             Spacer(Modifier.height(24.dp))
             // What it is for: the site a login fills in, or the hosts a key is sent to.
@@ -172,6 +191,38 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         },
                         modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                     )
+                    if (fresh) {
+                        HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = colors.outlineVariant.copy(alpha = 0.6f))
+                        TextField(
+                            again, { if (it.length <= 4000) again = it }, singleLine = true, enabled = !saving,
+                            label = { Text(stringResource(R.string.orbit_vault_password_confirm)) },
+                            visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
+                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
+                            colors = fieldColors,
+                            isError = again.isNotEmpty() && again != secret,
+                            modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                        )
+                    }
+                }
+            }
+            if (fresh) {
+                if (again.isNotEmpty() && again != secret) {
+                    Text(stringResource(R.string.orbit_vault_password_mismatch), style = MaterialTheme.typography.bodySmall,
+                        color = colors.error, modifier = Modifier.fillMaxWidth().padding(start = 18.dp, top = 6.dp))
+                }
+                TextButton(
+                    onClick = {
+                        val made = strongPassword()
+                        secret = made
+                        again = made
+                        visible = true
+                    },
+                    enabled = !saving,
+                    modifier = Modifier.padding(top = 4.dp),
+                ) {
+                    Icon(orbitIcon("wand-sparkles"), null, Modifier.size(16.dp))
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(R.string.orbit_vault_generate))
                 }
             }
             Spacer(Modifier.height(14.dp))
@@ -186,7 +237,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
             }
             Spacer(Modifier.height(28.dp))
             Button(
-                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()),
+                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()) && (!fresh || again == secret),
                 shape = RoundedCornerShape(50),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 onClick = {
@@ -195,6 +246,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         try {
                             val id = OrbitVault.save(context, orbit.id, request, username, secret)
                             secret = ""
+                            again = ""
                             // The approval list notes the save (only the site and the time), before
                             // the sheet and its scope go away.
                             runCatching {
@@ -217,7 +269,8 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(stringResource(R.string.orbit_vault_add), style = MaterialTheme.typography.titleMedium)
+                Text(stringResource(if (fresh) R.string.orbit_vault_set else R.string.orbit_vault_add),
+                    style = MaterialTheme.typography.titleMedium)
             }
             TextButton(onClick = { dismiss() }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) {
                 Text(stringResource(R.string.cancel), style = MaterialTheme.typography.titleMedium, color = colors.onSurface)

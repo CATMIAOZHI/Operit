@@ -35,6 +35,8 @@ internal object OrbitChatCards {
         .put("username_hint", request.usernameHint)
         .put("api_hosts", JSONArray(request.apiHosts))
         .put("placement", request.placement)
+        .put("new_password", request.newPassword)
+        .put("requested_at", request.requestedAt)
 
     /** [width] and [height] of a picture let the chat size it before it loads, so nothing jumps. */
     fun attachment(orbitId: String, path: String, name: String, size: Long, width: Int = 0, height: Int = 0): JSONObject = JSONObject()
@@ -68,6 +70,8 @@ internal object OrbitChatCards {
         return OrbitVault.Request(
             orbitId, card.optString("chat_id"), kind, site, card.optString("page_url"),
             card.optString("username_hint"), hosts, card.optString("placement").ifEmpty { "bearer" },
+            newPassword = kind == OrbitVault.LOGIN && card.optBoolean("new_password"),
+            requestedAt = card.optLong("requested_at"),
         )
     }
 }
@@ -86,24 +90,60 @@ internal object OrbitVaultNotice {
     fun titleOf(content: String): String? =
         markerLine.find(content)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
 
-    fun build(english: Boolean, request: OrbitVault.Request, id: String): String {
+    /**
+     * [previous] is the password the site most likely still takes, which a new password left in
+     * place; [untried] are earlier new passwords for the same user.
+     */
+    fun build(english: Boolean, request: OrbitVault.Request, id: String, previous: String? = null,
+        untried: List<String> = emptyList()): String {
         val login = request.kind == OrbitVault.LOGIN
+        val fresh = login && request.newPassword
         return if (english) {
-            val title = if (login) "Login for ${request.site} saved" else "API key for ${request.site} saved"
+            val title = when {
+                fresh -> "New password for ${request.site} saved"
+                login -> "Login for ${request.site} saved"
+                else -> "API key for ${request.site} saved"
+            }
             "$MARKER $title\n" +
                 "The user filled in the secure card and saved " +
-                (if (login) "a login for ${request.site}" else "an API key for ${request.site} (sent only to ${request.apiHosts.joinToString()})") +
+                (when {
+                    fresh -> "a new password for ${request.site}, to fill into its sign-up or reset form"
+                    login -> "a login for ${request.site}"
+                    else -> "an API key for ${request.site} (sent only to ${request.apiHosts.joinToString()})"
+                }) +
                 " (credential_id $id). This is not a message from the user; they typed nothing here and cannot see this note.\n" +
+                (previous?.let {
+                    "The earlier password for this user is still saved as credential_id $it, for a form that asks for the " +
+                        "current password. Once the site has taken the new one, delete $it with orbit_vault delete.\n"
+                }.orEmpty()) +
+                (untried.takeIf { it.isNotEmpty() }?.let {
+                    "Earlier new passwords for this user are saved too (credential_id ${it.joinToString()}). Go by what the site " +
+                        "said: one it took is the current password; delete the ones it did not take.\n"
+                }.orEmpty()) +
                 "If you were in the middle of something that needed it, carry on now with orbit_vault " +
                 (if (login) "fill" else "http_request") +
                 ". Otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO} if nothing needs saying. " +
                 "Never repeat a saved value, and do not mention hidden notes."
         } else {
-            val title = if (login) "已保存 ${request.site} 的登录" else "已保存 ${request.site} 的 API 密钥"
+            val title = when {
+                fresh -> "已保存 ${request.site} 的新密码"
+                login -> "已保存 ${request.site} 的登录"
+                else -> "已保存 ${request.site} 的 API 密钥"
+            }
             "$MARKER $title\n" +
                 "用户在安全卡片里填好并保存了" +
-                (if (login) " ${request.site} 的登录" else " ${request.site} 的 API 密钥（只发往 ${request.apiHosts.joinToString()}）") +
+                (when {
+                    fresh -> " ${request.site} 的新密码，用来填进注册或重设密码的表单"
+                    login -> " ${request.site} 的登录"
+                    else -> " ${request.site} 的 API 密钥（只发往 ${request.apiHosts.joinToString()}）"
+                }) +
                 "（credential_id $id）。这不是用户发的消息，用户没有在这里打字，也看不到这段话。\n" +
+                (previous?.let {
+                    "这个用户原来的密码还留着（credential_id $it），表单要“当前密码”时用它；网站确认改好新密码后，用 orbit_vault 的 delete 删掉 $it。\n"
+                }.orEmpty()) +
+                (untried.takeIf { it.isNotEmpty() }?.let {
+                    "之前设过的新密码也还在（credential_id ${it.joinToString()}）。按网站刚才的结果判断：网站采用了的就是当前密码，没采用的删掉。\n"
+                }.orEmpty()) +
                 "如果刚才有事情正等着它，现在就用 orbit_vault 的 " + (if (login) "fill" else "http_request") +
                 " 接着做；没有的话简短回一句，没什么要说就调用 ${OrbitReactionNotice.NOTHING_TO_DO}。" +
                 "绝不复述保存的值，也不要提“隐藏消息”这些内部说法。"
@@ -117,7 +157,13 @@ internal object OrbitVaultNotice {
         val app = context.applicationContext
         scope.launch {
             try {
-                val notice = build(LocaleUtils.usesEnglishPrompt(app), request, id)
+                val (previous, untried) = if (request.kind == OrbitVault.LOGIN && request.newPassword) {
+                    val entries = OrbitVault.entries(app, orbit.id)
+                    entries.firstOrNull { it.id == id }?.let { saved ->
+                        OrbitVault.earlierPasswords(entries, saved).let { (current, rest) -> current?.id to rest.map { it.id } }
+                    } ?: (null to emptyList())
+                } else null to emptyList()
+                val notice = build(LocaleUtils.usesEnglishPrompt(app), request, id, previous, untried)
                 // Another note or reply can take the chat at the same moment; wait for it and try again.
                 val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
                 while (true) {
