@@ -55,6 +55,9 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.disabled
+import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.semantics.toggleableState
@@ -77,7 +80,10 @@ private class PackageRow(
     val name: String,
     val title: String,
     val description: String,
-)
+) {
+    /** Orbit always keeps it on: no switch, no removal. */
+    val required: Boolean get() = name in OrbitPackages.REQUIRED
+}
 
 /** One folder of packages: a category of the main app, or one plugin with its subpackages. */
 @Immutable
@@ -177,7 +183,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                     // Dependency containers stay hidden; anything else Orbit can no longer use
                     // (deleted or archived) is listed so it can be removed.
                     missing = state.imported.filter {
-                        it !in candidates && !(it in all && packageManager.isToolPkgContainer(it))
+                        it !in candidates && it !in OrbitPackages.REQUIRED &&
+                            !(it in all && packageManager.isToolPkgContainer(it))
                     }.sorted(),
                     enabled = state.enabled,
                     importable = folders(context, packageManager, all, candidates.filterKeys { it !in state.imported }),
@@ -204,6 +211,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 e.packageName,
                 e.dependents.joinToString(context.getString(R.string.orbit_packages_list_separator)),
             )
+        is OrbitPackages.RequiredException ->
+            context.getString(R.string.orbit_packages_required_locked)
         else -> context.getString(fallback)
     }
 
@@ -578,22 +587,33 @@ internal fun SearchPill(query: String, onChange: (String) -> Unit, placeholder: 
     }
 }
 
-/** One imported package: tap switches it, a long press offers to take it out of the Orbit. */
+/**
+ * One imported package: tap switches it, a long press offers to take it out of the Orbit. A required
+ * package shows a fixed "always on" switch and does nothing on tap or long press.
+ */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Unit, onRemove: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
+    val requiredText = stringResource(R.string.orbit_packages_required)
+    val requiredState = stringResource(R.string.orbit_packages_required_state)
     Box {
     Row(
         Modifier.fillMaxWidth()
             // One target for screen readers: the package name and its on/off state together.
-            .combinedClickable(
-                role = Role.Switch,
-                onClick = { onToggle(!on) },
-                onLongClick = { menu = true },
-                onLongClickLabel = stringResource(R.string.orbit_packages_remove),
+            .then(
+                if (row.required) Modifier.semantics(mergeDescendants = true) {
+                    role = Role.Switch
+                    toggleableState = ToggleableState.On
+                    stateDescription = requiredState
+                    disabled()
+                } else Modifier.combinedClickable(
+                    role = Role.Switch,
+                    onClick = { onToggle(!on) },
+                    onLongClick = { menu = true },
+                    onLongClickLabel = stringResource(R.string.orbit_packages_remove),
+                ).semantics { toggleableState = if (on) ToggleableState.On else ToggleableState.Off }
             )
-            .semantics { toggleableState = if (on) ToggleableState.On else ToggleableState.Off }
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -603,8 +623,19 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
         ) { Icon(orbitIcon("package"), contentDescription = null, modifier = Modifier.size(18.dp)) }
         Spacer(Modifier.width(14.dp))
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-            Text(row.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
-                maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(row.title, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                if (row.required) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surface,
+                        modifier = Modifier.clearAndSetSemantics { }) {
+                        Text(requiredText, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
+            }
             if (row.description.isNotBlank()) {
                 Text(
                     row.description,
@@ -616,9 +647,9 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
             }
         }
         Spacer(Modifier.width(8.dp))
-        Switch(checked = on, onCheckedChange = null)
+        Switch(checked = on || row.required, onCheckedChange = null, enabled = !row.required)
     }
-    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+    if (!row.required) DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         DropdownMenuItem(
             text = { Text(stringResource(R.string.orbit_packages_remove)) },
             leadingIcon = { Icon(orbitIcon("trash-2"), contentDescription = null, modifier = Modifier.size(18.dp)) },

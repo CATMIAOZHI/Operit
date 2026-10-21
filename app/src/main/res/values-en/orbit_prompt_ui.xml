@@ -18,7 +18,7 @@
     <string name="orbit_prompt_copied">Copied</string>
     <string name="orbit_packages_title">Packages</string>
     <string name="orbit_packages_row_desc">Picked from the main app, switched on their own</string>
-    <string name="orbit_packages_help">Only the packages you imported into Orbit are here, and these switches are only for Orbit. The main app\'s switches don\'t change them. Long press to remove one.</string>
+    <string name="orbit_packages_help">These are Orbit\'s packages, and these switches are only for Orbit; the main app\'s switches don\'t change them. Packages marked \"Required\" always stay on. Long press any other package to remove it.</string>
     <string name="orbit_packages_import">Import from main app</string>
     <string name="orbit_packages_import_desc">Pick packages for Orbit (%1$d more available)</string>
     <string name="orbit_packages_import_help">Tick the packages to import. They start switched on, and you switch them in Orbit from then on.</string>
@@ -41,6 +41,9 @@
     <string name="orbit_packages_folder_closed">Collapsed</string>
     <string name="orbit_packages_needs_missing">\"%1$s\" needs a plugin that is missing or the wrong version, so it can\'t be switched on yet</string>
     <string name="orbit_packages_still_needed">\"%1$s\" is still used by %2$s. Switch those off first</string>
+    <string name="orbit_packages_required">Required</string>
+    <string name="orbit_packages_required_state">Required, on, can\'t be switched off or removed</string>
+    <string name="orbit_packages_required_locked">Orbit needs this package, so it can\'t be switched off or removed</string>
     <string name="orbit_packages_list_separator">", "</string>
     <string name="orbit_packages_save_failed">Could not save that switch. It is back as it was</string>
     <string name="orbit_packages_imported">Imported %1$d packages</string>
