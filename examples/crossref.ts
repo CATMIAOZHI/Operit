@@ -10,7 +10,7 @@
         "en": "Crossref scholarly literature search tools: query by DOI, keyword, author, title, ISSN, and retrieve publication metadata."
     },
     "category": "Search",
-    "enabledByDefault": true,
+    "enabledByDefault": false,
     "tools": [
         {
             "name": "search_by_doi",
