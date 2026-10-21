@@ -285,6 +285,21 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
     )
 }
 
+/** The alignment synthesis, opened from the prompt layers; the nightly review rewrites it. */
+@Composable
+internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
+    val context = LocalContext.current
+    val files = remember(orbitId) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId) }
+    OrbitFilePage(
+        title = stringResource(R.string.orbit_file_alignment),
+        note = stringResource(R.string.orbit_file_alignment_note, rememberOrbitName(orbitId)),
+        load = { files.read(com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT) },
+        save = { files.write(com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT, it) },
+        onBack = onBack,
+        maxChars = com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_ALIGNMENT_PROMPT,
+    )
+}
+
 /**
  * Orbit's own user.md. User edits go through [UserProfileDocumentRepository.saveUserEdit], the
  * same reviewed path as the memory settings, and are refused if Orbit changed the file meanwhile.

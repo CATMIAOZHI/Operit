@@ -158,7 +158,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                 editPath = null
                 reload++
             }),
-            maxChars = OrbitFiles.MAX_TEXT,
+            maxChars = if (path == OrbitFiles.ALIGNMENT) OrbitFiles.MAX_ALIGNMENT_PROMPT else OrbitFiles.MAX_TEXT,
             startEditing = editPath == path,
             // Back from a file returns to the files list, not past it.
             interceptBack = true,

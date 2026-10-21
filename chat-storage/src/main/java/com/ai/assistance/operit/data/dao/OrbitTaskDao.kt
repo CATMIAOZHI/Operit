@@ -11,6 +11,17 @@ import kotlinx.coroutines.flow.Flow
 
 data class OrbitSourceMessage(val sender: String, val content: String)
 
+/** One message of an Orbit's chats inside a review window, with what points back to it. */
+data class OrbitWindowMessage(
+    val messageId: Long,
+    val chatId: String,
+    val sender: String,
+    val content: String,
+    val timestamp: Long,
+    /** True when [content] is only part of the message. */
+    val truncated: Boolean,
+)
+
 /** When a task's next run will really happen: its waiting event, which may have been put off. */
 data class OrbitTaskDue(val taskId: String, val dueAt: Long)
 
@@ -292,6 +303,18 @@ interface OrbitTaskDao {
     suspend fun executionSource(chatId: String): List<OrbitSourceMessage>
     @Query("SELECT COUNT(*) FROM messages WHERE chatId=:chatId AND sender='user'")
     suspend fun userMessageCount(chatId: String): Int
+
+    /** The newest messages of [chatIds] after [since], newest first; long ones are cut. */
+    @Query("SELECT messageId, chatId, sender, CASE WHEN sender='ai' THEN SUBSTR(content,-800) ELSE SUBSTR(content,1,1500) END AS content, timestamp, CASE WHEN sender='ai' THEN LENGTH(content) > 800 ELSE LENGTH(content) > 1500 END AS truncated FROM messages WHERE chatId IN (:chatIds) AND sender IN ('user','ai') AND displayMode='NORMAL' AND timestamp > :since ORDER BY timestamp DESC LIMIT :limit")
+    suspend fun windowSource(chatIds: List<String>, since: Long, limit: Int): List<OrbitWindowMessage>
+
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId IN (:chatIds) AND sender='user' AND displayMode='NORMAL' AND timestamp > :since")
+    suspend fun userTurnsSince(chatIds: List<String>, since: Long): Int
+
+    /** The last run that ended well and really ran (not skipped); a review window starts where it began. */
+    @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state = 'COMPLETED' AND decision != '" +
+        OrbitRunEntity.SKIPPED + "' ORDER BY finishedAt DESC LIMIT 1")
+    suspend fun lastCompletedRun(taskId: String): OrbitRunEntity?
     @Query("SELECT * FROM orbit_tasks WHERE orbitId = :orbitId ORDER BY createdAt DESC")
     fun observeTasks(orbitId: String): Flow<List<OrbitTaskEntity>>
 

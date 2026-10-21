@@ -39,7 +39,7 @@ internal object OrbitFileTools {
   - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
   - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好（要什么、不要什么、什么时间）。后台任务会读它。
   - timezones.yaml：用户的长期时区（home）和常联系的人的时区（others）。
-  - ALIGNMENT_SYNTHESIS.md：你对用户最重要的理解，后台自我整理时更新。
+  - ALIGNMENT_SYNTHESIS.md：对齐总结（和用户怎么相处），每晚对齐复盘重写。dreams/YYYY-MM-DD.md 是每晚复盘记录，alignment/ 下的 ALIGNMENT_STATE.yaml、PROGRESSION_HISTORY.yaml、REPAIR_THREADS.yaml 是复盘状态，只由复盘维护。
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
   - write 会覆盖整个文件，先 read 再改。delete 后告诉用户可以在回收站恢复。

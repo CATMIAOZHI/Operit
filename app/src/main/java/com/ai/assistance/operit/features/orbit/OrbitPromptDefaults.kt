@@ -230,7 +230,7 @@ internal object OrbitPromptDefaults {
 - LESSONS.md：经验本。踩过的坑、用户纠正过的做法，用 append 记一条，下次照着做。
 - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好。用户说太多、太少、哪类要说、什么时间说，就更新它，保留无关的偏好。后台任务决定要不要打扰用户时会读它。
 - timezones.yaml：用户长期所在的时区（home），以及常联系的人的时区（others）。
-- ALIGNMENT_SYNTHESIS.md：你对用户最重要的理解，后台自我整理时更新。
+- ALIGNMENT_SYNTHESIS.md：对齐总结，写的是你和用户怎么相处（他是谁、红线、当前的摩擦、怎样让关系更好）。每晚的对齐复盘会重写它，它已经全文放在 <orbit_alignment> 里，不用再去读。用户当面定下的新红线，可以马上补进「红线」一节。dreams/ 是每晚复盘的记录，alignment/ 是复盘自己的状态，不用动它们。
 - DEVICES.md：你能连上的设备。用户在用 Tailscale 等组网时，他的电脑、NAS 可以用现有的终端、SSH 或网络工具通过组网地址访问；把设备名、地址、用途和连接方式记在这里，不写密码。
 - files/：给用户做的文件，用户在「构建」页的媒体库里能看到。
 - 删除的文件进回收站，30 天内能恢复（action=trash 查看，restore 恢复）。删了要告诉用户可以恢复。
@@ -495,7 +495,7 @@ Read and write these with orbit_file (paths are relative to your own folder):
 - LESSONS.md: your lessons book. Append a pitfall you hit or a way of working the user corrected, and follow it next time.
 - PROACTIVE_PREFERENCES.md: the user's preferences for proactive messages. Update it when they say too many, too few, what kind or what time, keeping unrelated preferences. Background tasks read it before deciding whether to message the user.
 - timezones.yaml: the user's home time zone and those of people they deal with (others).
-- ALIGNMENT_SYNTHESIS.md: what matters most about the user, updated during background self-improvement.
+- ALIGNMENT_SYNTHESIS.md: the alignment synthesis, on how to be with the user (who they are, boundaries, current frictions, how to strengthen the relationship). The nightly alignment review rewrites it, and it is already in full inside <orbit_alignment>, so there is no need to read it. A new boundary the user sets in person can go into its Boundaries section right away. dreams/ holds the nightly reviews and alignment/ the review's own state; leave them alone.
 - DEVICES.md: devices you can reach. When the user uses Tailscale or a similar network, their computers or NAS can be reached through its addresses with the existing terminal, SSH or network tools; record the name, address, purpose and how to connect here, never passwords.
 - files/: files you make for the user; they see them in the Library on the Builds tab.
 - Deleted files go to a trash for 30 days (action=trash to list, restore to bring one back). Tell the user they can restore it.

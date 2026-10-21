@@ -9214,6 +9214,8 @@
     <string name="orbit_idea_done_badge">Done</string>
     <string name="orbit_idea_kept">You liked it, so it stays</string>
     <string name="orbit_routine_feed">Feed updates</string>
+    <string name="orbit_routine_alignment">Nightly alignment review</string>
+    <string name="orbit_routine_alignment_desc">Made by %1$s. Each night it looks back over the day\'s chats in the background, thinks about how working with you went and where you corrected it, then updates the alignment synthesis. It does not message you. You can pause it or change its time, but not delete it.</string>
     <string name="orbit_routine_ideas">Daily ideas</string>
     <string name="orbit_routine_feed_desc">Made by %1$s. Writes posts for your Feed in the background from your Feed instructions, without messaging you. You can pause it or change its time, but not delete it.</string>
     <string name="orbit_routine_ideas_desc">Made by %1$s. Thinks of things it could do for you in the background and puts them on the Ideas tab, without messaging you. You can pause it or change its time, but not delete it.</string>
@@ -9292,11 +9294,14 @@
     <string name="orbit_section_prompts">Prompts</string>
     <string name="orbit_prompt_layers">Prompt layers</string>
     <string name="orbit_prompt_layers_desc">See what Orbit reads before each reply</string>
-    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order, always. Tap one to see or edit it.</string>
+    <string name="orbit_prompt_layers_help">Each of these goes into Orbit\'s system prompt in this order and cannot be turned off; the alignment synthesis joins once the first review writes it. Tap one to see or edit it.</string>
     <string name="orbit_layer_base">Base instructions</string>
     <string name="orbit_layer_base_desc">Initiative, reminders, memory, tone and safety</string>
     <string name="orbit_layer_soul">Personality</string>
     <string name="orbit_layer_soul_desc">Values and habits</string>
+    <string name="orbit_layer_alignment">Alignment synthesis</string>
+    <string name="orbit_layer_alignment_desc">How to be with you, updated nightly</string>
+    <string name="orbit_layer_alignment_empty">Not written yet</string>
     <string name="orbit_layer_identity">Identity</string>
     <string name="orbit_layer_identity_desc">Name, character and vibe</string>
     <string name="orbit_layer_user">About you</string>
@@ -9387,7 +9392,7 @@
     <string name="orbit_file_timezones">Time zones</string>
     <string name="orbit_file_timezones_note">Your home time zone and those of people you deal with. This note is not part of the file.</string>
     <string name="orbit_file_alignment">Alignment synthesis</string>
-    <string name="orbit_file_alignment_note">What matters most about you, as %1$s understands it. Background self-improvement keeps it current. This note is not part of the file.</string>
+    <string name="orbit_file_alignment_note">How %1$s should be with you: who you are, your boundaries, where things have rubbed lately and how to do better. Every chat carries it in full; the nightly alignment review rewrites it, and you can edit it too. This note is not part of the file.</string>
     <string name="orbit_file_devices">Devices</string>
     <string name="orbit_file_devices_note">Devices %1$s can reach, such as computers or a NAS on your Tailscale network. Never write passwords here. This note is not part of the file.</string>
     <string name="orbit_files_people">People</string>
@@ -9507,6 +9512,7 @@
     <string name="orbit_export_confirm_message">Files, memory, task records and chat history will be packed into one zip. It may contain private content, so check before sharing.</string>
     <string name="orbit_export_confirm">Export</string>
     <string name="orbit_decision_no_active_goals">No active goals, so no briefing this time</string>
+    <string name="orbit_decision_no_new_talk">No new chats since the last review, so nothing to review</string>
     <string name="orbit_routine_source_chat">Reads the recent Orbit conversation</string>
     <string name="orbit_routine_source_goals">Reads your active goals</string>
     <string name="orbit_routine_self_review_desc">Made by %1$s. On nights after new conversation, it quietly tidies memory, people, lessons and skills without messaging you.</string>
