@@ -99,6 +99,8 @@ object OrbitDelivery {
                 dao.pendingDeliveries(orbitId).map { it.chatId }.distinct()
                     .filter { it != orbit.chatId && chats.getChatById(it) == null }
                     .forEach { dao.movePendingDeliveries(orbitId, it, orbit.chatId) }
+                // A draft that ran out while it waited is moot; Orbit never hears of it.
+                dao.expirePending(orbitId, now)
                 val pending = dao.pendingDeliveries(orbitId).filter { dueAt(context, it, now) <= now }
                 // A report already posted as a message by an older build is done.
                 pending.mapNotNull { it.messageId }.distinct().forEach { dao.markBatchDelivered(orbitId, it) }
@@ -112,7 +114,18 @@ object OrbitDelivery {
         val (orbit, batch) = picked ?: return false
         val chatId = batch.first().chatId
         val ids = batch.map { it.id }
-        val notice = OrbitWake.resultNotice(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context), batch)
+        val earlier = dao.toldSince(orbitId, now - TOLD_LOOKBACK_MS, TOLD_LIMIT)
+        val preferences = try {
+            kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                OrbitFiles.readHead(OrbitFiles.of(context, orbitId).fileFor(OrbitFiles.PROACTIVE), 3000)
+            }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            ""
+        }
+        val notice = OrbitWake.resultNotice(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context), batch,
+            earlier, preferences)
         // Marked as told the moment Orbit takes the notice, so a crash never tells it twice.
         val told = OrbitWake.tell(context, orbit, chatId, notice, IDLE_WAIT_MS, totalWaitMs,
             // A report cancelled or replaced while the chat was busy is not told.
@@ -124,9 +137,17 @@ object OrbitDelivery {
                 catch (e: Exception) { OrbitExecutionGate.serialized { dao.markHandedToOrbit(ids) } }
             })
         if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbitId, System.currentTimeMillis())
+        // An item Orbit did not register a call for counts as not sent (Muse: undecided means no).
+        // A call that comes later, from a reply still running, still replaces this.
+        if (told.sent) runCatching { dao.markUnregistered(ids, System.currentTimeMillis()) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
         busy += chatId
         return true
     }
+
+    /** How far back the notice lists what Orbit already told, to catch the same matter twice. */
+    private const val TOLD_LOOKBACK_MS = 14L * 24 * 60 * 60_000
+    private const val TOLD_LIMIT = 15
 
     /**
      * Orbit said something on its own (a due task, a background result): mark the chat unread and,

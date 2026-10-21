@@ -1,0 +1,2543 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 43,
+    "identityHash": "a65fd4080cfb1f73b48bfa37c11f3e31",
+    "entities": [
+      {
+        "tableName": "chats",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `title` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `inputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `currentWindowSize` INTEGER NOT NULL, `group` TEXT, `folderId` TEXT, `displayOrder` INTEGER NOT NULL, `workspace` TEXT, `workspaceEnv` TEXT, `parentChatId` TEXT, `chatKind` TEXT NOT NULL DEFAULT 'NORMAL', `characterCardName` TEXT, `characterGroupId` TEXT, `locked` INTEGER NOT NULL, `pinned` INTEGER NOT NULL, `isFavorite` INTEGER NOT NULL, `lastMessageAt` INTEGER, `isHidden` INTEGER NOT NULL, `hiddenReason` TEXT, `contextPolicyJson` TEXT, PRIMARY KEY(`id`), FOREIGN KEY(`folderId`) REFERENCES `chat_folders`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "currentWindowSize",
+            "columnName": "currentWindowSize",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "group",
+            "columnName": "group",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "folderId",
+            "columnName": "folderId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "displayOrder",
+            "columnName": "displayOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "workspace",
+            "columnName": "workspace",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "workspaceEnv",
+            "columnName": "workspaceEnv",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "parentChatId",
+            "columnName": "parentChatId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "chatKind",
+            "columnName": "chatKind",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'NORMAL'"
+          },
+          {
+            "fieldPath": "characterCardName",
+            "columnName": "characterCardName",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "characterGroupId",
+            "columnName": "characterGroupId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "locked",
+            "columnName": "locked",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pinned",
+            "columnName": "pinned",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastMessageAt",
+            "columnName": "lastMessageAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "isHidden",
+            "columnName": "isHidden",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hiddenReason",
+            "columnName": "hiddenReason",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "contextPolicyJson",
+            "columnName": "contextPolicyJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_chats_folderId",
+            "unique": false,
+            "columnNames": [
+              "folderId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chats_folderId` ON `${TABLE_NAME}` (`folderId`)"
+          },
+          {
+            "name": "index_chats_chatKind",
+            "unique": false,
+            "columnNames": [
+              "chatKind"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chats_chatKind` ON `${TABLE_NAME}` (`chatKind`)"
+          },
+          {
+            "name": "index_chats_parentChatId_chatKind",
+            "unique": false,
+            "columnNames": [
+              "parentChatId",
+              "chatKind"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chats_parentChatId_chatKind` ON `${TABLE_NAME}` (`parentChatId`, `chatKind`)"
+          },
+          {
+            "name": "index_chats_isHidden",
+            "unique": false,
+            "columnNames": [
+              "isHidden"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chats_isHidden` ON `${TABLE_NAME}` (`isHidden`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chat_folders",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "folderId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_folders",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `name` TEXT NOT NULL, `parentFolderId` TEXT, `displayOrder` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`), FOREIGN KEY(`parentFolderId`) REFERENCES `chat_folders`(`id`) ON UPDATE NO ACTION ON DELETE SET NULL )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentFolderId",
+            "columnName": "parentFolderId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "displayOrder",
+            "columnName": "displayOrder",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_chat_folders_parentFolderId_displayOrder",
+            "unique": false,
+            "columnNames": [
+              "parentFolderId",
+              "displayOrder"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chat_folders_parentFolderId_displayOrder` ON `${TABLE_NAME}` (`parentFolderId`, `displayOrder`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chat_folders",
+            "onDelete": "SET NULL",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "parentFolderId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_todos",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` TEXT NOT NULL, `position` INTEGER NOT NULL, `content` TEXT NOT NULL, `status` TEXT NOT NULL, `priority` TEXT NOT NULL, PRIMARY KEY(`chatId`, `position`), FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "position",
+            "columnName": "position",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "priority",
+            "columnName": "priority",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chatId",
+            "position"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_chat_todos_chatId",
+            "unique": false,
+            "columnNames": [
+              "chatId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_chat_todos_chatId` ON `${TABLE_NAME}` (`chatId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "messages",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`messageId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chatId` TEXT NOT NULL, `sender` TEXT NOT NULL, `content` TEXT NOT NULL, `timestamp` INTEGER NOT NULL, `orderIndex` INTEGER NOT NULL, `roleName` TEXT NOT NULL, `selectedVariantIndex` INTEGER NOT NULL, `provider` TEXT NOT NULL, `modelName` TEXT NOT NULL, `inputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `cachedInputTokens` INTEGER NOT NULL, `sentAt` INTEGER NOT NULL, `outputDurationMs` INTEGER NOT NULL, `waitDurationMs` INTEGER NOT NULL, `completedAt` INTEGER NOT NULL, `displayMode` TEXT NOT NULL, `isFavorite` INTEGER NOT NULL, FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sender",
+            "columnName": "sender",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "timestamp",
+            "columnName": "timestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orderIndex",
+            "columnName": "orderIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "roleName",
+            "columnName": "roleName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "selectedVariantIndex",
+            "columnName": "selectedVariantIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelName",
+            "columnName": "modelName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cachedInputTokens",
+            "columnName": "cachedInputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentAt",
+            "columnName": "sentAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputDurationMs",
+            "columnName": "outputDurationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waitDurationMs",
+            "columnName": "waitDurationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayMode",
+            "columnName": "displayMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "isFavorite",
+            "columnName": "isFavorite",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "messageId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_messages_chatId",
+            "unique": false,
+            "columnNames": [
+              "chatId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_chatId` ON `${TABLE_NAME}` (`chatId`)"
+          },
+          {
+            "name": "index_messages_chatId_timestamp",
+            "unique": false,
+            "columnNames": [
+              "chatId",
+              "timestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_messages_chatId_timestamp` ON `${TABLE_NAME}` (`chatId`, `timestamp`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "chat_recall_fts",
+        "createSql": "CREATE VIRTUAL TABLE IF NOT EXISTS `${TABLE_NAME}` USING FTS4(`content` TEXT NOT NULL, tokenize=unicode61, content=`messages`)",
+        "fields": [
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": []
+        },
+        "ftsVersion": "FTS4",
+        "ftsOptions": {
+          "tokenizer": "unicode61",
+          "tokenizerArgs": [],
+          "contentTable": "messages",
+          "languageIdColumnName": "",
+          "matchInfo": "FTS4",
+          "notIndexedColumns": [],
+          "prefixSizes": [],
+          "preferredOrder": "ASC"
+        },
+        "contentSyncTriggers": [
+          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_BEFORE_UPDATE BEFORE UPDATE ON `messages` BEGIN DELETE FROM `chat_recall_fts` WHERE `docid`=OLD.`rowid`; END",
+          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_BEFORE_DELETE BEFORE DELETE ON `messages` BEGIN DELETE FROM `chat_recall_fts` WHERE `docid`=OLD.`rowid`; END",
+          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_AFTER_UPDATE AFTER UPDATE ON `messages` BEGIN INSERT INTO `chat_recall_fts`(`docid`, `content`) VALUES (NEW.`rowid`, NEW.`content`); END",
+          "CREATE TRIGGER IF NOT EXISTS room_fts_content_sync_chat_recall_fts_AFTER_INSERT AFTER INSERT ON `messages` BEGIN INSERT INTO `chat_recall_fts`(`docid`, `content`) VALUES (NEW.`rowid`, NEW.`content`); END"
+        ]
+      },
+      {
+        "tableName": "message_variants",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`variantId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `chatId` TEXT NOT NULL, `messageTimestamp` INTEGER NOT NULL, `variantIndex` INTEGER NOT NULL, `content` TEXT NOT NULL, `roleName` TEXT NOT NULL, `provider` TEXT NOT NULL, `modelName` TEXT NOT NULL, `inputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `cachedInputTokens` INTEGER NOT NULL, `sentAt` INTEGER NOT NULL, `outputDurationMs` INTEGER NOT NULL, `waitDurationMs` INTEGER NOT NULL, `completedAt` INTEGER NOT NULL, FOREIGN KEY(`chatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "variantId",
+            "columnName": "variantId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageTimestamp",
+            "columnName": "messageTimestamp",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "variantIndex",
+            "columnName": "variantIndex",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "content",
+            "columnName": "content",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "roleName",
+            "columnName": "roleName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "modelName",
+            "columnName": "modelName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cachedInputTokens",
+            "columnName": "cachedInputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sentAt",
+            "columnName": "sentAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputDurationMs",
+            "columnName": "outputDurationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "waitDurationMs",
+            "columnName": "waitDurationMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "variantId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_message_variants_chatId_messageTimestamp",
+            "unique": false,
+            "columnNames": [
+              "chatId",
+              "messageTimestamp"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_message_variants_chatId_messageTimestamp` ON `${TABLE_NAME}` (`chatId`, `messageTimestamp`)"
+          },
+          {
+            "name": "index_message_variants_chatId_messageTimestamp_variantIndex",
+            "unique": true,
+            "columnNames": [
+              "chatId",
+              "messageTimestamp",
+              "variantIndex"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_message_variants_chatId_messageTimestamp_variantIndex` ON `${TABLE_NAME}` (`chatId`, `messageTimestamp`, `variantIndex`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "subagent_runs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `parentChatId` TEXT NOT NULL, `childChatId` TEXT NOT NULL, `parentToolCallId` TEXT, `agentProfileId` TEXT NOT NULL, `title` TEXT NOT NULL, `status` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `startedAt` INTEGER, `completedAt` INTEGER, `error` TEXT, `agentConfigSnapshot` TEXT, `modelConfigIdSnapshot` TEXT, `modelIndexSnapshot` INTEGER, `toolInvocationCount` INTEGER NOT NULL, `externalOwnerType` TEXT, `externalOwnerId` TEXT, `modelRoundCount` INTEGER NOT NULL, `archivedAt` INTEGER, PRIMARY KEY(`id`), FOREIGN KEY(`parentChatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE NO ACTION , FOREIGN KEY(`childChatId`) REFERENCES `chats`(`id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentChatId",
+            "columnName": "parentChatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "childChatId",
+            "columnName": "childChatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "parentToolCallId",
+            "columnName": "parentToolCallId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "agentProfileId",
+            "columnName": "agentProfileId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "completedAt",
+            "columnName": "completedAt",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "agentConfigSnapshot",
+            "columnName": "agentConfigSnapshot",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelConfigIdSnapshot",
+            "columnName": "modelConfigIdSnapshot",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelIndexSnapshot",
+            "columnName": "modelIndexSnapshot",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "toolInvocationCount",
+            "columnName": "toolInvocationCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "externalOwnerType",
+            "columnName": "externalOwnerType",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "externalOwnerId",
+            "columnName": "externalOwnerId",
+            "affinity": "TEXT"
+          },
+          {
+            "fieldPath": "modelRoundCount",
+            "columnName": "modelRoundCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "archivedAt",
+            "columnName": "archivedAt",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_subagent_runs_parentChatId",
+            "unique": false,
+            "columnNames": [
+              "parentChatId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subagent_runs_parentChatId` ON `${TABLE_NAME}` (`parentChatId`)"
+          },
+          {
+            "name": "index_subagent_runs_childChatId",
+            "unique": true,
+            "columnNames": [
+              "childChatId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_subagent_runs_childChatId` ON `${TABLE_NAME}` (`childChatId`)"
+          },
+          {
+            "name": "index_subagent_runs_parentChatId_parentToolCallId",
+            "unique": false,
+            "columnNames": [
+              "parentChatId",
+              "parentToolCallId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subagent_runs_parentChatId_parentToolCallId` ON `${TABLE_NAME}` (`parentChatId`, `parentToolCallId`)"
+          },
+          {
+            "name": "index_subagent_runs_status",
+            "unique": false,
+            "columnNames": [
+              "status"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subagent_runs_status` ON `${TABLE_NAME}` (`status`)"
+          },
+          {
+            "name": "index_subagent_runs_externalOwnerType_externalOwnerId",
+            "unique": false,
+            "columnNames": [
+              "externalOwnerType",
+              "externalOwnerId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_subagent_runs_externalOwnerType_externalOwnerId` ON `${TABLE_NAME}` (`externalOwnerType`, `externalOwnerId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chats",
+            "onDelete": "NO ACTION",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "parentChatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          },
+          {
+            "table": "chats",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "childChatId"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`eventId` TEXT NOT NULL, `statIdentityId` TEXT NOT NULL, `category` TEXT NOT NULL, `status` TEXT NOT NULL, `acceptedGeneration` INTEGER NOT NULL, `startedAtMs` INTEGER NOT NULL, `endedAtMs` INTEGER NOT NULL, `firstTokenAtMs` INTEGER, `uncachedInputTokens` INTEGER, `cachedInputTokens` INTEGER, `cacheWriteTokens` INTEGER, `totalInputTokens` INTEGER, `outputTokens` INTEGER, `reasoningTokens` INTEGER, `reasoningIncludedInOutput` INTEGER, `cacheWriteSeparateBilling` INTEGER, `billingMode` TEXT NOT NULL, `pricingCurrency` TEXT NOT NULL, `inputPricePerMillion` REAL, `cachedInputPricePerMillion` REAL, `cacheWritePricePerMillion` REAL, `outputPricePerMillion` REAL, `pricePerRequest` REAL, `pricingSource` TEXT NOT NULL, `costInPricingCurrency` REAL, `diagnosticsJson` TEXT, PRIMARY KEY(`eventId`), FOREIGN KEY(`statIdentityId`) REFERENCES `token_stat_identities`(`identityId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "eventId",
+            "columnName": "eventId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "statIdentityId",
+            "columnName": "statIdentityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "category",
+            "columnName": "category",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "acceptedGeneration",
+            "columnName": "acceptedGeneration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAtMs",
+            "columnName": "startedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endedAtMs",
+            "columnName": "endedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "firstTokenAtMs",
+            "columnName": "firstTokenAtMs",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "uncachedInputTokens",
+            "columnName": "uncachedInputTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "cachedInputTokens",
+            "columnName": "cachedInputTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "cacheWriteTokens",
+            "columnName": "cacheWriteTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "totalInputTokens",
+            "columnName": "totalInputTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "reasoningTokens",
+            "columnName": "reasoningTokens",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "reasoningIncludedInOutput",
+            "columnName": "reasoningIncludedInOutput",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "cacheWriteSeparateBilling",
+            "columnName": "cacheWriteSeparateBilling",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "billingMode",
+            "columnName": "billingMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pricingCurrency",
+            "columnName": "pricingCurrency",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputPricePerMillion",
+            "columnName": "inputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cachedInputPricePerMillion",
+            "columnName": "cachedInputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cacheWritePricePerMillion",
+            "columnName": "cacheWritePricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "outputPricePerMillion",
+            "columnName": "outputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pricePerRequest",
+            "columnName": "pricePerRequest",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pricingSource",
+            "columnName": "pricingSource",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "costInPricingCurrency",
+            "columnName": "costInPricingCurrency",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "diagnosticsJson",
+            "columnName": "diagnosticsJson",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "eventId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_token_stat_events_statIdentityId_startedAtMs",
+            "unique": false,
+            "columnNames": [
+              "statIdentityId",
+              "startedAtMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_token_stat_events_statIdentityId_startedAtMs` ON `${TABLE_NAME}` (`statIdentityId`, `startedAtMs`)"
+          },
+          {
+            "name": "index_token_stat_events_startedAtMs",
+            "unique": false,
+            "columnNames": [
+              "startedAtMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_token_stat_events_startedAtMs` ON `${TABLE_NAME}` (`startedAtMs`)"
+          },
+          {
+            "name": "index_token_stat_events_category_startedAtMs",
+            "unique": false,
+            "columnNames": [
+              "category",
+              "startedAtMs"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_token_stat_events_category_startedAtMs` ON `${TABLE_NAME}` (`category`, `startedAtMs`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "token_stat_identities",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "statIdentityId"
+            ],
+            "referencedColumns": [
+              "identityId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_identities",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`identityId` TEXT NOT NULL, `configId` TEXT NOT NULL, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, `displayModelId` TEXT NOT NULL, PRIMARY KEY(`identityId`))",
+        "fields": [
+          {
+            "fieldPath": "identityId",
+            "columnName": "identityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configId",
+            "columnName": "configId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayModelId",
+            "columnName": "displayModelId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "identityId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_token_stat_identities_configId_provider_model",
+            "unique": true,
+            "columnNames": [
+              "configId",
+              "provider",
+              "model"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_token_stat_identities_configId_provider_model` ON `${TABLE_NAME}` (`configId`, `provider`, `model`)"
+          },
+          {
+            "name": "index_token_stat_identities_displayModelId",
+            "unique": false,
+            "columnNames": [
+              "displayModelId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_token_stat_identities_displayModelId` ON `${TABLE_NAME}` (`displayModelId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_display_models",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`displayModelId` TEXT NOT NULL, `normalizedModel` TEXT NOT NULL, `displayName` TEXT NOT NULL, PRIMARY KEY(`displayModelId`))",
+        "fields": [
+          {
+            "fieldPath": "displayModelId",
+            "columnName": "displayModelId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "normalizedModel",
+            "columnName": "normalizedModel",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "displayName",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "displayModelId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_token_stat_display_models_normalizedModel",
+            "unique": true,
+            "columnNames": [
+              "normalizedModel"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_token_stat_display_models_normalizedModel` ON `${TABLE_NAME}` (`normalizedModel`)"
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_price_overrides",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`rowId` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `scope` TEXT NOT NULL, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, `configId` TEXT NOT NULL, `billingMode` TEXT NOT NULL, `pricingCurrency` TEXT NOT NULL, `inputPricePerMillion` REAL, `cachedInputPricePerMillion` REAL, `cacheWritePricePerMillion` REAL, `outputPricePerMillion` REAL, `pricePerRequest` REAL)",
+        "fields": [
+          {
+            "fieldPath": "rowId",
+            "columnName": "rowId",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scope",
+            "columnName": "scope",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "configId",
+            "columnName": "configId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "billingMode",
+            "columnName": "billingMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pricingCurrency",
+            "columnName": "pricingCurrency",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputPricePerMillion",
+            "columnName": "inputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cachedInputPricePerMillion",
+            "columnName": "cachedInputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "cacheWritePricePerMillion",
+            "columnName": "cacheWritePricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "outputPricePerMillion",
+            "columnName": "outputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "pricePerRequest",
+            "columnName": "pricePerRequest",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "rowId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_token_stat_price_overrides_scope_provider_model_configId",
+            "unique": true,
+            "columnNames": [
+              "scope",
+              "provider",
+              "model",
+              "configId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_token_stat_price_overrides_scope_provider_model_configId` ON `${TABLE_NAME}` (`scope`, `provider`, `model`, `configId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_baselines",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`identityId` TEXT NOT NULL, `inputTokens` INTEGER NOT NULL, `cachedInputTokens` INTEGER NOT NULL, `outputTokens` INTEGER NOT NULL, `requestCount` INTEGER NOT NULL, `pricingCurrency` TEXT NOT NULL, `costInPricingCurrency` REAL, `isEstimated` INTEGER NOT NULL, `fingerprint` TEXT NOT NULL, `importedAtMs` INTEGER NOT NULL, `frozenBillingMode` TEXT NOT NULL, `frozenInputPricePerMillion` REAL, `frozenCachedInputPricePerMillion` REAL, `frozenOutputPricePerMillion` REAL, `frozenPricePerRequest` REAL, PRIMARY KEY(`identityId`), FOREIGN KEY(`identityId`) REFERENCES `token_stat_identities`(`identityId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "identityId",
+            "columnName": "identityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "inputTokens",
+            "columnName": "inputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "cachedInputTokens",
+            "columnName": "cachedInputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "outputTokens",
+            "columnName": "outputTokens",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestCount",
+            "columnName": "requestCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pricingCurrency",
+            "columnName": "pricingCurrency",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "costInPricingCurrency",
+            "columnName": "costInPricingCurrency",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "isEstimated",
+            "columnName": "isEstimated",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "importedAtMs",
+            "columnName": "importedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frozenBillingMode",
+            "columnName": "frozenBillingMode",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "frozenInputPricePerMillion",
+            "columnName": "frozenInputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "frozenCachedInputPricePerMillion",
+            "columnName": "frozenCachedInputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "frozenOutputPricePerMillion",
+            "columnName": "frozenOutputPricePerMillion",
+            "affinity": "REAL"
+          },
+          {
+            "fieldPath": "frozenPricePerRequest",
+            "columnName": "frozenPricePerRequest",
+            "affinity": "REAL"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "identityId"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "token_stat_identities",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "identityId"
+            ],
+            "referencedColumns": [
+              "identityId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "token_stat_restore_generations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`generation` TEXT NOT NULL, `appliedAtMs` INTEGER NOT NULL, PRIMARY KEY(`generation`))",
+        "fields": [
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "appliedAtMs",
+            "columnName": "appliedAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "generation"
+          ]
+        }
+      },
+      {
+        "tableName": "token_stat_reset_cutoffs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`kind` TEXT NOT NULL, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, `generation` INTEGER NOT NULL, PRIMARY KEY(`kind`, `provider`, `model`))",
+        "fields": [
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "kind",
+            "provider",
+            "model"
+          ]
+        }
+      },
+      {
+        "tableName": "token_stat_range_cutoffs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`generation` INTEGER NOT NULL, `startMs` INTEGER NOT NULL, `endMs` INTEGER NOT NULL, PRIMARY KEY(`generation`))",
+        "fields": [
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startMs",
+            "columnName": "startMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "endMs",
+            "columnName": "endMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "generation"
+          ]
+        }
+      },
+      {
+        "tableName": "token_stat_cleanup_operations",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operationId` TEXT NOT NULL, `scope` TEXT NOT NULL, `targetRef` TEXT NOT NULL, `deleteBaselines` INTEGER NOT NULL, `status` TEXT NOT NULL, `createdAtMs` INTEGER NOT NULL, PRIMARY KEY(`operationId`))",
+        "fields": [
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scope",
+            "columnName": "scope",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "targetRef",
+            "columnName": "targetRef",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "deleteBaselines",
+            "columnName": "deleteBaselines",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "status",
+            "columnName": "status",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAtMs",
+            "columnName": "createdAtMs",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "operationId"
+          ]
+        }
+      },
+      {
+        "tableName": "token_stat_cleanup_items",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`operationId` TEXT NOT NULL, `identityId` TEXT NOT NULL, `provider` TEXT NOT NULL, `model` TEXT NOT NULL, PRIMARY KEY(`operationId`, `identityId`), FOREIGN KEY(`operationId`) REFERENCES `token_stat_cleanup_operations`(`operationId`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "operationId",
+            "columnName": "operationId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "identityId",
+            "columnName": "identityId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "provider",
+            "columnName": "provider",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "model",
+            "columnName": "model",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "operationId",
+            "identityId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_token_stat_cleanup_items_operationId",
+            "unique": false,
+            "columnNames": [
+              "operationId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_token_stat_cleanup_items_operationId` ON `${TABLE_NAME}` (`operationId`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "token_stat_cleanup_operations",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "operationId"
+            ],
+            "referencedColumns": [
+              "operationId"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_tasks",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `orbitId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `title` TEXT NOT NULL, `instruction` TEXT NOT NULL, `kind` TEXT NOT NULL, `source` TEXT NOT NULL, `intervalMinutes` INTEGER NOT NULL, `dailyMinute` INTEGER NOT NULL, `notifyPolicy` TEXT NOT NULL, `state` TEXT NOT NULL, `version` INTEGER NOT NULL, `nextRunAt` INTEGER NOT NULL, `lastObservation` TEXT NOT NULL, `lastFingerprint` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, `scheduleMode` TEXT NOT NULL DEFAULT 'INTERVAL', `goalId` TEXT NOT NULL DEFAULT '', `triggerTaskId` TEXT NOT NULL DEFAULT '', `sourceArtifactVersionId` TEXT NOT NULL DEFAULT '', `calendarRule` TEXT NOT NULL DEFAULT '', `timeoutMinutes` INTEGER NOT NULL DEFAULT 0, `useSubagent` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orbitId",
+            "columnName": "orbitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "instruction",
+            "columnName": "instruction",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kind",
+            "columnName": "kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "source",
+            "columnName": "source",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intervalMinutes",
+            "columnName": "intervalMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dailyMinute",
+            "columnName": "dailyMinute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "notifyPolicy",
+            "columnName": "notifyPolicy",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "nextRunAt",
+            "columnName": "nextRunAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastObservation",
+            "columnName": "lastObservation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastFingerprint",
+            "columnName": "lastFingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "scheduleMode",
+            "columnName": "scheduleMode",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'INTERVAL'"
+          },
+          {
+            "fieldPath": "goalId",
+            "columnName": "goalId",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "triggerTaskId",
+            "columnName": "triggerTaskId",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "sourceArtifactVersionId",
+            "columnName": "sourceArtifactVersionId",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "calendarRule",
+            "columnName": "calendarRule",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "timeoutMinutes",
+            "columnName": "timeoutMinutes",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "useSubagent",
+            "columnName": "useSubagent",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_tasks_orbitId",
+            "unique": false,
+            "columnNames": [
+              "orbitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_tasks_orbitId` ON `${TABLE_NAME}` (`orbitId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_events",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `taskId` TEXT NOT NULL, `taskVersion` INTEGER NOT NULL, `dueAt` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `sourceRunId` TEXT NOT NULL DEFAULT '', PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskVersion",
+            "columnName": "taskVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "dueAt",
+            "columnName": "dueAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceRunId",
+            "columnName": "sourceRunId",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_events_taskId",
+            "unique": false,
+            "columnNames": [
+              "taskId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_events_taskId` ON `${TABLE_NAME}` (`taskId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_runs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `eventId` TEXT NOT NULL, `taskId` TEXT NOT NULL, `taskVersion` INTEGER NOT NULL, `state` TEXT NOT NULL, `owner` TEXT NOT NULL, `generation` INTEGER NOT NULL, `bootId` TEXT NOT NULL, `leaseUntilElapsed` INTEGER NOT NULL, `leaseUntilWall` INTEGER NOT NULL, `sourceText` TEXT NOT NULL, `fingerprint` TEXT NOT NULL, `hasSource` INTEGER NOT NULL, `observation` TEXT NOT NULL, `error` TEXT NOT NULL, `startedAt` INTEGER NOT NULL, `finishedAt` INTEGER NOT NULL, `decision` TEXT NOT NULL DEFAULT '', PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "eventId",
+            "columnName": "eventId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskVersion",
+            "columnName": "taskVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "owner",
+            "columnName": "owner",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "bootId",
+            "columnName": "bootId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseUntilElapsed",
+            "columnName": "leaseUntilElapsed",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "leaseUntilWall",
+            "columnName": "leaseUntilWall",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceText",
+            "columnName": "sourceText",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "fingerprint",
+            "columnName": "fingerprint",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "hasSource",
+            "columnName": "hasSource",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "observation",
+            "columnName": "observation",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "error",
+            "columnName": "error",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startedAt",
+            "columnName": "startedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "finishedAt",
+            "columnName": "finishedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "decision",
+            "columnName": "decision",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_runs_eventId",
+            "unique": true,
+            "columnNames": [
+              "eventId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_orbit_runs_eventId` ON `${TABLE_NAME}` (`eventId`)"
+          },
+          {
+            "name": "index_orbit_runs_taskId",
+            "unique": false,
+            "columnNames": [
+              "taskId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_runs_taskId` ON `${TABLE_NAME}` (`taskId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_deliveries",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `runId` TEXT NOT NULL, `taskId` TEXT NOT NULL, `taskVersion` INTEGER NOT NULL, `orbitId` TEXT NOT NULL, `chatId` TEXT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `state` TEXT NOT NULL, `messageId` INTEGER, `messageTimestamp` INTEGER, `notificationSent` INTEGER NOT NULL, `opportunityKey` TEXT NOT NULL DEFAULT '', `expiresAt` INTEGER NOT NULL DEFAULT 0, `priority` TEXT NOT NULL DEFAULT 'regular', `evidence` TEXT NOT NULL DEFAULT '', `verdict` TEXT NOT NULL DEFAULT '', `verdictReason` TEXT NOT NULL DEFAULT '', `verdictNote` TEXT NOT NULL DEFAULT '', `decidedAt` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskVersion",
+            "columnName": "taskVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orbitId",
+            "columnName": "orbitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "body",
+            "columnName": "body",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "messageId",
+            "columnName": "messageId",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "messageTimestamp",
+            "columnName": "messageTimestamp",
+            "affinity": "INTEGER"
+          },
+          {
+            "fieldPath": "notificationSent",
+            "columnName": "notificationSent",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "opportunityKey",
+            "columnName": "opportunityKey",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "expiresAt",
+            "columnName": "expiresAt",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          },
+          {
+            "fieldPath": "priority",
+            "columnName": "priority",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "'regular'"
+          },
+          {
+            "fieldPath": "evidence",
+            "columnName": "evidence",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "verdict",
+            "columnName": "verdict",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "verdictReason",
+            "columnName": "verdictReason",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "verdictNote",
+            "columnName": "verdictNote",
+            "affinity": "TEXT",
+            "notNull": true,
+            "defaultValue": "''"
+          },
+          {
+            "fieldPath": "decidedAt",
+            "columnName": "decidedAt",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_deliveries_runId",
+            "unique": true,
+            "columnNames": [
+              "runId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_orbit_deliveries_runId` ON `${TABLE_NAME}` (`runId`)"
+          },
+          {
+            "name": "index_orbit_deliveries_taskId",
+            "unique": false,
+            "columnNames": [
+              "taskId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_deliveries_taskId` ON `${TABLE_NAME}` (`taskId`)"
+          },
+          {
+            "name": "index_orbit_deliveries_orbitId_state_expiresAt",
+            "unique": false,
+            "columnNames": [
+              "orbitId",
+              "state",
+              "expiresAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_deliveries_orbitId_state_expiresAt` ON `${TABLE_NAME}` (`orbitId`, `state`, `expiresAt`)"
+          },
+          {
+            "name": "index_orbit_deliveries_orbitId_decidedAt",
+            "unique": false,
+            "columnNames": [
+              "orbitId",
+              "decidedAt"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_deliveries_orbitId_decidedAt` ON `${TABLE_NAME}` (`orbitId`, `decidedAt`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_actions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `taskId` TEXT NOT NULL, `runId` TEXT NOT NULL, `generation` INTEGER NOT NULL, `toolName` TEXT NOT NULL, `operationHash` TEXT NOT NULL, `state` TEXT NOT NULL, `summary` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "toolName",
+            "columnName": "toolName",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "operationHash",
+            "columnName": "operationHash",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "summary",
+            "columnName": "summary",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_actions_taskId",
+            "unique": false,
+            "columnNames": [
+              "taskId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_actions_taskId` ON `${TABLE_NAME}` (`taskId`)"
+          },
+          {
+            "name": "index_orbit_actions_runId",
+            "unique": false,
+            "columnNames": [
+              "runId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_actions_runId` ON `${TABLE_NAME}` (`runId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_task_chats",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chatId` TEXT NOT NULL, `runId` TEXT NOT NULL, `generation` INTEGER NOT NULL, `rootChatId` TEXT NOT NULL, PRIMARY KEY(`chatId`))",
+        "fields": [
+          {
+            "fieldPath": "chatId",
+            "columnName": "chatId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "generation",
+            "columnName": "generation",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "rootChatId",
+            "columnName": "rootChatId",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chatId"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_task_chats_runId",
+            "unique": false,
+            "columnNames": [
+              "runId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_task_chats_runId` ON `${TABLE_NAME}` (`runId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_task_inputs",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`taskId` TEXT NOT NULL, `taskVersion` INTEGER NOT NULL, `requestedUrl` TEXT NOT NULL, `sessionId` TEXT NOT NULL, `userNote` TEXT NOT NULL, `pageObservation` TEXT NOT NULL, PRIMARY KEY(`taskId`))",
+        "fields": [
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskVersion",
+            "columnName": "taskVersion",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "requestedUrl",
+            "columnName": "requestedUrl",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sessionId",
+            "columnName": "sessionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userNote",
+            "columnName": "userNote",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "pageObservation",
+            "columnName": "pageObservation",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "taskId"
+          ]
+        }
+      },
+      {
+        "tableName": "orbit_goals",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `orbitId` TEXT NOT NULL, `title` TEXT NOT NULL, `plan` TEXT NOT NULL, `state` TEXT NOT NULL, `version` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, `updatedAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orbitId",
+            "columnName": "orbitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "title",
+            "columnName": "title",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "plan",
+            "columnName": "plan",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "state",
+            "columnName": "state",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "version",
+            "columnName": "version",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "updatedAt",
+            "columnName": "updatedAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_goals_orbitId",
+            "unique": false,
+            "columnNames": [
+              "orbitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_goals_orbitId` ON `${TABLE_NAME}` (`orbitId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_artifact_versions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `artifactId` TEXT NOT NULL, `orbitId` TEXT NOT NULL, `taskId` TEXT NOT NULL, `runId` TEXT NOT NULL, `actionId` TEXT NOT NULL, `name` TEXT NOT NULL, `relativePath` TEXT NOT NULL, `sha256` TEXT NOT NULL, `byteCount` INTEGER NOT NULL, `createdAt` INTEGER NOT NULL, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "artifactId",
+            "columnName": "artifactId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "orbitId",
+            "columnName": "orbitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "taskId",
+            "columnName": "taskId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "runId",
+            "columnName": "runId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "actionId",
+            "columnName": "actionId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "relativePath",
+            "columnName": "relativePath",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sha256",
+            "columnName": "sha256",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "byteCount",
+            "columnName": "byteCount",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_orbit_artifact_versions_orbitId",
+            "unique": false,
+            "columnNames": [
+              "orbitId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_artifact_versions_orbitId` ON `${TABLE_NAME}` (`orbitId`)"
+          },
+          {
+            "name": "index_orbit_artifact_versions_artifactId",
+            "unique": false,
+            "columnNames": [
+              "artifactId"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_orbit_artifact_versions_artifactId` ON `${TABLE_NAME}` (`artifactId`)"
+          },
+          {
+            "name": "index_orbit_artifact_versions_actionId",
+            "unique": true,
+            "columnNames": [
+              "actionId"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_orbit_artifact_versions_actionId` ON `${TABLE_NAME}` (`actionId`)"
+          }
+        ]
+      },
+      {
+        "tableName": "orbit_notifications",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`orbitId` TEXT NOT NULL, `quietEnabled` INTEGER NOT NULL, `quietStart` INTEGER NOT NULL, `quietEnd` INTEGER NOT NULL, `intervalMinutes` INTEGER NOT NULL, `digestMinute` INTEGER NOT NULL, `lastDeliveredAt` INTEGER NOT NULL, PRIMARY KEY(`orbitId`))",
+        "fields": [
+          {
+            "fieldPath": "orbitId",
+            "columnName": "orbitId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quietEnabled",
+            "columnName": "quietEnabled",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quietStart",
+            "columnName": "quietStart",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "quietEnd",
+            "columnName": "quietEnd",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "intervalMinutes",
+            "columnName": "intervalMinutes",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "digestMinute",
+            "columnName": "digestMinute",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "lastDeliveredAt",
+            "columnName": "lastDeliveredAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "orbitId"
+          ]
+        }
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, 'a65fd4080cfb1f73b48bfa37c11f3e31')"
+    ]
+  }
+}

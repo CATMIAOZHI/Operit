@@ -122,7 +122,7 @@ class TokenStatsRoomMigrationTest {
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -174,7 +174,7 @@ class TokenStatsRoomMigrationTest {
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -415,7 +415,7 @@ reasoningTokens = 50L,
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -536,7 +536,7 @@ outputTokens = 500L,
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -662,7 +662,7 @@ outputTokens = 500L,
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -723,7 +723,7 @@ totalInputTokens = 1000L,
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()
@@ -774,7 +774,7 @@ totalInputTokens = 1000L,
                         AppDatabase.MIGRATION_36_37,
                         AppDatabase.MIGRATION_37_38,
                         AppDatabase.MIGRATION_38_39,
-                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42,
+                        AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43,
                     )
                     .allowMainThreadQueries()
                     .build()

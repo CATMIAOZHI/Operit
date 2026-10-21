@@ -37,7 +37,7 @@ internal object OrbitFileTools {
   - 人物：memory/people/<名字>.md，一人一份；群组：memory/groups/<名字>.md。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
   - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事仍写进 memory.md。
   - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
-  - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好（要什么、不要什么、什么时间）。后台任务会读它。
+  - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好，四节：想听的、别跟我说、什么时候、怎么说。只改相关的那一节；一次拒绝不写成长期禁令。
   - timezones.yaml：用户的长期时区（home）和常联系的人的时区（others）。
   - ALIGNMENT_SYNTHESIS.md：对齐总结（和用户怎么相处），每晚对齐复盘重写。dreams/YYYY-MM-DD.md 是每晚复盘记录，alignment/ 下的 ALIGNMENT_STATE.yaml、PROGRESSION_HISTORY.yaml、REPAIR_THREADS.yaml 是复盘状态，只由复盘维护。
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。

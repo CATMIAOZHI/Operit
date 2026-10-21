@@ -94,7 +94,13 @@ interface OrbitTaskDao {
             val valid = task != null && task.version == it.taskVersion &&
                 task.state in setOf("ACTIVE", "DONE", "WAITING_USER", "VERIFY", "PAUSED")
             if (!valid && it.state == "PENDING") updateDelivery(it.copy(state = "CANCELLED"))
-            valid && it.state == "PENDING"
+            // A draft that ran out while it waited for a quiet chat is moot and never told.
+            val now = System.currentTimeMillis()
+            val expired = it.expiresAt in 1..now
+            if (valid && expired && it.state == "PENDING") updateDelivery(it.copy(state = "CANCELLED",
+                verdict = OrbitDeliveryEntity.SKIP, verdictReason = "moot", verdictNote = OrbitDeliveryEntity.EXPIRED,
+                decidedAt = now))
+            valid && !expired && it.state == "PENDING"
         }
     @Query("SELECT * FROM orbit_goals WHERE orbitId=:orbitId ORDER BY updatedAt DESC")
     fun observeGoals(orbitId: String): Flow<List<OrbitGoalEntity>>
@@ -457,6 +463,35 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE id IN (:ids) AND state='PENDING'")
     suspend fun markHandedToOrbit(ids: List<String>)
 
+    /** Drafts that ran out before Orbit heard of them are never told; the reason is kept. */
+    @Query("UPDATE orbit_deliveries SET state='CANCELLED', verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='moot', " +
+        "verdictNote='" + OrbitDeliveryEntity.EXPIRED + "', decidedAt=:now WHERE orbitId=:orbitId AND state='PENDING' " +
+        "AND expiresAt > 0 AND expiresAt <= :now")
+    suspend fun expirePending(orbitId: String, now: Long)
+
+    /** Items Orbit has already told the user, newest first, to spot a repeat of the same matter. */
+    @Query("SELECT * FROM orbit_deliveries WHERE orbitId=:orbitId AND verdict='" + OrbitDeliveryEntity.SEND + "' " +
+        "AND decidedAt > :since ORDER BY decidedAt DESC LIMIT :limit")
+    suspend fun toldSince(orbitId: String, since: Long, limit: Int): List<OrbitDeliveryEntity>
+
+    /** Orbit's calls on handed items, newest first: what it told and what it left out, and why. */
+    @Query("SELECT * FROM orbit_deliveries WHERE orbitId=:orbitId AND verdict != '' ORDER BY decidedAt DESC LIMIT :limit")
+    suspend fun decidedItems(orbitId: String, limit: Int): List<OrbitDeliveryEntity>
+
+    /** Orbit's call on one handed item; it can still replace a default "not registered" skip. */
+    @Query("UPDATE orbit_deliveries SET verdict=:verdict, verdictReason=:reason, verdictNote=:note, decidedAt=:now " +
+        "WHERE id=:id AND orbitId=:orbitId AND chatId=:chatId AND state='SENT' " +
+        "AND (verdict='' OR verdictReason='" + OrbitDeliveryEntity.UNREGISTERED + "')")
+    suspend fun decide(id: String, orbitId: String, chatId: String, verdict: String, reason: String, note: String, now: Long): Int
+
+    /** Items Orbit spoke about without a call count as not sent. */
+    @Query("UPDATE orbit_deliveries SET verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='" +
+        OrbitDeliveryEntity.UNREGISTERED + "', decidedAt=:now WHERE id IN (:ids) AND verdict=''")
+    suspend fun markUnregistered(ids: List<String>, now: Long)
+
+    @Query("SELECT * FROM orbit_deliveries WHERE runId = :runId")
+    fun observeDeliveryOfRun(runId: String): Flow<OrbitDeliveryEntity?>
+
     /** The application supplies DAOs from the same database and holds its chat lock. */
     @Transaction
     suspend fun appendDelivery(deliveryId: String, now: Long, chats: ChatDao, messages: MessageDao): OrbitDeliveryEntity? {
@@ -662,7 +697,8 @@ interface OrbitTaskDao {
     /** Result + next schedule + delivery form one commit. Recovery never reruns a submitted result. */
     @Transaction
     suspend fun complete(token: OrbitRunEntity, observation: String, message: String, error: String,
-        nextRunAt: Long, bootId: String, now: Long, elapsed: Long, decision: String = ""): Boolean {
+        nextRunAt: Long, bootId: String, now: Long, elapsed: Long, decision: String = "",
+        opportunityKey: String = "", expiresAt: Long = 0, priority: String = "regular", evidence: String = ""): Boolean {
         val current = currentLease(token, bootId, now, elapsed) ?: return false
         if (unresolvedActions(token.taskId).isNotEmpty()) return false
         val task = checkNotNull(task(current.taskId))
@@ -685,6 +721,7 @@ interface OrbitTaskDao {
             id = current.id, runId = current.id, taskId = task.id, taskVersion = task.version,
             orbitId = task.orbitId, chatId = task.chatId, title = task.title, body = message,
             createdAt = now, state = "PENDING", messageId = null, messageTimestamp = null, notificationSent = false,
+            opportunityKey = opportunityKey, expiresAt = expiresAt, priority = priority, evidence = evidence,
         ))
         deleteEvent(current.eventId)
         // A check skipped because its source was not ready is not a success that relays to EVENT tasks.
