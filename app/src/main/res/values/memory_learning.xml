@@ -7,7 +7,7 @@
     <string name="memory_review_interval">记忆提取间隔（用户对话轮数）</string>
     <string name="skill_review_interval">技能提取间隔（工具迭代次数）</string>
     <string name="memory_learning_delay_minutes">%1$d 分钟</string>
-    <string name="memory_auto_master_off">总开关已关闭：图谱、笔记和技能的自动提取均暂停。路径设置会保留。</string>
+    <string name="memory_auto_master_off">总开关已关闭：笔记和技能都不会自动整理。下面的设置会保留。</string>
     <string name="memory_graph_path_desc">总开关开启后，定时整理对话并写入旧记忆图谱。此路径开关对所有记忆空间生效。</string>
     <string name="memory_notes_path_desc">总开关开启后，每次回复结束可整理当前空间的 memory.md 和全局 user.md，按自动通过设置生效或等待审批。</string>
     <string name="memory_skills_path_desc">总开关开启后，从当前空间的对话提炼可复用技能，按自动通过设置安装或等待审批。持续修订由下面的开关控制。</string>
@@ -119,7 +119,8 @@
     <string name="memory_review_delete_skill">通过后将删除此技能及其全部附属文件。上方清单用于确认待删除的文件版本。</string>
     <string name="memory_interval_unit_turns">轮</string>
     <string name="memory_interval_unit_iterations">次工具调用</string>
-    <string name="memory_graph_empty">这里还没有记忆。点右下角的加号新建，或让 AI 从对话里自动提取。</string>
+    <string name="memory_graph_empty">这里没有旧记忆。旧记忆只能查看，新的记忆会自动整理到新记忆里。</string>
+    <string name="memory_legacy_read_only_banner">旧记忆只能查看和搜索，不能再新增或修改</string>
     <string name="memory_graph_empty_search">没有找到匹配的记忆，换个关键词试试。</string>
     <string name="memory_source_manual">手动添加</string>
     <string name="memory_source_ai_created">AI 自动添加</string>

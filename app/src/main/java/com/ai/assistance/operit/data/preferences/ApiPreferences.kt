@@ -339,13 +339,11 @@ class ApiPreferences private constructor(private val context: Context) {
         context.apiDataStore.data.map { preferences ->
             preferences[ENABLE_MEMORY_AUTO_UPDATE] ?: DEFAULT_ENABLE_MEMORY_AUTO_UPDATE
         }
-    val enableLegacyMemoryExtractionFlow: Flow<Boolean> =
-        context.apiDataStore.data.map { it[ENABLE_LEGACY_MEMORY_EXTRACTION] ?: false }
-
-    suspend fun saveEnableLegacyMemoryExtraction(enabled: Boolean) {
-        context.apiDataStore.edit { it[ENABLE_LEGACY_MEMORY_EXTRACTION] = enabled }
-        if (!enabled) com.ai.assistance.operit.api.chat.library.MemoryAutoSaveScheduler.getInstance()?.cancelAutomaticExtraction()
-    }
+    /**
+     * Extraction into the old memory graph is gone: the graph is read-only, so this is always off
+     * whatever was saved before. New memory is learned by the memory_review pipeline instead.
+     */
+    val enableLegacyMemoryExtractionFlow: Flow<Boolean> = kotlinx.coroutines.flow.flowOf(false)
 
     // Flow for Auto Read
     val enableAutoReadFlow: Flow<Boolean> =

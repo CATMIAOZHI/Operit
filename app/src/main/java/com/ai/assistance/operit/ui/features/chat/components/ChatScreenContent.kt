@@ -599,33 +599,7 @@ fun ChatScreenContent(
                             )
                         }
 
-                        FilledIconButton(
-                            onClick = {
-                                if (selectedMessageIndices.isNotEmpty()) {
-                                    val selectedMessages =
-                                        selectedMessageIndices
-                                            .mapNotNull { index -> chatHistory.getOrNull(index) }
-                                            .sortedBy { it.timestamp }
-                                    actualViewModel.enqueueSelectedMessagesForMemoryAutoSave(
-                                        selectedMessages
-                                    )
-                                }
-                            },
-                            enabled = selectedMessageIndices.isNotEmpty(),
-                            modifier = Modifier.size(32.dp),
-                            colors = IconButtonDefaults.filledIconButtonColors(
-                                containerColor = MaterialTheme.colorScheme.tertiaryContainer,
-                                contentColor = MaterialTheme.colorScheme.onTertiaryContainer,
-                                disabledContainerColor = MaterialTheme.colorScheme.surfaceVariant,
-                                disabledContentColor = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.38f)
-                            )
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.CheckCircle,
-                                contentDescription = stringResource(R.string.add_selected_to_memory),
-                                modifier = Modifier.size(16.dp)
-                            )
-                        }
+                        // "Add selected to memory" fed only the old memory graph, which is read-only now.
 
                         // 分享按钮
                         FilledIconButton(

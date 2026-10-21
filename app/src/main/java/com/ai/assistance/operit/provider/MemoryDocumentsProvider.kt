@@ -243,8 +243,8 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         row.add(DocumentsContract.Root.COLUMN_MIME_TYPES, "application/json\ntext/plain\n*/*")
         row.add(
             DocumentsContract.Root.COLUMN_FLAGS,
-            DocumentsContract.Root.FLAG_SUPPORTS_CREATE or
-                DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
+            // The old memory is read-only: nothing can be created here.
+            DocumentsContract.Root.FLAG_SUPPORTS_IS_CHILD
         )
         row.add(DocumentsContract.Root.COLUMN_ICON, android.R.drawable.ic_menu_info_details)
         row.add(DocumentsContract.Root.COLUMN_TITLE, "Operit Memory Library")
@@ -363,6 +363,8 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         val handler = Handler(Looper.getMainLooper())
 
         val wantsWrite = mode.contains('w') || mode.contains('W')
+        // The old memory is read-only; refuse before an editor believes its save went through.
+        if (wantsWrite) throw SecurityException("Legacy memory is read-only")
         return if (!wantsWrite) {
             val jsonString = runBlocking {
                 val memory = repo.findMemoryByUuid(ref.uuid)
@@ -675,7 +677,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                 row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, 0L)
                 row.add(
                     DocumentsContract.Document.COLUMN_FLAGS,
-                    DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
+                    DocumentsContract.Document.FLAG_SUPPORTS_RENAME
                 )
                 row.add(DocumentsContract.Document.COLUMN_SIZE, 0L)
             }
@@ -684,10 +686,8 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                 requireProfileExists(ref.profileId)
                 val repo = getRepository(ref.profileId)
                 requireDirectoryExists(repo, ref.path)
-                var flags = DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
-                flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_DELETE
-                flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
-                flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+                // Folders of the old memory are read-only.
+                val flags = 0
 
                 val row = result.newRow()
                 row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, buildDirectoryDocumentId(ref.profileId, ref.path))
@@ -714,10 +714,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                 row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, lastModified)
                 row.add(
                     DocumentsContract.Document.COLUMN_FLAGS,
-                    DocumentsContract.Document.FLAG_SUPPORTS_WRITE or
-                        DocumentsContract.Document.FLAG_SUPPORTS_DELETE or
-                        DocumentsContract.Document.FLAG_SUPPORTS_RENAME or
-                        DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+                    0 // the old memory is read-only
                 )
                 row.add(DocumentsContract.Document.COLUMN_SIZE, size)
             }
@@ -733,16 +730,14 @@ class MemoryDocumentsProvider : DocumentsProvider() {
         row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, 0L)
         row.add(
             DocumentsContract.Document.COLUMN_FLAGS,
-            DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
+            DocumentsContract.Document.FLAG_SUPPORTS_RENAME
         )
         row.add(DocumentsContract.Document.COLUMN_SIZE, 0L)
     }
 
     private fun includeDirectory(result: MatrixCursor, profileId: String, path: String, displayName: String) {
-        var flags = DocumentsContract.Document.FLAG_DIR_SUPPORTS_CREATE
-        flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_DELETE
-        flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_RENAME
-        flags = flags or DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+        // Folders of the old memory are read-only.
+        val flags = 0
 
         val row = result.newRow()
         row.add(DocumentsContract.Document.COLUMN_DOCUMENT_ID, buildDirectoryDocumentId(profileId, path))
@@ -775,10 +770,7 @@ class MemoryDocumentsProvider : DocumentsProvider() {
                 row.add(DocumentsContract.Document.COLUMN_LAST_MODIFIED, lastModified)
                 row.add(
                     DocumentsContract.Document.COLUMN_FLAGS,
-                    DocumentsContract.Document.FLAG_SUPPORTS_WRITE or
-                        DocumentsContract.Document.FLAG_SUPPORTS_DELETE or
-                        DocumentsContract.Document.FLAG_SUPPORTS_RENAME or
-                        DocumentsContract.Document.FLAG_SUPPORTS_MOVE
+                    0 // the old memory is read-only
                 )
                 row.add(DocumentsContract.Document.COLUMN_SIZE, size)
             }

@@ -236,7 +236,6 @@ fun MemoryManagementCard(
     operationState: MemoryOperation,
     operationMessage: String,
     onExport: () -> Unit,
-    onImport: () -> Unit
 ) {
     val memoryTitle = stringResource(R.string.backup_memory_library)
 
@@ -256,6 +255,12 @@ fun MemoryManagementCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
+            // The old memory graph is read-only, so it can be exported but no longer imported.
+            Text(
+                text = stringResource(R.string.memory_legacy_read_only_banner),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
 
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
@@ -266,12 +271,6 @@ fun MemoryManagementCard(
                     text = stringResource(R.string.backup_export),
                     icon = Icons.Default.CloudDownload,
                     onClick = onExport,
-                    modifier = Modifier.weight(1f, fill = false)
-                )
-                ManagementButton(
-                    text = stringResource(R.string.backup_import),
-                    icon = Icons.Default.CloudUpload,
-                    onClick = onImport,
                     modifier = Modifier.weight(1f, fill = false)
                 )
             }

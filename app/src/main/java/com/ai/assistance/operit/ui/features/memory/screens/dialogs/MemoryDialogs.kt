@@ -44,12 +44,9 @@ import kotlin.math.roundToInt
 fun MemoryInfoDialog(
         memory: Memory,
         onDismiss: () -> Unit,
-        onEdit: () -> Unit,
-        onDelete: () -> Unit
 ) {
     val scrollState = rememberScrollState()
     val dateFormat = remember { SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.getDefault()) }
-    var confirmingDelete by remember { mutableStateOf(false) }
     // A raw UUID and the internal source key are developer details, so they stay available but are
     // not shown to every user who just wants to read their memory.
     var showTechnical by remember { mutableStateOf(false) }
@@ -98,27 +95,9 @@ fun MemoryInfoDialog(
                 }
             },
             confirmButton = {
-                FlowRow(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                        verticalArrangement = Arrangement.Center
-                ) {
-                    Button(onClick = onEdit) { Text(stringResource(R.string.memory_edit)) }
-                    Button(
-                            onClick = { confirmingDelete = true },
-                            colors =
-                                    ButtonDefaults.buttonColors(
-                                            containerColor = MaterialTheme.colorScheme.error
-                                    )
-                    ) { Text(stringResource(R.string.memory_delete)) }
-                    OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
-                }
+                // The old memory graph is read-only: it can be read here but not edited or deleted.
+                OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
             }
-    )
-    if (confirmingDelete) DeleteConfirmed(
-        message = stringResource(R.string.memory_confirm_delete_node),
-        onDismiss = { confirmingDelete = false },
-        onConfirm = { confirmingDelete = false; onDelete() }
     )
 }
 
@@ -243,12 +222,9 @@ fun EdgeInfoDialog(
     edge: Edge,
     graph: com.ai.assistance.operit.ui.features.memory.screens.graph.model.Graph,
     onDismiss: () -> Unit,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit
 ) {
     val sourceNode = graph.nodes.find { it.id == edge.sourceId }
     val targetNode = graph.nodes.find { it.id == edge.targetId }
-    var confirmingDelete by remember { mutableStateOf(false) }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -263,24 +239,9 @@ fun EdgeInfoDialog(
             }
         },
         confirmButton = {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End),
-                verticalArrangement = Arrangement.Center
-            ) {
-                Button(onClick = onEdit) { Text(stringResource(R.string.memory_edit)) }
-                Button(
-                    onClick = { confirmingDelete = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) { Text(stringResource(R.string.memory_delete)) }
-                OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
-            }
+            // The old memory graph is read-only: links can be read here but not edited or deleted.
+            OutlinedButton(onClick = onDismiss) { Text(stringResource(R.string.memory_close)) }
         }
-    )
-    if (confirmingDelete) DeleteConfirmed(
-        message = stringResource(R.string.memory_confirm_delete_edge),
-        onDismiss = { confirmingDelete = false },
-        onConfirm = { confirmingDelete = false; onDelete() }
     )
 }
 

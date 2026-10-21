@@ -3089,7 +3089,9 @@
     <string name="memory_space_name">记忆空间名称</string>
     <string name="memory_space_delete_warning">确定删除“%1$s”及其中的全部记忆吗？此操作无法撤销。</string>
     <string name="memory_auto_update">自动保存记忆（总开关）</string>
-    <string name="memory_auto_update_desc">全局控制自动记忆学习。关闭后停止图谱、笔记和技能的自动提取；开启后按「记忆库 → 自动保存设置」中的独立路径开关执行。</string>
+    <string name="memory_auto_update_desc">全局控制自动记忆学习。关闭后停止笔记和技能的自动整理；开启后按「记忆库 → 自动保存设置」中的开关执行。旧记忆只读，不再新增。</string>
+    <string name="memory_auto_update_runtime_new_on">新记忆（笔记和技能）会在聊天后自动整理。旧记忆只能查看，不再新增。</string>
+    <string name="memory_auto_update_runtime_new_off">自动记忆学习已关闭，笔记和技能不会自动整理。旧记忆只能查看，不再新增。</string>
     <string name="memory_auto_update_runtime_status">图谱自动提取：待处理候选 %1$d 条，距离下次检查约 %2$d 分钟</string>
     <string name="memory_auto_update_runtime_paused">图谱自动提取未开启；待处理候选 %1$d 条会保留，不会自动执行</string>
     <string name="memory_auto_update_runtime_paused_master">自动保存记忆的总开关已关闭，图谱、笔记和技能的自动提取都已暂停；待处理候选 %1$d 条会保留</string>
@@ -5139,7 +5141,7 @@
 
     <!-- 手动更新记忆 -->
     <string name="memory_include_thinking">提取时包含思考内容</string>
-    <string name="memory_include_thinking_desc">当前记忆空间的图谱、笔记和技能提取会参考模型的 think 思考内容，包括提取时读取的历史。默认开启；关闭后只参考正文和工具记录，不影响聊天显示或上下文缓存。</string>
+    <string name="memory_include_thinking_desc">当前记忆空间整理笔记和技能时会参考模型的思考内容，包括整理时读取的历史。默认开启；关闭后只参考正文和工具记录，不影响聊天显示或上下文缓存。</string>
     <string name="manual_memory_update">立即整理图谱记忆</string>
     <string name="manual_memory_update_desc">立即将本次对话的有价值内容整理到旧记忆图谱，不受自动保存总开关影响。笔记和技能由自动提炼整理。</string>
     <string name="manual_conversation_summary">手动总结对话</string>
@@ -6081,7 +6083,7 @@
     <string name="backup_delete_all">删除全部</string>
     
     <string name="backup_memory_library">记忆库</string>
-    <string name="backup_memory_library_subtitle">跨配置备份与恢复，保持思维链一致</string>
+    <string name="backup_memory_library_subtitle">导出旧记忆备份</string>
     <string name="backup_memory_current_count">当前共有 %1$d 条记忆和 %2$d 个链接。</string>
     
     <string name="backup_model_config">模型配置</string>
@@ -9109,6 +9111,7 @@
     <string name="orbit_delete_phrase">我确认删除%1$s</string>
     <string name="orbit_delete_wait">删除（%1$d）</string>
     <string name="orbit_memory_graph_unavailable">Orbit 没有记忆图谱，它的记忆都写在 memory.md 里</string>
+    <string name="memory_legacy_read_only">旧记忆只能查看，不能再新增或修改。新的记忆会自动整理到新记忆里。</string>
     <string name="orbit_settings">Orbit 设置</string>
     <string name="orbit_pause">暂停 %1$s</string>
     <string name="orbit_pause_desc">暂停后可以换成别的角色，聊天记录会保留</string>

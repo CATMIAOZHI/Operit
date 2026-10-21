@@ -344,8 +344,7 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
 
         AppLogger.d(TAG, "【启动计时】JSON序列化器初始化完成 - ${System.currentTimeMillis() - startTime}ms")
 
-        memoryAutoSaveScheduler = MemoryAutoSaveScheduler(applicationContext, applicationScope)
-            .also { it.start() }
+        // The old memory graph is read-only, so its extraction scheduler no longer runs.
         com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.resumePending(applicationContext)
         AppLogger.d(TAG, "【启动计时】长期记忆自动保存轮询器启动完成 - ${System.currentTimeMillis() - startTime}ms")
 
