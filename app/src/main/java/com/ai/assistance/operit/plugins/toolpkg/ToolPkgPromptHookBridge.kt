@@ -21,8 +21,14 @@ import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_PROMPT_HISTORY
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_PROMPT_INPUT
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_SYSTEM_PROMPT_COMPOSE
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_TOOL_PROMPT_COMPOSE
+import android.os.Looper
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.core.application.OperitApplication
+import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+import com.ai.assistance.operit.features.orbit.OrbitPackages
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -156,6 +162,35 @@ internal object ToolPkgPromptHookBridge {
         manager.addToolPkgRuntimeChangeListener(runtimeChangeListener)
     }
 
+    /**
+     * In an Orbit chat only plugins the Orbit itself has switched on may change its prompt; the main
+     * app's plugin switches stay out. Normal chats keep every active hook.
+     */
+    private fun orbitScopedHooks(
+        hooks: List<ToolPkgPromptHookRegistration>,
+        chatId: String?
+    ): List<ToolPkgPromptHookRegistration> {
+        if (chatId.isNullOrBlank()) return hooks
+        val appContext = OperitApplication.instance.applicationContext
+        val containers = runCatching {
+            val orbitId =
+                if (Looper.getMainLooper().isCurrentThread) {
+                    // On the main thread use the loaded settings only; an Orbit's own chats and every
+                    // chat whose owner was already resolved are in them.
+                    OrbitPreferences.getInstance(appContext).loadedSettingsBlocking()
+                        .let { it.ownerForChat(chatId) ?: it.orbitForChat(chatId) }?.id
+                } else {
+                    runBlocking { OrbitMemoryScope.owner(appContext, chatId) }?.id
+                } ?: return hooks
+            val manager = toolPkgPackageManager()
+            OrbitPackages.enabledNow(appContext, orbitId).mapNotNullTo(HashSet()) { manager.toolPkgContainerOf(it) }
+        }.getOrElse { error ->
+            AppLogger.e(TAG, "Could not tell whether $chatId is an Orbit chat; skipping plugin prompt hooks", error)
+            emptySet()
+        }
+        return hooks.filter { it.containerPackageName in containers }
+    }
+
     private fun dispatchPromptHooks(
         hooks: List<ToolPkgPromptHookRegistration>,
         familyEvent: String,
@@ -165,11 +200,15 @@ internal object ToolPkgPromptHookBridge {
         if (hooks.isEmpty()) {
             return null
         }
+        val scopedHooks = orbitScopedHooks(hooks, context.chatId)
+        if (scopedHooks.isEmpty()) {
+            return null
+        }
 
         val manager = toolPkgPackageManager()
         val budget = ToolPkgHookExecutionBudget.create()
         var current = context
-        for (hook in hooks) {
+        for (hook in scopedHooks) {
             val resolvedHookId = hook.hookId
             val resolvedContainer = hook.containerPackageName
             val resolvedFunction = hook.functionName

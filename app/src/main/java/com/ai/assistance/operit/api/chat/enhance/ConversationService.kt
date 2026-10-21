@@ -501,6 +501,11 @@ class ConversationService(
             dispatchSystemPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchSystemPromptComposeHooks,
             dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
     ): List<PromptTurn> {
+        // Settle which Orbit (if any) owns this chat before the first plugin hook runs, so hooks
+        // that cannot look up a chat's parents (an older subagent's, say) still keep to the Orbit's own.
+        chatId?.takeIf { it.isNotBlank() }?.let {
+            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.registerDescendant(context, it)
+        }
         val activePromptMetadata =
             buildActivePromptHookMetadata(
                 context,
@@ -610,7 +615,8 @@ class ConversationService(
                         isSubTask = isSubTask,
                         requestTemplate = customSystemPromptTemplate,
                         globalTemplate =
-                            if (isSubTask) {
+                            // The main app's custom template is its own setting; an Orbit uses the built-in one.
+                            if (isSubTask || orbitParts != null) {
                                 ""
                             } else {
                                 apiPreferences.customSystemPromptTemplateFlow.first()
@@ -697,9 +703,9 @@ class ConversationService(
                     dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
                 )
 
-                // 构建waifu特殊规则
+                // 构建waifu特殊规则。Orbit 有自己的身份和性格，主应用的老婆模式规则不进 Orbit。
                 val waifuRulesText =
-                    if (allowPersonalContext && waifuPreferences.enableWaifuModeFlow.first()) {
+                    if (orbitParts == null && allowPersonalContext && waifuPreferences.enableWaifuModeFlow.first()) {
                         buildWaifuRulesText()
                     } else {
                         ""
@@ -716,7 +722,8 @@ class ConversationService(
                         append(additionalSystemPrompt)
                         append("\n</subagent_profile>")
                     }
-                    if (allowPersonalContext && proxyRolePrompt.isNotEmpty()) {
+                    // A main-app role card never speaks for an Orbit.
+                    if (orbitParts == null && allowPersonalContext && proxyRolePrompt.isNotEmpty()) {
                         append("\n\n<assistant_role source=\"proxy_character_card\">\n")
                         append(proxyRolePrompt)
                         append("\n</assistant_role>")
@@ -748,7 +755,13 @@ class ConversationService(
                 }
 
                 // 替换提示词中的占位符
-                val aiName = activeCard?.name ?: context.getString(R.string.app_name)
+                // In an Orbit's chats, its subagents' included, {{char}} is the Orbit's own name, never
+                // a main-app role card's.
+                val orbitName = if (orbitSpace != null || orbitParts != null) {
+                    runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+                        .getOrNull()?.let { owner -> owner.name.trim().ifEmpty { "Orbit" } }
+                } else null
+                val aiName = orbitName ?: activeCard?.name ?: context.getString(R.string.app_name)
                 val finalSystemPromptWithReplacements = replacePromptPlaceholders(
                     finalSystemPrompt,
                     aiName

@@ -88,16 +88,18 @@ class CharacterCardToolAccessResolver private constructor(private val context: C
             ?: runCatching { apiPreferences.toolPromptVisibilityFlow.first() }.getOrElse { emptyMap() }
 
         // In an Orbit chat the package list is the Orbit's own, apart from the main app's.
-        val globalPackageNames = com.ai.assistance.operit.features.orbit.OrbitPackages
-            .scopeFor(context, packageManager, chatId)?.let { LinkedHashSet(it) }
+        val orbitScope = com.ai.assistance.operit.features.orbit.OrbitPackages
+            .scopeFor(context, packageManager, chatId)
+        val globalPackageNames = orbitScope?.let { LinkedHashSet(it) }
             ?: buildGlobalPackageNames(packageManager)
         val knownPackageNames = packageManager.getAvailablePackages().keys
             .filterTo(LinkedHashSet()) { !packageManager.isToolPkgContainer(it) }
         val globalSkillNames = LinkedHashSet(SkillRepository.forChat(context, chatId).getAiVisibleSkillPackages().keys)
         val globalMcpServerNames = LinkedHashSet(packageManager.getAvailableServerPackages().keys)
 
+        // A main-app role card's tool limits do not apply to an Orbit.
         val roleCardConfig = roleCardId
-            ?.takeIf { it.isNotBlank() }
+            ?.takeIf { it.isNotBlank() && orbitScope == null }
             ?.let { cardId ->
                 runCatching { characterCardManager.getCharacterCard(cardId).toolAccessConfig.normalized() }
                     .getOrDefault(CharacterCardToolAccessConfig())

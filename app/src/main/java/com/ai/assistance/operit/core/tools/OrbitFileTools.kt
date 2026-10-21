@@ -35,7 +35,7 @@ internal object OrbitFileTools {
             ToolParameterSchema("line_count", "integer", "read 可选：最多读几行，默认读到 20000 字为止", false),
             ToolParameterSchema("start_char", "integer", "read 可选：只在接着读一行特别长的行时用，表示从 start_line 这一行的第几个字开始（从 1 开始）", false),
             ToolParameterSchema("trash_id", description = "restore：trash 返回的编号", required = false),
-            ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如绘图工具返回的 file_path", required = false),
+            ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如终端或其他工具生成的文件", required = false),
             ToolParameterSchema("format", description = "export：html、docx 或 pdf", required = false),
         ),
         details = """
@@ -51,7 +51,7 @@ internal object OrbitFileTools {
   - write 会覆盖整个文件，先 read 再改；返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点一下就存进相册；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
-  - import：把应用里别处的文件收进 files/（比如绘图工具画好的图），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
+  - import：把应用里别处的文件收进 files/（比如终端或其他工具生成的文件），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
   - export：把 files/ 里的 Markdown 文件导出成 html（网页）、docx（Word）或 pdf，存在同一个文件夹，返回新文件路径（同名文件已存在时会自动改名）。要交给用户一份正式文档时先写 Markdown 再导出。支持标题、段落、列表、引用、代码、分割线和粗体斜体；表格会变成对齐的等宽文字，图片只留下名字。
 """,
     )

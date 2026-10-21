@@ -1670,7 +1670,11 @@ private fun ChatInputBottomBar(
     val permissionStop by actualViewModel.masterPermissionStop.collectAsState()
     val isSummarizing by actualViewModel.isSummarizing.collectAsState()
     val isSendTriggeredSummarizing by actualViewModel.isSendTriggeredSummarizing.collectAsState()
-    val isWaifuModeEnabled by waifuPreferences.enableWaifuModeFlow.collectAsState(initial = false)
+    val waifuModeSetting by waifuPreferences.enableWaifuModeFlow.collectAsState(initial = false)
+    // The main app's waifu merge-send does not apply in an Orbit chat, including its developer view
+    // (which draws with the normal look), so ask which chats belong to an Orbit.
+    val orbitOwnedChatIds by com.ai.assistance.operit.features.orbit.rememberOrbitChatIds()
+    val isWaifuModeEnabled = waifuModeSetting && !orbitChat && currentChatId !in orbitOwnedChatIds
     val isWaifuMergeSendEnabled by
         waifuPreferences.waifuEnableMergeSendFlow.collectAsState(initial = false)
     val waifuMergeSendDelayMs by
