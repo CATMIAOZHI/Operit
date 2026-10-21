@@ -94,8 +94,9 @@ class OrbitLearningBoundary(
             val orbit = preferences.current().orbits.single { it.id == orbitId }
             val generation = orbit.memorySpaceId?.let { guard(context, it).generation } ?: 0
             // "layout-v2": stable parts first, Soul/memory/user last; the required packages list the
-            // packages every Orbit always has. A change to either rebuilds old snapshots once.
-            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:layout-v2:" +
+            // packages every Orbit always has; "isolation-v1": main-app persona and settings stay out.
+            // A change to any of these rebuilds old snapshots once.
+            return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:layout-v2:isolation-v1:" +
                 "required-${OrbitPackages.REQUIRED.sorted().joinToString(",")}:" +
                 OrbitPromptFiles.revision(context, orbitId)
         }

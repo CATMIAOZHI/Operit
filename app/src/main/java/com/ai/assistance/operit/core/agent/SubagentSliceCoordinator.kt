@@ -80,6 +80,8 @@ class SubagentSliceCoordinator(context: Context) {
             )
         val taskId = created.run.id
         val child = created.childChat
+        // A subagent of an Orbit chat belongs to that Orbit; record it before any prompt is built.
+        com.ai.assistance.operit.features.orbit.OrbitMemoryScope.registerDescendant(appContext, child.id)
 
         var activeSession: com.ai.assistance.operit.services.core.ChatTurnSession? = null
         try {

@@ -54,6 +54,7 @@ object OrbitPackages {
     // Guards publishing and forgetting the list together, so a slow scan cannot bring back an old one.
     private val namesLock = Any()
     private var namesVersion = 0L
+    private val enabledByOrbit = ConcurrentHashMap<String, Set<String>>()
 
     /** A package could not be switched on because something it needs is missing or the wrong version. */
     class NeedsMissingException(val packageName: String, detail: String) : IllegalArgumentException(detail)
@@ -137,7 +138,20 @@ object OrbitPackages {
         synchronized(namesLock) {
             namesVersion++
             namesInUse = null
+            enabledByOrbit.clear()
         }
+    }
+
+    /**
+     * The packages switched on for this Orbit, for code that cannot suspend (plugin prompt hooks).
+     * Kept in memory until a package switch changes, so it normally reads no file.
+     */
+    fun enabledNow(context: Context, orbitId: String): Set<String> {
+        enabledByOrbit[orbitId]?.let { return it }
+        val version = synchronized(namesLock) { namesVersion }
+        val enabled = readOrEmpty(file(context, orbitId)).enabled
+        synchronized(namesLock) { if (namesVersion == version) enabledByOrbit[orbitId] = enabled }
+        return enabled
     }
 
     private fun allOrbitNames(context: Context): Set<String> {

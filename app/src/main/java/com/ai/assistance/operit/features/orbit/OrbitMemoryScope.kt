@@ -45,6 +45,20 @@ object OrbitMemoryScope {
         return null
     }
 
+    /**
+     * Records which Orbit a newly made child chat (a subagent's) belongs to, from its parents, so
+     * code that cannot look up the chat's ancestry still treats it as the Orbit's.
+     */
+    suspend fun registerDescendant(context: Context, chatId: String) {
+        try {
+            owner(context, chatId)
+        } catch (cancelled: kotlinx.coroutines.CancellationException) {
+            throw cancelled
+        } catch (error: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w("OrbitMemoryScope", "Could not record the Orbit of $chatId: ${error.message}")
+        }
+    }
+
     suspend fun resolve(context: Context, chatId: String?, requested: String?): String? {
         val orbit = owner(context, chatId)
         val preferences = UserPreferencesManager.getInstance(context)

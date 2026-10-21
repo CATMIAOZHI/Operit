@@ -1345,7 +1345,10 @@ class MessageProcessingDelegate(
 
                 // 检查是否启用waifu模式来决定是否显示流式过程
                 val waifuPreferences = WaifuPreferences.getInstance(context)
-                isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first()
+                // The main app's waifu mode (split sentences, typing delay, emotion stickers) is not an Orbit's.
+                isWaifuModeEnabled = waifuPreferences.enableWaifuModeFlow.first() &&
+                    runCatching { com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) }
+                        .getOrNull() == null
                 val collaborationEnabled =
                     com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
                         .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true

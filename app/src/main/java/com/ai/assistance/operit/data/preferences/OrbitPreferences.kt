@@ -240,12 +240,16 @@ class OrbitPreferences private constructor(context: Context) {
     }
 
     suspend fun rememberChatOwner(chatId: String, orbitId: String) {
+        var added = false
         dataStore.edit { preferences ->
             val owners = JSONObject(preferences[CHAT_OWNERS] ?: "{}")
             check(!owners.has(chatId) || owners.getString(chatId) == orbitId)
+            added = !owners.has(chatId)
             owners.put(chatId, orbitId)
             preferences[CHAT_OWNERS] = owners.toString()
         }
+        // Code that cannot suspend reads the snapshot; make the new owner visible to it right away.
+        if (added) current()
     }
 
     /** Temporary model chats have no user archive; only forget ownership after confirmed deletion. */
@@ -327,6 +331,8 @@ class OrbitPreferences private constructor(context: Context) {
             check(orbits.none { it.id != owner.id && (it.chatId == childChatId || childChatId in it.ownedChatIds) })
             orbits.map { if (it.id == owner.id) it.copy(ownedChatIds = it.ownedChatIds + childChatId) else it }
         }
+        // Code that cannot suspend reads the snapshot; make the inherited owner visible to it right away.
+        current()
     }
 
     suspend fun addSideChat(orbitId: String, chatId: String, title: String) {
