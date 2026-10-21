@@ -83,6 +83,8 @@ internal fun OrbitVaultPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenEntry
     var reload by remember { mutableStateOf(0) }
     val loaded = vaultEntries(orbit.id, reload)
     val list = loaded?.getOrNull()?.sortedByDescending { it.savedAt }
+    // A new password keeps the old one, so one user can have two rows; their save time tells them apart.
+    val twins = remember(list) { list.orEmpty().groupingBy { Triple(it.kind, it.site, it.username) }.eachCount() }
     LazyColumn(
         Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
             .statusBarsPadding().navigationBarsPadding(),
@@ -112,7 +114,7 @@ internal fun OrbitVaultPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenEntry
                         modifier = Modifier.padding(start = 70.dp, end = 16.dp),
                         color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                     )
-                    VaultRow(entry) { onOpenEntry(entry.id) }
+                    VaultRow(entry, (twins[Triple(entry.kind, entry.site, entry.username)] ?: 0) > 1) { onOpenEntry(entry.id) }
                 }
             }
         }
@@ -148,7 +150,7 @@ private fun VaultIcon(name: String, size: androidx.compose.ui.unit.Dp, iconSize:
 }
 
 @Composable
-private fun VaultRow(entry: OrbitVault.Entry, onClick: () -> Unit) {
+private fun VaultRow(entry: OrbitVault.Entry, showTime: Boolean, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().heightIn(min = 64.dp)
             .clickable(role = Role.Button, onClick = onClick)
@@ -161,8 +163,10 @@ private fun VaultRow(entry: OrbitVault.Entry, onClick: () -> Unit) {
             Text(entry.site, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.SemiBold,
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
-                if (entry.isLogin()) OrbitVault.masked(entry.username).ifBlank { stringResource(R.string.orbit_vault_password) }
-                else stringResource(R.string.orbit_vault_api_key),
+                (if (entry.isLogin()) OrbitVault.masked(entry.username).ifBlank { stringResource(R.string.orbit_vault_password) }
+                else stringResource(R.string.orbit_vault_api_key)) +
+                    (if (showTime) " · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
+                        .format(Date(entry.savedAt)) else ""),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1, overflow = TextOverflow.Ellipsis,

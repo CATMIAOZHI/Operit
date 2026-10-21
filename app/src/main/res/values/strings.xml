@@ -9689,6 +9689,14 @@
     <string name="orbit_vault_add">添加</string>
     <string name="orbit_vault_card_login_title">安全存储</string>
     <string name="orbit_vault_card_login_sub">登录 %1$s</string>
+    <string name="orbit_vault_card_new_password_sub">为 %1$s 设新密码</string>
+    <string name="orbit_vault_sheet_new_password">设置新密码</string>
+    <string name="orbit_vault_password_confirm">再输一次</string>
+    <string name="orbit_vault_password_mismatch">两次输入的密码不一样</string>
+    <string name="orbit_vault_generate">生成一个强密码</string>
+    <string name="orbit_vault_set">设置</string>
+    <string name="orbit_vault_reset">重新设置</string>
+    <string name="orbit_vault_card_new_password_saved">新密码已存进保险箱</string>
     <string name="orbit_vault_card_key_sub">API 密钥</string>
     <string name="orbit_vault_card_saved">已存进保险箱</string>
     <string name="orbit_vault_card_update">更新</string>

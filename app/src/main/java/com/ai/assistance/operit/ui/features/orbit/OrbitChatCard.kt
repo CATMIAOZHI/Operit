@@ -93,10 +93,14 @@ private fun VaultCard(request: OrbitVault.Request) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val login = request.kind == OrbitVault.LOGIN
+    val fresh = login && request.newPassword
     val version by OrbitVault.version.collectAsState()
     val saved by produceState(false, request, version) {
-        value = runCatching { OrbitVault.has(OrbitVault.entries(context, request.orbitId), request.kind, request.site) }
-            .getOrDefault(false)
+        // A new-password card is done once a password is saved after it; an older login does not count.
+        value = runCatching {
+            val entries = OrbitVault.entries(context, request.orbitId)
+            if (fresh) OrbitVault.newPasswordSaved(entries, request) else OrbitVault.has(entries, request.kind, request.site)
+        }.getOrDefault(false)
     }
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -109,6 +113,8 @@ private fun VaultCard(request: OrbitVault.Request) {
                 )
                 Text(
                     when {
+                        fresh && saved -> stringResource(R.string.orbit_vault_card_new_password_saved)
+                        fresh -> stringResource(R.string.orbit_vault_card_new_password_sub, request.site)
                         saved -> stringResource(R.string.orbit_vault_card_saved)
                         login -> stringResource(R.string.orbit_vault_card_login_sub, request.site)
                         else -> stringResource(R.string.orbit_vault_card_key_sub)
@@ -129,6 +135,8 @@ private fun VaultCard(request: OrbitVault.Request) {
                 Text(
                     stringResource(
                         when {
+                            fresh && saved -> R.string.orbit_vault_reset
+                            fresh -> R.string.orbit_vault_set
                             saved -> R.string.orbit_vault_card_update
                             login -> R.string.orbit_vault_add
                             else -> R.string.orbit_vault_card_link

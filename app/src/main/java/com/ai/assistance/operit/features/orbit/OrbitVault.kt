@@ -37,6 +37,8 @@ internal object OrbitVault {
         /** API key: `bearer`, `header:<Name>` or `query:<param>`. */
         val placement: String,
         val savedAt: Long,
+        /** Saved from a new-password card: that card's [Request.requestedAt]; 0 for any other save. */
+        val card: Long = 0,
     )
 
     /** What one card asks the user for. The value never passes through the request. */
@@ -50,6 +52,10 @@ internal object OrbitVault {
         val usernameHint: String,
         val apiHosts: List<String>,
         val placement: String,
+        /** Login: the user sets a new password (signing up or resetting), typed twice. */
+        val newPassword: Boolean = false,
+        /** New password: when the card was made, so it shows done once a password is saved after it. */
+        val requestedAt: Long = 0,
     )
 
     private val pending = MutableStateFlow<Request?>(null)
@@ -92,7 +98,7 @@ internal object OrbitVault {
             Entry(o.getString("id"), o.getString("kind"), o.getString("site"), o.optString("username"),
                 o.getString("secret"),
                 o.optJSONArray("apiHosts")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
-                o.optString("placement"), o.optLong("savedAt"))
+                o.optString("placement"), o.optLong("savedAt"), o.optLong("card"))
         }
     }
 
@@ -101,23 +107,28 @@ internal object OrbitVault {
             entries.forEach {
                 put(JSONObject().put("id", it.id).put("kind", it.kind).put("site", it.site).put("username", it.username)
                     .put("secret", it.secret).put("apiHosts", JSONArray(it.apiHosts)).put("placement", it.placement)
-                    .put("savedAt", it.savedAt))
+                    .put("savedAt", it.savedAt).put("card", it.card))
             }
         }).toString())
     }
 
-    /** Saves what the user typed. A second login for the same site and user name replaces the first. */
+    /**
+     * Saves what the user typed. A second login for the same site and user name replaces the first,
+     * except a new password: a change-password form still asks for the old one, so it stays until
+     * Orbit deletes it.
+     */
     suspend fun save(context: Context, orbitId: String, request: Request, username: String, secret: String): String =
         withContext(Dispatchers.IO) {
             require(secret.isNotEmpty() && secret.length <= 4000) { "Empty value" }
             lock(orbitId).withLock {
                 val current = read(context, orbitId)
                 val name = username.trim().take(200)
-                val same = current.firstOrNull {
+                val same = if (request.newPassword) null else current.firstOrNull {
                     it.kind == request.kind && it.site == request.site && (request.kind == API_KEY || it.username == name)
                 }
                 val entry = Entry(same?.id ?: UUID.randomUUID().toString().take(8), request.kind, request.site,
-                    name, secret, request.apiHosts, request.placement, System.currentTimeMillis())
+                    name, secret, request.apiHosts, request.placement, System.currentTimeMillis(),
+                    card = if (request.newPassword) request.requestedAt else 0)
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, orbitId, next)
@@ -149,6 +160,21 @@ internal object OrbitVault {
     /** True when a login for [site], or the key for that provider, is already saved. */
     fun has(entries: List<Entry>, kind: String, site: String): Boolean =
         entries.any { it.kind == kind && it.site.equals(site, true) }
+
+    /** True when this new-password card itself was filled in (and that password is still saved). */
+    fun newPasswordSaved(entries: List<Entry>, request: Request): Boolean = request.requestedAt > 0 &&
+        entries.any { it.kind == LOGIN && it.site.equals(request.site, true) && it.card == request.requestedAt }
+
+    /**
+     * After a new password [saved] for a user: the password saved before any new-password card (the
+     * newest such), and the earlier new passwords for that user. Whether the site took one of those
+     * is known only from what the site said, so none of them is called current.
+     */
+    fun earlierPasswords(entries: List<Entry>, saved: Entry): Pair<Entry?, List<Entry>> {
+        val others = entries.filter { it.id != saved.id && it.kind == LOGIN && it.site == saved.site && it.username == saved.username }
+        val current = others.filter { it.card == 0L }.maxByOrNull { it.savedAt }
+        return current to others.filter { it.card != 0L }.sortedBy { it.savedAt }
+    }
 
     /** True when [text] carries any saved value, so it must not be sent or stored. */
     suspend fun containsSecret(context: Context, orbitId: String, text: String): Boolean =
