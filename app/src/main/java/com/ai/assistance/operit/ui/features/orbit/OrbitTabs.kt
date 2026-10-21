@@ -221,7 +221,10 @@ internal fun OrbitTabPage(
         }
         OrbitCoverPage(visible = openTaskId != null, onDismiss = { openTaskId = null }) {
             (openTaskId ?: shownTaskId)?.let { taskId ->
-                key(taskId) { OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId) }
+                key(taskId) {
+                    OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId,
+                        onDraft = { text -> openTaskId = null; onDraft(text) })
+                }
             }
         }
     }
@@ -959,10 +962,9 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     // Keeps the category on screen while its page slides away.
     var shownCategory by remember(orbit.id) { mutableStateOf(category) }
     LaunchedEffect(category) { category?.let { shownCategory = it } }
-    val started = stringResource(R.string.orbit_ideas_started)
-    val paused = stringResource(R.string.orbit_ideas_paused)
+    // Asks Orbit in the main chat; the request waits in the input box for the user to send.
     val askIdeas: () -> Unit = {
-        action { showToast(context, if (OrbitRoutines.runNow(context, orbit.id, feed = false)) started else paused) }
+        onDraft(context.getString(R.string.orbit_task_run_now_draft, context.getString(R.string.orbit_routine_ideas)))
     }
     // Tapping the chosen answer again takes it back.
     fun vote(idea: OrbitBoardRepository.Item, vote: Int) =

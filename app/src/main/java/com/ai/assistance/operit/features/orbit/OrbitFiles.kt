@@ -126,15 +126,32 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         }.getOrDefault(emptyList())
     }
 
-    suspend fun write(path: String, text: String) = io {
+    /**
+     * One change to a file: its path, its text before (null when it was new, or too big to compare)
+     * and after, and whether the file was there before.
+     */
+    class Written(
+        val path: String,
+        val before: String?,
+        val after: String,
+        val appendedLines: Int = 0,
+        val existed: Boolean = before != null,
+    )
+
+    suspend fun write(path: String, text: String): Written = io {
         val p = writable(path)
         require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
         // Every chat carries the synthesis in full, so it must fit what the prompt takes.
         require(p != ALIGNMENT || text.length <= MAX_ALIGNMENT_PROMPT) {
             "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
         }
-        atomic(File(root, p), text)
+        val f = File(root, p)
+        val existed = f.isFile
+        // Only a text the size Orbit can write is read back to compare.
+        val before = if (existed && inside(f).length() <= MAX_TEXT * 4L) f.readText() else null
+        atomic(f, text)
         afterChange(p)
+        Written(p, before, text, existed = existed)
     }
 
     /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
@@ -143,31 +160,37 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             ?.filter { DREAM.matches(it) && runCatching { inside(File(root, it)) }.isSuccess }?.maxOrNull()
     }
 
-    suspend fun append(path: String, text: String) = io {
+    suspend fun append(path: String, text: String): Written = io {
         val p = writable(path)
         appendLocked(p, text)
     }
 
     /** Adds one line to today's (or [time]'s) daily log, memory/YYYY-MM-DD.md. */
-    suspend fun appendDaily(line: String, time: Long = System.currentTimeMillis()) = io {
+    suspend fun appendDaily(line: String, time: Long = System.currentTimeMillis()): Written = io {
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.US).format(Date(time))
         val clock = SimpleDateFormat("HH:mm", Locale.US).format(Date(time))
         val p = "memory/$day.md"
         val f = File(root, p)
-        if (!f.isFile) atomic(f, "# $day\n")
-        appendLocked(p, "- $clock ${line.replace(Regex("\\s+"), " ").trim().take(600)}")
+        val existed = f.isFile
+        if (!existed) atomic(f, "# $day\n")
+        val w = appendLocked(p, "- $clock ${line.replace(Regex("\\s+"), " ").trim().take(600)}")
+        if (existed) w else Written(p, null, w.after, w.appendedLines, existed = false)
     }
 
-    private fun appendLocked(p: String, text: String) {
+    private fun appendLocked(p: String, text: String): Written {
         val f = File(root, p)
-        val old = if (f.isFile) inside(f).readText() else template(p).orEmpty()
+        val existed = f.isFile
+        val old = if (existed) inside(f).readText() else template(p).orEmpty()
         val next = old.trimEnd() + "\n" + text.trim() + "\n"
         require(next.length <= MAX_TEXT) { "The file is full; tidy it up with write first" }
         require(p != ALIGNMENT || next.length <= MAX_ALIGNMENT_PROMPT) {
             "$ALIGNMENT would be longer than $MAX_ALIGNMENT_PROMPT characters; rewrite it shorter with write"
         }
-        atomic(f, next.trimStart('\n'))
+        val after = next.trimStart('\n')
+        atomic(f, after)
         afterChange(p)
+        val added = text.trim().let { if (it.isEmpty()) 0 else it.lines().size }
+        return Written(p, if (existed) old else null, after, added)
     }
 
     /** Moves a file to the trash. It can be restored for [TRASH_DAYS] days. */

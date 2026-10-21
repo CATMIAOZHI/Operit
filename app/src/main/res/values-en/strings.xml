@@ -9102,6 +9102,8 @@
     <string name="orbit_focus_label">Things for %1$s to keep an eye on</string>
     <string name="orbit_focus_placeholder">For example: remind me to back up on Fridays; tell me to sleep early before exams</string>
     <string name="orbit_run_now">Try it now</string>
+    <string name="orbit_task_run_now_draft">Run the "%1$s" task once now.</string>
+    <string name="orbit_show_all">Show all</string>
     <string name="orbit_running">Orbit is thinking…</string>
     <string name="orbit_last_run_never">Has not run yet</string>
     <string name="orbit_last_run_spoke">Last run %1$s: sent you a message</string>

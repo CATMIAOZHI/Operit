@@ -68,7 +68,13 @@ private fun taskCardColor(): Color = MaterialTheme.colorScheme.surfaceVariant.co
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: String? = null) {
+internal fun OrbitTasksPage(
+    orbitId: String,
+    onBack: () -> Unit,
+    initialTaskId: String? = null,
+    /** Puts a prompt in the main chat's input box and shows the chat; nothing is sent. */
+    onDraft: (String) -> Unit,
+) {
     val context = LocalContext.current
     val repository = remember(context) { OrbitTaskRepository(context) }
     val scope = rememberCoroutineScope()
@@ -161,6 +167,7 @@ internal fun OrbitTasksPage(orbitId: String, onBack: () -> Unit, initialTaskId: 
                 onCancel = { confirmCancel = it },
                 onResolve = { id, completed -> resolveReceipt = Triple(shown, id, completed) },
                 onRecord = { id -> action { executionRecord = repository.executionRecord(id) } },
+                onDraft = onDraft,
             )
             }
         }
@@ -360,6 +367,7 @@ private fun TaskDetail(
     onCancel: (OrbitTaskEntity) -> Unit,
     onResolve: (String, Boolean) -> Unit,
     onRecord: (String) -> Unit,
+    onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
     val task = tasks?.firstOrNull { it.id == taskId }
@@ -553,8 +561,6 @@ private fun TaskDetail(
                 if (task.state != "WAITING_USER") {
                     val active = task.state == "ACTIVE"
                     val blocked = !active && receipts.any { it.state in setOf("STARTED", "UNKNOWN") }
-                    val runQueued = stringResource(R.string.orbit_task_run_queued)
-                    val alreadyQueued = stringResource(R.string.orbit_task_run_already_queued)
                     val pauseOrResume: @Composable (Modifier) -> Unit = { modifier ->
                         TaskButton(
                             stringResource(if (active) R.string.orbit_task_pause else R.string.orbit_task_resume),
@@ -567,14 +573,11 @@ private fun TaskDetail(
                         }
                     }
                     val runNow: @Composable (Modifier) -> Unit = { modifier ->
+                        // Asks Orbit in the main chat; the request waits in the input box for the
+                        // user to send, so a tap only to see what happens runs nothing.
                         TaskButton(stringResource(R.string.orbit_run_now), "zap", primary = true,
                             enabled = !busy, modifier = modifier) {
-                            action {
-                                val queued = repository.dao.enqueueManual(task.id, java.util.UUID.randomUUID().toString(),
-                                    System.currentTimeMillis())
-                                if (queued) OrbitTaskScheduler.reschedule(context)
-                                onNotice(if (queued) runQueued else alreadyQueued)
-                            }
+                            onDraft(context.getString(R.string.orbit_task_run_now_draft, task.title))
                         }
                     }
                     // Two pills side by side; with large text or a narrow screen they stack so

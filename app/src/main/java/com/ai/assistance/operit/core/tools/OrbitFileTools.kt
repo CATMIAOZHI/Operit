@@ -63,9 +63,9 @@ internal object OrbitFileTools {
                         .put("size", if (it.size < 0) "empty template" else it.size)
                 }).toString()
                 "read" -> files.read(arg("path"))
-                "write" -> { files.write(arg("path"), args["text"] ?: error("Missing text")); "Saved" }
-                "append" -> { files.append(arg("path"), arg("text")); "Appended" }
-                "daily" -> { files.appendDaily(arg("text")); "Added to today's log" }
+                "write" -> wrote(context, files.write(arg("path"), args["text"] ?: error("Missing text")))
+                "append" -> appended(files.append(arg("path"), arg("text")))
+                "daily" -> appended(files.appendDaily(arg("text")))
                 "delete" -> {
                     val item = files.delete(arg("path"))
                     "Moved to the trash (id ${item.id}); it can be restored for ${OrbitFiles.TRASH_DAYS} days"
@@ -157,6 +157,51 @@ internal object OrbitFileTools {
         require(file.length() <= OrbitFiles.MAX_FILE_BYTES) { "File is larger than 50 MB" }
         return file
     }
+
+    private fun lineCount(text: String): Int {
+        val unix = text.replace("\r\n", "\n")
+        return if (unix.isEmpty()) 0 else unix.removeSuffix("\n").lines().size
+    }
+
+    /**
+     * What a write did, like the app's own file tools: the path, new or overwritten, its size now,
+     * and the changed lines as a diff, so Orbit knows exactly what it put in the file.
+     */
+    private fun wrote(context: Context, w: OrbitFiles.Written): String {
+        val size = "${lineCount(w.after)} lines, ${w.after.length} characters"
+        val before = w.before
+        return when {
+            !w.existed -> "Created ${w.path} ($size)."
+            before == null -> "Overwrote ${w.path} (now $size)."
+            before == w.after -> "No change: ${w.path} already had this content ($size)."
+            else -> {
+                val old = before.replace("\r\n", "\n")
+                val new = w.after.replace("\r\n", "\n")
+                // The diff search grows with the square of the lines; a big rewrite only gets counts.
+                if (old.length + new.length > MAX_DIFF_INPUT || lineCount(old) + lineCount(new) > MAX_DIFF_LINES) {
+                    return "Overwrote ${w.path} (now $size; was ${lineCount(before)} lines). " +
+                        "Too large to show the changes; read the file to check it."
+                }
+                val diff = com.ai.assistance.operit.api.chat.enhance.FileBindingService(context).generateUnifiedDiff(old, new)
+                val shown = if (diff.length <= MAX_DIFF) diff
+                else diff.take(MAX_DIFF).substringBeforeLast('\n') + "\n… (diff cut; read the file to see the rest)"
+                "Overwrote ${w.path} (now $size; was ${lineCount(before)} lines).\n$shown"
+            }
+        }
+    }
+
+    /** What an append did: the file, the lines the new text landed on, and the file's size now. */
+    private fun appended(w: OrbitFiles.Written): String {
+        val total = lineCount(w.after)
+        val first = (total - w.appendedLines + 1).coerceAtLeast(1)
+        val lines = if (w.appendedLines <= 1) "line $total" else "lines $first-$total"
+        val start = if (!w.existed) "Created ${w.path} and added" else "Added to ${w.path} at"
+        return "$start $lines (the file now has $total lines, ${w.after.length} characters)."
+    }
+
+    private const val MAX_DIFF = 2000
+    private const val MAX_DIFF_INPUT = 40_000
+    private const val MAX_DIFF_LINES = 1_500
 
     /**
      * Pictures and audio can be shown in the chat; other files are only listed in the Builds tab.
