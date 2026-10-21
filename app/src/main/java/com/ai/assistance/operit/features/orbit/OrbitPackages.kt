@@ -30,13 +30,21 @@ import org.json.JSONObject
  * Orbit's folder: the packages imported into it, and which of those are switched on. Turning a
  * package off on one side leaves the other side as it was.
  *
- * A new Orbit starts with none. The user picks some of the main app's packages to import, and an
- * imported package is switched on; nothing follows the main app's switches afterwards. Only these
+ * A new Orbit starts with only the [REQUIRED] packages, which stay on. The user picks more of the
+ * main app's packages to import, and an imported package is switched on; nothing follows the main
+ * app's switches afterwards. Only these
  * lists are the Orbit's own: a package's runtime is still the app's one. Every package, plugin
  * subpackages included, loads on use whatever the main app's switches say.
  */
 object OrbitPackages {
     private const val FILE = "packages.json"
+
+    /**
+     * Built-in packages every Orbit has on and cannot switch off or take out: its terminal, web
+     * search, memory tools, cards and browser, which Orbit's own prompt and routines rely on.
+     */
+    val REQUIRED: Set<String> = linkedSetOf("super_admin", "various_search", "memory_review", "dynamic_ui", "browser")
+
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingRefresh = ConcurrentHashMap<String, Job>()
@@ -58,40 +66,54 @@ object OrbitPackages {
     class NotImportedException(val packageName: String) :
         IllegalArgumentException("'$packageName' has not been imported into this Orbit. The user can import it in Orbit's settings, under Packages.")
 
+    /** A package Orbit always keeps on: it cannot be switched off or taken out. */
+    class RequiredException(val packageName: String) :
+        IllegalArgumentException("'$packageName' is always on in Orbit; it cannot be switched off or removed.")
+
     /** An Orbit's packages: what was imported, and which of those are on. */
-    data class State(val imported: Set<String>, val enabled: Set<String>)
+    data class State(val imported: Set<String>, val enabled: Set<String>) {
+        /** The same lists with the [REQUIRED] packages in and on. */
+        fun withRequired() = State(imported + REQUIRED, enabled + REQUIRED)
+    }
 
     private fun file(context: Context, orbitId: String) =
         File(OrbitPreferences.getInstance(context).orbitDir(orbitId), FILE)
 
     private fun lock(file: File) = locks.computeIfAbsent(file.absolutePath) { Mutex() }
 
-    /** Packages a user can switch on: loadable, not a ToolPkg container and not archived. */
+    /**
+     * Packages a user can switch on: loadable, not a ToolPkg container and not archived. A required
+     * package stays usable here even while the main app has it archived.
+     */
     fun candidates(packageManager: PackageManager): Map<String, ToolPackage> {
         val archived = packageManager.getArchivedBuiltInPackageNames()
         return packageManager.getAvailablePackages().filterKeys { name ->
             !packageManager.isToolPkgContainer(name) &&
-                !packageManager.isArchivedBuiltInPackageOrSubpackage(name, archived)
+                (name in REQUIRED || !packageManager.isArchivedBuiltInPackageOrSubpackage(name, archived))
         }
     }
 
     private fun names(json: JSONObject, key: String): Set<String>? =
         json.optJSONArray(key)?.let { list -> (0 until list.length()).mapTo(LinkedHashSet()) { list.getString(it) } }
 
-    /** The stored lists. A file from before imports existed counts every package it had on as imported. */
+    /**
+     * The stored lists, always with the [REQUIRED] packages in and on. A file from before imports
+     * existed counts every package it had on as imported.
+     */
     private fun read(file: File): State? =
         file.takeIf { it.isFile }?.let { stored ->
             runCatching {
                 val json = JSONObject(stored.readText())
                 val enabled = names(json, "enabled").orEmpty()
                 val imported = names(json, "imported") ?: enabled
-                State(imported, enabled.filterTo(LinkedHashSet()) { it in imported })
+                State(imported, enabled.filterTo(LinkedHashSet()) { it in imported }).withRequired()
             }.getOrNull()
         }
 
-    private fun readOrEmpty(file: File) = read(file) ?: State(emptySet(), emptySet())
+    private fun readOrEmpty(file: File) = read(file) ?: State(emptySet(), emptySet()).withRequired()
 
-    private fun write(file: File, state: State) {
+    private fun write(file: File, given: State) {
+        val state = given.withRequired()
         val parent = checkNotNull(file.parentFile)
         check(parent.mkdirs() || parent.isDirectory)
         val temp = File.createTempFile(".packages-", ".tmp", parent)
@@ -180,6 +202,7 @@ object OrbitPackages {
             val file = file(context, orbitId)
             lock(file).withLock {
                 val current = readOrEmpty(file)
+                if (!on && name in REQUIRED) throw RequiredException(name)
                 if (name !in current.imported) throw NotImportedException(name)
                 if (on) {
                     val added = linkedSetOf(name) + needs(packageManager, name)
@@ -230,11 +253,12 @@ object OrbitPackages {
         }
 
     /**
-     * Takes [name] out of this Orbit; the main app keeps it. Throws [StillNeededException] while a
-     * switched-on package needs it.
+     * Takes [name] out of this Orbit; the main app keeps it. Throws [RequiredException] for a
+     * required package and [StillNeededException] while a switched-on package needs it.
      */
     suspend fun remove(context: Context, orbitId: String, packageManager: PackageManager, name: String) =
         withContext(Dispatchers.IO) {
+            if (name in REQUIRED) throw RequiredException(name)
             val file = file(context, orbitId)
             lock(file).withLock {
                 val current = readOrEmpty(file)
