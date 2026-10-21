@@ -223,6 +223,9 @@ fun OrbitScreen(
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureIdeas(context.applicationContext, orbit) }
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
+        // The nightly alignment review keeps the synthesis every chat carries, like Muse's dream.
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureAlignment(context.applicationContext, orbit) }
+            .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         // Goals made before the briefing existed get it too.
         runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureGoalBriefingIfGoals(context.applicationContext, orbit) }
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
@@ -743,12 +746,14 @@ private fun OrbitChatPage(
                 OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
                 OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
                 OrbitSubPage.PROMPT -> OrbitPromptFilePage(orbit.id, onBack = back)
+                OrbitSubPage.ALIGNMENT -> OrbitAlignmentFilePage(orbit.id, onBack = back)
                 OrbitSubPage.PROMPTS -> OrbitPromptLayersPage(
                     orbit = orbit,
                     onBack = back,
                     onOpenPrompt = { push(OrbitSubPage.PROMPT) },
                     onOpenSoul = { push(OrbitSubPage.SOUL) },
                     onOpenIdentity = { push(OrbitSubPage.IDENTITY) },
+                    onOpenAlignment = { push(OrbitSubPage.ALIGNMENT) },
                     onOpenMemory = { push(OrbitSubPage.MEMORY) },
                     onOpenUser = { push(OrbitSubPage.USER) },
                 )
@@ -851,7 +856,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

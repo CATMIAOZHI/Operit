@@ -129,8 +129,18 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     suspend fun write(path: String, text: String) = io {
         val p = writable(path)
         require(text.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
+        // Every chat carries the synthesis in full, so it must fit what the prompt takes.
+        require(p != ALIGNMENT || text.length <= MAX_ALIGNMENT_PROMPT) {
+            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
+        }
         atomic(File(root, p), text)
         afterChange(p)
+    }
+
+    /** The newest nightly review, dreams/YYYY-MM-DD.md, or null before the first one. */
+    suspend fun latestDream(): String? = io {
+        File(root, "dreams").listFiles()?.map { "dreams/${it.name}" }
+            ?.filter { DREAM.matches(it) && runCatching { inside(File(root, it)) }.isSuccess }?.maxOrNull()
     }
 
     suspend fun append(path: String, text: String) = io {
@@ -153,6 +163,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val old = if (f.isFile) inside(f).readText() else template(p).orEmpty()
         val next = old.trimEnd() + "\n" + text.trim() + "\n"
         require(next.length <= MAX_TEXT) { "The file is full; tidy it up with write first" }
+        require(p != ALIGNMENT || next.length <= MAX_ALIGNMENT_PROMPT) {
+            "$ALIGNMENT would be longer than $MAX_ALIGNMENT_PROMPT characters; rewrite it shorter with write"
+        }
         atomic(f, next.trimStart('\n'))
         afterChange(p)
     }
@@ -319,8 +332,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             else "# 主动消息偏好\n\n用户希望你在什么时候、为了什么事主动找他。\n\n## 想要\n\n## 不要\n\n## 时间\n"
         TIMEZONES -> if (english) "# The user's time zone and those of people they deal with\nhome: \nothers: []\n"
             else "# 用户所在的时区，以及常联系的人的时区\nhome: \nothers: []\n"
-        ALIGNMENT -> if (english) "# Alignment synthesis\n\nWhat matters most about this user: what they care about, how they judge good work, and how they like to work with you. Background self-improvement keeps it current.\n"
-            else "# 对齐总结\n\n你对这位用户最重要的理解：他在乎什么、怎么判断好坏、喜欢怎么和你合作。后台自我整理会定期更新它。\n"
+        ALIGNMENT -> if (english) ALIGNMENT_EN else ALIGNMENT_ZH
+        ALIGNMENT_STATE -> "schema_version: 1\nrelationship_contract: []\nuser_facets: {}\nworking_alliance: \"\"\n" +
+            "observed_fit: \"\"\nproactivity_policies: []\nrepair_threads: []\n"
+        PROGRESSION -> "observations: []\n"
+        REPAIR -> "# Open frictions only: {id, trigger, opened, evidence: [message ids], clean_reviews}. No other text.\n[]\n"
         DEVICES -> if (english) "# Devices\n\nDevices you can reach (for example computers or a NAS on the user's Tailscale network): name, address, what it is for and how to connect. Never write passwords here.\n"
             else "# 设备\n\n你能连上的设备（比如用户 Tailscale 组网里的电脑、NAS）：名字、地址、用途和连接方式。不要写密码。\n"
         else -> null
@@ -335,6 +351,11 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         const val TIMEZONES = "timezones.yaml"
         const val ALIGNMENT = "ALIGNMENT_SYNTHESIS.md"
         const val DEVICES = "DEVICES.md"
+        /** The alignment review's own state, beside the synthesis it writes (like Muse's dreams/alignment). */
+        const val ALIGNMENT_STATE = "alignment/ALIGNMENT_STATE.yaml"
+        const val PROGRESSION = "alignment/PROGRESSION_HISTORY.yaml"
+        const val REPAIR = "alignment/REPAIR_THREADS.yaml"
+        val ALIGNMENT_DATA = listOf(ALIGNMENT_STATE, PROGRESSION, REPAIR)
         /** Not one of the files Orbit reads or writes; the app keeps the user's Library pins here. */
         private const val PINS = "library_pins.json"
         val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)
@@ -344,6 +365,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         private const val META = "meta.json"
         private val PEOPLE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")
         private val DAILY = Regex("memory/\\d{4}-\\d{2}-\\d{2}\\.md")
+        /** One alignment review a night: dreams/YYYY-MM-DD.md. */
+        private val DREAM = Regex("dreams/\\d{4}-\\d{2}-\\d{2}\\.md")
         private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
         private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
         private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
@@ -362,9 +385,33 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             return p
         }
 
-        fun allowed(p: String) = p in SINGLE || PEOPLE.matches(p) || DAILY.matches(p) || FILES.matches(p)
+        fun allowed(p: String) = p in SINGLE || PEOPLE.matches(p) || DAILY.matches(p) || FILES.matches(p) ||
+            p in ALIGNMENT_DATA || DREAM.matches(p)
         fun isIndex(p: String) = PEOPLE.matches(p) && p.endsWith("/$INDEX")
         fun isText(p: String) = p.substringAfterLast('.', "").lowercase() in TEXT_EXTENSIONS
+
+        private const val ALIGNMENT_ZH = "# 对齐总结\n\n你和这位用户怎么相处。每晚的对齐复盘会重写它，每次聊天都会全文带上。\n\n" +
+            "## 他是谁、该怎么帮他\n\n## 他从你这里得到什么\n\n## 红线\n\n## 当前的摩擦\n\n## 怎样让关系更好\n\n## 细节去哪找\n"
+        private const val ALIGNMENT_EN = "# Alignment synthesis\n\nHow to be with this user. The nightly alignment review " +
+            "rewrites it, and every chat carries it in full.\n\n## Who this user is and how to act for them\n\n## User value\n\n" +
+            "## Boundaries\n\n## Current frictions\n\n## How you can strengthen the relationship\n\n## Where to look for detail\n"
+        /** Lines of the alignment templates, old and new, that say nothing about the user. */
+        private val ALIGNMENT_FILLER = setOf(
+            "你和这位用户怎么相处。每晚的对齐复盘会重写它，每次聊天都会全文带上。",
+            "How to be with this user. The nightly alignment review rewrites it, and every chat carries it in full.",
+            "你对这位用户最重要的理解：他在乎什么、怎么判断好坏、喜欢怎么和你合作。后台自我整理会定期更新它。",
+            "What matters most about this user: what they care about, how they judge good work, and how they like to " +
+                "work with you. Background self-improvement keeps it current.",
+        )
+        /** Longest synthesis put into the prompt; the review keeps it far shorter. */
+        const val MAX_ALIGNMENT_PROMPT = 8000
+
+        /** The synthesis to put into every chat, or null while it is still an empty template. */
+        fun alignmentForPrompt(text: String): String? {
+            val said = text.lineSequence().map { it.trim() }
+                .any { it.isNotEmpty() && !it.startsWith("#") && it !in ALIGNMENT_FILLER }
+            return if (said) text.trim().take(MAX_ALIGNMENT_PROMPT) else null
+        }
 
         /** The Library's kind of a file, by extension. */
 

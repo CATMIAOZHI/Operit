@@ -723,7 +723,7 @@ class ConversationService(
                     }
                     append(waifuRulesText)
                     if (orbitParts != null) {
-                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul)
+                        listOf(orbitParts.runtime, orbitParts.identity, orbitParts.soul, orbitParts.alignment)
                             .filter { it.isNotEmpty() }
                             .forEach { append("\n\n"); append(it) }
                     }

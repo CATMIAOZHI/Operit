@@ -196,8 +196,9 @@ object OrbitTaskRunner {
                             context.getString(com.ai.assistance.operit.R.string.orbit_decision_watch_failed))
                         return@withTimeout
                     }
-                    // A goal briefing with no active goal has nothing to write about.
-                    if (task.kind == "ASSIST" && task.source == OrbitRoutines.GOALS_SOURCE && source.isBlank()) {
+                    // A goal briefing with no active goal, or an alignment review with no new talk, has nothing to do.
+                    if (task.kind == "ASSIST" && source.isBlank() &&
+                        task.source in setOf(OrbitRoutines.GOALS_SOURCE, OrbitRoutines.ALIGNMENT_SOURCE)) {
                         // SKIPPED keeps the activity list free of a daily empty row; the detail page says why.
                         complete(context, state, task.lastObservation, "", "", OrbitRunEntity.SKIPPED)
                         return@withTimeout
@@ -229,6 +230,9 @@ object OrbitTaskRunner {
                     runModel(context, chatId, task, checkpoint, timeoutMinutes)
                     check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
                         "The model did not submit a result"
+                    }
+                    if (task.source == OrbitRoutines.ALIGNMENT_SOURCE && dao.run(token.id)?.state == "COMPLETED") {
+                        OrbitRoutines.afterAlignmentReview(context, orbit)
                     }
                 }
             }
@@ -456,6 +460,7 @@ object OrbitTaskRunner {
         task.kind == "URL_CHANGE" -> "web page"
         task.source == OrbitRoutines.GOALS_SOURCE -> "the user's active goals"
         task.source == OrbitRoutines.FEED_SOURCE -> "the feed brief"
+        task.source == OrbitRoutines.ALIGNMENT_SOURCE -> "every Orbit chat since the last alignment review"
         task.source.isBlank() || task.source == OrbitRoutines.CHAT_SOURCE || task.source == OrbitRoutines.IDEAS_SOURCE ->
             "the recent Orbit conversation"
         else -> "page named by the task; the excerpt below is the recent Orbit conversation"

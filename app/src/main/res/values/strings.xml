@@ -9191,6 +9191,8 @@
     <string name="orbit_idea_done_badge">已做过</string>
     <string name="orbit_idea_kept">你喜欢它，会一直留着</string>
     <string name="orbit_routine_feed">动态更新</string>
+    <string name="orbit_routine_alignment">夜间对齐复盘</string>
+    <string name="orbit_routine_alignment_desc">%1$s 自动创建。每晚在后台回看当天的聊天，想想和你相处得怎么样、哪里被你纠正过，再更新对齐总结。不会打扰你。可以暂停或改时间，但不能删除。</string>
     <string name="orbit_routine_ideas">每日点子</string>
     <string name="orbit_routine_feed_desc">%1$s 自动创建。在后台按动态说明写动态，放进动态页，不会打扰你。可以暂停或改时间，但不能删除。</string>
     <string name="orbit_routine_ideas_desc">%1$s 自动创建。在后台想几个能为你做的点子，放进点子页，不会打扰你。可以暂停或改时间，但不能删除。</string>
@@ -9269,11 +9271,14 @@
     <string name="orbit_section_prompts">提示词</string>
     <string name="orbit_prompt_layers">提示词层</string>
     <string name="orbit_prompt_layers_desc">看看 Orbit 每次回复前读了什么</string>
-    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，全部始终包含。点开可以查看或编辑。</string>
+    <string name="orbit_prompt_layers_help">下面每一层都按顺序放进 Orbit 的系统提示词，不能关掉；对齐总结要等第一次复盘写好后才带上。点开可以查看或编辑。</string>
     <string name="orbit_layer_base">基础指令</string>
     <string name="orbit_layer_base_desc">主动、提醒、记忆、说话方式和安全</string>
     <string name="orbit_layer_soul">个性</string>
     <string name="orbit_layer_soul_desc">价值观和习惯</string>
+    <string name="orbit_layer_alignment">对齐总结</string>
+    <string name="orbit_layer_alignment_desc">和你怎么相处，每晚复盘更新</string>
+    <string name="orbit_layer_alignment_empty">还没写</string>
     <string name="orbit_layer_identity">身份</string>
     <string name="orbit_layer_identity_desc">名字、角色和气质</string>
     <string name="orbit_layer_user">用户资料</string>
@@ -9364,7 +9369,7 @@
     <string name="orbit_file_timezones">时区</string>
     <string name="orbit_file_timezones_note">你长期所在的时区，以及常联系的人的时区。这段说明不是文件内容。</string>
     <string name="orbit_file_alignment">对齐总结</string>
-    <string name="orbit_file_alignment_note">%1$s 对你最重要的理解。后台自我整理会定期更新它。这段说明不是文件内容。</string>
+    <string name="orbit_file_alignment_note">%1$s 和你怎么相处的总结：你是谁、红线、最近哪里磨合得不好、怎样相处得更好。每次聊天都会全文带上，每晚的对齐复盘会重写它，你也可以自己改。这段说明不是文件内容。</string>
     <string name="orbit_file_devices">设备</string>
     <string name="orbit_file_devices_note">%1$s 能连上的设备，比如 Tailscale 组网里的电脑、NAS。不要写密码。这段说明不是文件内容。</string>
     <string name="orbit_files_people">人物</string>
@@ -9484,6 +9489,7 @@
     <string name="orbit_export_confirm_message">会把文件、记忆、任务记录和聊天记录打包成一个压缩包，里面可能有隐私内容，分享前请先确认。</string>
     <string name="orbit_export_confirm">导出</string>
     <string name="orbit_decision_no_active_goals">没有进行中的目标，这次没写简报</string>
+    <string name="orbit_decision_no_new_talk">上次复盘后没有新的聊天，这次不用复盘</string>
     <string name="orbit_routine_source_chat">读取最近的 Orbit 对话</string>
     <string name="orbit_routine_source_goals">读取进行中的目标</string>
     <string name="orbit_routine_self_review_desc">%1$s 自动创建。每晚有新对话时，安静地整理记忆、人物、心得和技能，不会打扰你。</string>

@@ -95,12 +95,14 @@ internal object OrbitTools {
     /**
      * Orbit's parts of the system prompt, in its own chat; null in any other chat. They are placed
      * apart so the prompt runs from what rarely changes to what changes often: [handbook] (PROMPT.md)
-     * comes before the app's system prompt; [runtime], [identity] and [soul] come after it, followed
-     * by memory.md and user.md.
+     * comes before the app's system prompt; [runtime], [identity], [soul] and [alignment] come after
+     * it, followed by memory.md and user.md. [alignment] is the alignment synthesis, read in full in
+     * every chat (Muse injects it rather than leaving it to a search); empty while it is a template.
      */
-    class PromptParts(val handbook: String, val runtime: String, val identity: String, val soul: String) {
+    class PromptParts(val handbook: String, val runtime: String, val identity: String, val soul: String,
+        val alignment: String = "") {
         /** All parts in prompt order, for a copy the user can read. */
-        val all: String get() = listOf(handbook, runtime, identity, soul).filter { it.isNotEmpty() }.joinToString("\n\n")
+        val all: String get() = listOf(handbook, runtime, identity, soul, alignment).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
 
     suspend fun promptParts(context: Context, chatId: String?, useEnglish: Boolean): PromptParts? {
@@ -135,6 +137,11 @@ internal object OrbitTools {
             "\n</orbit_identity>"
         val soul = OrbitPreferences.getInstance(context).readSoul(orbit.id).takeIf { it.isNotBlank() }
             ?.let { "<orbit_soul source=\"SOUL.md\">\n${escape(it)}\n</orbit_soul>" }.orEmpty()
+        val alignmentFile = com.ai.assistance.operit.features.orbit.OrbitFiles
+        val alignment = runCatching { alignmentFile.of(context, orbit.id).read(alignmentFile.ALIGNMENT) }
+            .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            .getOrNull()?.let { alignmentFile.alignmentForPrompt(it) }
+            ?.let { "<orbit_alignment source=\"ALIGNMENT_SYNTHESIS.md\">\n${escape(it)}\n</orbit_alignment>" }.orEmpty()
         // A side chat is its own thread; work started here reports back here.
         val side = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbit.id }
             ?.sideChats?.firstOrNull { it.chatId == chatId }
@@ -147,7 +154,7 @@ internal object OrbitTools {
         val firstTalk = com.ai.assistance.operit.features.orbit.OrbitOnboarding.hint(context, orbit, chatId, useEnglish)
             ?.let { "\n$it" }.orEmpty()
         val runtime = "<orbit>\n$body$sideNote$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
-        return PromptParts(handbook, runtime, identity, soul)
+        return PromptParts(handbook, runtime, identity, soul, alignment)
     }
 
     fun executeSetName(context: Context, tool: AITool): ToolResult {

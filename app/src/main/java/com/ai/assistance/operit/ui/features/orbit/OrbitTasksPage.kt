@@ -399,6 +399,7 @@ private fun TaskDetail(
                         routine && task.source == OrbitRoutines.GOALS_SOURCE -> stringResource(R.string.orbit_routine_goal_briefing_desc, rememberOrbitName(orbitId))
                         routine && task.source == OrbitRoutines.FEED_SOURCE -> stringResource(R.string.orbit_routine_feed_desc, rememberOrbitName(orbitId))
                         routine && task.source == OrbitRoutines.IDEAS_SOURCE -> stringResource(R.string.orbit_routine_ideas_desc, rememberOrbitName(orbitId))
+                        routine && task.source == OrbitRoutines.ALIGNMENT_SOURCE -> stringResource(R.string.orbit_routine_alignment_desc, rememberOrbitName(orbitId))
                         routine -> stringResource(R.string.orbit_routine_self_review_desc, rememberOrbitName(orbitId))
                         else -> task.instruction.ifBlank { stringResource(R.string.orbit_tasks_daily_default) }
                     },
@@ -634,6 +635,7 @@ private fun taskIconName(task: OrbitTaskEntity, scheduleIcon: String): String = 
     OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.GOALS_SOURCE -> "target"
     OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.FEED_SOURCE -> "newspaper"
     OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.IDEAS_SOURCE -> "lightbulb"
+    OrbitRoutines.isRoutine(task) && task.source == OrbitRoutines.ALIGNMENT_SOURCE -> "compass"
     OrbitRoutines.isRoutine(task) -> "moon-star"
     task.kind == "DAILY" -> "heart-handshake"
     else -> scheduleIcon
@@ -768,6 +770,7 @@ internal fun watchLabel(task: OrbitTaskEntity): String {
     when (task.source) {
         com.ai.assistance.operit.features.orbit.OrbitRoutines.CHAT_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
         com.ai.assistance.operit.features.orbit.OrbitRoutines.IDEAS_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
+        com.ai.assistance.operit.features.orbit.OrbitRoutines.ALIGNMENT_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
         com.ai.assistance.operit.features.orbit.OrbitRoutines.FEED_SOURCE -> return stringResource(R.string.orbit_routine_source_feed)
         com.ai.assistance.operit.features.orbit.OrbitRoutines.GOALS_SOURCE -> return stringResource(R.string.orbit_routine_source_goals)
     }
