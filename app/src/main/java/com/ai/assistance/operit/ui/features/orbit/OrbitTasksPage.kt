@@ -111,7 +111,7 @@ internal fun OrbitTasksPage(
         scope.launch {
             try { block() }
             catch (e: CancellationException) { throw e }
-            catch (e: Exception) { actionError = e.message.orEmpty() }
+            catch (e: Exception) { actionError = orbitActionError(context, e) }
             finally { busy = false }
         }
     }

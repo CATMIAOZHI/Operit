@@ -76,12 +76,23 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     /** The trash folder, or null when it is a link out of Orbit's folder. */
     private fun safeTrashRoot(): File? = File(root, TRASH).takeIf { runCatching { inside(it) }.isSuccess }
 
-    /** Every file, including the fixed files that are still empty templates (size -1). */
-    suspend fun list(): List<Entry> = io {
+    /**
+     * Every file, including the fixed files that are still empty templates (size -1). With
+     * [includeReview], also the nightly reviews (dreams/) and the alignment state the review keeps.
+     */
+    suspend fun list(includeReview: Boolean = false): List<Entry> = io {
         val found = mutableListOf<Entry>()
         SINGLE.forEach { p ->
             val f = File(root, p)
             found += if (f.isFile) entry(p, f) else Entry(p, -1, 0, p)
+        }
+        if (includeReview) {
+            ALIGNMENT_DATA.forEach { p ->
+                val f = File(root, p)
+                found += if (f.isFile) entry(p, f) else Entry(p, -1, 0, p)
+            }
+            File(root, "dreams").listFiles()?.filter { it.isFile && DREAM.matches("dreams/${it.name}") }
+                ?.forEach { found += entry("dreams/${it.name}", it) }
         }
         listOf("memory/people", "memory/groups").forEach { dir ->
             File(root, dir).listFiles()?.filter { it.isFile && it.name.endsWith(".md") }?.forEach { found += entry("$dir/${it.name}", it) }
@@ -173,7 +184,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val f = File(root, p)
         val existed = f.isFile
         if (!existed) atomic(f, "# $day\n")
-        val w = appendLocked(p, "- $clock ${line.replace(Regex("\\s+"), " ").trim().take(600)}")
+        val w = appendLocked(p, "- $clock ${line.replace(Regex("\\s+"), " ").trim().take(MAX_DAILY_LINE)}")
         if (existed) w else Written(p, null, w.after, w.appendedLines, existed = false)
     }
 
@@ -369,6 +380,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     companion object {
         const val MAX_TEXT = 200_000
+        /** Longest line the daily log takes; the rest is cut. */
+        const val MAX_DAILY_LINE = 600
         const val MAX_FILE_BYTES = 50L * 1024 * 1024
         const val TRASH_DAYS = 30
         const val LESSONS = "LESSONS.md"

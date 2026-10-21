@@ -84,9 +84,14 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
     } }
     suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) { mutex.withLock { read() } }
     suspend fun update(body: String, reason: String, expected: String): Version = withContext(Dispatchers.IO) { mutex.withLock {
-        require(body.isNotBlank() && body.length <= MAX_CHARS && reason.length in 1..2000)
+        require(body.isNotBlank()) { "body is empty; send the whole new SOUL.md" }
+        require(body.length <= MAX_CHARS) { "body has ${body.length} characters; SOUL.md allows at most $MAX_CHARS" }
+        require(reason.isNotBlank()) { "reason is required: say in one or two sentences why Soul changes" }
+        require(reason.length <= 2000) { "reason has ${reason.length} characters; at most 2000" }
         val old = read()
-        check(old.current.id == expected) { "Soul changed; read it again before updating" }
+        check(old.current.id == expected) {
+            if (expected.isBlank()) "version is required: call read and pass its version" else "Soul changed since version $expected; call read again and update from the current version"
+        }
         val version = Version(UUID.randomUUID().toString(), body, reason, expected, "approved", System.currentTimeMillis(),
             source = "update")
         store(version.id, old.history.filter { it.state == "approved" } + version)

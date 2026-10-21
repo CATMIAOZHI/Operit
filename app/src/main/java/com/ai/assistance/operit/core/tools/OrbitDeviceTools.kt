@@ -39,7 +39,11 @@ internal object OrbitDeviceTools {
         Command("calendar.search", "Read calendar events, optionally only those whose title or place matches.",
             "days ahead 1-90 (default 7), past_days 0-30 (default 0), query (optional)", listOf(Manifest.permission.READ_CALENDAR)),
         Command("sms.search", "Search received and sent text messages by text or sender.",
-            "query (optional), limit 1-30 (default 10)", listOf(Manifest.permission.READ_SMS)),
+            "query (optional), limit 1-30 (default 10), before (optional: next_before from the last result, for older messages)",
+            listOf(Manifest.permission.READ_SMS)),
+        Command("sms.read", "Read one text message in full; use it when sms.search marked a text as cut. Up to 20000 characters per call.",
+            "id (required, from sms.search), start_char (optional, from 0; use next_start_char from the last result to read on)",
+            listOf(Manifest.permission.READ_SMS)),
         Command("location.get", "The phone's current location.",
             "high_accuracy true/false (default false)",
             listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)),
@@ -57,6 +61,7 @@ internal object OrbitDeviceTools {
         details = """
   - 只在用户的请求需要时读，比如「给小王打电话前查下他的号码」「我下周有什么安排」「我现在在哪」。短信只在用户明确要求时读。
   - 结果是这一刻从手机上实时读的。用户拒绝授权时，告诉他可以在系统设置里给 Operit 打开对应权限，不要换别的办法绕过去。
+  - 时间都是手机本地时间（结果里有 timezone）。has_more=true 说明还有没返回的：通讯录和日历请缩小 query 或天数，短信把 next_before 原样放进 params.before 往前翻。短信标了 cut=true 时用 sms.read 加它的 id 读全文；一次最多20000字，next_start_char 不为空时放进 params.start_char 接着读。
   - 读到的号码、地址、消息只用在当前任务里，不要写进记忆，除非用户让你记。
 """,
     )
@@ -70,17 +75,20 @@ internal object OrbitDeviceTools {
                 "describe" -> describe(context)
                 "invoke" -> {
                     val command = commands.firstOrNull { it.id == args["command"]?.trim() }
-                        ?: error("Unknown command. Call describe for the list.")
-                    val params = args["params"]?.takeIf { it.isNotBlank() }?.let(::JSONObject) ?: JSONObject()
+                        ?: error("Unknown command \"${args["command"].orEmpty()}\". Use one of: ${commands.joinToString { it.id }}.")
+                    val params = args["params"]?.takeIf { it.isNotBlank() }?.let {
+                        runCatching { JSONObject(it) }.getOrElse { error("params must be a JSON object such as {\"query\":\"Mom\"}") }
+                    } ?: JSONObject()
                     ensureAllowed(context, command)
                     when (command.id) {
                         "contacts.search" -> contacts(context, params)
                         "calendar.search" -> calendar(context, params)
                         "sms.search" -> sms(context, params)
+                        "sms.read" -> smsRead(context, params)
                         else -> location(context, params)
                     }
                 }
-                else -> error("action must be describe or invoke")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use describe or invoke.")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -119,12 +127,14 @@ internal object OrbitDeviceTools {
     }
 
     private fun time(millis: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(millis))
+    private fun zone() = java.util.TimeZone.getDefault().id
 
     private fun contacts(context: Context, params: JSONObject): String {
         val query = params.optString("query").trim()
         require(query.isNotEmpty() && query.length <= 80) { "contacts.search needs a query" }
         val limit = params.optInt("limit", 10).coerceIn(1, 20)
         val people = linkedMapOf<Long, JSONObject>()
+        var more = false
         context.contentResolver.query(
             ContactsContract.Data.CONTENT_URI,
             arrayOf(ContactsContract.Data.CONTACT_ID, ContactsContract.Data.DISPLAY_NAME, ContactsContract.Data.MIMETYPE,
@@ -137,7 +147,7 @@ internal object OrbitDeviceTools {
         )?.use { cursor ->
             while (cursor.moveToNext()) {
                 val id = cursor.getLong(0)
-                if (id !in people && people.size >= limit) continue
+                if (id !in people && people.size >= limit) { more = true; continue }
                 val person = people.getOrPut(id) {
                     JSONObject().put("name", cursor.getString(1).orEmpty()).put("phones", JSONArray()).put("emails", JSONArray())
                 }
@@ -147,7 +157,9 @@ internal object OrbitDeviceTools {
                 if ((0 until list.length()).none { list.getString(it) == value } && list.length() < 5) list.put(value)
             }
         }
-        return JSONObject().put("source", "live").put("contacts", JSONArray(people.values.toList())).toString()
+        return JSONObject().put("source", "live").put("returned", people.size).put("has_more", more)
+            .apply { if (more) put("note", "More people match; use a narrower query.") }
+            .put("contacts", JSONArray(people.values.toList())).toString()
     }
 
     private fun calendar(context: Context, params: JSONObject): String {
@@ -158,44 +170,96 @@ internal object OrbitDeviceTools {
         val uri = CalendarContract.Instances.CONTENT_URI.buildUpon()
             .appendPath((now - past * 86_400_000L).toString()).appendPath((now + days * 86_400_000L).toString()).build()
         val events = JSONArray()
+        var more = false
         context.contentResolver.query(
             uri,
             arrayOf(CalendarContract.Instances.BEGIN, CalendarContract.Instances.END, CalendarContract.Instances.TITLE,
                 CalendarContract.Instances.EVENT_LOCATION, CalendarContract.Instances.ALL_DAY),
             null, null, "${CalendarContract.Instances.BEGIN} ASC",
         )?.use { cursor ->
-            while (cursor.moveToNext() && events.length() < 100) {
+            while (cursor.moveToNext()) {
                 val title = cursor.getString(2).orEmpty()
                 val place = cursor.getString(3).orEmpty()
                 if (query.isNotEmpty() && query !in title.lowercase() && query !in place.lowercase()) continue
+                if (events.length() >= 100) { more = true; break }
                 events.put(JSONObject().put("title", title).put("place", place)
                     .put("start", time(cursor.getLong(0))).put("end", time(cursor.getLong(1)))
                     .put("all_day", cursor.getInt(4) == 1))
             }
         }
-        return JSONObject().put("source", "live").put("from", time(now - past * 86_400_000L))
-            .put("to", time(now + days * 86_400_000L)).put("events", events).toString()
+        return JSONObject().put("source", "live").put("timezone", zone()).put("from", time(now - past * 86_400_000L))
+            .put("to", time(now + days * 86_400_000L)).put("returned", events.length()).put("has_more", more)
+            .apply { if (more) put("note", "Only the first 100 events are shown; use fewer days or a query.") }
+            .put("events", events).toString()
     }
 
     private fun sms(context: Context, params: JSONObject): String {
         val query = params.optString("query").trim()
         require(query.length <= 80) { "query is at most 80 characters" }
         val limit = params.optInt("limit", 10).coerceIn(1, 30)
-        val selection = if (query.isEmpty()) null else "${Telephony.Sms.ADDRESS} LIKE ? OR ${Telephony.Sms.BODY} LIKE ?"
-        val args = if (query.isEmpty()) null else arrayOf("%$query%", "%$query%")
+        // The cursor is "date:id", so texts sharing a timestamp across a page edge are not skipped.
+        val before = params.optString("before").trim().takeIf { it.isNotEmpty() }?.let { raw ->
+            val parts = raw.split(':')
+            val date = parts[0].toLongOrNull()
+            val id = parts.getOrNull(1)?.toLongOrNull() ?: Long.MAX_VALUE
+            require(date != null && parts.size <= 2) { "before must be the next_before value from the last sms.search" }
+            date to id
+        }
+        val clauses = mutableListOf<String>()
+        val values = mutableListOf<String>()
+        if (query.isNotEmpty()) { clauses += "(${Telephony.Sms.ADDRESS} LIKE ? OR ${Telephony.Sms.BODY} LIKE ?)"; values += "%$query%"; values += "%$query%" }
+        if (before != null) {
+            clauses += "(${Telephony.Sms.DATE} < ? OR (${Telephony.Sms.DATE} = ? AND ${Telephony.Sms._ID} < ?))"
+            values += before.first.toString(); values += before.first.toString(); values += before.second.toString()
+        }
+        val selection = clauses.takeIf { it.isNotEmpty() }?.joinToString(" AND ")
+        val args = values.takeIf { it.isNotEmpty() }?.toTypedArray()
         val messages = JSONArray()
+        var more = false
+        var oldest = ""
+        context.contentResolver.query(
+            Telephony.Sms.CONTENT_URI,
+            arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE, Telephony.Sms._ID),
+            selection, args, "${Telephony.Sms.DATE} DESC, ${Telephony.Sms._ID} DESC",
+        )?.use { cursor ->
+            while (cursor.moveToNext()) {
+                if (messages.length() >= limit) { more = true; break }
+                oldest = "${cursor.getLong(2)}:${cursor.getLong(4)}"
+                val body = cursor.getString(1).orEmpty()
+                messages.put(JSONObject().put("id", cursor.getLong(4)).put("from_or_to", cursor.getString(0).orEmpty())
+                    .put("direction", if (cursor.getInt(3) == Telephony.Sms.MESSAGE_TYPE_SENT) "sent" else "received")
+                    .put("time", time(cursor.getLong(2))).put("text", body.take(1000))
+                    .apply { if (body.length > 1000) put("cut", true).put("chars", body.length) })
+            }
+        }
+        return JSONObject().put("source", "live").put("timezone", zone()).put("returned", messages.length())
+            .put("has_more", more).put("next_before", if (more) oldest else JSONObject.NULL)
+            .put("messages", messages).toString()
+    }
+
+    private fun smsRead(context: Context, params: JSONObject): String {
+        val id = params.optString("id").trim().toLongOrNull() ?: error("sms.read needs id from sms.search")
+        val raw = params.opt("start_char")?.toString()?.trim()?.takeIf { it.isNotEmpty() && it != "null" }
+        val from = raw?.let { it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: error("start_char must be a whole number from 0; got \"$it\"") } ?: 0
         context.contentResolver.query(
             Telephony.Sms.CONTENT_URI,
             arrayOf(Telephony.Sms.ADDRESS, Telephony.Sms.BODY, Telephony.Sms.DATE, Telephony.Sms.TYPE),
-            selection, args, "${Telephony.Sms.DATE} DESC",
+            "${Telephony.Sms._ID} = ?", arrayOf(id.toString()), null,
         )?.use { cursor ->
-            while (cursor.moveToNext() && messages.length() < limit) {
-                messages.put(JSONObject().put("from_or_to", cursor.getString(0).orEmpty())
+            if (cursor.moveToFirst()) {
+                val body = cursor.getString(1).orEmpty()
+                require(from == 0 || from < body.length) { "start_char $from is past the end; this text has ${body.length} characters" }
+                val end = minOf(body.length, from + 20_000)
+                return JSONObject().put("source", "live").put("timezone", zone()).put("id", id)
+                    .put("from_or_to", cursor.getString(0).orEmpty())
                     .put("direction", if (cursor.getInt(3) == Telephony.Sms.MESSAGE_TYPE_SENT) "sent" else "received")
-                    .put("time", time(cursor.getLong(2))).put("text", cursor.getString(1).orEmpty().take(1000)))
+                    .put("time", time(cursor.getLong(2))).put("chars", body.length)
+                    .put("start_char", from).put("text", body.substring(from, end))
+                    .put("next_start_char", if (end < body.length) end else JSONObject.NULL)
+                    .toString()
             }
         }
-        return JSONObject().put("source", "live").put("messages", messages).toString()
+        error("No text message with id $id; search again")
     }
 
     private fun location(context: Context, params: JSONObject): String {

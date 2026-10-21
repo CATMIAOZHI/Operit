@@ -29,14 +29,21 @@ internal object OrbitSkillTools {
                 "Skill loading is disabled in this conversation"
             }
             val args = tool.parameters.associate { it.name to it.value }
+            fun int(name: String, default: Int): Int = args[name]?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                it.toIntOrNull() ?: error("$name must be a whole number, got \"${it.take(20)}\"")
+            } ?: default
+            val query = args["query"].orEmpty()
+            require(query.length <= 200) { "query has ${query.length} characters; at most 200" }
             val page = OrbitSkillCatalog.page(
                 SkillRepository.forChat(context, runtime.callerChatId).getAiVisibleSkillPackages()
                     .filterKeys { it in access.allowedSkillNames }.mapValues { it.value.description },
-                args["query"].orEmpty(), args["offset"]?.toInt() ?: 0, args["limit"]?.toInt() ?: 20)
+                query, int("offset", 0), int("limit", 20))
             val result = JSONObject().put("skills", JSONArray(page.entries.map {
                 JSONObject().put("name", it.name).put("description", it.description)
-            })).put("total", page.total).put("next_offset", page.nextOffset ?: JSONObject.NULL)
-                .put("next", "Load a relevant skill with use_package(package_name=name). This is a live directory; restart pagination if it changes.")
+            })).put("query", query).put("returned", page.entries.size).put("total", page.total)
+                .put("next_offset", page.nextOffset ?: JSONObject.NULL)
+                .put("next", if (page.total == 0) "No skill matches; try other keywords or an empty query to browse."
+                    else "Load a relevant skill with use_package(package_name=name). This is a live directory; restart pagination if it changes.")
             ToolResult(tool.name, true, StringResultData(result.toString()))
         }
 }

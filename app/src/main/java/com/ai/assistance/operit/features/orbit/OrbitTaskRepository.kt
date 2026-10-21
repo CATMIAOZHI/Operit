@@ -35,13 +35,10 @@ class OrbitTaskRepository(private val context: Context) {
         runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
         timeoutMinutes: Int = 0, chatId: String? = null, useSubagent: Boolean = false,
     ): OrbitTaskEntity {
-        require(title.isNotBlank() && title.length <= 80)
-        require(instruction.isNotBlank() && instruction.length <= 4000)
-        require(intervalMinutes in 15..10080)
-        require(notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
-        require(kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND))
-        require(scheduleMode in setOf("ONCE", "INTERVAL", "EVENT", "DAILY") + OrbitCalendarSchedule.modes)
-        require(dailyMinute in 0 until 24 * 60)
+        checkTaskFields(title, instruction, intervalMinutes, notifyPolicy, dailyMinute)
+        require(kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND)) { "kind must be URL_CHANGE, ASSIST or ${OrbitWatchSources.KIND}" }
+        val modes = setOf("ONCE", "INTERVAL", "EVENT", "DAILY") + OrbitCalendarSchedule.modes
+        require(scheduleMode in modes) { "schedule_mode must be one of ${modes.joinToString()}" }
         checkTimeout(timeoutMinutes)
         require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
         val rule = checkedRule(scheduleMode, calendarRule)
@@ -64,15 +61,19 @@ class OrbitTaskRepository(private val context: Context) {
             "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes,
             useSubagent = useSubagent)
         OrbitExecutionGate.serialized {
-            check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting })
+            check(OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbit.id && !it.deleting }) { "This Orbit no longer exists" }
             if (dao.task(id) != null) return@serialized
             check(dao.tasks(orbit.id).count { it.state !in setOf("CANCELLED", "DONE") } < 20) { "At most 20 unfinished tasks" }
-            if (goalId.isNotBlank()) check(dao.goal(goalId)?.let { it.orbitId == orbit.id && it.state == "ACTIVE" } == true)
+            if (goalId.isNotBlank()) check(dao.goal(goalId)?.let { it.orbitId == orbit.id && it.state == "ACTIVE" } == true) {
+                "goal_id $goalId is not an active goal of this Orbit; check orbit_goal list"
+            }
             if (scheduleMode == "EVENT") {
                 check(triggerTaskId != id && dao.task(triggerTaskId)?.orbitId == orbit.id) { "Choose another task in this Orbit" }
                 // New task IDs cannot already be part of a cycle; trigger changes are not exposed.
-            } else require(triggerTaskId.isBlank())
-            if (sourceArtifactVersionId.isNotBlank()) check(dao.artifact(sourceArtifactVersionId)?.orbitId == orbit.id)
+            } else require(triggerTaskId.isBlank()) { "trigger_task_id only works with schedule_mode EVENT" }
+            if (sourceArtifactVersionId.isNotBlank()) check(dao.artifact(sourceArtifactVersionId)?.orbitId == orbit.id) {
+                "No artifact version $sourceArtifactVersionId in this Orbit; check orbit_artifact list"
+            }
             dao.insertSubscribedTask(task, now)
         }
         OrbitTaskScheduler.reschedule(context)
@@ -80,9 +81,8 @@ class OrbitTaskRepository(private val context: Context) {
     }
 
     suspend fun changeState(orbitId: String, taskId: String, state: String): Boolean {
-        require(state in setOf("ACTIVE", "PAUSED", "CANCELLED"))
-        val task = dao.task(taskId) ?: error("Task not found")
-        check(task.orbitId == orbitId)
+        require(state in setOf("ACTIVE", "PAUSED", "CANCELLED")) { "state must be ACTIVE, PAUSED or CANCELLED" }
+        val task = dao.task(taskId)?.takeIf { it.orbitId == orbitId } ?: error("No task $taskId in this Orbit; check orbit_task list")
         // The Feed and Ideas tabs live on their routines: they pause, they are never cancelled.
         check(state != "CANCELLED" || !OrbitRoutines.isProtected(task)) {
             "This routine can only be paused, not cancelled"
@@ -121,7 +121,8 @@ class OrbitTaskRepository(private val context: Context) {
         intervalMinutes: Int, notifyPolicy: String, runAt: Long? = null, dailyMinute: Int = task.dailyMinute,
         calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes,
         useSubagent: Boolean = task.useSubagent, scheduleMode: String = task.scheduleMode): Boolean {
-        check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND) && task.state != "CANCELLED")
+        check(task.state != "CANCELLED") { "A cancelled task cannot be edited; create a new one" }
+        check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND)) { "This kind of task (${task.kind}) cannot be edited" }
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
         }
@@ -141,16 +142,21 @@ class OrbitTaskRepository(private val context: Context) {
                 "Only the schedule of this routine can change (schedule_mode, interval_minutes, daily_time, repeat_on)"
             }
         }
-        require(title.isNotBlank() && title.length <= 80 && instruction.length in 1..4000)
-        require(intervalMinutes in 15..10080 && notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST"))
-        require(dailyMinute in 0 until 24 * 60)
+        checkTaskFields(title, instruction, intervalMinutes, notifyPolicy, dailyMinute)
         checkTimeout(timeoutMinutes)
         require(runAt == null || scheduleMode == "ONCE") { "run_at only works with schedule_mode ONCE" }
         // Only the calendar modes keep a day rule.
         val rule = checkedRule(scheduleMode, if (scheduleMode in OrbitCalendarSchedule.modes) calendarRule else "")
         checkSource(task.kind, source)
         val now = System.currentTimeMillis()
-        val nextRun = when (scheduleMode) {
+        // Only a change to when it runs (or to the page it watches) sets a new next run; a new title or
+        // notify policy keeps the time. Any saved edit still fences out a run in progress (replaceDefinition).
+        val timingChanged = scheduleMode != task.scheduleMode || intervalMinutes != task.intervalMinutes ||
+            dailyMinute != task.dailyMinute || rule != task.calendarRule || (runAt != null && runAt != task.nextRunAt)
+        // Nothing to save: leave the task, its run and its pending results as they are.
+        if (!timingChanged && title == task.title && instruction == task.instruction && source == task.source &&
+            notifyPolicy == task.notifyPolicy && timeoutMinutes == task.timeoutMinutes && useSubagent == task.useSubagent) return true
+        val nextRun = if (!timingChanged && source == task.source) task.nextRunAt else when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
             in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
@@ -230,6 +236,16 @@ class OrbitTaskRepository(private val context: Context) {
         /** 0 keeps the default; otherwise 1 to [MAX_TIMEOUT_MINUTES]. */
         fun checkTimeout(minutes: Int) = require(minutes in 0..MAX_TIMEOUT_MINUTES) {
             "timeout_minutes must be 1 to $MAX_TIMEOUT_MINUTES (24 hours)"
+        }
+
+        fun checkTaskFields(title: String, instruction: String, intervalMinutes: Int, notifyPolicy: String, dailyMinute: Int) {
+            require(title.isNotBlank()) { "title is required" }
+            require(title.length <= 80) { "title has ${title.length} characters; at most 80" }
+            require(instruction.isNotBlank()) { "instruction is required: say what the task should do each run" }
+            require(instruction.length <= 4000) { "instruction has ${instruction.length} characters; at most 4000" }
+            require(intervalMinutes in 15..10080) { "interval_minutes must be 15 to 10080 (one week), got $intervalMinutes" }
+            require(notifyPolicy in setOf("CHANGES", "ALWAYS", "DIGEST")) { "notify_policy must be CHANGES, ALWAYS or DIGEST" }
+            require(dailyMinute in 0 until 24 * 60) { "daily_time must be a time of day between 00:00 and 23:59" }
         }
 
         fun timeoutMinutes(task: OrbitTaskEntity): Int =

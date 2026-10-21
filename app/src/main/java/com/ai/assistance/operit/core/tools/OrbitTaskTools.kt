@@ -24,17 +24,21 @@ internal object OrbitTaskTools {
             ToolParameterSchema("goal_id", description = "可选，orbit_goal 返回的当前 Orbit 目标编号", required = false),
             ToolParameterSchema("trigger_task_id", description = "EVENT 必填：成功后触发本任务的同 Orbit 任务编号", required = false),
             ToolParameterSchema("source_artifact_version_id", description = "可选，继续修改的成果版本编号，由 orbit_artifact 获取", required = false),
-            ToolParameterSchema("task_id", description = "list 返回的任务编号；detail/update/pause/resume/cancel/run 必填", required = false),
+            ToolParameterSchema("task_id", description = "list 返回的 task_id；detail/update/pause/resume/cancel/run 必填", required = false),
             ToolParameterSchema("user_note", description = "resume：用户对待办问题的答复，最多4000字符；仅转达实际答复，不代替用户授权", required = false),
-            ToolParameterSchema("title", description = "创建时任务名称，最多80字符", required = false),
-            ToolParameterSchema("instruction", description = "创建时用户希望关注的变化及汇报要求，最多4000字符", required = false),
-            ToolParameterSchema("url", description = "创建时需要检查的 http(s) 网页，不带账号密码；仅执行 GET", required = false),
+            ToolParameterSchema("title", description = "create 必填、update 可改：任务名称，最多80字符", required = false),
+            ToolParameterSchema("instruction", description = "create 必填、update 可改：要做什么、关注什么变化、怎么汇报，最多4000字符", required = false),
+            ToolParameterSchema("url", description = "URL_CHANGE 的 http(s) 网页（create 填，update 可改），不带账号密码；仅执行 GET", required = false),
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
             ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
             ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务。超过8分钟的任务会切到前台运行并显示一条通知", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
+            "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent），没传的保持不变。" +
+            "改了时间（schedule_mode、run_at、daily_time、repeat_on、interval_minutes）或网页会重算下次运行，只改 title、notify_policy 等不动下次时间；任何真的改动都会停掉正在进行的这次运行（没做完的结果作废），正在跑时别为了改标题去 update。" +
+            "改动类操作会返回任务现在的样子、changed（有没有变）和 changed_fields（变了哪些），next_run 是下次执行的本地时间（timezone 是时区，停了的任务为 null）。run 只是排队，结果做完才回来。" +
+            "list 里的 instruction、last_observation 只给前200字，要全文用 detail。" +
             "“每天几点”用 DAILY+daily_time；“每周几几点”用 WEEKLY+repeat_on+daily_time；“每月几号”用 MONTHLY+repeat_on+daily_time；" +
             "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
             "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
@@ -58,7 +62,8 @@ internal object OrbitTaskTools {
         val orbit = OrbitMemoryScope.owner(context, runtime?.callerChatId) ?: error("This tool requires an Orbit chat")
         val repository = OrbitTaskRepository(context)
         val arguments = tool.parameters.associate { it.name to it.value }
-        val action = arguments["action"] ?: error("Missing action")
+        val action = arguments["action"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("Missing action; use one of ${ACTIONS.joinToString("/")}")
+        require(action in ACTIONS) { "Unknown action \"$action\"; use one of ${ACTIONS.joinToString("/")}" }
         val payload: Any = when (action) {
             "create" -> {
                 val kind = arguments["kind"] ?: "ASSIST"
@@ -70,8 +75,9 @@ internal object OrbitTaskTools {
                     watchSource(context, orbit.id, arguments, arguments["title"].orEmpty(), requestId)
                 } else arguments["url"].orEmpty()
                 json(repository.create(orbit,
-                arguments["title"] ?: error("Missing title"), arguments["instruction"] ?: error("Missing instruction"),
-                source, arguments["interval_minutes"]?.toInt() ?: 60,
+                arguments["title"] ?: error("create needs title (at most 80 characters)"),
+                arguments["instruction"] ?: error("create needs instruction: what the task should do each run"),
+                source, parseInterval(arguments["interval_minutes"]) ?: 60,
                 // A reminder exists to reach the user, so it always reports unless told otherwise.
                 arguments["notify_policy"] ?: if (runAt != null || calendar) "ALWAYS" else "CHANGES",
                 requestId, kind,
@@ -87,18 +93,32 @@ internal object OrbitTaskTools {
                 // running task: its reports go where that task reports.
                 chatId = reportChatId(context, orbit, runtime?.callerChatId)))
             }
-            "list" -> JSONArray(repository.dao.tasks(orbit.id).map(::json))
+            // A list is for finding a task; detail reads one in full.
+            "list" -> JSONObject().put("timezone", zone()).put("tasks", JSONArray(repository.dao.tasks(orbit.id).map { summary(it) }))
+                .put("note", "instruction and last_observation are cut to $EXCERPT characters here; detail gives them in full")
             "pending" -> JSONArray(repository.dao.tasks(orbit.id).mapNotNull { task ->
                 val last = repository.dao.latestRun(task.id)
                 // Waiting for the user, waiting to be checked, or failing (stopped or still retrying).
                 val waiting = task.state in setOf("WAITING_USER", "VERIFY") ||
                     (task.state in setOf("PAUSED", "ACTIVE") && last?.state == "FAILED")
-                if (!waiting) null else json(task).put("waiting_for", last?.error.orEmpty())
+                if (!waiting) null else summary(task).put("waiting_for", last?.error.orEmpty())
                     .put("unverified_actions", JSONArray(repository.dao.unresolvedActions(task.id).map { it.summary }))
             })
             else -> {
-                val id = arguments["task_id"] ?: error("Missing task_id")
-                val task = repository.dao.task(id)?.takeIf { it.orbitId == orbit.id } ?: error("Task not found")
+                val id = arguments["task_id"]?.trim()?.takeIf { it.isNotEmpty() } ?: error("$action needs task_id; get it from list")
+                val task = repository.dao.task(id)?.takeIf { it.orbitId == orbit.id }
+                    ?: error("No task with task_id \"$id\"; call orbit_task with action=list to find it")
+                // Every change answers with the task as it is now and what really moved; applied=false
+                // means the change could not be saved (the task changed meanwhile).
+                suspend fun after(applied: Boolean, force: Boolean = false, extra: JSONObject.() -> Unit = {}): JSONObject {
+                    val now = repository.dao.task(id) ?: task
+                    val fields = changedFields(task, now)
+                    return json(now).put("applied", applied).put("changed", force || fields.isNotEmpty())
+                        .put("changed_fields", JSONArray(fields)).put("timezone", zone())
+                        .apply { if (!applied) put("note", "Nothing was saved because the task changed meanwhile; call detail and try again.") }
+                        .apply { if (applied && !force && fields.isEmpty()) put("note", "The task was already like this; nothing changed.") }
+                        .apply(extra)
+                }
                 when (action) {
                     "update" -> {
                         val mode = arguments["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
@@ -109,13 +129,13 @@ internal object OrbitTaskTools {
                         // A day rule belongs to its own mode: a new calendar mode needs its own.
                         val rule = arguments["repeat_on"]?.takeIf { it.isNotBlank() }
                             ?: if (mode == task.scheduleMode) task.calendarRule else ""
-                        JSONObject().put("updated", repository.edit(task,
+                        after(repository.edit(task,
                         arguments["title"] ?: task.title, arguments["instruction"] ?: task.instruction,
                         if (task.kind == OrbitWatchSources.KIND &&
                             (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
                             watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString())
                         } else arguments["url"] ?: task.source,
-                        arguments["interval_minutes"]?.toInt() ?: task.intervalMinutes,
+                        parseInterval(arguments["interval_minutes"]) ?: task.intervalMinutes,
                         arguments["notify_policy"] ?: task.notifyPolicy,
                         arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt),
                         dailyTime ?: task.dailyMinute,
@@ -124,10 +144,12 @@ internal object OrbitTaskTools {
                         parseFlag(arguments["use_subagent"]) ?: task.useSubagent,
                         scheduleMode = mode))
                     }
-                    "detail" -> json(task).put("executionRecord", repository.executionRecord(id))
-                        .put("lastRun", repository.dao.latestRun(id)?.let {
+                    "detail" -> json(task).put("timezone", zone()).put("execution_record", repository.executionRecord(id))
+                        .put("last_run", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
-                            .put("error", it.error).put("finishedAt", it.finishedAt)
+                            .put("error", it.error)
+                            .put("finished_at", if (it.finishedAt > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT)
+                                .format(java.util.Date(it.finishedAt)) else JSONObject.NULL)
                             .put("decision", when (it.decision) {
                                 OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
                                 OrbitRunEntity.IN_CHAT -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_in_chat, orbit.name.ifBlank { context.getString(com.ai.assistance.operit.R.string.nav_orbit) })
@@ -138,23 +160,74 @@ internal object OrbitTaskTools {
                     "resume" -> {
                         if (task.state == "WAITING_USER") {
                             OrbitBrowserHandoff.resume(context, task, arguments["user_note"].orEmpty())
-                            JSONObject().put("updated", true)
-                        } else JSONObject().put("updated", repository.changeState(orbit.id, id, "ACTIVE"))
+                            after(true, force = true) { put("user_note_passed", arguments["user_note"].orEmpty().isNotBlank()) }
+                        } else after(repository.changeState(orbit.id, id, "ACTIVE"))
                     }
-                    "pause", "cancel" -> JSONObject().put("updated",
-                        repository.changeState(orbit.id, id,
-                            when (action) { "pause" -> "PAUSED"; "resume" -> "ACTIVE"; else -> "CANCELLED" }))
+                    "pause", "cancel" -> after(repository.changeState(orbit.id, id, if (action == "pause") "PAUSED" else "CANCELLED"))
                     "run" -> {
+                        val alreadyWaiting = task.state == "ACTIVE" && repository.dao.pendingManualCount(task.id, task.version) > 0
                         val queued = repository.dao.enqueueManual(id,
                             runtime?.callId ?: java.util.UUID.randomUUID().toString(), System.currentTimeMillis())
                         OrbitTaskScheduler.reschedule(context)
-                        JSONObject().put("queued", queued)
+                        val reason = when {
+                            queued -> JSONObject.NULL
+                            task.state != "ACTIVE" -> "TASK_NOT_ACTIVE"
+                            alreadyWaiting -> "ALREADY_QUEUED"
+                            else -> "ALREADY_RUN_FOR_THIS_CALL"
+                        }
+                        after(true) {
+                            put("queued", queued)
+                            put("not_queued_reason", reason)
+                            put("note", when {
+                                queued -> "Queued to start shortly; it has not run yet. Its result comes back when it finishes."
+                                task.state != "ACTIVE" -> "The task is ${task.state}, so it cannot run now. Resume it first if the user wants it to run."
+                                alreadyWaiting -> "A run of this task is already waiting, so no second one was queued."
+                                else -> "This same request already started a run; check detail for its result."
+                            })
+                        }
                     }
-                    else -> error("Unknown action")
+                    else -> error("Unknown action \"$action\"")
                 }
             }
         }
         ToolResult(NAME, true, StringResultData(payload.toString()))
+    }
+
+    private val ACTIONS = listOf("create", "list", "detail", "update", "pause", "resume", "cancel", "run", "pending")
+    private const val EXCERPT = 200
+
+    private fun zone(): String = java.util.TimeZone.getDefault().id
+
+    private fun excerpt(text: String) = if (text.length <= EXCERPT) text else text.take(EXCERPT) + "…"
+
+    /** One task in a list: how to find it and what it is doing, with long texts cut. */
+    private fun summary(task: OrbitTaskEntity) = json(task).apply {
+        put("instruction", excerpt(task.instruction))
+        put("last_observation", excerpt(task.lastObservation))
+        if (task.instruction.length > EXCERPT || task.lastObservation.length > EXCERPT) put("cut", true)
+    }
+
+    /** The fields of a task that differ between [before] and [after], by their tool names. */
+    private fun changedFields(before: OrbitTaskEntity, after: OrbitTaskEntity): List<String> = buildList {
+        if (before.title != after.title) add("title")
+        if (before.instruction != after.instruction) add("instruction")
+        if (before.source != after.source) add("source")
+        if (before.state != after.state) add("state")
+        if (before.scheduleMode != after.scheduleMode) add("schedule_mode")
+        if (before.intervalMinutes != after.intervalMinutes) add("interval_minutes")
+        if (before.dailyMinute != after.dailyMinute) add("daily_time")
+        if (before.calendarRule != after.calendarRule) add("repeat_on")
+        if (before.notifyPolicy != after.notifyPolicy) add("notify_policy")
+        if (before.timeoutMinutes != after.timeoutMinutes) add("timeout_minutes")
+        if (before.useSubagent != after.useSubagent) add("use_subagent")
+        if (before.nextRunAt != after.nextRunAt) add("next_run")
+    }
+
+    /** Null when the model left it out; anything but a whole number of minutes is rejected. */
+    private fun parseInterval(value: String?): Int? {
+        val text = value?.trim()?.takeIf { it.isNotEmpty() } ?: return null
+        return text.toDoubleOrNull()?.takeIf { it % 1.0 == 0.0 }?.toInt()
+            ?: error("interval_minutes must be a whole number of minutes from 15 to 10080; got \"$text\"")
     }
 
     private fun parseRunAt(value: String): Long {
@@ -238,7 +311,7 @@ internal object OrbitTaskTools {
         else -> error("use_subagent must be true or false")
     }
 
-    private fun json(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
+    private fun json(task: OrbitTaskEntity) = JSONObject().put("task_id", task.id).put("title", task.title)
         .put("kind", task.kind)
         .put("use_subagent", task.useSubagent)
         // The Feed and Ideas routines: pause or reschedule only.
@@ -252,7 +325,8 @@ internal object OrbitTaskTools {
                 put("daily_time", String.format(java.util.Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60))
             if (task.calendarRule.isNotEmpty()) put("repeat_on", task.calendarRule)
         }
-        .put("nextRunAt", task.nextRunAt)
-        .put("next_run", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(task.nextRunAt)))
-        .put("lastObservation", task.lastObservation)
+        // A stopped task has no next run, whatever time is left in the row.
+        .put("next_run", if (task.state == "ACTIVE" && task.nextRunAt > 0)
+            java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(task.nextRunAt)) else JSONObject.NULL)
+        .put("last_observation", task.lastObservation)
 }

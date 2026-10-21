@@ -17,6 +17,7 @@
     <string name="orbit_task_run_queued">Queued. It starts shortly.</string>
     <string name="orbit_task_run_already_queued">Already waiting to run.</string>
     <string name="orbit_task_dismiss">OK</string>
+    <string name="orbit_action_failed">Could not do that; it may have just changed. Refresh and try again.</string>
     <string name="orbit_goal_new_message">Help me set up a new goal:</string>
     <string name="orbit_task_keep">Keep task</string>
     <string name="orbit_tasks_group_active">Active</string>

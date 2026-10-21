@@ -42,6 +42,12 @@ class MemoryLearningActions(
     private fun forgetVersion(target: String) { readVersions.remove("$profileId\u0000$target") }
     suspend fun execute(action: String, args: Map<String,String>): JSONObject {
         fun arg(name:String) = args[name].orEmpty()
+        /** memory.md unless target says user; anything else is a mistake, not a silent memory edit. */
+        fun userTarget(): Boolean = when (arg("target").trim().lowercase().removeSuffix(".md")) {
+            "", "memory" -> false
+            "user" -> true
+            else -> throw IllegalArgumentException("target must be memory (memory.md) or user (user.md), got \"${arg("target").take(40)}\"")
+        }
         val name = arg("name")
         val path = arg("path").ifBlank { "SKILL.md" }
         return when(action) {
@@ -58,7 +64,7 @@ class MemoryLearningActions(
             }
             "memory_read" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
-                val user = arg("target")=="user"
+                val user = userTarget()
                 val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val staged = stagedDocument(stagedChanges, user)
@@ -80,7 +86,7 @@ class MemoryLearningActions(
             }
             "memory_change" -> {
                 check(notesEnabled) { "Note extraction is not scheduled for this run. Do not retry memory operations; continue skill work or finish." }
-                val user = arg("target")=="user"
+                val user = userTarget()
                 val disk = if(user) UserProfileDocumentRepository.forMemorySpace(context, profileId).load()
                     else MemoryNotesRepository(context,profileId).load().markdown
                 val key = if(user) "user" else "memory"
