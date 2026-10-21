@@ -185,6 +185,43 @@ internal object OrbitVault {
         secrets.filter { it.isNotEmpty() }.flatMap(::variants).distinct().sortedByDescending { it.length }
             .fold(text) { acc, s -> acc.replace(s, "••••") }
 
+    /**
+     * [redact] for raw bytes (a response of any type): each form of a value is masked where it appears.
+     * Masking a very short value can make the bytes grow; past [maxSize] it stops with [TooLarge].
+     */
+    fun redact(bytes: ByteArray, secrets: Collection<String>, maxSize: Int = Int.MAX_VALUE): ByteArray {
+        val mask = "••••".toByteArray(Charsets.UTF_8)
+        return secrets.filter { it.isNotEmpty() }.flatMap(::variants).distinct().sortedByDescending { it.length }
+            .map { it.toByteArray(Charsets.UTF_8) }.fold(bytes) { acc, needle -> replaceBytes(acc, needle, mask, maxSize) }
+    }
+
+    class TooLarge : IllegalStateException("Too large after masking")
+
+    private fun replaceBytes(source: ByteArray, needle: ByteArray, replacement: ByteArray, maxSize: Int): ByteArray {
+        if (needle.isEmpty() || source.size < needle.size) return source
+        var out: java.io.ByteArrayOutputStream? = null
+        var copied = 0
+        var i = 0
+        val last = source.size - needle.size
+        while (i <= last) {
+            var match = source[i] == needle[0]
+            var j = 1
+            while (match && j < needle.size) { match = source[i + j] == needle[j]; j++ }
+            if (match) {
+                val o = out ?: java.io.ByteArrayOutputStream(source.size).also { out = it }
+                o.write(source, copied, i - copied)
+                o.write(replacement)
+                if (o.size() > maxSize) throw TooLarge()
+                i += needle.size
+                copied = i
+            } else i++
+        }
+        val o = out ?: return source
+        o.write(source, copied, source.size - copied)
+        if (o.size() > maxSize) throw TooLarge()
+        return o.toByteArray()
+    }
+
     private fun variants(secret: String): List<String> = listOfNotNull(
         secret,
         runCatching { java.net.URLEncoder.encode(secret, "UTF-8") }.getOrNull(),

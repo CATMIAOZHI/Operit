@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.slideInHorizontally
@@ -83,11 +84,11 @@ internal fun OrbitTasksPage(
     var error by remember { mutableStateOf(false) }
     var errorDetail by remember { mutableStateOf<String?>(null) }
     var retry by remember { mutableIntStateOf(0) }
-    var confirmCancel by remember { mutableStateOf<OrbitTaskEntity?>(null) }
     // The task id is kept with the choice, so the answer lands on that task even if the page
     // has started going back to the list.
     var resolveReceipt by remember { mutableStateOf<Triple<String, String, Boolean>?>(null) }
-    var executionRecord by remember { mutableStateOf<String?>(null) }
+    // The task whose run history is open.
+    var historyTask by remember { mutableStateOf<String?>(null) }
     // Results of a button press show next to the buttons, where the user is looking.
     var actionError by remember { mutableStateOf<String?>(null) }
     var notice by remember { mutableStateOf<String?>(null) }
@@ -100,6 +101,12 @@ internal fun OrbitTasksPage(
     // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
     val dues by produceState(emptyMap<String, Long>(), orbitId, retry) {
         try { repository.dao.observeTaskDues(orbitId).collect { rows -> value = rows.associate { it.taskId to it.dueAt } } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { }
+    }
+    // Each task's newest run, so the list says how it last went (a skipped review included).
+    val latestRuns by produceState(emptyMap<String, OrbitRunEntity>(), orbitId, retry) {
+        try { repository.dao.observeLatestRuns(orbitId).collect { rows -> value = rows.associateBy { it.taskId } } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { }
     }
@@ -164,9 +171,11 @@ internal fun OrbitTasksPage(
                 feedback = feedback,
                 action = ::action,
                 onNotice = { notice = it },
-                onCancel = { confirmCancel = it },
+                // Pausing, resuming and cancelling go through Orbit: the request waits in the main
+                // chat's input box for the user to send.
+                onCancel = { onDraft(context.getString(R.string.orbit_task_cancel_draft, it.title)) },
                 onResolve = { id, completed -> resolveReceipt = Triple(shown, id, completed) },
-                onRecord = { id -> action { executionRecord = repository.executionRecord(id) } },
+                onRecord = { id -> historyTask = id },
                 onDraft = onDraft,
             )
             }
@@ -184,7 +193,7 @@ internal fun OrbitTasksPage(
                 onPop = { clearFeedback(); selected = null },
                 base = {
                     Box(Modifier.fillMaxSize().background(pageColor)) {
-                        TaskList(rememberOrbitName(orbitId), tasks, dues, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+                        TaskList(rememberOrbitName(orbitId), tasks, dues, latestRuns, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
                     }
                 },
                 page = detail,
@@ -192,38 +201,9 @@ internal fun OrbitTasksPage(
         }
     }
 
-    executionRecord?.let { record ->
-        ModalBottomSheet(onDismissRequest = { executionRecord = null }) {
-            Column(
-                Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
-                verticalArrangement = Arrangement.spacedBy(12.dp),
-            ) {
-                Text(stringResource(R.string.orbit_execution_record),
-                    style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-                Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
-                    SelectionContainer {
-                        Text(
-                            record.ifBlank { stringResource(R.string.orbit_task_no_result) },
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.heightIn(max = 480.dp).verticalScroll(rememberScrollState()).padding(16.dp),
-                        )
-                    }
-                }
-            }
-        }
-    }
-    confirmCancel?.let { task ->
-        TaskConfirmSheet(
-            icon = "circle-x",
-            title = stringResource(R.string.orbit_task_cancel),
-            message = stringResource(R.string.orbit_task_cancel_message, task.title),
-            confirmText = stringResource(R.string.orbit_task_cancel),
-            dismissText = stringResource(R.string.orbit_task_keep),
-            destructive = true,
-            onDismiss = { confirmCancel = null },
-        ) {
-            confirmCancel = null
-            action { check(repository.changeState(orbitId, task.id, "CANCELLED")) }
+    historyTask?.let { id ->
+        tasks?.firstOrNull { it.id == id }?.let { task ->
+            RunHistorySheet(orbitId, task, repository) { historyTask = null }
         }
     }
     resolveReceipt?.let { (taskId, id, completed) ->
@@ -239,6 +219,132 @@ internal fun OrbitTasksPage(
         ) {
             resolveReceipt = null
             action { repository.resolveAction(orbitId, taskId, id, completed) }
+        }
+    }
+}
+
+/** How one run went, in a line: the skipped, unchanged and in-chat runs in words. */
+@Composable
+private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
+    val context = LocalContext.current
+    val text = when {
+        run.state == "RUNNING" -> stringResource(R.string.orbit_task_running)
+        run.state == "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
+        run.error.isNotBlank() -> run.error
+        run.state == "FAILED" -> stringResource(R.string.orbit_run_failed_unknown)
+        run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
+        run.decision == OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
+        run.decision == OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(task.orbitId))
+        run.observation.isNotBlank() -> run.observation
+        run.decision.isNotBlank() -> run.decision
+        else -> stringResource(R.string.orbit_task_no_result)
+    }
+    return OrbitWork.listLine(text)
+}
+
+private fun runIcon(run: OrbitRunEntity): String = when {
+    run.state == "RUNNING" -> "loader"
+    run.state == "CANCELLED" -> "circle-slash"
+    run.state == "FAILED" || run.error.isNotBlank() -> "circle-alert"
+    run.decision == OrbitRunEntity.SKIPPED -> "skip-forward"
+    run.decision == OrbitRunEntity.IN_CHAT -> "message-circle"
+    else -> "circle-check"
+}
+
+/**
+ * Every run of one task, newest first. A run opens to what it saw and, when it ran in the
+ * background, its full transcript; a skipped or in-chat run says why there is none.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: OrbitTaskRepository, onDismiss: () -> Unit) {
+    // A read that fails says so with a retry; it is never shown as "no runs" or "no record".
+    var reload by remember { mutableIntStateOf(0) }
+    var listFailed by remember { mutableStateOf<String?>(null) }
+    var recordFailed by remember { mutableStateOf<String?>(null) }
+    val runs by produceState<List<OrbitRunEntity>?>(null, task.id, reload) {
+        listFailed = null
+        try { repository.dao.observeRuns(task.id, 50).collect { value = it } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { listFailed = e.message ?: e.toString() }
+    }
+    var openRunId by remember(task.id) { mutableStateOf<String?>(null) }
+    val openRun = openRunId?.let { id -> runs?.firstOrNull { it.id == id } }
+    val format = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
+    // Kept outside the list, so coming back from one run returns to where the user was.
+    val historyState = rememberLazyListState()
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(
+            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            if (openRun == null) {
+                Text(stringResource(R.string.orbit_run_history_title), style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.SemiBold)
+                Text(task.title, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis)
+                val list = runs
+                when {
+                    listFailed != null -> TaskErrorCard(listFailed) { reload++ }
+                    list == null -> TaskLoading()
+                    list.isEmpty() -> EmptyHint(stringResource(R.string.orbit_run_history_empty))
+                    else -> LazyColumn(Modifier.fillMaxWidth().heightIn(max = 560.dp), state = historyState) {
+                        items(list, key = { it.id }, contentType = { "run" }) { run ->
+                            val failed = run.state == "FAILED" || run.error.isNotBlank()
+                            OrbitListRow(
+                                icon = orbitIcon(runIcon(run)),
+                                title = format.format(Date(run.startedAt)),
+                                detail = runOutcome(run, task),
+                                meta = relativeTime(run.finishedAt.takeIf { it > 0 } ?: run.startedAt),
+                                iconTint = if (failed) com.ai.assistance.operit.ui.common.readableErrorColor()
+                                    else MaterialTheme.colorScheme.onSurfaceVariant,
+                                showChevron = true,
+                                onClick = { openRunId = run.id },
+                            )
+                        }
+                    }
+                }
+            } else {
+                BackHandler { openRunId = null }
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(onClick = { openRunId = null }) {
+                        Icon(orbitIcon("arrow-left"), stringResource(R.string.back))
+                    }
+                    Column(Modifier.weight(1f)) {
+                        Text(format.format(Date(openRun.startedAt)), style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold)
+                        Text(runOutcome(openRun, task), style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                val record by produceState<String?>(null, openRun.id, openRun.state, reload) {
+                    recordFailed = null
+                    value = try { repository.runRecord(task.id, openRun.id) }
+                        catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { recordFailed = e.message ?: e.toString(); null }
+                }
+                val body = record
+                if (body == null && recordFailed != null) TaskErrorCard(recordFailed) { reload++ }
+                else Surface(shape = RoundedCornerShape(16.dp), color = taskCardColor(), modifier = Modifier.fillMaxWidth()) {
+                    if (body == null) TaskLoading()
+                    else SelectionContainer {
+                        Text(
+                            body.ifBlank {
+                                // No background transcript: what the run saw, and why there is nothing more.
+                                listOf(
+                                    openRun.error.ifBlank { openRun.observation.takeIf { openRun.decision != OrbitRunEntity.SKIPPED }.orEmpty() },
+                                    stringResource(when (openRun.decision) {
+                                        OrbitRunEntity.IN_CHAT -> R.string.orbit_run_record_in_chat
+                                        else -> R.string.orbit_run_record_none
+                                    }, rememberOrbitName(orbitId)),
+                                ).filter { it.isNotBlank() }.joinToString("\n\n")
+                            },
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.heightIn(max = 520.dp).verticalScroll(rememberScrollState()).padding(16.dp),
+                        )
+                    }
+                }
+            }
         }
     }
 }
@@ -278,6 +384,7 @@ private fun TaskList(
     who: String,
     tasks: List<OrbitTaskEntity>?,
     dues: Map<String, Long>,
+    latestRuns: Map<String, OrbitRunEntity>,
     listState: LazyListState,
     onBack: () -> Unit,
     errorBanner: LazyListScope.() -> Unit,
@@ -319,7 +426,7 @@ private fun TaskList(
                 Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 0.dp)
                     .background(taskCardColor(), shape)) {
                     if (index > 0) HorizontalDivider(Modifier.padding(start = 70.dp, end = 16.dp), color = divider)
-                    TaskListRow(task, tasks.orEmpty(), dues[task.id], shape) { onOpen(task.id) }
+                    TaskListRow(task, tasks.orEmpty(), dues[task.id], latestRuns[task.id], shape) { onOpen(task.id) }
                 }
             }
         }
@@ -327,7 +434,8 @@ private fun TaskList(
 }
 
 @Composable
-private fun TaskListRow(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?, shape: Shape, onClick: () -> Unit) {
+private fun TaskListRow(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?, lastRun: OrbitRunEntity?,
+    shape: Shape, onClick: () -> Unit) {
     val icon = taskScheduleIcon(task)
     Row(
         Modifier.fillMaxWidth().clip(shape).clickable(role = Role.Button, onClick = onClick)
@@ -342,6 +450,14 @@ private fun TaskListRow(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, due
             Text(if (task.state == "ACTIVE") taskSchedule(task, tasks, dueAt) else taskState(task),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 2, overflow = TextOverflow.Ellipsis)
+            // How the last run went, so a quiet "nothing to review" still shows the task ran.
+            lastRun?.let { run ->
+                val time = run.finishedAt.takeIf { it > 0 } ?: run.startedAt
+                Text(stringResource(R.string.orbit_task_last_run_line, relativeTime(time), runOutcome(run, task)),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+            }
         }
         Icon(orbitIcon("chevron-right"), null, Modifier.padding(start = 8.dp).size(20.dp),
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -461,20 +577,22 @@ private fun TaskDetail(
                         Text(stringResource(R.string.orbit_task_running), style = MaterialTheme.typography.bodyLarge)
                     }
                 } else {
-                    val failed = run?.state == "FAILED" && !run?.error.isNullOrBlank()
+                    val failed = run?.state == "FAILED" && !run.error.isNullOrBlank()
+                    // A skipped run keeps the previous observation; it says why it was skipped instead.
+                    val skipped = run?.decision == OrbitRunEntity.SKIPPED && run.error.isBlank()
                     Text(
-                        run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
+                        if (skipped) OrbitRoutines.skippedReason(context, task)
+                        else run?.error?.takeIf { it.isNotBlank() } ?: run?.observation?.takeIf { it.isNotBlank() }
                             ?: stringResource(R.string.orbit_task_no_result),
                         style = MaterialTheme.typography.bodyLarge,
                         color = if (failed) com.ai.assistance.operit.ui.common.readableErrorColor() else MaterialTheme.colorScheme.onSurface,
                         maxLines = 12, overflow = TextOverflow.Ellipsis,
                     )
                 }
-                run?.decision?.takeIf { it.isNotBlank() && !running }?.let { decision ->
+                run?.decision?.takeIf { it.isNotBlank() && !running && it != OrbitRunEntity.SKIPPED }?.let { decision ->
                     Text(stringResource(R.string.orbit_task_decision, when (decision) {
                         OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
                         OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(orbitId))
-                        OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
                         else -> decision
                     }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 4, overflow = TextOverflow.Ellipsis)
@@ -504,7 +622,7 @@ private fun TaskDetail(
                     ) {
                         Icon(orbitIcon("scroll-text"), null, Modifier.size(20.dp))
                         Spacer(Modifier.width(12.dp))
-                        Text(stringResource(R.string.orbit_execution_record), style = MaterialTheme.typography.bodyLarge,
+                        Text(stringResource(R.string.orbit_run_history_open), style = MaterialTheme.typography.bodyLarge,
                             modifier = Modifier.weight(1f))
                         Icon(orbitIcon("chevron-right"), null, Modifier.size(20.dp),
                             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f))
@@ -562,6 +680,7 @@ private fun TaskDetail(
                     val active = task.state == "ACTIVE"
                     val blocked = !active && receipts.any { it.state in setOf("STARTED", "UNKNOWN") }
                     val pauseOrResume: @Composable (Modifier) -> Unit = { modifier ->
+                        // Orbit is told first: the request waits in the main chat's input box.
                         TaskButton(
                             stringResource(if (active) R.string.orbit_task_pause else R.string.orbit_task_resume),
                             if (active) "pause" else "play",
@@ -569,7 +688,8 @@ private fun TaskDetail(
                             enabled = !busy && !blocked,
                             modifier = modifier,
                         ) {
-                            action { check(repository.changeState(orbitId, task.id, if (active) "PAUSED" else "ACTIVE")) }
+                            onDraft(context.getString(
+                                if (active) R.string.orbit_task_pause_draft else R.string.orbit_task_resume_draft, task.title))
                         }
                     }
                     val runNow: @Composable (Modifier) -> Unit = { modifier ->

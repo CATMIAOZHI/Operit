@@ -86,10 +86,6 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         private const val ARCHIVED_BUILTIN_PACKAGES_KEY = "archived_builtin_packages"
         private const val ACTIVE_PACKAGES_KEY = "active_packages"
         private const val TOOLPKG_SUBPACKAGE_STATES_KEY = "toolpkg_subpackage_states"
-        private const val FORMER_DEFAULTS_SWITCHED_OFF_KEY = "former_default_packages_switched_off_v1"
-        private val FORMER_DEFAULT_PACKAGES = listOf(
-            "12306_ticket", "crossref", "daily_life", "com.operit.linux_ssh_bundle", "com.operit.remote_operit_bundle"
-        )
         private const val TOOLPKG_EXTENSION = ".toolpkg"
         private const val TOOLPKG_CACHE_DIR = "toolpkg_cache"
         private const val TOOLPKG_CACHE_SIGNATURE_FILE = ".toolpkg-cache-signature"
@@ -681,7 +677,6 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     // Load available packages info (metadata only) from assets and external storage
                     loadAvailablePackages()
 
-                    switchOffFormerDefaultPackagesOnce()
                     // Automatically import built-in packages that are enabled by default
                     initializeDefaultPackages()
                     reconcileToolPkgCaches()
@@ -1715,28 +1710,6 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             exportName = exportName,
             preferEnabledContainer = preferEnabledContainer
         )
-    }
-
-    /**
-     * These built-ins used to start switched on and now start off. Installs that had them switched on
-     * automatically get them switched off once; switching one back on later stays. Orbits keep their own
-     * switches and are not touched.
-     */
-    private fun switchOffFormerDefaultPackagesOnce() {
-        val prefs = context.getSharedPreferences(PACKAGE_PREFS, Context.MODE_PRIVATE)
-        if (prefs.getBoolean(FORMER_DEFAULTS_SWITCHED_OFF_KEY, false)) return
-        val names = synchronized(initLock) {
-            FORMER_DEFAULT_PACKAGES.flatMap { name ->
-                listOf(name) + toolPkgContainers[name]?.subpackages?.map { it.packageName }.orEmpty()
-            }.toSet()
-        }
-        val enabled = decodeEnabledPackageNamesFromPrefs()
-        val kept = enabled.filterNot { it in names }
-        if (kept.size != enabled.size) {
-            persistEnabledPackageNamesToPrefs(kept)
-            AppLogger.d(TAG, "Switched off former default packages: ${enabled - kept.toSet()}")
-        }
-        prefs.edit().putBoolean(FORMER_DEFAULTS_SWITCHED_OFF_KEY, true).apply()
     }
 
     /**

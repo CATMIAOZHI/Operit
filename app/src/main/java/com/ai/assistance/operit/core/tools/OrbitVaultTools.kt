@@ -32,14 +32,14 @@ internal object OrbitVaultTools {
         name = NAME,
         description = "密码保险箱：保存和使用登录密码、API 密钥。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/list/fill/http_request/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/list/fill/http_request/terminal/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
             ToolParameterSchema("provider", description = "request_api_key：服务名，比如 OpenWeather", required = false),
             ToolParameterSchema("api_hosts", description = "request_api_key：这个密钥只能发往的主机，逗号分隔，比如 api.openweathermap.org", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
             ToolParameterSchema("domain", description = "list：可选，只列这个网站的", required = false),
-            ToolParameterSchema("credential_id", description = "fill/http_request/delete：保险箱条目编号（来自 list）", required = false),
+            ToolParameterSchema("credential_id", description = "fill/http_request/terminal/delete：保险箱条目编号（来自 list）", required = false),
             ToolParameterSchema("field", description = "fill：username 或 password", required = false),
             ToolParameterSchema("ref", description = "fill：浏览器快照里输入框的 ref", required = false),
             ToolParameterSchema("submit", description = "fill：填完后是否按回车，默认 false", required = false),
@@ -56,6 +56,7 @@ internal object OrbitVaultTools {
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
   - API：用 http_request，宿主会把密钥加到请求里，只发往存密钥时登记的主机，返回里的密钥会被打码。
+  - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置（Authorization 头、自定义头或查询参数），把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
   - 汇报时只说用没用成，不要说出任何保存的值。
 """,
     )
@@ -137,6 +138,7 @@ internal object OrbitVaultTools {
                         .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true")
                 }
                 "http_request" -> request(entry(), arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
+                "terminal" -> terminal(context, orbit.id, entry())
                 "delete" -> {
                     val id = arg("credential_id").ifEmpty { error("delete needs credential_id; get it from list") }
                     val e = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == id }
@@ -145,7 +147,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request, terminal or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -159,6 +161,28 @@ internal object OrbitVaultTools {
         // Redirects could carry a key in the query to another host, so they are reported, not followed.
         OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
             .connectTimeout(20, TimeUnit.SECONDS).readTimeout(40, TimeUnit.SECONDS).build()
+    }
+
+    /** A surrogate and the loopback proxy for using an API key from terminal scripts; see [OrbitVaultBroker]. */
+    private fun terminal(context: Context, orbitId: String, e: OrbitVault.Entry): JSONObject {
+        check(e.kind == OrbitVault.API_KEY) { "terminal only works with a saved API key; logins are filled in the browser with fill" }
+        val base = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.base(context)
+        val surrogate = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.surrogate(context, orbitId, e)
+        val host = e.apiHosts.first()
+        val curl = when {
+            e.placement == "bearer" -> "curl -sS -H \"Authorization: Bearer $surrogate\" \"${base}$host/\""
+            e.placement.startsWith("header:") -> "curl -sS -H \"${e.placement.removePrefix("header:")}: $surrogate\" \"${base}$host/\""
+            else -> "curl -sS \"${base}$host/?${e.placement.removePrefix("query:")}=$surrogate\""
+        }
+        return JSONObject().put("credential_id", e.id).put("site", e.site)
+            .put("proxy_base", base).put("surrogate", surrogate)
+            .put("api_hosts", JSONArray(e.apiHosts)).put("placement", e.placement)
+            .put("example", curl)
+            .put("note", "Put the surrogate where the key goes (placement ${e.placement}) and send the request to " +
+                "proxy_base + host + path instead of https://host/path. Only these hosts are allowed: " +
+                "${e.apiHosts.joinToString()}. The proxy swaps in the real key as the request leaves and masks it in the " +
+                "response; redirects are passed back, not followed. Send bodies with a Content-Length. If the proxy " +
+                "cannot be reached or says the surrogate is out of date, call terminal again.")
     }
 
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
