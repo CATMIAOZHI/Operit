@@ -234,7 +234,6 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
 
     var selectedProfileId by remember { mutableStateOf(activeProfileId) }
     var showFolderNavigator by remember { mutableStateOf(false) }
-    var showMoveTargetPicker by remember { mutableStateOf(false) }
 
 
     LaunchedEffect(activeProfileId) { selectedProfileId = activeProfileId }
@@ -271,158 +270,8 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
         viewModel.clearError()
     }
 
-    val filePickerLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.OpenDocument(),
-        onResult = { uri ->
-            uri?.let { fileUri ->
-                scope.launch {
-                    var tempFile: File? = null
-                    try {
-                        // More robust file name extraction
-                        val (fileName, mimeType) = withContext(Dispatchers.IO) {
-                            // Execute ContentResolver operations on IO thread
-                            var extractedFileName = "Untitled"
-                            context.contentResolver.query(fileUri, null, null, null, null)
-                                ?.use { cursor ->
-                                    if (cursor.moveToFirst()) {
-                                        val displayNameIndex =
-                                            cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
-                                        if (displayNameIndex != -1) {
-                                            extractedFileName = cursor.getString(displayNameIndex)
-                                        }
-                                    }
-                                }
-
-                            val extractedMimeType = context.contentResolver.getType(fileUri)
-                            Pair(extractedFileName, extractedMimeType)
-                        }
-
-                        if (mimeType != null && mimeType.startsWith("text")) {
-                            val content = withContext(Dispatchers.IO) {
-                                val inputStream = context.contentResolver.openInputStream(fileUri)
-                                val reader = BufferedReader(InputStreamReader(inputStream))
-                                reader.readText()
-                            }
-                            viewModel.importDocument(fileName, fileUri.toString(), content)
-                        } else {
-                            // For binary files, use the tool
-                            tempFile = File(context.cacheDir, fileName)
-                            withContext(Dispatchers.IO) {
-                                val inputStream = context.contentResolver.openInputStream(fileUri)
-                                val outputStream = FileOutputStream(tempFile)
-                                inputStream?.use { input ->
-                                    outputStream.use { output ->
-                                        input.copyTo(output)
-                                    }
-                                }
-                            }
-
-                            val result = withContext(Dispatchers.IO) {
-                                val toolHandler = AIToolHandler.getInstance(context)
-                                val tool = AITool(
-                                    name = "read_file_full",
-                                    parameters = listOf(ToolParameter("path", tempFile.absolutePath))
-                                )
-                                toolHandler.executeTool(tool)
-                            }
-
-                            if (result.success) {
-                                // Assuming result.result can be cast to StringResultData
-                                val resultData = result.result
-                                val content = if (resultData is StringResultData) {
-                                    resultData.value
-                                } else {
-                                    resultData.toString()
-                                }
-                                viewModel.importDocument(fileName, fileUri.toString(), content)
-                            } else {
-                                AppLogger.e("MemoryScreen", "Tool execution failed: ${result.error}")
-                            }
-                        }
-                    } catch (e: Exception) {
-                        AppLogger.e("MemoryScreen", "Error processing file: $fileUri", e)
-                    } finally {
-                        tempFile?.delete()
-                    }
-                }
-            }
-        }
-    )
-
+    // The old memory graph is read-only: no create, import, link, move or delete actions here.
     CustomScaffold(
-        floatingActionButton = {
-            Column(
-                horizontalAlignment = Alignment.End,
-                verticalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                // 框选模式下的操作：移动或删除选中的记忆
-                if (uiState.isBoxSelectionMode) {
-                    ExtendedFloatingActionButton(
-                        // A batch move asks for its target first: moving straight into the folder the
-                        // user is browsing clears folders without ever saying so.
-                        onClick = { showMoveTargetPicker = true },
-                        icon = { Icon(Icons.Default.DriveFileMove, contentDescription = null) },
-                        text = { Text(stringResource(R.string.memory_move_selected)) },
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer
-                    )
-                    ExtendedFloatingActionButton(
-                        onClick = { viewModel.showBatchDeleteConfirm() },
-                        icon = { Icon(Icons.Default.Delete, contentDescription = null) },
-                        text = { Text(stringResource(R.string.memory_delete_selected)) },
-                        containerColor = MaterialTheme.colorScheme.errorContainer
-                    )
-                }
-
-                // 次要操作收进「更多」，避免一列无文字按钮让人不知道每个是做什么的。
-                var moreExpanded by remember { mutableStateOf(false) }
-                Box {
-                    ExtendedFloatingActionButton(
-                        onClick = { moreExpanded = true },
-                        icon = { Icon(Icons.Default.MoreVert, contentDescription = null) },
-                        text = { Text(stringResource(R.string.memory_more_actions)) },
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant
-                    )
-                    DropdownMenu(expanded = moreExpanded, onDismissRequest = { moreExpanded = false }) {
-                        DropdownMenuItem(
-                            text = { Text(stringResource(R.string.memory_a11y_import_document)) },
-                            onClick = {
-                                moreExpanded = false
-                                filePickerLauncher.launch(
-                                    arrayOf(
-                                        "text/*",
-                                        "application/pdf",
-                                        "application/msword",
-                                        "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-                                    )
-                                )
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(if (uiState.isLinkingMode)
-                                R.string.memory_linking_stop else R.string.memory_a11y_toggle_linking)) },
-                            onClick = {
-                                moreExpanded = false
-                                viewModel.toggleLinkingMode(!uiState.isLinkingMode)
-                            }
-                        )
-                        DropdownMenuItem(
-                            text = { Text(stringResource(if (uiState.isBoxSelectionMode)
-                                R.string.memory_box_select_stop else R.string.memory_a11y_toggle_box_selection)) },
-                            onClick = {
-                                moreExpanded = false
-                                viewModel.toggleBoxSelectionMode(!uiState.isBoxSelectionMode)
-                            }
-                        )
-                    }
-                }
-
-                ExtendedFloatingActionButton(
-                    onClick = { viewModel.startEditing(null) },
-                    icon = { Icon(Icons.Default.Add, contentDescription = null) },
-                    text = { Text(stringResource(R.string.memory_a11y_create_memory)) }
-                )
-            }
-        }
     ) { padding ->
         Box(
             modifier = Modifier
@@ -443,6 +292,12 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
                     },
                     onSettingsClick = { viewModel.showSearchSettingsDialog(true) },
                     onMenuClick = { showFolderNavigator = !showFolderNavigator }
+                )
+                Text(
+                    text = stringResource(R.string.memory_legacy_read_only_banner),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp)
                 )
 
                 Box(
@@ -497,14 +352,6 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
                     folderPaths = uiState.folderPaths,
                     selectedFolderPath = uiState.selectedFolderPath,
                     onFolderSelected = { folderPath -> viewModel.selectFolder(folderPath) },
-                    onFolderRename = { oldPath, newPath ->
-                        viewModel.renameFolder(
-                            oldPath,
-                            newPath
-                        )
-                    },
-                    onFolderDelete = { folderPath -> viewModel.deleteFolder(folderPath) },
-                    onFolderCreate = { folderPath -> viewModel.createFolder(folderPath) },
                     onRefresh = { viewModel.refreshFolderList() },
                     profileList = profileList,
                     profileNameMap = profileNameMap,
@@ -566,7 +413,6 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
                         // Saving used to leave the dialog open, which reads as "did it save?".
                         viewModel.showSearchSettingsDialog(false)
                     },
-                    onRebuild = { viewModel.rebuildVectorIndex() },
                     onSimulateSearch = { viewModel.openSearchSimulationDialog() }
                 )
             }
@@ -584,86 +430,19 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
             }
 
             if (uiState.isDocumentViewOpen && uiState.selectedMemory != null) {
-                val documentMemoryId = uiState.selectedMemory!!.id
-                // A rotation recreates this composition, so the title and the edited chunks are saved;
-                // keying them by document id keeps one document's drafts out of another's.
-                var memoryTitle by rememberSaveable(documentMemoryId) {
-                    mutableStateOf(uiState.selectedMemory!!.title)
-                }
-                val chunkStates = rememberSaveable(documentMemoryId,
-                    saver = listSaver<SnapshotStateMap<Long, String>, Any>(
-                        save = { map -> map.entries.flatMap { listOf(it.key, it.value) } },
-                        restore = { flat -> mutableStateMapOf<Long, String>().apply {
-                            var index = 0
-                            while (index + 1 < flat.size) {
-                                put(flat[index] as Long, flat[index + 1] as String)
-                                index += 2
-                            }
-                        } }
-                    )) {
-                    mutableStateMapOf<Long, String>().apply {
-                        uiState.selectedDocumentChunks.forEach { put(it.id, it.content) }
-                    }
-                }
-                var draftsSeeded by rememberSaveable(documentMemoryId) { mutableStateOf(false) }
-                // 当chunks列表变化时，同步状态；已有草稿时不覆盖，避免旋转或重载吃掉未保存的编辑。
-                LaunchedEffect(uiState.selectedDocumentChunks) {
-                    if (!draftsSeeded && uiState.selectedDocumentChunks.isNotEmpty()) {
-                        chunkStates.clear()
-                        uiState.selectedDocumentChunks.forEach { chunk ->
-                            chunkStates[chunk.id] = chunk.content
-                        }
-                        draftsSeeded = true
-                    }
-                }
-
                 DocumentViewDialog(
-                    memoryTitle = memoryTitle,
-                    onTitleChange = { memoryTitle = it },
+                    memoryTitle = uiState.selectedMemory!!.title,
                     chunks = uiState.selectedDocumentChunks,
-                    chunkStates = chunkStates,
-                    onChunkChange = { id, content -> chunkStates[id] = content },
                     searchQuery = uiState.documentSearchQuery,
                     onSearchQueryChange = { viewModel.onDocumentSearchQueryChange(it) },
                     onPerformSearch = { viewModel.performSearchInDocument() },
                     onDismiss = { viewModel.closeDocumentView() },
-                    onSave = {
-                        // 保存标题
-                        if (memoryTitle != uiState.selectedMemory!!.title) {
-                            viewModel.updateMemory(
-                                memory = uiState.selectedMemory!!,
-                                newTitle = memoryTitle,
-                                newContent = uiState.selectedMemory!!.content,
-                                newContentType = uiState.selectedMemory!!.contentType,
-                                newSource = uiState.selectedMemory!!.source,
-                                newCredibility = uiState.selectedMemory!!.credibility,
-                                newImportance = uiState.selectedMemory!!.importance,
-                                newFolderPath = uiState.selectedMemory!!.folderPath ?: "",
-                                newTags = uiState.selectedMemory!!.tags.map { it.name }
-                            )
-                        }
-                        // 保存有变动的chunks
-                        chunkStates.forEach { (id, content) ->
-                            val originalContent =
-                                uiState.selectedDocumentChunks.find { it.id == id }?.content
-                            if (content != originalContent) {
-                                viewModel.updateChunkContent(id, content)
-                            }
-                        }
-                        viewModel.closeDocumentView()
-                    },
-                    onDelete = { viewModel.deleteMemory(uiState.selectedMemory!!.id) },
                     folderPath = uiState.selectedMemory?.folderPath ?: ""
                 )
             } else if (uiState.selectedMemory != null) {
                 MemoryInfoDialog(
                     memory = uiState.selectedMemory!!,
-                    onDismiss = { viewModel.clearSelection() },
-                    onEdit = {
-                        viewModel.startEditing(uiState.selectedMemory)
-                        viewModel.clearSelection() // 关闭当前对话框
-                    },
-                    onDelete = { viewModel.deleteMemory(uiState.selectedMemory!!.id) }
+                    onDismiss = { viewModel.clearSelection() }
                 )
             }
 
@@ -672,98 +451,12 @@ private fun MemoryGraphPage(activeProfileId: String, lockedSpace: Boolean = fals
                 EdgeInfoDialog(
                     edge = selectedEdge,
                     graph = uiState.graph,
-                    onDismiss = { viewModel.clearSelection() },
-                    onEdit = {
-                        viewModel.startEditingEdge(selectedEdge)
-                        viewModel.clearSelection() // 同样, 点击编辑后关闭
-                    },
-                    onDelete = { viewModel.deleteEdge(selectedEdge.id) }
-                )
-            }
-
-            if (uiState.linkingNodeIds.size == 2) {
-                val sourceNode = uiState.graph.nodes.find { it.id == uiState.linkingNodeIds[0] }
-                val targetNode = uiState.graph.nodes.find { it.id == uiState.linkingNodeIds[1] }
-                if (sourceNode != null && targetNode != null) {
-                    LinkMemoryDialog(
-                        sourceNodeLabel = sourceNode.label,
-                        targetNodeLabel = targetNode.label,
-                        onDismiss = { viewModel.toggleLinkingMode(false) },
-                        onLink = { type, weight, description ->
-                            viewModel.linkMemories(
-                                sourceNode.id,
-                                targetNode.id,
-                                type,
-                                weight,
-                                description
-                            )
-                        }
-                    )
-                }
-            }
-
-            if (showMoveTargetPicker) {
-                MoveMemoriesToFolderDialog(
-                    allFolderPaths = uiState.folderPaths,
-                    selectedCount = uiState.boxSelectedNodeIds.size,
-                    onDismiss = { showMoveTargetPicker = false },
-                    onConfirm = { target ->
-                        showMoveTargetPicker = false
-                        viewModel.moveSelectedMemoriesToFolder(target)
-                    }
-                )
-            }
-
-            if (uiState.isEditing) {
-                EditMemoryDialog(
-                    memory = uiState.editingMemory,
-                    allFolderPaths = uiState.folderPaths,
-                    onDismiss = { viewModel.cancelEditing() },
-                    onSave = { memory, title, content, contentType, source, credibility, importance, folderPath, tags ->
-                        if (memory == null) {
-                            // 新建时同样落盘弹窗里选择的文件夹、标签和分数。
-                             viewModel.createMemory(title, content, contentType, source = source,
-                                 folderPath = folderPath, tags = tags, credibility = credibility,
-                                 importance = importance)
-                        } else {
-                            viewModel.updateMemory(
-                                memory = memory,
-                                newTitle = title,
-                                newContent = content,
-                                newContentType = contentType,
-                                newSource = source,
-                                newCredibility = credibility,
-                                newImportance = importance,
-                                newFolderPath = folderPath,
-                                newTags = tags
-                            )
-                        }
-                    }
-                )
-            }
-
-            val editingEdge = uiState.editingEdge
-            if (uiState.isEditingEdge && editingEdge != null) {
-                EditEdgeDialog(
-                    edge = editingEdge,
-                    onDismiss = { viewModel.cancelEditingEdge() },
-                    onSave = { type, weight, description ->
-                        viewModel.updateEdge(editingEdge, type, weight, description)
-                    }
-                )
-            }
-
-            if (uiState.showBatchDeleteConfirm) {
-                BatchDeleteConfirmDialog(
-                    selectedCount = uiState.boxSelectedNodeIds.size,
-                    onDismiss = { viewModel.dismissBatchDeleteConfirm() },
-                    onConfirm = { viewModel.deleteSelectedNodes() }
+                    onDismiss = { viewModel.clearSelection() }
                 )
             }
         }
     }
 }
-
 @Composable
 private fun MemoryLibraryNavigation(
     modifier: Modifier = Modifier,

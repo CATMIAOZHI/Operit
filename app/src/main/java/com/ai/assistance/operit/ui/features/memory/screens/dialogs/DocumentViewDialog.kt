@@ -41,33 +41,22 @@ import com.ai.assistance.operit.data.model.Memory
 @Composable
 fun DocumentViewDialog(
     memoryTitle: String,
-    onTitleChange: (String) -> Unit,
     chunks: List<DocumentChunk>,
-    chunkStates: Map<Long, String>,
-    onChunkChange: (Long, String) -> Unit,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onPerformSearch: () -> Unit,
     onDismiss: () -> Unit,
-    onSave: () -> Unit,
-    onDelete: () -> Unit,
     folderPath: String = "" // 添加文件夹路径参数
 ) {
+    // The old memory graph is read-only, so a document is shown for reading and searching only.
     val keyboardController = LocalSoftwareKeyboardController.current
-    var confirmingDelete by remember { mutableStateOf(false) }
 
     AlertDialog(
         modifier = Modifier.fillMaxHeight(0.85f),
         onDismissRequest = onDismiss,
         title = {
             Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
-                OutlinedTextField(
-                    value = memoryTitle,
-                    onValueChange = onTitleChange,
-                    label = { Text(stringResource(R.string.memory_document_title)) },
-                    modifier = Modifier.fillMaxWidth(),
-                    textStyle = MaterialTheme.typography.bodyMedium
-                )
+                Text(text = memoryTitle, style = MaterialTheme.typography.titleMedium)
                 if (folderPath.isNotEmpty()) {
                     Text(
                         text = "${stringResource(R.string.memory_folder_label)}: $folderPath",
@@ -111,45 +100,25 @@ fun DocumentViewDialog(
                 } else {
                     LazyColumn(modifier = Modifier.fillMaxSize()) {
                         items(chunks, key = { it.id }) { chunk ->
-                            val content = chunkStates[chunk.id] ?: ""
-                            OutlinedTextField(
-                                value = content,
-                                onValueChange = { newContent -> onChunkChange(chunk.id, newContent) },
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 4.dp),
-                                label = { Text(stringResource(R.string.document_block_label, chunk.chunkIndex + 1)) }
-                            )
+                            Column(Modifier.fillMaxWidth().padding(vertical = 6.dp)) {
+                                Text(
+                                    stringResource(R.string.document_block_label, chunk.chunkIndex + 1),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                androidx.compose.foundation.text.selection.SelectionContainer {
+                                    Text(chunk.content, style = MaterialTheme.typography.bodyMedium)
+                                }
+                            }
                         }
                     }
                 }
             }
         },
-        dismissButton = {
+        confirmButton = {
              OutlinedButton(onClick = onDismiss) {
                 Text(stringResource(R.string.memory_close))
             }
-        },
-        confirmButton = {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.Start)
-            ) {
-                Button(onClick = onSave) {
-                    Text(stringResource(R.string.memory_save_all))
-                }
-                Button(
-                    onClick = { confirmingDelete = true },
-                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
-                ) {
-                    Text(stringResource(R.string.memory_delete_document))
-                }
-            }
         }
-    )
-    if (confirmingDelete) DeleteConfirmed(
-        message = stringResource(R.string.memory_confirm_delete_document),
-        onDismiss = { confirmingDelete = false },
-        onConfirm = { confirmingDelete = false; onDelete() }
     )
 }

@@ -42,6 +42,11 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             "query_memory", "get_memory_by_title", "create_memory", "update_memory", "delete_memory",
             "move_memory", "link_memories", "query_memory_links", "update_memory_link", "delete_memory_link",
         )
+        /** Tools that changed the old memory graph; it is read-only now, so they are refused. */
+        val LEGACY_GRAPH_WRITE_TOOLS = setOf(
+            "create_memory", "update_memory", "delete_memory", "move_memory",
+            "link_memories", "update_memory_link", "delete_memory_link",
+        )
 
         private data class QuerySnapshotState(
             val id: String,
@@ -218,6 +223,17 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                     result = StringResultData(""),
                     error = "Orbit has no memory graph. Its memory is memory.md: read and edit it with memory_notes, " +
                         "and use search_chat_history to look through earlier conversations."
+                )
+            }
+            // The old memory graph only answers queries now; nothing is added to or changed in it.
+            if (tool.name in LEGACY_GRAPH_WRITE_TOOLS) {
+                return@runBlocking ToolResult(
+                    toolName = tool.name,
+                    success = false,
+                    result = StringResultData(""),
+                    error = "${tool.name} is no longer available: the old memory graph is read-only (query_memory, " +
+                        "get_memory_by_title and query_memory_links still work). To remember something, use the new " +
+                        "memory: the memory_review package, memory_notes for memory.md and user.md."
                 )
             }
             return@runBlocking when (tool.name) {

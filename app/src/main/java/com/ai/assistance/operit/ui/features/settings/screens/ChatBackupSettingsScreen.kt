@@ -757,13 +757,6 @@ fun ChatBackupSettingsScreen() {
                 operationState = memoryOperationState,
                 operationMessage = memoryOperationMessage,
                 onExport = { showExportProfileDialog = true },
-                onImport = {
-                    val intent = Intent(Intent.ACTION_OPEN_DOCUMENT).apply {
-                        addCategory(Intent.CATEGORY_OPENABLE)
-                        type = "application/json"
-                    }
-                    memoryFilePickerLauncher.launch(intent)
-                }
             )
         }
         item {

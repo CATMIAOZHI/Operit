@@ -623,7 +623,8 @@ object SystemToolPrompts {
             includeSubagentTools = includeSubagentTools
         ) + internalToolCategoriesEn.map { category ->
             category.copy(tools = category.tools.filterNot {
-                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames
+                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
+                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS
             })
         }
     }
@@ -712,7 +713,8 @@ object SystemToolPrompts {
             includeSubagentTools = includeSubagentTools
         ) + internalToolCategoriesCn.map { category ->
             category.copy(tools = category.tools.filterNot {
-                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames
+                it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
+                    it.name in com.ai.assistance.operit.core.tools.defaultTool.standard.MemoryQueryToolExecutor.LEGACY_GRAPH_WRITE_TOOLS
             })
         }
     }

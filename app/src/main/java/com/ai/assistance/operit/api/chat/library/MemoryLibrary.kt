@@ -176,16 +176,17 @@ object MemoryLibrary {
     ) {
         val resolvedProfile = com.ai.assistance.operit.features.orbit.OrbitMemoryScope
             .resolve(context, sourceChatId, profileIdOverride) ?: preferencesManager.activeMemorySpaceIdFlow.first()
-        // An Orbit keeps its memory in memory.md only; it has no memory graph.
+        // The old memory graph is read-only everywhere; an Orbit never had one. Only the new
+        // memory (notes and skills) is written here.
         val orbitSpace =
             com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(resolvedProfile)
-        val includeGraph = includeGraph && !orbitSpace
-        if (!includeGraph && !includeNotes && !includeSkills) {
-            // Manual "update memory" and rebuilds only write the graph; say so instead of reporting success.
-            if (orbitSpace) throw IllegalStateException(
-                context.getString(com.ai.assistance.operit.R.string.orbit_memory_graph_unavailable))
-            return
+        if (!includeNotes && !includeSkills) {
+            // A call that only wanted the graph has nothing left to do; say so instead of reporting success.
+            throw IllegalStateException(context.getString(
+                if (orbitSpace) com.ai.assistance.operit.R.string.orbit_memory_graph_unavailable
+                else com.ai.assistance.operit.R.string.memory_legacy_read_only))
         }
+        @Suppress("NAME_SHADOWING") val includeGraph = false
         withSpaceOperation(resolvedProfile) {
         val logs = com.ai.assistance.operit.data.preferences.MemoryExtractionLogRepository(context, resolvedProfile)
         val log = com.ai.assistance.operit.data.preferences.MemoryExtractionLog(

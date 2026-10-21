@@ -7,7 +7,7 @@
     <string name="memory_review_interval">Memory interval (user turns)</string>
     <string name="skill_review_interval">Skill interval (tool iterations)</string>
     <string name="memory_learning_delay_minutes">%1$d min</string>
-    <string name="memory_auto_master_off">The master switch is off. Automatic graph, notes and skill extraction are paused. Path settings are retained.</string>
+    <string name="memory_auto_master_off">The master switch is off, so notes and skills are not organized automatically. The settings below are kept.</string>
     <string name="memory_graph_path_desc">When the master switch is on, periodically organize conversations into the legacy memory graph. This path switch applies to all spaces.</string>
     <string name="memory_notes_path_desc">When the master switch is on, review replies for this space’s memory.md and global user.md. Changes follow the auto-approval setting.</string>
     <string name="memory_skills_path_desc">When the master switch is on, extract reusable skills in this space. Installation follows auto-approval; continuous revision uses the switch below.</string>
@@ -119,7 +119,8 @@
     <string name="memory_review_delete_skill">Approval deletes this skill and all supporting files. The manifest above identifies the file versions to delete.</string>
     <string name="memory_interval_unit_turns">turns</string>
     <string name="memory_interval_unit_iterations">tool iterations</string>
-    <string name="memory_graph_empty">Nothing saved here yet. Use the plus button below, or let the AI extract from your chats.</string>
+    <string name="memory_graph_empty">No legacy memory here. Legacy memory is read-only; new memories go into the new memory automatically.</string>
+    <string name="memory_legacy_read_only_banner">Legacy memory can be viewed and searched, but no longer added or changed</string>
     <string name="memory_graph_empty_search">No memory matched this search. Try another keyword.</string>
     <string name="memory_source_manual">Added manually</string>
     <string name="memory_source_ai_created">Added by the AI</string>
