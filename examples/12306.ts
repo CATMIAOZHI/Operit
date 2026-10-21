@@ -7,7 +7,7 @@
         "en": "12306 Extension"
     },
     "description": { "zh": "提供12306火车票信息查询功能，包括余票、中转、经停站等。", "en": "Query China Railway 12306 train ticket information, including availability, transfer routes, and stop stations." },
-    "enabledByDefault": true,
+    "enabledByDefault": false,
     "category": "Life",
     "tools": [
         {

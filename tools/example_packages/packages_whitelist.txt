@@ -3,14 +3,11 @@ code_runner.js
 codex_draw.js
 crossref.js
 daily_life.js
-duckduckgo.js
 extended_memory_tools.js
 extended_http_tools.js
 extended_file_tools.js
-ffmpeg.js
 file_converter.js
 google_search.js
-github.js
 extended_chat.js
 nanobanana_draw.js
 minimax_draw.js
@@ -33,7 +30,6 @@ zhipu_search.js
 linux_ssh
 remote_operit
 worldbook
-plan_mode
 reading_companion
 memory_review.js
 phone_control.js
