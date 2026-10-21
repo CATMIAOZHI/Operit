@@ -118,7 +118,7 @@ internal object OrbitVaultTools {
                             JSONObject().put("credential_id", it.id).put("kind", it.kind).put("site", it.site)
                                 .put("fields", JSONArray(if (it.kind == OrbitVault.LOGIN) listOf("username", "password") else listOf("api_key")))
                                 .put("username", OrbitVault.masked(it.username))
-                                .apply { if (it.kind == OrbitVault.API_KEY) put("api_hosts", JSONArray(it.apiHosts)) }
+                                .apply { if (it.kind == OrbitVault.API_KEY) put("api_hosts", JSONArray(it.apiHosts)).put("placement", it.placement) }
                                 // A password set from a new-password card, which the site may not have taken yet.
                                 .apply { if (it.card != 0L) put("new_password", true) }
                                 .put("saved_at", it.savedAt)
@@ -132,13 +132,20 @@ internal object OrbitVaultTools {
                         "password" -> e.secret
                         else -> error("field must be username or password")
                     }
-                    val ref = arg("ref").ifEmpty { error("Missing ref") }
+                    val ref = arg("ref").ifEmpty { error("fill needs ref: the input box's ref from a browser snapshot of the login page") }
                     return@runBlockingIoPreservingToolRuntimeContext ToolGetter.getBrowserSessionTools(context)
                         .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true")
                 }
                 "http_request" -> request(entry(), arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
-                "delete" -> JSONObject().put("deleted", OrbitVault.delete(context, orbit.id, arg("credential_id")))
-                else -> error("Unknown action")
+                "delete" -> {
+                    val id = arg("credential_id").ifEmpty { error("delete needs credential_id; get it from list") }
+                    val e = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == id }
+                    val deleted = OrbitVault.delete(context, orbit.id, id)
+                    JSONObject().put("credential_id", id).put("deleted", deleted)
+                        .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
+                        .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
+                }
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -156,14 +163,14 @@ internal object OrbitVaultTools {
 
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
         check(e.kind == OrbitVault.API_KEY) { "http_request only works with a saved API key" }
-        require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported method" }
-        var parsed = url.toHttpUrlOrNull() ?: error("Bad url")
+        require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported method $method; use GET, POST, PUT, PATCH or DELETE" }
+        var parsed = url.toHttpUrlOrNull() ?: error("url \"${url.take(200)}\" is not a valid https address")
         require(parsed.isHttps) { "url must be https" }
         require(e.apiHosts.any { OrbitVault.matchesHost(parsed.host, it) }) { "This key may only be sent to ${e.apiHosts.joinToString()}" }
         val builder = Request.Builder()
         var contentType = "application/json"
         if (headers.isNotBlank()) {
-            val obj = JSONObject(headers)
+            val obj = runCatching { JSONObject(headers) }.getOrElse { error("headers must be a JSON object such as {\"Accept\":\"application/json\"}") }
             obj.keys().forEach { name ->
                 val value = obj.getString(name)
                 if (name.equals("content-type", true)) contentType = value else builder.header(name, value)
@@ -179,11 +186,24 @@ internal object OrbitVaultTools {
         client.newCall(builder.url(parsed).method(method, requestBody).build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
             val secrets = listOf(e.secret)
-            return JSONObject().put("status", response.code)
+            val code = response.code
+            val next = when {
+                code in 200..299 -> "The request worked."
+                code == 401 || code == 403 -> "The service refused the key. First check the url is the right API and placement " +
+                    "(${e.placement}) matches the service docs; if those are right, the key itself may be wrong or lack access. " +
+                    "A wrong placement can only be fixed with a new request_api_key card."
+                code in 300..399 -> "The service redirected; redirects are not followed so the key is not sent elsewhere. Call the redirect url directly if it is on an allowed host."
+                code == 429 -> "Rate limited; wait before trying again."
+                code >= 500 -> "The service had an error; try again later."
+                else -> "The service rejected the request; read body for the reason."
+            }
+            return JSONObject().put("status", code).put("http_ok", code in 200..299)
+                .put("placement", e.placement).put("host", parsed.host).put("next_step", next)
                 .put("content_type", response.header("Content-Type").orEmpty())
                 .apply { response.header("Location")?.let { put("redirect", OrbitVault.redact(it, secrets)) } }
                 .put("body", OrbitVault.redact(text.take(MAX_RESPONSE), secrets))
                 .put("truncated", text.length > MAX_RESPONSE)
+                .apply { if (text.length > MAX_RESPONSE) put("body_chars", text.length) }
         }
     }
 }

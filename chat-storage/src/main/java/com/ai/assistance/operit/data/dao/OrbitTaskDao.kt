@@ -135,8 +135,10 @@ interface OrbitTaskDao {
     fun observeArtifacts(orbitId: String): Flow<List<OrbitArtifactVersionEntity>>
     @Query("SELECT * FROM orbit_artifact_versions WHERE id=:id")
     suspend fun artifact(id: String): OrbitArtifactVersionEntity?
-    @Query("SELECT * FROM orbit_artifact_versions WHERE orbitId=:orbitId ORDER BY createdAt DESC LIMIT 100")
-    suspend fun artifacts(orbitId: String): List<OrbitArtifactVersionEntity>
+    @Query("SELECT * FROM orbit_artifact_versions WHERE orbitId=:orbitId ORDER BY createdAt DESC, id DESC LIMIT :limit OFFSET :offset")
+    suspend fun artifacts(orbitId: String, limit: Int, offset: Int): List<OrbitArtifactVersionEntity>
+    @Query("SELECT COUNT(*) FROM orbit_artifact_versions WHERE orbitId=:orbitId")
+    suspend fun artifactCount(orbitId: String): Int
     @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertArtifact(artifact: OrbitArtifactVersionEntity)
     @Query("DELETE FROM orbit_artifact_versions WHERE orbitId=:orbitId")

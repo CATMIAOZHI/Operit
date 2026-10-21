@@ -242,18 +242,32 @@ internal object OrbitRoutines {
         val tasks = dao.tasks(task.orbitId)
         val notes = OrbitBoardRepository(context, task.orbitId, OrbitBoardRepository.Board.GOAL_NOTES).list()
         val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
-        return "today: ${day.format(Date())}\n\n" + goals.joinToString("\n\n") { goal ->
+        fun cut(text: String, max: Int) = if (text.length > max) text.take(max) + "…[cut]" else text
+        val blocks = goals.map { goal ->
             val steps = tasks.filter { it.goalId == goal.id }
-            val latest = notes.filter { it.extra == goal.id }.take(3)
+            val goalNotes = notes.filter { it.extra == goal.id }
             buildString {
                 append("GOAL ${goal.id}: ${goal.title}\n")
                 append("Last changed: ${day.format(Date(goal.updatedAt))}\n")
-                if (goal.plan.isNotBlank()) append("Plan: ${goal.plan.take(1500)}\n")
+                if (goal.plan.isNotBlank()) append("Plan: ${cut(goal.plan, 1500)}\n")
                 append("Steps: ${steps.count { it.state == "DONE" }}/${steps.size} done")
-                steps.take(10).forEach { append("\n- [${it.state}] ${it.title}: ${it.lastObservation.take(200)}") }
-                latest.forEach { append("\nEarlier ${it.state.lowercase()} (${day.format(Date(it.createdAt))}): ${it.title} ${it.body.take(300)}") }
+                steps.take(10).forEach { append("\n- [${it.state}] ${it.title}: ${cut(it.lastObservation, 200)}") }
+                if (steps.size > 10) append("\n- …${steps.size - 10} more steps not shown")
+                goalNotes.take(3).forEach { append("\nEarlier ${it.state.lowercase()} ${it.id} (${day.format(Date(it.createdAt))}): ${it.title} ${cut(it.body, 300)}") }
+                if (goalNotes.size > 3) append("\n…${goalNotes.size - 3} older notes not shown")
+                if (goal.plan.length > 1500 || steps.size > 10 || steps.any { it.lastObservation.length > 200 } || goalNotes.size > 3 || goalNotes.take(3).any { it.body.length > 300 }) {
+                    append("\nSome of this goal is cut. Full plan and steps: orbit_goal action=detail goal_id=${goal.id}; one step's full observation: orbit_goal action=step goal_id=${goal.id} task_id=<step>; notes: orbit_goal_note action=list or read.")
+                }
             }
-        }.take(20_000)
+        }
+        val out = StringBuilder("today: ${day.format(Date())}\n")
+        val left = mutableListOf<String>()
+        blocks.forEachIndexed { i, block ->
+            if (left.isEmpty() && out.length + block.length + 2 <= 19_000) out.append("\n").append(block).append("\n")
+            else left += goals[i].id
+        }
+        if (left.isNotEmpty()) out.append("\nNot shown for length (${left.size} goals): ${left.joinToString()}. Read each with orbit_goal action=detail.\n")
+        return out.toString()
     }
 
     /**
@@ -510,7 +524,7 @@ internal object OrbitRoutines {
 
     private val GOAL_ALIGN_ZH = """
         目标对齐（后台）。SOURCE 里是今天的日期、用户进行中的目标、计划、步骤（任务）的状态和最近结果，以及以前的简报。在后台安静地对一遍：
-        1. 对账：逐个目标看步骤的真实状态，找出计划和实际对不上的地方：做完了但计划里还挂着、步骤失败或卡住、在等用户、很久没动。拿不准用户最近有没有改主意，用 search_chat_history 搜他说过的话，或用 orbit_file 读 memory.md，不要猜。
+        1. 对账：逐个目标看步骤的真实状态，找出计划和实际对不上的地方：做完了但计划里还挂着、步骤失败或卡住、在等用户、很久没动。拿不准用户最近有没有改主意，用 search_chat_history 搜他说过的话，或用 memory_review 工具包的 notes 读 memory.md，不要猜。SOURCE 里标了 [cut] 或“not shown”的地方，按旁边的提示读全再下结论。
         2. 需要新信息时先查（搜网页、读页面），只引用你真的打开过的链接。
         3. 简报：和上一封比有新东西的目标，用 orbit_goal_note action=brief 写一封（goal_id 填 SOURCE 里的编号，title 一句话，text 写进展、卡在哪、下一步最值得做什么、你能帮上什么）。没变化的目标跳过。
         4. 只有真需要用户本人的事（快到期的、等他拍板的、卡住只有他能解决的）才备一条主动消息：userMessage 用你平时和他说话的语气写一两句，opportunityKey 用 goal:<目标编号>:<事由>。发不发由主聊天再判断。其他情况 userMessage 留空。
@@ -523,7 +537,8 @@ internal object OrbitRoutines {
         1. Reconcile: for each goal, compare the plan with what really happened. Point out steps done but still open in
            the plan, steps that failed or are stuck, steps waiting on the user, and goals that have not moved for a long
            time. When unsure whether the user changed their mind, search what they said with search_chat_history or
-           read memory.md with orbit_file instead of guessing.
+           read memory.md with notes in the memory_review package instead of guessing. Where SOURCE says [cut] or
+           "not shown", read the full item as the hint says before concluding.
         2. Research first when you need fresh facts (search the web, read pages); cite only links you actually opened.
         3. Briefing: for a goal with something new since its last briefing, save one with orbit_goal_note action=brief
            (goal_id from SOURCE, title one line, text: what moved, where it is stuck, the most useful next step, where

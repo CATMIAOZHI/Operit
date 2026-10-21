@@ -400,12 +400,20 @@ private fun rememberAction(): (suspend () -> Unit) -> Unit {
                     throw e
                 } catch (e: Exception) {
                     AppLogger.w(TABS_TAG, "Orbit tab action failed: ${e.message}")
-                    showToast(context, e.message ?: e.toString())
+                    showToast(context, orbitActionError(context, e))
                 }
             }
         }
     }
 }
+
+/**
+ * What a failed page action tells the user. The app's own reasons are written in English for the
+ * model; unless the page itself is in English (values-en), the user gets the localized sentence.
+ */
+internal fun orbitActionError(context: android.content.Context, e: Exception): String =
+    e.message?.takeIf { it.isNotBlank() && context.resources.configuration.locales[0].language == "en" }
+        ?: context.getString(com.ai.assistance.operit.R.string.orbit_action_failed)
 
 // ---------------------------------------------------------------- Feed and Ideas: shared parts
 

@@ -29,20 +29,26 @@ internal object OrbitFileTools {
             ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
             ToolParameterSchema("path", description = "相对路径，如 memory/people/张三.md、LESSONS.md、files/报告.md；read/write/append/delete/export/send 必填；import 时是存到 files/ 下的目标路径（可省略）", required = false),
             ToolParameterSchema("text", description = "write：完整新内容；append/daily：要追加的一段或一行", required = false),
+            ToolParameterSchema("folder", description = "list 可选：只列这个文件夹下的，如 memory/people、files、dreams、alignment", required = false),
+            ToolParameterSchema("offset", "integer", "list 可选：从第几个开始列（从 0 开始），用上次返回的 next_offset 继续", false),
+            ToolParameterSchema("start_line", "integer", "read 可选：从第几行开始读（从 1 开始），默认 1", false),
+            ToolParameterSchema("line_count", "integer", "read 可选：最多读几行，默认读到 20000 字为止", false),
+            ToolParameterSchema("start_char", "integer", "read 可选：只在接着读一行特别长的行时用，表示从 start_line 这一行的第几个字开始（从 1 开始）", false),
             ToolParameterSchema("trash_id", description = "restore：trash 返回的编号", required = false),
             ToolParameterSchema("source", description = "import：应用里已有文件的绝对路径，比如绘图工具返回的 file_path", required = false),
             ToolParameterSchema("format", description = "export：html、docx 或 pdf", required = false),
         ),
         details = """
   - 人物：memory/people/<名字>.md，一人一份；群组：memory/groups/<名字>.md。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
-  - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事仍写进 memory.md。
+  - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察，最多 600 字，换行会变成空格。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事用记忆工具写进 memory.md（memory.md 不归这个工具管）。
   - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
   - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好，四节：想听的、别跟我说、什么时候、怎么说。只改相关的那一节；一次拒绝不写成长期禁令。
   - timezones.yaml：用户的长期时区（home）和常联系的人的时区（others）。
   - ALIGNMENT_SYNTHESIS.md：对齐总结（和用户怎么相处），每晚对齐复盘重写。dreams/YYYY-MM-DD.md 是每晚复盘记录，alignment/ 下的 ALIGNMENT_STATE.yaml、PROGRESSION_HISTORY.yaml、REPAIR_THREADS.yaml 是复盘状态，只由复盘维护。
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
-  - write 会覆盖整个文件，先 read 再改。delete 后告诉用户可以在回收站恢复。
+  - read 一次最多返回 20000 字；没读完时末尾会写明读到第几行、下次怎么接着读（照着提示填 start_line，长行还要填 start_char）。list 一次最多 200 个，有 next_offset 时用 offset 接着列。
+  - write 会覆盖整个文件，先 read 再改；返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点一下就存进相册；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
   - import：把应用里别处的文件收进 files/（比如绘图工具画好的图），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
@@ -58,14 +64,33 @@ internal object OrbitFileTools {
             val args = tool.parameters.associate { it.name to it.value }
             fun arg(name: String) = args[name]?.takeIf { it.isNotBlank() } ?: error("Missing $name")
             val result: String = when (args["action"]) {
-                "list" -> JSONArray(files.list().map {
-                    JSONObject().put("path", it.path).put("title", it.title)
-                        .put("size", if (it.size < 0) "empty template" else it.size)
-                }).toString()
-                "read" -> files.read(arg("path"))
-                "write" -> wrote(context, files.write(arg("path"), args["text"] ?: error("Missing text")))
+                "list" -> {
+                    val folder = args["folder"]?.trim()?.trim('/')?.takeIf { it.isNotEmpty() }
+                    val all = files.list(includeReview = true)
+                        .filter { folder == null || it.path.startsWith("$folder/") }
+                    val offset = args["offset"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: error("offset must be a whole number from 0; got \"$it\"")
+                    } ?: 0
+                    require(offset == 0 || offset < all.size) { "offset $offset is past the end; there are ${all.size} files" }
+                    val page = all.drop(offset).take(MAX_LIST)
+                    val next = (offset + page.size).takeIf { it < all.size }
+                    JSONObject().put("total", all.size).put("offset", offset).put("returned", page.size)
+                        .put("next_offset", next ?: JSONObject.NULL)
+                        .put("files", JSONArray(page.map {
+                            JSONObject().put("path", it.path).put("title", it.title)
+                                .put("size", if (it.size < 0) "empty template" else it.size)
+                        }))
+                        .toString()
+                }
+                "read" -> paged(arg("path"), files.read(arg("path")), args["start_line"], args["line_count"], args["start_char"])
+                "write" -> wrote(context, files.write(arg("path"), args["text"] ?: error("write needs text: the whole new content of the file")))
                 "append" -> appended(files.append(arg("path"), arg("text")))
-                "daily" -> appended(files.appendDaily(arg("text")))
+                "daily" -> {
+                    val line = arg("text")
+                    val cut = line.replace(Regex("\\s+"), " ").trim().length > OrbitFiles.MAX_DAILY_LINE
+                    appended(files.appendDaily(line)) +
+                        if (cut) " The line was longer than ${OrbitFiles.MAX_DAILY_LINE} characters and was cut; write the rest as another line." else ""
+                }
                 "delete" -> {
                     val item = files.delete(arg("path"))
                     "Moved to the trash (id ${item.id}); it can be restored for ${OrbitFiles.TRASH_DAYS} days"
@@ -134,7 +159,7 @@ internal object OrbitFileTools {
                     val entry = files.saveBytes(path, text.byteInputStream())
                     "Saved as ${entry.path}. The user finds it under Files in the Builds tab."
                 }
-                else -> error("Unknown action")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\"; use list, read, write, append, daily, delete, trash, restore, send, import, export or prompt_copy")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -200,6 +225,51 @@ internal object OrbitFileTools {
     }
 
     private const val MAX_DIFF = 2000
+    private const val MAX_LIST = 200
+    private const val MAX_READ = 20_000
+
+    /**
+     * The lines asked for, up to [MAX_READ] characters. A whole file comes back as it is; a part
+     * ends with where it stopped and where to go on.
+     */
+    private fun paged(path: String, text: String, start: String?, count: String?, startChar: String?): String {
+        val lines = text.replace("\r\n", "\n").removeSuffix("\n").let { if (it.isEmpty()) emptyList() else it.lines() }
+        val from = start?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_line must be a whole number from 1; got \"$it\"")
+        } ?: 1
+        val wanted = count?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("line_count must be a whole number from 1; got \"$it\"")
+        } ?: Int.MAX_VALUE
+        val charFrom = startChar?.trim()?.takeIf { it.isNotEmpty() }?.let {
+            it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_char must be a whole number from 1; got \"$it\"")
+        } ?: 1
+        if (lines.isEmpty()) return ""
+        require(from <= lines.size) { "start_line $from is past the end; $path has ${lines.size} lines" }
+        val first = lines[from - 1]
+        require(charFrom == 1 || charFrom <= first.length) { "start_char $charFrom is past the end of line $from, which has ${first.length} characters" }
+        // Inside one long line: the next slice of that line, then a pointer to the rest.
+        if (charFrom > 1 || first.length > MAX_READ) {
+            val end = minOf(first.length, charFrom - 1 + MAX_READ)
+            val more = if (end < first.length) "Read on with start_line=$from start_char=${end + 1}."
+                else if (from < lines.size) "Read on with start_line=${from + 1}." else "This is the end of the file."
+            return first.substring(charFrom - 1, end) +
+                "\n\n[Line $from of ${lines.size} in $path, characters ${charFrom}-$end of ${first.length}. $more]"
+        }
+        val out = StringBuilder()
+        var last = from - 1
+        while (last < lines.size && last - from + 1 < wanted) {
+            val line = lines[last]
+            val started = last > from - 1
+            // A line that does not fit is left whole for the next read, which pages through it if it is long.
+            if (started && (out.length + line.length + 1 > MAX_READ || line.length > MAX_READ)) break
+            if (started) out.append('\n')
+            out.append(line)
+            last++
+        }
+        if (from == 1 && last == lines.size && text.length <= MAX_READ + 1) return text
+        val more = if (last < lines.size) " Read on with start_line=${last + 1}." else ""
+        return "$out\n\n[Lines $from-$last of ${lines.size} in $path.$more]"
+    }
     private const val MAX_DIFF_INPUT = 40_000
     private const val MAX_DIFF_LINES = 1_500
 

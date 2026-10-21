@@ -795,9 +795,13 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                     review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
                         resolveCallerChatId(tool).orEmpty())
                 )
+                // Same shape as manage's memory_change, plus the size so the model knows what changed.
                 return ToolResult(toolName = tool.name, success = true,
-                    result = StringResultData(org.json.JSONObject().put("change_id", change.id)
-                        .put("status", change.status).put("message", context.getString(
+                    result = StringResultData(review.toModelJson(change).put("change_id", change.id)
+                        .put("action", action).put("target", "memory.md")
+                        .put("chars_before", proposal.before.markdown.length).put("chars_after", proposal.after.length)
+                        .put("max_chars", MemoryNotesRepository.MAX_CHARS)
+                        .put("message", context.getString(
                             if (change.status == "approved") R.string.memory_review_auto_applied
                             else R.string.memory_review_staged)).toString()))
             }

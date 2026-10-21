@@ -26,8 +26,8 @@ internal object OrbitVoiceTools {
         description = "用手机自带的语音合成把文字做成语音消息，或把多人台词做成一段播客式对话，存进 files/voice/，返回可以直接放进回复的 markdown（聊天里会显示成播放器）。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "voices（列出可用声音）/ speak（一段语音）/ podcast（多人对话）", required = true),
-            ToolParameterSchema("text", description = "speak：要读的文字", required = false),
-            ToolParameterSchema("voice", description = "speak：声音名（来自 voices，可省略）", required = false),
+            ToolParameterSchema("text", description = "speak：要读的文字，最多6000字（约20分钟）", required = false),
+            ToolParameterSchema("voice", description = "speak：声音名（来自 voices，可省略；写了不存在的名字会报错）", required = false),
             ToolParameterSchema("script", description = "podcast：JSON 数组，如 [{\"speaker\":\"A\",\"text\":\"…\"},{\"speaker\":\"B\",\"text\":\"…\"}]", required = false),
             ToolParameterSchema("voices", description = "podcast：JSON 对象，说话人到声音名，如 {\"A\":\"zh-cn-x-…\"}；可省略，自动给每人分不同声音", required = false),
             ToolParameterSchema("title", description = "文件名（不含扩展名），可省略", required = false),
@@ -35,6 +35,7 @@ internal object OrbitVoiceTools {
         details = """
   - 用户想听而不是看时（比如通勤路上的简报、睡前故事、练口语），或者用户要语音消息时用。
   - 声音来自手机系统的语音引擎，效果取决于手机；中文内容会自动选中文声音。
+  - 一个文件最多6000字（podcast 是所有台词加起来）。更长就拆成几段分别生成。
   - 生成后把返回的 markdown 放进回复，用户就能在聊天里直接播放；文件也会出现在构建页的文件里。
   - podcast 的台词要像真人对话：短句、有来有回，每人一段不要太长。
 """,
@@ -51,11 +52,15 @@ internal object OrbitVoiceTools {
                 }).toString()
                 "speak", "podcast" -> {
                     val lines = if (args["action"] == "speak") {
-                        listOf(OrbitVoice.Line("voice", args["text"]?.takeIf { it.isNotBlank() } ?: error("Missing text")))
+                        listOf(OrbitVoice.Line("voice", args["text"]?.takeIf { it.isNotBlank() } ?: error("speak needs text")))
                     } else {
-                        val script = JSONArray(args["script"]?.takeIf { it.isNotBlank() } ?: error("Missing script"))
+                        val raw = args["script"]?.takeIf { it.isNotBlank() } ?: error("podcast needs script")
+                        val script = runCatching { JSONArray(raw) }.getOrElse {
+                            error("script must be a JSON array like [{\"speaker\":\"A\",\"text\":\"…\"}]")
+                        }
+                        require(script.length() > 0) { "script has no lines" }
                         (0 until script.length()).map { i ->
-                            val line = script.getJSONObject(i)
+                            val line = script.optJSONObject(i) ?: error("Line ${i + 1} of the script is not an object with speaker and text")
                             val text = line.optString("text")
                             require(text.isNotBlank()) { "Line ${i + 1} of the script has no text" }
                             OrbitVoice.Line(line.optString("speaker").ifBlank { "A" }.take(40), text)
@@ -65,7 +70,8 @@ internal object OrbitVoiceTools {
                         args["voice"]?.takeIf { it.isNotBlank() }?.let { mapOf("voice" to it) }.orEmpty()
                     } else {
                         args["voices"]?.takeIf { it.isNotBlank() }?.let { raw ->
-                            JSONObject(raw).let { json -> json.keys().asSequence().associateWith { json.getString(it) } }
+                            runCatching { JSONObject(raw) }.getOrElse { error("voices must be a JSON object like {\"A\":\"voice name\"}") }
+                                .let { json -> json.keys().asSequence().associateWith { json.getString(it) } }
                         }.orEmpty()
                     }
                     val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.US).format(Date())
@@ -73,16 +79,18 @@ internal object OrbitVoiceTools {
                         ?.takeIf { it.isNotBlank() } ?: (if (args["action"] == "speak") "voice-$stamp" else "podcast-$stamp")
                     val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}.wav")
                     try {
-                        OrbitVoice.synthesize(context, lines, voices, temp)
+                        val used = OrbitVoice.synthesize(context, lines, voices, temp)
                         val files = OrbitFiles.of(context, orbit.id)
                         val entry = temp.inputStream().use { files.saveBytes("files/voice/$name.wav", it) }
-                        JSONObject().put("path", entry.path)
+                        JSONObject().put("path", entry.path).put("chars", lines.sumOf { it.text.length })
+                            .put("lines", lines.size).put("bytes", entry.size)
+                            .put("voices", JSONObject(used.mapValues { it.value.ifEmpty { "default" } }))
                             .put("markdown", OrbitFileTools.mediaMarkdown(files.fileFor(entry.path))).toString()
                     } finally {
                         temp.delete()
                     }
                 }
-                else -> error("Unknown action")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use voices, speak or podcast.")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {

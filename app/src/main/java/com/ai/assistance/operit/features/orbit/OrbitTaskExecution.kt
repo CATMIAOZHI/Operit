@@ -23,7 +23,8 @@ internal object OrbitTaskExecution {
     internal fun promptsForBinding(root: Boolean) =
         OrbitTaskActionTools.prompts.filter { it.name != OrbitTaskActionTools.WAIT || root } +
             com.ai.assistance.operit.core.tools.OrbitProductTools.prompts.filter {
-                it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT
+                it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT ||
+                    root && it.name == com.ai.assistance.operit.core.tools.OrbitProductTools.GOAL
             } + if (root) com.ai.assistance.operit.core.tools.OrbitBoardTools.prompts +
                 com.ai.assistance.operit.core.tools.OrbitExtraTools.taskPrompts + OrbitTaskRunner.finishPrompt
             else emptyList()
@@ -65,6 +66,7 @@ internal object OrbitTaskExecution {
     /** A CLI visibility exception, not a permission-review exemption. Execution rechecks the lease. */
     fun isTaskCapability(name: String) = name == OrbitTaskRunner.FINISH || name in OrbitTaskActionTools.names ||
         name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT ||
+        name == com.ai.assistance.operit.core.tools.OrbitProductTools.GOAL ||
         name in com.ai.assistance.operit.core.tools.OrbitBoardTools.names ||
         name in com.ai.assistance.operit.core.tools.OrbitExtraTools.taskNames
 }

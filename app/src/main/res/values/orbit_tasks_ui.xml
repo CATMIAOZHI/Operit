@@ -17,6 +17,7 @@
     <string name="orbit_task_run_queued">已安排，马上开始。</string>
     <string name="orbit_task_run_already_queued">已经在等着运行了，不用再点。</string>
     <string name="orbit_task_dismiss">知道了</string>
+    <string name="orbit_action_failed">没能完成这个操作，可能刚被改过。请刷新后再试一次。</string>
     <string name="orbit_goal_new_message">帮我新建一个目标：</string>
     <string name="orbit_task_keep">保留任务</string>
     <string name="orbit_tasks_group_active">进行中</string>

@@ -78,7 +78,8 @@ internal object OrbitTools {
         }
         return mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
-            OrbitProductTools.GOAL to isOrbitChat, OrbitProductTools.ARTIFACT to isOrbitChat,
+            // A background routine (goal alignment) reads goals in full; the tool keeps it read-only there.
+            OrbitProductTools.GOAL to (isOrbitChat || isTaskRoot), OrbitProductTools.ARTIFACT to isOrbitChat,
             OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
             OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false) +

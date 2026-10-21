@@ -59,10 +59,12 @@ object OrbitVoice {
      * otherwise a different installed voice for the text's language; with only one voice on the
      * phone, speakers are told apart by pitch.
      */
-    suspend fun synthesize(context: Context, lines: List<Line>, voices: Map<String, String>, out: File) {
+    /** Returns the voice each speaker got (empty name: the engine's default for the language). */
+    suspend fun synthesize(context: Context, lines: List<Line>, voices: Map<String, String>, out: File): Map<String, String> {
         require(lines.isNotEmpty() && lines.all { it.text.isNotBlank() }) { "Nothing to say" }
-        require(lines.sumOf { it.text.length } <= MAX_CHARS) { "The script is longer than $MAX_CHARS characters; split it into several parts" }
-        withEngine(context) { tts ->
+        val length = lines.sumOf { it.text.length }
+        require(length <= MAX_CHARS) { "The text has $length characters; one file allows at most $MAX_CHARS. Split it into several parts" }
+        return withEngine(context) { tts ->
             val installed = tts.voices.orEmpty().filter {
                 !it.features.orEmpty().contains(TextToSpeech.Engine.KEY_FEATURE_NOT_INSTALLED) && !it.isNetworkConnectionRequired
             }
@@ -70,6 +72,11 @@ object OrbitVoice {
                 "zh" else Locale.getDefault().language
             val sameLanguage = installed.filter { it.locale.language == language }.sortedBy { it.name }
             val speakers = lines.map { it.speaker }.distinct()
+            voices.forEach { (speaker, wanted) ->
+                require(tts.voices.orEmpty().any { it.name == wanted }) {
+                    "Voice \"$wanted\" for $speaker is not on this phone. Call action=voices and use a name from it, or leave the voice out"
+                }
+            }
             val assigned = speakers.mapIndexed { index, speaker ->
                 val named = voices[speaker]?.let { wanted -> tts.voices.orEmpty().firstOrNull { it.name == wanted } }
                 speaker to (named ?: sameLanguage.getOrNull(index % sameLanguage.size.coerceAtLeast(1)))
@@ -104,6 +111,7 @@ object OrbitVoice {
             } finally {
                 temp.deleteRecursively()
             }
+            speakers.associateWith { assigned[it]?.name.orEmpty() }
         }
     }
 

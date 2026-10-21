@@ -38,12 +38,12 @@ internal object OrbitPrivacyTools {
         ),
         details = """
   - 「忘掉」是在你这里全面清理，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行，不用这个。
-  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含回收站）、技能、目标、定时任务、动态和点子、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止、purge 把回收站里的那份彻底删掉）。SOUL.md、IDENTITY.md 和自定义提示词里的命中只列出来，不会自动改，要请用户自己在 Orbit 资料页里改。
+  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含每晚复盘记录、对齐状态和回收站）、技能、目标、定时任务、动态和点子、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止、purge 把回收站里的那份彻底删掉）。SOUL.md、IDENTITY.md 和自定义提示词里的命中只列出来，不会自动改，要请用户自己在 Orbit 资料页里改。scanned 是查过的范围，unscanned 是读不了、没能检查的地方。
   - 用日常说法把范围告诉用户：记忆、提醒和定时任务、你做的东西、记录。说清楚删除不能撤销，再问一句是否确认。不要在回复里重复要忘掉的内容，用「那件事」指代。
   - 用户明确同意后才 confirm。沉默、含糊、只同意一部分，都不算同意；用户改了范围就重新 plan。
   - confirm 会重新检查，情况变了会要求重新 plan。完成后按结果汇报清掉了哪些类别、停了哪些任务、还剩什么。
   - 聊天记录不会被清理：这次和以前的聊天里还留着原话，用户可以在聊天列表里自己删掉那些聊天。汇报时要说明这一点。
-  - 只有 all_clear 为 true 时，才能说「我存的内容里已经清干净了」；不要说成「完全忘掉了」。all_clear 为 false 时，照 remaining 和 failed 如实说还剩哪里。
+  - 只有 all_clear 为 true 时，才能说「我存的内容里已经清干净了」；不要说成「完全忘掉了」。all_clear 为 false 时，照 remaining、failed 和 unscanned 如实说还剩哪里、哪里没能检查。
   - 清理之后，这条信息不能再写回记忆。别人的邮件、日历、已经发出去的东西要另外问用户。
 """,
     )
@@ -73,6 +73,7 @@ internal object OrbitPrivacyTools {
         details = """
   - 每次替用户对外发东西前都先调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人、先给用户看草稿）。
   - 草稿要先原样发给用户看，用户同意后再检查和发送；改过的版本要重新给用户看。
+  - 这个工具不能判断用户的回复是不是同意：approval 永远是 UNVERIFIED。verdict 是 PASS 时，看 user_replies 里用户看过草稿后说的话（按时间排，最后一条最新），以最新的为准：明确同意才发；后面又说“等等”“不要发”、提了修改或含糊其辞都不算。
   - warnings 不拦截，但要想一想：比如正文里有电话号码、身份证号，确认是用户想发的。
 """,
     )
@@ -97,13 +98,20 @@ internal object OrbitPrivacyTools {
             val result = when (a["action"]?.trim()) {
                 "plan" -> {
                     val terms = a["terms"].orEmpty().lines().map { it.trim() }.filter { it.isNotEmpty() }
-                    val (id, hits) = OrbitForget.plan(context, orbit, chatId, terms)
-                    JSONObject().put("plan_id", id)
+                    val planned = OrbitForget.plan(context, orbit, chatId, terms)
+                    val hits = planned.hits
+                    JSONObject().put("plan_id", planned.id)
                         .put("summary", JSONObject(hits.groupingBy { it.category }.eachCount()))
                         .put("places", JSONArray(hits.map { it.json() }))
+                        .put("scanned", JSONArray(OrbitForget.SCANNED))
+                        .put("unscanned", JSONArray(planned.unscanned.take(50)))
                         .put("cannot_erase", JSONArray(CANNOT_ERASE))
-                        .put("next", if (hits.isEmpty()) "Nothing was found. Tell the user, or plan again with other terms."
-                            else "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation.")
+                        .put("next", when {
+                            hits.isEmpty() && planned.unscanned.isEmpty() -> "Nothing was found. Tell the user, or plan again with other terms."
+                            hits.isEmpty() -> "Nothing was found in what could be read, but the places in unscanned could not be checked; tell the user that."
+                            else -> "Tell the user the scope in everyday words, say it cannot be undone, and ask once for confirmation." +
+                                if (planned.unscanned.isNotEmpty()) " Also say some places could not be checked." else ""
+                        })
                 }
                 "confirm" -> {
                     val lastUser = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 30)
@@ -112,13 +120,16 @@ internal object OrbitPrivacyTools {
                     JSONObject().put("cleaned", JSONObject(outcome.cleaned as Map<*, *>))
                         .put("remaining", JSONArray(outcome.remaining.take(OrbitForget.MAX_PLACES).map { it.json() }))
                         .put("failed", JSONArray(outcome.failed))
-                        .put("all_clear", outcome.remaining.isEmpty() && outcome.failed.isEmpty())
+                        .put("scanned", JSONArray(OrbitForget.SCANNED))
+                        .put("unscanned", JSONArray(outcome.unscanned.take(50)))
+                        .put("all_clear", outcome.remaining.isEmpty() && outcome.failed.isEmpty() && outcome.unscanned.isEmpty())
                         .put("cannot_erase", JSONArray(CANNOT_ERASE))
                         .put("note", "all_clear covers only what this Orbit stores, not chat history. " +
+                            "Places in unscanned could not be read, so they may still hold it. " +
                             "Places marked user_review must be edited by the user. Report categories only; never repeat the information.")
                 }
                 "cancel" -> { OrbitForget.cancel(context, orbit.id); JSONObject().put("cancelled", true) }
-                else -> error("Unknown action")
+                else -> error("Unknown action \"${a["action"].orEmpty()}\"; use plan, confirm or cancel")
             }
             ToolResult(FORGET, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { fail(FORGET, e) }
@@ -215,15 +226,37 @@ internal object OrbitPrivacyTools {
                 if (found > 0) warnings.put("The text contains $found $label(s); make sure the user wants to send them")
             }
             val talk = caller?.let { OrbitPreferences.getInstance(context).current().orbitForChat(it) } != null
+            val userReplies = JSONArray()
+            var repliesCut = false
             if (talk) {
                 val messages = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(caller!!, 40)
-                val probe = OrbitForget.normalize(text).take(80)
-                val shown = messages.firstOrNull { it.sender == "ai" && OrbitForget.normalize(ChatUtils.removeThinkingContent(it.content)).contains(probe) }
-                val answered = shown != null && messages.any { it.sender == "user" && it.timestamp > shown.timestamp }
-                check("user approved", answered, when {
-                    shown == null -> "Show the user this exact text first and wait for their approval"
-                    !answered -> "The user has not answered since you showed the draft"
-                    else -> "The user replied after seeing this exact text; make sure the reply was an approval"
+                // Quote marks, bullets and bold around a draft shown in the chat do not make it a different text.
+                fun plain(value: String) = OrbitForget.normalize(value.lines()
+                    .joinToString(" ") { it.trimStart().trimStart('>').trim() }.replace(Regex("[*_`~]"), ""))
+                val full = plain(text)
+                val probe = full.take(80)
+                fun said(m: com.ai.assistance.operit.data.model.ChatMessage) = plain(ChatUtils.removeThinkingContent(m.content))
+                // The newest draft that starts the same way, and whether it is the whole of this text.
+                val started = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
+                val shown = started?.takeIf { said(it).contains(full) }
+                // Every visible user message since the draft, oldest first: a later "wait, don't" overrides an earlier "ok".
+                val replies = shown?.let { s ->
+                    messages.filter {
+                        it.sender == "user" && it.timestamp > s.timestamp &&
+                            it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL
+                    }.sortedBy { it.timestamp }
+                }.orEmpty()
+                repliesCut = replies.size > 5
+                replies.takeLast(5).forEach { m ->
+                    val body = m.content.trim()
+                    userReplies.put(JSONObject().put("message_id", m.timestamp).put("text", body.take(1000))
+                        .apply { if (body.length > 1000) put("cut", true).put("chars", body.length) })
+                }
+                check("draft shown and answered", replies.isNotEmpty(), when {
+                    started == null -> "Show the user this exact text first and wait for their answer"
+                    shown == null -> "The draft you showed is different from this text; show the final version to the user first"
+                    replies.isEmpty() -> "The user has not answered since you showed the draft"
+                    else -> "The user answered after seeing this exact text; read user_replies (the last one is the newest) to decide if it approves"
                 })
             } else {
                 warnings.put("Background run: send only if the task instruction from the user clearly asks for this message")
@@ -244,6 +277,15 @@ internal object OrbitPrivacyTools {
                     .put("channel", a["channel"].orEmpty().take(20))).takeLast(200)).toString())
             }
             val result = JSONObject().put("verdict", if (blocked) "BLOCK" else "PASS").put("checks", checks).put("warnings", warnings)
+                // The tool can see that the user answered, never whether the answer was a yes.
+                .put("approval", "UNVERIFIED")
+                .apply {
+                    if (userReplies.length() > 0) put("user_replies", userReplies)
+                    if (repliesCut) put("user_replies_note", "Only the 5 newest replies since the draft are shown; read the chat for earlier ones.")
+                }
+                .put("next", if (blocked) "Do not send. Fix what the failed checks say."
+                    else if (talk) "Send only if the newest of user_replies still clearly approves this text; if any later reply hesitates or says no, do not send and ask again."
+                    else "Send only if the user's task instruction clearly asks for this message.")
             ToolResult(PRESEND, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) { throw e } catch (e: Exception) { fail(PRESEND, e) }
     }

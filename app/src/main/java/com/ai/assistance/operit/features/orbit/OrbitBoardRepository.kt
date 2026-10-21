@@ -263,20 +263,22 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         (if (board == Board.IDEAS && (vote != null || state != null)) keepIdeas(all, now, id) else all) to updated
     }
 
-    suspend fun delete(id: String) {
-        change { items -> items.filterNot { it.id == id } to Unit }
-    }
+    /** Removes [id]; false when there was no such item. */
+    suspend fun delete(id: String): Boolean =
+        change { items -> items.filterNot { it.id == id } to items.any { it.id == id } }
 
-    /** Moves [id] one place up or down in the user's own ordering. */
-    suspend fun move(id: String, up: Boolean) {
+    /**
+     * Moves [id] one place up or down in the user's own ordering. Gives its place before and after,
+     * counted from 1; the same place when it was already at that end.
+     */
+    suspend fun move(id: String, up: Boolean): Pair<Int, Int> =
         change { items ->
             val index = items.indexOfFirst { it.id == id }
             require(index >= 0) { "Not found: $id" }
             val target = if (up) index - 1 else index + 1
-            if (target !in items.indices) return@change items to Unit
-            items.toMutableList().apply { add(target, removeAt(index)) } to Unit
+            if (target !in items.indices) return@change items to (index + 1 to index + 1)
+            items.toMutableList().apply { add(target, removeAt(index)) } to (index + 1 to target + 1)
         }
-    }
 
     private fun initialState() = when (board) {
         Board.FEED -> "LIVE"

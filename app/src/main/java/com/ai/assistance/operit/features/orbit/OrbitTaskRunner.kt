@@ -446,13 +446,17 @@ object OrbitTaskRunner {
     suspend fun submit(context: Context, tool: AITool): ToolResult {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val state = caller?.let { active[it] } ?: error("No active Orbit task owns this call")
-        val observation = tool.parameters.firstOrNull { it.name == "observation" }?.value ?: error("Missing observation")
-        val message = tool.parameters.firstOrNull { it.name == "userMessage" }?.value ?: error("Missing userMessage")
+        val observation = tool.parameters.firstOrNull { it.name == "observation" }?.value
+            ?: error("Missing observation: a short checkpoint of what you found, at most 4000 characters")
+        val message = tool.parameters.firstOrNull { it.name == "userMessage" }?.value
+            ?: error("Missing userMessage: the draft for the user, or an empty string to stay quiet")
         val decision = tool.parameters.firstOrNull { it.name == "decision" }?.value?.trim()?.takeIf { it.isNotEmpty() }
             ?: error("Missing decision: say in a sentence why you drafted something for the user or stayed quiet")
         // Values starting with '@' are the app's own run markers.
         require(!decision.startsWith("@")) { "decision must be a plain sentence" }
-        require(observation.length <= 4000 && message.length <= 8000 && decision.length <= 500)
+        require(observation.length <= 4000) { "observation has ${observation.length} characters; at most 4000" }
+        require(message.length <= 8000) { "userMessage has ${message.length} characters; at most 8000" }
+        require(decision.length <= 500) { "decision has ${decision.length} characters; at most 500" }
         require(state.task.notifyPolicy != "ALWAYS" || message.isNotBlank()) {
             "This task requires a report on every check, including when nothing changed"
         }
@@ -469,8 +473,12 @@ object OrbitTaskRunner {
         require(evidence.length <= 1000) { "evidence is longer than 1000 characters" }
         val expiresAt = parseExpiry(arg("expiresAt"))
         check(complete(context, state, observation, message, "", decision,
-            OrbitDraft(key, expiresAt, priority, evidence))) { "Task was paused, cancelled or replaced" }
-        return ToolResult(FINISH, true, StringResultData("Saved"))
+            OrbitDraft(key, expiresAt, priority, evidence))) { "Task was paused, cancelled or replaced; nothing was saved" }
+        return ToolResult(FINISH, true, StringResultData(org.json.JSONObject().put("saved", true).put("task_id", state.task.id)
+            .put("drafted_for_user", message.isNotBlank()).put("delivered", false)
+            .apply { if (message.isNotBlank()) put("opportunity_key", key).put("priority", priority) }
+            .put("note", if (message.isNotBlank()) "The draft is handed to the chat, which decides whether and how to tell the user. This run is finished."
+                else "Saved quietly; nothing goes to the user. This run is finished.").toString()))
     }
 
     /** What a background draft carries besides its text, for Orbit's check before telling. */

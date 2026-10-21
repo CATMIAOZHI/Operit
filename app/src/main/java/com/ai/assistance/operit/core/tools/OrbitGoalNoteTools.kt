@@ -19,18 +19,19 @@ internal object OrbitGoalNoteTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "目标的进展记录和简报，显示在目标页每个目标下面。log 记一条带日期的进展；list 查看某个目标的记录和简报；" +
+        description = "目标的进展记录和简报，显示在目标页每个目标下面。log 记一条带日期的进展；list 查看某个目标的记录和简报（正文只给前300字）；read 读一条全文；" +
             "delete 删除一条（用户要求时）；brief 保存一封简报，只有后台的目标简报任务能用。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "log/list/delete/brief", required = true),
+            ToolParameterSchema("action", description = "log/list/read/delete/brief", required = true),
             ToolParameterSchema("goal_id", description = "目标编号（来自 orbit_goal list），log/list/brief 必填", required = false),
-            ToolParameterSchema("note_id", description = "delete：记录或简报的编号", required = false),
+            ToolParameterSchema("note_id", description = "list 返回的 note_id，read/delete 必填", required = false),
+            ToolParameterSchema("offset", "integer", "list 可选：从第几条开始（从0开始，最新的在前），默认0；每次最多30条", false),
             ToolParameterSchema("title", description = "brief：一句话附言，最多80字符", required = false),
             ToolParameterSchema("text", description = "log：发生了什么；brief：简报正文，最多6000字符", required = false),
         ),
         details = """
   - 用户告诉你某个目标有了进展（完成了一步、遇到了问题、决定暂停一阵），用 log 记一条，目标就有了自己的历史。
-  - 简报由后台每天早上写，你不能当场生成，也不要承诺什么时候会有。用户问简报内容时，只根据 list 里真的存在的简报回答。
+  - 简报由后台每天早上写，你不能当场生成，也不要承诺什么时候会有。用户问简报内容时，只根据真的存在的简报回答；cut 为 true 的先用 read 读全文。
 """,
     )
 
@@ -43,12 +44,20 @@ internal object OrbitGoalNoteTools {
             val board = OrbitBoardRepository(context, orbit.id, Board.GOAL_NOTES)
             suspend fun goalId(): String {
                 val id = args["goal_id"]?.trim().orEmpty()
-                require(id.isNotEmpty()) { "Missing goal_id" }
+                require(id.isNotEmpty()) { "Missing goal_id; get it from orbit_goal list" }
                 val goal = dao.goal(id)
-                require(goal != null && goal.orbitId == orbit.id && goal.state != "CANCELLED") { "No such goal: $id" }
+                require(goal != null && goal.orbitId == orbit.id && goal.state != "CANCELLED") {
+                    "No open goal with goal_id \"$id\"; call orbit_goal with action=list to find it"
+                }
                 return id
             }
-            val result: Any = when (args["action"]) {
+            suspend fun note(): OrbitBoardRepository.Item {
+                val id = args["note_id"]?.trim().orEmpty()
+                require(id.isNotEmpty()) { "Missing note_id; get it from list" }
+                return board.list().firstOrNull { it.id == id } ?: error("No note with note_id \"$id\"; call list with its goal_id to find it")
+            }
+            val action = args["action"]?.trim().orEmpty()
+            val result: Any = when (action) {
                 "log" -> {
                     val text = args["text"]?.trim().orEmpty()
                     require(text.isNotEmpty()) { "Missing text" }
@@ -68,16 +77,27 @@ internal object OrbitGoalNoteTools {
                 }
                 "list" -> {
                     val id = goalId()
-                    // Short text keeps the list small; the goal briefing reads the latest ones in full from its source.
-                    JSONArray(board.list().filter { it.extra == id }.take(30).map { json(it).put("text", it.body.take(300)) })
+                    val start = args["offset"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        it.toIntOrNull()?.takeIf { n -> n >= 0 } ?: error("offset must be a whole number from 0; got \"$it\"")
+                    } ?: 0
+                    // Short text keeps the list small; read gives one in full.
+                    val all = board.list().filter { it.extra == id }
+                    val end = (start + 30).coerceAtMost(all.size)
+                    JSONObject().put("total", all.size)
+                        .put("notes", JSONArray(if (start < all.size) all.subList(start, end).map { item ->
+                            json(item).apply {
+                                if (item.body.length > 300) put("text", item.body.take(300) + "…").put("cut", true)
+                            }
+                        } else emptyList()))
+                        .put("next_offset", if (end < all.size) end else JSONObject.NULL)
                 }
+                "read" -> json(note())
                 "delete" -> {
-                    val id = args["note_id"]?.trim().orEmpty()
-                    require(board.list().any { it.id == id }) { "No such note: $id" }
-                    board.delete(id)
-                    "Deleted"
+                    val item = note()
+                    JSONObject().put("note_id", item.id).put("goal_id", item.extra).put("title", item.title)
+                        .put("deleted", board.delete(item.id))
                 }
-                else -> error("Unknown action")
+                else -> error("Unknown action \"$action\"; use log, list, read, delete or brief")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -89,5 +109,6 @@ internal object OrbitGoalNoteTools {
 
     private fun json(item: OrbitBoardRepository.Item) = JSONObject().put("note_id", item.id).put("goal_id", item.extra)
         .put("kind", if (item.state == "BRIEF") "briefing" else "progress").put("title", item.title)
-        .put("text", item.body).put("createdAt", item.createdAt)
+        .put("text", item.body)
+        .put("created_at", java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(item.createdAt)))
 }

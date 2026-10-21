@@ -43,18 +43,19 @@ internal object OrbitAvatarTools {
             when (args["source"]) {
                 "image" -> {
                     val path = args["image_path"].orEmpty()
-                    require(path.isNotEmpty()) { "Missing image_path" }
+                    require(path.isNotEmpty()) { "source=image needs image_path: the attachment id (its path) from the user's message" }
                     val uri = when {
                         path.startsWith("content://") || path.startsWith("file://") -> Uri.parse(path)
                         else -> File(path).also { require(it.isFile) { "No image at $path" } }.let(Uri::fromFile)
                     }
                     val saved = checkNotNull(
                         com.ai.assistance.operit.util.FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar")
-                    ) { "Could not read the image" }
+                    ) { "Could not read the image at $path; ask the user to send it again" }
                     preferences.setAvatar(orbit.id, saved.toString())
                 }
                 "pet" -> {
                     val petId = args["pet_id"].orEmpty()
+                    require(petId.isNotEmpty()) { "source=pet needs pet_id; the user's message names it" }
                     val pet = checkNotNull(
                         com.ai.assistance.operit.pet.PetPreferences.get(context).pets.value.firstOrNull { it.id == petId }
                     ) { "No pet with id $petId" }
@@ -66,7 +67,8 @@ internal object OrbitAvatarTools {
                 "default" -> OrbitCompanion.resetAvatar(context, orbit.id)
                 else -> error("source must be image, pet or default")
             }
-            ToolResult(NAME, true, StringResultData("Avatar changed."))
+            ToolResult(NAME, true, StringResultData(org.json.JSONObject().put("changed", true).put("source", args["source"])
+                .put("note", "The new avatar shows on the Orbit page right away.").toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
         } catch (e: Exception) {
