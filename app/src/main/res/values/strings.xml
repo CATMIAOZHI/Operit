@@ -9079,6 +9079,8 @@
     <string name="orbit_focus_label">想让 %1$s 留意的事</string>
     <string name="orbit_focus_placeholder">比如：每周五提醒我备份；考试前提醒我早点睡</string>
     <string name="orbit_run_now">现在试一次</string>
+    <string name="orbit_task_run_now_draft">现在触发一次「%1$s」任务。</string>
+    <string name="orbit_show_all">展开全部</string>
     <string name="orbit_running">Orbit 正在想…</string>
     <string name="orbit_last_run_never">还没运行过</string>
     <string name="orbit_last_run_spoke">上次 %1$s：发来了一条消息</string>

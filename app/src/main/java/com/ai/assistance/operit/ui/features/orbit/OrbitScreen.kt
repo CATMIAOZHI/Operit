@@ -782,7 +782,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.NOTIFICATIONS -> OrbitNotificationsPage(orbit.id, onBack = back)
                 OrbitSubPage.FILES -> OrbitFilesPage(orbit.id, onBack = back, onDraft = ::draftToChat)
                 // No id opens the grouped list of every task.
-                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId)
+                OrbitSubPage.TASK -> OrbitTasksPage(orbit.id, onBack = back, initialTaskId = openTaskId, onDraft = ::draftToChat)
                 OrbitSubPage.PROCESS -> {
                     val process = openProcess
                     if (process != null) {

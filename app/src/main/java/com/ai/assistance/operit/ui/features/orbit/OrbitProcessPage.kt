@@ -214,10 +214,11 @@ private fun YouSaid(text: String) {
             modifier = Modifier.padding(start = 4.dp, bottom = 4.dp),
         )
         Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
-            Text(
+            OrbitFoldableText(
                 text.ifBlank { "…" },
                 style = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp),
+                foldedLines = 8,
             )
         }
     }

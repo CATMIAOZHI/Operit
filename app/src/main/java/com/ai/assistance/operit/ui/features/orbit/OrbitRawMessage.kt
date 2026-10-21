@@ -13,7 +13,9 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
@@ -67,10 +69,53 @@ internal fun OrbitRawMessage(message: ChatMessage) {
                 )
             }
             Spacer(Modifier.height(6.dp))
-            SelectionContainer {
+            OrbitFoldableText(
+                message.content.ifEmpty { "∅" },
+                style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                selectable = true,
+            )
+        }
+    }
+}
+
+/**
+ * Text that shows its first [foldedLines] lines with a "show all" button when it is longer, so a
+ * long prompt or hidden notice does not fill the page. Only the start is laid out while folded.
+ */
+@Composable
+internal fun OrbitFoldableText(
+    text: String,
+    style: androidx.compose.ui.text.TextStyle,
+    modifier: Modifier = Modifier,
+    selectable: Boolean = false,
+    foldedLines: Int = 10,
+) {
+    var expanded by androidx.compose.runtime.saveable.rememberSaveable(text) { androidx.compose.runtime.mutableStateOf(false) }
+    var overflows by remember(text) { androidx.compose.runtime.mutableStateOf(false) }
+    // Enough characters to fill the folded lines; the rest is only measured once opened.
+    val head = remember(text, foldedLines) { if (text.length > foldedLines * 200) text.take(foldedLines * 200) else text }
+    val cut = head.length < text.length
+    Column(modifier) {
+        val body: @Composable () -> Unit = {
+            Text(
+                if (expanded) text else head,
+                style = style,
+                maxLines = if (expanded) Int.MAX_VALUE else foldedLines,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                onTextLayout = { if (!expanded) overflows = it.hasVisualOverflow },
+            )
+        }
+        // Copyable folded or open, as the raw text always was.
+        if (selectable) SelectionContainer { body() } else body()
+        if (expanded || overflows || cut) {
+            androidx.compose.material3.TextButton(
+                onClick = { expanded = !expanded },
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 0.dp, vertical = 0.dp),
+                modifier = Modifier.height(40.dp),
+            ) {
                 Text(
-                    message.content.ifEmpty { "∅" },
-                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
+                    stringResource(if (expanded) R.string.common_collapse else R.string.orbit_show_all),
+                    style = MaterialTheme.typography.labelLarge,
                 )
             }
         }
