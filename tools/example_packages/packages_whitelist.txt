@@ -1,6 +1,4 @@
 12306.js
-automatic_ui_base.js
-automatic_ui_subagent.js
 code_runner.js
 codex_draw.js
 crossref.js
@@ -29,14 +27,12 @@ openai_draw.js
 ollama_search.js
 operit_editor.js
 browser.js
-context_limiter_c
 windows_control
 zhipu_draw.js
 zhipu_search.js
 linux_ssh
 remote_operit
 worldbook
-thinking_guidance
 plan_mode
 reading_companion
 memory_review.js
