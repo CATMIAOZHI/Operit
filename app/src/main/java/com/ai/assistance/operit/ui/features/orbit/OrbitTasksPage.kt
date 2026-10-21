@@ -41,6 +41,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.OrbitActionEntity
+import com.ai.assistance.operit.data.model.OrbitDeliveryEntity
 import com.ai.assistance.operit.data.model.OrbitRunEntity
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.model.OrbitTaskInputEntity
@@ -368,6 +369,13 @@ private fun TaskDetail(
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { onError() }
     }
+    // What Orbit did with the run's draft: told the user or left it out, and why.
+    val lastItem by produceState<OrbitDeliveryEntity?>(null, lastRun?.id) {
+        val runId = lastRun?.id ?: return@produceState
+        try { repository.dao.observeDeliveryOfRun(runId).collect { value = it } }
+        catch (e: CancellationException) { throw e }
+        catch (e: Exception) { value = null }
+    }
     val receipts by produceState(emptyList<OrbitActionEntity>(), taskId) {
         try { repository.dao.observeActions(taskId).collect { rows -> value = rows } }
         catch (e: CancellationException) { throw e }
@@ -462,6 +470,11 @@ private fun TaskDetail(
                         else -> decision
                     }), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 4, overflow = TextOverflow.Ellipsis)
+                }
+                lastItem?.takeIf { !running && it.verdict.isNotEmpty() }?.let { item ->
+                    Text(proactiveVerdictText(item, rememberOrbitName(orbitId)),
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 3, overflow = TextOverflow.Ellipsis)
                 }
                 run?.finishedAt?.takeIf { it > 0 && !running }?.let {
                     Text(relativeTime(it), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -808,6 +821,29 @@ private fun appNames(packages: String): String {
 @Composable
 internal fun watchSuffix(task: OrbitTaskEntity): String =
     if (task.kind == com.ai.assistance.operit.features.orbit.OrbitWatchSources.KIND) " · " + watchLabel(task) else ""
+
+/** "Orbit told you: a deadline is coming", or why it left a draft out. */
+@Composable
+private fun proactiveVerdictText(item: OrbitDeliveryEntity, name: String): String {
+    val reason = stringResource(when {
+        item.verdictNote == OrbitDeliveryEntity.EXPIRED -> R.string.orbit_item_reason_expired
+        else -> when (item.verdictReason) {
+            "time_sensitive" -> R.string.orbit_item_reason_time_sensitive
+            "changed" -> R.string.orbit_item_reason_changed
+            "requested" -> R.string.orbit_item_reason_requested
+            "ready_for_decision" -> R.string.orbit_item_reason_ready
+            "new_opportunity" -> R.string.orbit_item_reason_new
+            "moot" -> R.string.orbit_item_reason_moot
+            "already_handled" -> R.string.orbit_item_reason_handled
+            "unconfirmed" -> R.string.orbit_item_reason_unconfirmed
+            "preferences" -> R.string.orbit_item_reason_preferences
+            "not_useful_now" -> R.string.orbit_item_reason_not_now
+            else -> R.string.orbit_item_reason_undecided
+        }
+    })
+    return stringResource(if (item.verdict == OrbitDeliveryEntity.SEND) R.string.orbit_item_told else R.string.orbit_item_skipped,
+        name, reason)
+}
 
 /** Which permission a WATCH failure is about, from the saved reason. */
 private fun watchPermissionOf(context: android.content.Context, error: String): String? = when (error) {

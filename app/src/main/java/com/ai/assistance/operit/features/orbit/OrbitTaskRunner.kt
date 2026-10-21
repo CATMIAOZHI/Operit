@@ -47,11 +47,15 @@ object OrbitTaskRunner {
 
     val finishPrompt = ToolPrompt(
         name = FINISH,
-        description = "Save this Orbit turn's result and finish. Only userMessage is handed to Orbit in the chat, which tells the user in its own words; tool activity stays in the execution record.",
+        description = "Save this Orbit turn's result and finish. A non-empty userMessage is a draft item: Orbit checks it in the chat and decides whether and how to tell the user; tool activity stays in the execution record.",
         parametersStructured = listOf(
             ToolParameterSchema("observation", "string", "A concise durable checkpoint, at most 4000 characters", true),
-            ToolParameterSchema("userMessage", "string", "What Orbit should tell the user (results, a question, a problem), or empty to stay quiet; at most 8000 characters", true),
-            ToolParameterSchema("decision", "string", "One or two sentences on why you messaged the user or stayed quiet; the user can read it in the task details. At most 500 characters", true),
+            ToolParameterSchema("userMessage", "string", "The draft of what Orbit could tell the user (results, a question, a problem), or empty to stay quiet; at most 8000 characters", true),
+            ToolParameterSchema("decision", "string", "One or two sentences on why you drafted something for the user or stayed quiet; the user can read it in the task details. At most 500 characters", true),
+            ToolParameterSchema("opportunityKey", "string", "Required with a userMessage: a short stable key for the matter, the same every time it comes up (e.g. parcel:SF1234, reply:bbb-complaint). New wording of the same matter keeps its key. At most 80 characters", false),
+            ToolParameterSchema("expiresAt", "string", "When the item stops mattering, local time yyyy-MM-dd HH:mm (or yyyy-MM-dd for the end of that day); empty if it does not run out", false),
+            ToolParameterSchema("priority", "string", "regular (default), or high only for what is truly time-sensitive or risks something that cannot be undone", false),
+            ToolParameterSchema("evidence", "string", "What the draft rests on, so Orbit can check it: message ids, sources, links, what you saw. At most 1000 characters", false),
         ),
     )
 
@@ -361,7 +365,7 @@ object OrbitTaskRunner {
                 ?.takeIf { it.isNotEmpty() }?.let { AppDatabase.getDatabase(context).orbitTaskDao().run(it) }
             val proactivePreferences = try {
                 val file = OrbitFiles.of(context, task.orbitId).fileFor(OrbitFiles.PROACTIVE)
-                if (file.isFile) file.readText().take(3000) else ""
+                OrbitFiles.readHead(file, 3000)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -407,10 +411,16 @@ object OrbitTaskRunner {
                     "${it.state}: ${it.summary}"
                 }}
                 Compare with the previous observation. Do not claim actions you did not perform.
-                You are working in the background for Orbit. userMessage is handed to Orbit in the chat, which tells the user
-                in its own words. Decide on its own merits whether this result is worth telling now: new, useful to the user,
-                and fitting the reporting policy and their preferences. Say why in decision, whether you report or stay quiet.
-                Call $FINISH with an observation, the final userMessage (empty for silence) and the decision.
+                You are working in the background for Orbit and only prepare. A userMessage is a draft item: Orbit checks it
+                against the latest state in the chat and decides whether and how to tell the user, so it may never be sent.
+                Draft only what is worth the user's attention: a new fact, a change in something they care about, a deadline,
+                or finished work waiting for their decision. Be concrete (what, where, by when) and give the next step;
+                a vague flag or general advice is not worth a message. An unanswered earlier offer does not mean the matter
+                is still open, so do not turn it into a reminder. Respect the reporting policy and the preferences.
+                With a userMessage give opportunityKey (the same key every time this matter comes up), evidence Orbit can
+                check, expiresAt when it stops mattering, and priority high only when it is truly time-sensitive.
+                Say why in decision, whether you draft or stay quiet.
+                Call $FINISH with an observation, the userMessage (empty for silence) and the decision.
             """.trimIndent()
             val result = ChatTurnDispatcher().dispatch(core, ChatTurnDispatchRequest(
                 chatId = chatId, message = prompt,
@@ -439,15 +449,46 @@ object OrbitTaskRunner {
         val observation = tool.parameters.firstOrNull { it.name == "observation" }?.value ?: error("Missing observation")
         val message = tool.parameters.firstOrNull { it.name == "userMessage" }?.value ?: error("Missing userMessage")
         val decision = tool.parameters.firstOrNull { it.name == "decision" }?.value?.trim()?.takeIf { it.isNotEmpty() }
-            ?: error("Missing decision: say in a sentence why you messaged the user or stayed quiet")
+            ?: error("Missing decision: say in a sentence why you drafted something for the user or stayed quiet")
         // Values starting with '@' are the app's own run markers.
         require(!decision.startsWith("@")) { "decision must be a plain sentence" }
         require(observation.length <= 4000 && message.length <= 8000 && decision.length <= 500)
         require(state.task.notifyPolicy != "ALWAYS" || message.isNotBlank()) {
             "This task requires a report on every check, including when nothing changed"
         }
-        check(complete(context, state, observation, message, "", decision)) { "Task was paused, cancelled or replaced" }
+        fun arg(name: String) = tool.parameters.firstOrNull { it.name == name }?.value?.trim().orEmpty()
+        // One line: the key is shown in the chat notice next to the item.
+        val key = arg("opportunityKey").replace(Regex("\\s+"), "_")
+        require(message.isBlank() || key.isNotEmpty()) {
+            "Missing opportunityKey: give the matter a short stable key, the same each time it comes up"
+        }
+        require(key.length <= 80) { "opportunityKey is longer than 80 characters" }
+        val priority = arg("priority").lowercase().ifEmpty { "regular" }
+        require(priority == "regular" || priority == "high") { "priority must be regular or high" }
+        val evidence = arg("evidence")
+        require(evidence.length <= 1000) { "evidence is longer than 1000 characters" }
+        val expiresAt = parseExpiry(arg("expiresAt"))
+        check(complete(context, state, observation, message, "", decision,
+            OrbitDraft(key, expiresAt, priority, evidence))) { "Task was paused, cancelled or replaced" }
         return ToolResult(FINISH, true, StringResultData("Saved"))
+    }
+
+    /** What a background draft carries besides its text, for Orbit's check before telling. */
+    private data class OrbitDraft(val key: String = "", val expiresAt: Long = 0, val priority: String = "regular",
+        val evidence: String = "")
+
+    /** "yyyy-MM-dd HH:mm" (or with a T), or "yyyy-MM-dd" for the end of that day, in local time; empty is 0. */
+    internal fun parseExpiry(text: String): Long {
+        if (text.isEmpty()) return 0
+        val clean = text.replace('T', ' ').trim()
+        val (pattern, endOfDay) = if (clean.length <= 10) "yyyy-MM-dd" to true else "yyyy-MM-dd HH:mm" to false
+        val format = java.text.SimpleDateFormat(pattern, java.util.Locale.US).apply { isLenient = false }
+        val time = runCatching { format.parse(clean.take(pattern.length))?.time }.getOrNull()
+            ?: throw IllegalArgumentException("expiresAt must look like 2026-10-21 21:00 or 2026-10-21")
+        if (!endOfDay) return time
+        // The next local midnight, so a 23- or 25-hour day still ends at its own midnight.
+        return java.util.Calendar.getInstance().apply { timeInMillis = time; add(java.util.Calendar.DAY_OF_MONTH, 1) }
+            .timeInMillis - 1
     }
 
     /** Untrusted text cannot close the prompt's own END markers early. */
@@ -467,7 +508,7 @@ object OrbitTaskRunner {
     }
 
     private suspend fun complete(context: Context, state: ActiveRun, observation: String, message: String, error: String,
-        decision: String = ""): Boolean {
+        decision: String = "", draft: OrbitDraft = OrbitDraft()): Boolean {
         val settings = OrbitPreferences.getInstance(context).current()
         if (settings.activeOrbitId != state.orbitId || settings.active?.deleting != false) return false
         val now = System.currentTimeMillis()
@@ -475,18 +516,23 @@ object OrbitTaskRunner {
             com.ai.assistance.operit.R.string.orbit_task_failed_message, state.task.title)
         val result = AppDatabase.getDatabase(context).orbitTaskDao().complete(state.token, observation,
             deliveredMessage, error, OrbitTaskRepository.nextAt(state.task, now), state.boot, now, SystemClock.elapsedRealtime(),
-            decision)
+            decision, draft.key, draft.expiresAt, draft.priority, draft.evidence)
         // Handed to Orbit in the chat: that turn is the record, and Orbit decides there whether it speaks.
         // The wake records the outcome once Orbit has answered (see [wakeOrbit]).
         if (decision == OrbitRunEntity.IN_CHAT) return result
-        if (result) logRun(context, state, observation, error, message)
+        // A draft is only prepared here; whether it reaches the user is Orbit's call in the chat.
+        if (result) logRun(context, state, observation, error, message, drafted = error.isEmpty() && message.isNotEmpty())
         return result
     }
 
-    /** The run's outcome for the check-in status and the daily log; a non-empty [message] means Orbit spoke. */
-    private suspend fun logRun(context: Context, state: ActiveRun, observation: String, error: String, message: String) {
+    /**
+     * The run's outcome for the check-in status and the daily log; a non-empty [message] means Orbit
+     * spoke, or, when [drafted], that a draft went to Orbit to decide on.
+     */
+    private suspend fun logRun(context: Context, state: ActiveRun, observation: String, error: String, message: String,
+        drafted: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (state.task.kind in setOf("DAILY", "ONCE")) {
+        if (state.task.kind in setOf("DAILY", "ONCE") && !drafted) {
             OrbitPreferences.getInstance(context).recordRun(
                 if (error.isNotEmpty()) OrbitRunOutcome.FAILED
                 else if (message.isEmpty()) OrbitRunOutcome.SILENT else OrbitRunOutcome.SPOKE, error, state.orbitId)
@@ -496,6 +542,7 @@ object OrbitTaskRunner {
         val outcome = when {
             error.isNotEmpty() -> if (english) "failed" else "失败"
             message.isEmpty() -> if (english) "stayed quiet" else "没有打扰用户"
+            drafted -> if (english) "drafted a message for the chat to decide on" else "备好一条消息，交给聊天里决定说不说"
             else -> if (english) "told the user" else "告诉了用户"
         }
         try {

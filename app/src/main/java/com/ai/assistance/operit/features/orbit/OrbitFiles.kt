@@ -328,8 +328,10 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     fun template(p: String): String? = when (p) {
         LESSONS -> if (english) "# Lessons\n\nConventions and lessons you picked up while working, for your future self.\n\n## Conventions\n\n## Lessons\n"
             else "# 经验本\n\n做事时攒下的约定和教训，写给以后的自己。\n\n## 约定\n\n## 教训\n"
-        PROACTIVE -> if (english) "# Proactive preferences\n\nWhen and about what the user wants you to reach out first.\n\n## Wants\n\n## Does not want\n\n## Timing\n"
-            else "# 主动消息偏好\n\n用户希望你在什么时候、为了什么事主动找他。\n\n## 想要\n\n## 不要\n\n## 时间\n"
+        PROACTIVE -> if (english) "# Proactive preferences\n\nWhen, about what and how the user wants you to reach out first.\n\n" +
+            "## Tell me about\n\n## Never tell me about\n\n## When\n\n## How\n"
+            else "# 主动消息偏好\n\n用户希望你在什么时候、为了什么事、用什么方式主动找他。\n\n" +
+            "## 想听的\n\n## 别跟我说\n\n## 什么时候\n\n## 怎么说\n"
         TIMEZONES -> if (english) "# The user's time zone and those of people they deal with\nhome: \nothers: []\n"
             else "# 用户所在的时区，以及常联系的人的时区\nhome: \nothers: []\n"
         ALIGNMENT -> if (english) ALIGNMENT_EN else ALIGNMENT_ZH
@@ -405,6 +407,21 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         )
         /** Longest synthesis put into the prompt; the review keeps it far shorter. */
         const val MAX_ALIGNMENT_PROMPT = 8000
+
+        /** The first [max] characters of [file], without reading the rest; empty when it is missing. */
+        fun readHead(file: File, max: Int): String {
+            if (!file.isFile) return ""
+            return file.bufferedReader().use { reader ->
+                val buffer = CharArray(max)
+                var read = 0
+                while (read < max) {
+                    val n = reader.read(buffer, read, max - read)
+                    if (n < 0) break
+                    read += n
+                }
+                String(buffer, 0, read)
+            }
+        }
 
         /** The synthesis to put into every chat, or null while it is still an empty template. */
         fun alignmentForPrompt(text: String): String? {

@@ -66,7 +66,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity::class,
         com.ai.assistance.operit.data.model.OrbitNotificationEntity::class,
     ],
-    version = 42,
+    version = 43,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -92,6 +92,23 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        /** Proactive items (Muse's two-step delivery): a draft's key, expiry, evidence, and Orbit's call. */
+        val MIGRATION_42_43 = object : Migration(42, 43) {
+            private val statements = listOf(
+                "ALTER TABLE orbit_deliveries ADD COLUMN opportunityKey TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN expiresAt INTEGER NOT NULL DEFAULT 0",
+                "ALTER TABLE orbit_deliveries ADD COLUMN priority TEXT NOT NULL DEFAULT 'regular'",
+                "ALTER TABLE orbit_deliveries ADD COLUMN evidence TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN verdict TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN verdictReason TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN verdictNote TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN decidedAt INTEGER NOT NULL DEFAULT 0",
+                "CREATE INDEX IF NOT EXISTS index_orbit_deliveries_orbitId_state_expiresAt ON orbit_deliveries(orbitId, state, expiresAt)",
+                "CREATE INDEX IF NOT EXISTS index_orbit_deliveries_orbitId_decidedAt ON orbit_deliveries(orbitId, decidedAt)",
+            )
+            override fun migrate(db: SupportSQLiteDatabase) = statements.forEach { db.execSQL(it) }
+            override fun migrate(connection: SQLiteConnection) = statements.forEach { connection.execSQL(it) }
+        }
         val MIGRATION_41_42 = object : Migration(41, 42) {
             private val sql = "ALTER TABLE orbit_tasks ADD COLUMN useSubagent INTEGER NOT NULL DEFAULT 0"
             override fun migrate(db: SupportSQLiteDatabase) = db.execSQL(sql)
@@ -1211,6 +1228,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_39_40,
                                 MIGRATION_40_41,
                                 MIGRATION_41_42,
+                                MIGRATION_42_43,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

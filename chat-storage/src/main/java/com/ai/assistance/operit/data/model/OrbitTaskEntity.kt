@@ -94,7 +94,8 @@ data class OrbitRunEntity(
     }
 }
 
-@Entity(tableName = "orbit_deliveries", indices = [Index(value = ["runId"], unique = true), Index("taskId")])
+@Entity(tableName = "orbit_deliveries", indices = [Index(value = ["runId"], unique = true), Index("taskId"),
+    Index(value = ["orbitId", "state", "expiresAt"]), Index(value = ["orbitId", "decidedAt"])])
 data class OrbitDeliveryEntity(
     @PrimaryKey val id: String,
     val runId: String,
@@ -110,4 +111,28 @@ data class OrbitDeliveryEntity(
     val messageId: Long?,
     val messageTimestamp: Long?,
     val notificationSent: Boolean,
-)
+    /** One matter, one key: the same news in other words is still a repeat (Muse's opportunity_key). */
+    @ColumnInfo(defaultValue = "''") val opportunityKey: String = "",
+    /** Wall time after which the item is moot and is never told; 0 when it does not run out. */
+    @ColumnInfo(defaultValue = "0") val expiresAt: Long = 0,
+    /** "regular", or "high" for what is truly time-sensitive or risks something that cannot be undone. */
+    @ColumnInfo(defaultValue = "'regular'") val priority: String = "regular",
+    /** What the draft rests on (message ids, sources, links), for Orbit's check before telling. */
+    @ColumnInfo(defaultValue = "''") val evidence: String = "",
+    /** Orbit's call in the chat: [SEND], [SKIP], or empty while it has not decided. */
+    @ColumnInfo(defaultValue = "''") val verdict: String = "",
+    /** One of the fixed send or skip reasons, or [UNREGISTERED]. */
+    @ColumnInfo(defaultValue = "''") val verdictReason: String = "",
+    /** Why, in Orbit's words: what it checked. Answers "why did you send me this?". */
+    @ColumnInfo(defaultValue = "''") val verdictNote: String = "",
+    @ColumnInfo(defaultValue = "0") val decidedAt: Long = 0,
+) {
+    companion object {
+        const val SEND = "send"
+        const val SKIP = "skip"
+        /** Orbit spoke without registering the item: it counts as not sent. */
+        const val UNREGISTERED = "unregistered"
+        /** The item ran out before it was handed to Orbit. */
+        const val EXPIRED = "expired"
+    }
+}
