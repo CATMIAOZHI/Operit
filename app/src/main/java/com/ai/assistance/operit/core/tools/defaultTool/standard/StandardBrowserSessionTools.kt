@@ -282,7 +282,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 "browser_downloads" -> return@withScope browserDownloads(tool)
                 "browser_permissions" -> return@withScope browserPermissions(tool)
             }
-            com.ai.assistance.operit.features.orbit.OrbitBrowserControl.aiCall { when (tool.name) {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserControl.aiCall(BrowserProfiles.callerChatId(tool)) { when (tool.name) {
                 "browser_click" -> browserClick(tool)
                 "browser_close" -> browserClose(tool)
                 "browser_close_all" -> browserCloseAll(tool)

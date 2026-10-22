@@ -52,6 +52,12 @@ import com.ai.assistance.operit.util.stream.asFlow
  */
 val LocalOrbitChatLook = compositionLocalOf { false }
 
+/**
+ * Live content an Orbit chat shows after its last message, such as the browser Orbit is working in.
+ * It gets the color of Orbit's bubbles.
+ */
+val LocalOrbitChatFooter = compositionLocalOf<(@Composable (bubbleColor: androidx.compose.ui.graphics.Color) -> Unit)?> { null }
+
 /** The name the user gave the Orbit on screen; empty outside an Orbit, where words say "Orbit". */
 val LocalOrbitName = compositionLocalOf { "" }
 

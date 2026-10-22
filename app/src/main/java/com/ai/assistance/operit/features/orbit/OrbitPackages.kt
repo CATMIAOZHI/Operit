@@ -84,14 +84,25 @@ object OrbitPackages {
 
     /**
      * Packages a user can switch on: loadable, not a ToolPkg container and not archived. A required
-     * package stays usable here even while the main app has it archived.
+     * package, or one in [kept] (what an Orbit already has), stays usable here even while the main
+     * app has it archived; a deleted one an Orbit had is Orbit's copy and stays too.
      */
-    fun candidates(packageManager: PackageManager): Map<String, ToolPackage> {
+    fun candidates(packageManager: PackageManager, kept: Set<String> = emptySet()): Map<String, ToolPackage> {
         val archived = packageManager.getArchivedBuiltInPackageNames()
         return packageManager.getAvailablePackages().filterKeys { name ->
             !packageManager.isToolPkgContainer(name) &&
-                (name in REQUIRED || !packageManager.isArchivedBuiltInPackageOrSubpackage(name, archived))
+                (name in REQUIRED || name in kept || !packageManager.isArchivedBuiltInPackageOrSubpackage(name, archived))
         }
+    }
+
+    /** What can still be imported: the main app's packages, without Orbit's copies of deleted ones. */
+    fun importable(packageManager: PackageManager): Map<String, ToolPackage> =
+        packageManager.withoutOrbitCopies(candidates(packageManager))
+
+    /** Drops the copies of deleted packages no Orbit has any more. */
+    fun pruneCopies(context: Context, packageManager: PackageManager) {
+        runCatching { packageManager.pruneOrbitCopies(importedByAnyOrbit(context)) }
+            .onFailure { AppLogger.w("OrbitPackages", "Could not drop unused package copies", it) }
     }
 
     private fun names(json: JSONObject, key: String): Set<String>? =
@@ -161,6 +172,17 @@ object OrbitPackages {
         val names = root.listFiles()?.flatMapTo(HashSet()) { dir -> read(File(dir, FILE))?.enabled.orEmpty() }.orEmpty()
         synchronized(namesLock) { if (namesVersion == version) namesInUse = names }
         return names
+    }
+
+    /**
+     * Every package some Orbit has imported, on or off. A package the main app deletes is kept as a
+     * copy for Orbit while it is in here.
+     */
+    fun importedByAnyOrbit(context: Context): Set<String> {
+        val root = File(context.applicationContext.filesDir, "orbit")
+        return root.listFiles()?.flatMapTo(HashSet()) { dir ->
+            read(File(dir, FILE))?.imported.orEmpty() - REQUIRED
+        }.orEmpty()
     }
 
     /**
@@ -246,7 +268,7 @@ object OrbitPackages {
         names: Collection<String>,
     ): ImportResult =
         withContext(Dispatchers.IO) {
-            val available = candidates(packageManager).keys
+            val available = importable(packageManager).keys
             val added = LinkedHashSet<String>()
             val failed = LinkedHashMap<String, NeedsMissingException>()
             names.filter { it in available }.forEach { name ->
@@ -280,6 +302,7 @@ object OrbitPackages {
                 if (needed.isNotEmpty()) throw StillNeededException(name, needed)
                 write(file, State(current.imported - name, current.enabled - name))
             }
+            pruneCopies(context, packageManager)
         }
 
     /**
@@ -289,8 +312,9 @@ object OrbitPackages {
     suspend fun scopeFor(context: Context, packageManager: PackageManager, chatId: String?): Set<String>? {
         if (chatId.isNullOrBlank()) return null
         val orbit = runCatching { OrbitMemoryScope.owner(context, chatId) }.getOrNull() ?: return null
-        val candidates = candidates(packageManager).keys
-        return enabled(context, orbit.id, packageManager).filterTo(LinkedHashSet()) { name ->
+        val enabled = enabled(context, orbit.id, packageManager)
+        val candidates = candidates(packageManager, enabled).keys
+        return enabled.filterTo(LinkedHashSet()) { name ->
             name in candidates
         }
     }

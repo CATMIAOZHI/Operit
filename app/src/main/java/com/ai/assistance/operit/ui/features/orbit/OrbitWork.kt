@@ -49,6 +49,17 @@ internal sealed interface OrbitProcess {
         /** Still sorting when opened; the record then keeps itself up to date. */
         val running: Boolean = false,
     ) : OrbitProcess
+
+    /** A subagent's own chat: the task it was given and every step it took. */
+    data class Subagent(
+        val chatId: String,
+        /** Its place in the tree, like /root/browse_github. */
+        val path: String,
+        override val title: String,
+        override val time: Long,
+        /** Still working when opened; the record then keeps itself up to date. */
+        val running: Boolean = false,
+    ) : OrbitProcess
 }
 
 /** One chat turn in which Orbit did work (thought or used tools) before it answered. */
@@ -191,6 +202,8 @@ internal object OrbitWork {
                         ?: com.ai.assistance.operit.features.orbit.OrbitWake.titleOf(content)?.let { scheduledTitle.format(it) }
                         ?: com.ai.assistance.operit.features.orbit.OrbitVaultNotice.titleOf(content)
                         ?: com.ai.assistance.operit.features.orbit.OrbitApprovals.titleOf(content)
+                        ?: com.ai.assistance.operit.features.orbit.OrbitSubagentNotice.titleOf(content)
+                        ?: com.ai.assistance.operit.features.orbit.OrbitBrowserNotice.titleOf(content)
                 }?.let { ts to it }
             }
             // The nearest of the two started the turn: a tapback after the user's last message wins.
@@ -239,6 +252,9 @@ internal object OrbitWork {
             is OrbitProcess.TaskRun -> manager.loadChatMessages(process.chatId).filter { raw || it.sender != "user" }
             // The whole run, its instructions included: that is what an audit of it needs.
             is OrbitProcess.Learning -> manager.loadChatMessages(process.chatId)
+            // The task it was handed opens the chat; the record shows it as what it was asked.
+            is OrbitProcess.Subagent -> manager.loadChatMessages(process.chatId)
+                .filter { raw || it.displayMode != com.ai.assistance.operit.data.model.ChatMessageDisplayMode.HIDDEN_PLACEHOLDER }
         }
     }
 

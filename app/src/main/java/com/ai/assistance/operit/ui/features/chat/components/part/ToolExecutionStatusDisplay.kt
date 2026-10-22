@@ -65,6 +65,7 @@ import com.ai.assistance.operit.data.model.SubagentRunStatus
 import com.ai.assistance.operit.data.model.ToolExecutionState
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.ui.features.chat.components.LocalTranscriptRuns
+import com.ai.assistance.operit.ui.features.chat.components.LocalSubagentChatHost
 import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
 import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
 import com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost
@@ -1118,7 +1119,9 @@ private fun SubagentCallStatusDisplay(
         remember(context) {
             ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
         }
-    val parentChatId by chatCore.currentChatId.collectAsState()
+    val host = LocalSubagentChatHost.current
+    val mainChatId by chatCore.currentChatId.collectAsState()
+    val parentChatId = host?.parentChatId ?: mainChatId
     val sharedRuns = LocalTranscriptRuns.current?.takeIf { it.chatId == parentChatId }
     val runsFlow =
         remember(parentChatId, repository) {
@@ -1147,7 +1150,9 @@ private fun SubagentCallStatusDisplay(
         if (childChatId.isNullOrBlank()) {
             null
         } else {
-            { chatCore.switchChat(childChatId, scrollToBottom = false) }
+            {
+                host?.open?.invoke(childChatId) ?: chatCore.switchChat(childChatId, scrollToBottom = false)
+            }
         }
 
     Column(modifier = modifier) {
@@ -1207,7 +1212,9 @@ private fun SubagentTaskStatusDisplay(
             ChatRuntimeHolder.getInstance(context.applicationContext)
                 .getCore(ChatRuntimeSlot.MAIN)
         }
-    val parentChatId by chatCore.currentChatId.collectAsState()
+    val host = LocalSubagentChatHost.current
+    val mainChatId by chatCore.currentChatId.collectAsState()
+    val parentChatId = host?.parentChatId ?: mainChatId
     val runFlow =
         remember(parentChatId, callId, requestedSubagentTaskId) {
             when (
@@ -1476,10 +1483,8 @@ private fun SubagentTaskStatusDisplay(
             primaryActionLabel = stringResource(R.string.subagent_open_conversation),
             onPrimaryAction = {
                 showResultDialog = false
-                chatCore.switchChat(
-                    resolvedRun.childChatId,
-                    scrollToBottom = false,
-                )
+                host?.open?.invoke(resolvedRun.childChatId)
+                    ?: chatCore.switchChat(resolvedRun.childChatId, scrollToBottom = false)
             },
         )
     }
@@ -1494,10 +1499,8 @@ private fun SubagentTaskStatusDisplay(
             if (isTerminal) {
                 showResultDialog = true
             } else {
-                chatCore.switchChat(
-                    resolvedRun.childChatId,
-                    scrollToBottom = false,
-                )
+                host?.open?.invoke(resolvedRun.childChatId)
+                    ?: chatCore.switchChat(resolvedRun.childChatId, scrollToBottom = false)
             }
         },
     )

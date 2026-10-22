@@ -225,7 +225,9 @@ fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.c
         ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
     }
     val repository = remember(context) { SubagentRunRepository.getInstance(context) }
-    val currentChatId by chatCore.currentChatId.collectAsState(initial = null)
+    val host = LocalSubagentChatHost.current
+    val mainChatId by chatCore.currentChatId.collectAsState(initial = null)
+    val currentChatId = host?.parentChatId ?: mainChatId
     val sharedRuns = LocalTranscriptRuns.current?.takeIf { it.chatId == currentChatId }
     val runsFlow = remember(currentChatId) {
         currentChatId?.let { repository.observeByParentChatId(it) }
@@ -243,7 +245,8 @@ fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.c
                         event = event,
                         chatId = currentChatId,
                         onOpenConversation = {
-                            chatCore.switchChat(run.childChatId, scrollToBottom = false)
+                            host?.open?.invoke(run.childChatId)
+                                ?: chatCore.switchChat(run.childChatId, scrollToBottom = false)
                         },
                     )
                     return@forEach

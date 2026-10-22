@@ -289,6 +289,9 @@ class OrbitPreferences private constructor(context: Context) {
         withContext(Dispatchers.IO) {
             com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
             com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()
+            com.ai.assistance.operit.features.orbit.OrbitPackages.pruneCopies(appContext,
+                com.ai.assistance.operit.core.tools.packTool.PackageManager.getInstance(appContext,
+                    com.ai.assistance.operit.core.tools.AIToolHandler.getInstance(appContext)))
             deleteOwnedAvatar(avatarUri)
         }
         // Its tabs close and its own browser logins go with it.
