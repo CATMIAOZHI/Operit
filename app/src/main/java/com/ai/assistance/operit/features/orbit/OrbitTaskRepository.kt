@@ -233,12 +233,12 @@ class OrbitTaskRepository(private val context: Context) {
         const val DEFAULT_TIMEOUT_MINUTES = 5
 
         /**
-         * Android stops a normal background worker after about ten minutes, so runs up to this long
-         * (plus cleanup) fit there. Longer runs go to a separate foreground lane.
+         * Runs longer than this get a lane of their own in [OrbitTaskHost], so a run of hours never
+         * holds back a reminder.
          */
-        const val BACKGROUND_TIMEOUT_MINUTES = 8
+        const val LONG_RUN_MINUTES = 8
 
-        /** Longer runs move to a foreground worker with a notification; the ceiling matches Muse's 24 hours. */
+        /** The ceiling matches Muse's 24 hours. */
         const val MAX_TIMEOUT_MINUTES = 24 * 60
 
         /** 0 keeps the default; otherwise 1 to [MAX_TIMEOUT_MINUTES]. */
@@ -256,13 +256,14 @@ class OrbitTaskRepository(private val context: Context) {
             require(dailyMinute in 0 until 24 * 60) { "daily_time must be a time of day between 00:00 and 23:59" }
         }
 
+        /** The alignment review's limit lives in the app, like its steps, so older stored copies get it too. */
         fun timeoutMinutes(task: OrbitTaskEntity): Int =
-            task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
+            if (task.kind == "ASSIST" && task.source == OrbitRoutines.ALIGNMENT_SOURCE) OrbitRoutines.REVIEW_TIMEOUT_MINUTES
+            else task.timeoutMinutes.takeIf { it in 1..MAX_TIMEOUT_MINUTES } ?: DEFAULT_TIMEOUT_MINUTES
 
-        /** Runs longer than a normal background worker allows; they use the foreground lane. */
         /** Only a subagent run can be long; a task handled by Orbit in the chat just wakes it. */
         fun isLongRun(task: OrbitTaskEntity): Boolean =
-            task.useSubagent && timeoutMinutes(task) > BACKGROUND_TIMEOUT_MINUTES
+            task.useSubagent && timeoutMinutes(task) > LONG_RUN_MINUTES
 
         /** Modes that run at a chosen time of day or moment, so resuming waits for the next one. */
         private val timedModes = setOf("ONCE", "DAILY") + OrbitCalendarSchedule.modes

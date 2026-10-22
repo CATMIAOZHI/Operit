@@ -50,8 +50,10 @@ internal object OrbitRoutines {
     const val FEED_INTERVAL_MINUTES = 12 * 60
     /** New ideas every morning at 9 by default. */
     const val IDEAS_MINUTE = 9 * 60
-    /** Stays inside the normal background lane, so no foreground notification at night. */
+    /** Short routines share the lane with reminders. */
     private const val TIMEOUT_MINUTES = 8
+    /** Enough for the nightly alignment review to read the whole window in one run. */
+    const val REVIEW_TIMEOUT_MINUTES = 120
 
     fun isRoutineSource(source: String) =
         source in setOf(CHAT_SOURCE, GOALS_SOURCE, FEED_SOURCE, IDEAS_SOURCE, ALIGNMENT_SOURCE)

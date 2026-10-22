@@ -32,7 +32,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
             ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
-            ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务。超过8分钟的任务会切到前台运行并显示一条通知", false),
+            ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +
             "update 只改传入的字段（title、instruction、url、watch/script、schedule_mode、run_at、daily_time、repeat_on、interval_minutes、notify_policy、timeout_minutes、use_subagent），没传的保持不变。" +
@@ -43,7 +43,7 @@ internal object OrbitTaskTools {
             "“每年几月几号”（生日、纪念日、续费）用 YEARLY+repeat_on+daily_time；周期提醒同样配 notify_policy=ALWAYS；" +
             "“每隔几小时”用 INTERVAL。手机关机/强停/断网时不能承诺准点。" +
             "到点时默认在安排它的聊天里给你一条隐藏的“到点了”消息，你带着完整的聊天上下文自己处理，用户只看到你说的话；提醒就直接用自己的话提醒，不需要额外设置。" +
-            "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多5分钟，按需调大 timeout_minutes，最多1440分钟；超过8分钟会在前台运行并显示通知，系统不允许切前台时只能跑8分钟），结果交回给你后再由你告诉用户。" +
+            "只有活很重、很长时才设 use_subagent=true：子代理在后台做（默认最多5分钟，按需调大 timeout_minutes，最多1440分钟），结果交回给你后再由你告诉用户。" +
             "子代理与主聊天使用相同的现有工具和快速审核；需要技能或工具包时按需发现和加载。" +
             "「动态更新」（每12小时写一条动态）和「每日点子」（每天上午9点想点子）是你自己的后台任务，动态页和点子页靠它们更新：" +
             "只能 pause/resume/run 或用 update 改时间（schedule_mode、interval_minutes、daily_time、repeat_on），不能 cancel，也不能改标题、内容或执行方式。" +

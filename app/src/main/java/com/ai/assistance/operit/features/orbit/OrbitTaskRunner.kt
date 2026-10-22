@@ -32,8 +32,10 @@ object OrbitTaskRunner {
     private const val BUSY_RETRY_MS = 60_000L
     /** How long a due task waits in one go for Orbit's chat to be quiet. */
     private const val WAKE_IDLE_WAIT_MS = 60_000L
-    /** What a normal background worker may use before handing over leftover reports stops. */
-    private const val WORKER_BUDGET_MS = 9 * 60_000L
+    /** How long a task woken in Orbit's chat may wait for the chat to be free; the turn itself is the chat's. */
+    private const val WAKE_TIMEOUT_MINUTES = 8
+    /** How long handing over waiting reports may take after a run. */
+    private const val DELIVERY_BUDGET_MS = 4 * 60_000L
     private val runningState = MutableStateFlow(false)
     val running = runningState.asStateFlow()
     private data class ActiveRun(
@@ -75,7 +77,7 @@ object OrbitTaskRunner {
         Settings.Global.getInt(context.contentResolver, Settings.Global.BOOT_COUNT, -1)
             .takeIf { it >= 0 }?.toString() ?: processBootFallback
 
-    /** True while this process is executing [runId]; its own worker reschedules when it ends. */
+    /** True while this process is executing [runId]; its own lane reschedules when it ends. */
     internal fun isRunningHere(runId: String): Boolean = active.values.any { it.token.id == runId }
 
     /** True while this process runs a task in that lane; the lane reschedules when it ends. */
@@ -83,17 +85,13 @@ object OrbitTaskRunner {
         active.values.any { OrbitTaskRepository.isLongRun(it.task) == longLane }
 
     /**
-     * Runs one due task. Short tasks and long ones ([OrbitTaskRepository.isLongRun]) use separate
-     * lanes so a run of several hours never holds back a reminder. For a long run, [promote] moves
-     * the worker to the foreground; if that is refused the run is held to the background limit.
+     * Runs one due task, inside Operit's keep-alive service ([OrbitTaskHost]), so only the task's
+     * own time limit bounds it. Short tasks and long ones ([OrbitTaskRepository.isLongRun]) use
+     * separate lanes so a run of several hours never holds back a reminder.
+     * True when a task ran to its end here, so the lane can go straight on to the next due one.
      */
-    suspend fun runNext(
-        context: Context,
-        longLane: Boolean = false,
-        promote: suspend (OrbitTaskEntity) -> Boolean = { false },
-    ) = coroutineScope {
-        val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope
-        val workerStart = SystemClock.elapsedRealtime()
+    suspend fun runNext(context: Context, longLane: Boolean = false): Boolean = coroutineScope {
+        val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope false
         val repository = OrbitTaskRepository(context)
         val dao = repository.dao
         val tasks = dao.tasks(orbit.id)
@@ -118,15 +116,12 @@ object OrbitTaskRunner {
                 context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
         } ?: run {
             OrbitDelivery.sendPending(context, orbit.id)
-            return@coroutineScope
+            return@coroutineScope false
         }
-        val task = dao.task(token.taskId) ?: return@coroutineScope
+        val task = dao.task(token.taskId) ?: return@coroutineScope false
         // Woken in the chat, Orbit's own turn needs no long lane; the limit only bounds the wait.
-        val requestedMinutes = if (task.useSubagent) OrbitTaskRepository.timeoutMinutes(task)
-            else OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES
-        var heldToBackground = false
+        val timeoutMinutes = if (task.useSubagent) OrbitTaskRepository.timeoutMinutes(task) else WAKE_TIMEOUT_MINUTES
         var deferred = false
-        var timeoutMinutes = requestedMinutes
         // A stale model turn must never submit through a successor's execution token.
         val chatId = "orbit-task-" + UUID.nameUUIDFromBytes("${token.id}:${token.generation}".toByteArray())
         val job = currentCoroutineContext().job
@@ -154,14 +149,6 @@ object OrbitTaskRunner {
             }
         }
         try {
-            // The heartbeat is already renewing the lease while this waits for the foreground.
-            if (requestedMinutes > OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES) {
-                heldToBackground = !try { promote(task) } catch (e: CancellationException) { throw e } catch (e: Exception) {
-                    com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Foreground run refused: ${e.message}")
-                    false
-                }
-                if (heldToBackground) timeoutMinutes = OrbitTaskRepository.BACKGROUND_TIMEOUT_MINUTES
-            }
             val runStart = SystemClock.elapsedRealtime()
             withTimeout(timeoutMinutes * 60_000L) {
                 check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
@@ -243,12 +230,10 @@ object OrbitTaskRunner {
             }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException && currentCoroutineContext().isActive) {
-                // A review that wrote pages down in this run goes on soon from there instead of pausing.
+                // A review keeps what it wrote down and reads on from there at its next run; it is never paused.
                 if (!continueReview(context, state)) {
                     dao.interrupt(token, System.currentTimeMillis(), context.getString(
-                        if (heldToBackground) com.ai.assistance.operit.R.string.orbit_run_timed_out_background
-                        else com.ai.assistance.operit.R.string.orbit_run_timed_out,
-                        task.title, timeoutMinutes))
+                        com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes))
                 }
             } else throw e
         } catch (e: Exception) {
@@ -277,11 +262,9 @@ object OrbitTaskRunner {
             }
         }
         // Put off for a busy chat: end now so the retry is scheduled on time; reports wait for it.
-        if (deferred) return@coroutineScope
-        // A background worker has about ten minutes; reports left over go on the next wake-up.
-        val left = WORKER_BUDGET_MS - (SystemClock.elapsedRealtime() - workerStart)
-        if (longLane || left > 0) OrbitDelivery.sendPending(context, orbit.id,
-            if (longLane) 4 * 60_000L else minOf(4 * 60_000L, left))
+        if (deferred) return@coroutineScope false
+        OrbitDelivery.sendPending(context, orbit.id, DELIVERY_BUDGET_MS)
+        true
     }
 
     internal suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
@@ -310,14 +293,11 @@ object OrbitTaskRunner {
     private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
-    /** How soon an alignment review that ran out of time goes on reading. */
-    private const val REVIEW_CONTINUE_MS = 3 * 60_000L
-
     /**
      * Ends an alignment review run before its review is finished (time ran out, or it stopped
-     * partway). When it wrote pages down in this run, the next run comes in a few minutes and goes on
-     * from there; otherwise it waits for the usual time, so a run that makes no progress cannot loop
-     * and the routine is never paused for it. False when this is no such run.
+     * partway). What it wrote down is kept and the next run, at the usual time, reads on from
+     * there; the routine is never paused for it, and a run that makes no progress cannot loop.
+     * False when this is no such run.
      */
     private suspend fun continueReview(context: Context, state: ActiveRun, observation: String? = null,
         decision: String? = null): Boolean = try {
@@ -335,13 +315,11 @@ object OrbitTaskRunner {
         val reader = OrbitReviewReader.of(context, state.orbitId)
         if (!reader.isOpen()) return false
         val now = System.currentTimeMillis()
-        val progressed = reader.progressedIn(state.token.id)
         val read = reader.summary()
         return complete(context, state,
             observation ?: context.getString(com.ai.assistance.operit.R.string.orbit_review_continues_observation, read),
-            "", "", decision ?: context.getString(if (progressed) com.ai.assistance.operit.R.string.orbit_decision_review_continues
-                else com.ai.assistance.operit.R.string.orbit_decision_review_stalled, read),
-            nextAt = if (progressed) now + REVIEW_CONTINUE_MS else OrbitTaskRepository.nextAt(state.task, now))
+            "", "", decision ?: context.getString(com.ai.assistance.operit.R.string.orbit_decision_review_continues, read),
+            nextAt = OrbitTaskRepository.nextAt(state.task, now))
     }
 
     /** The alignment review's own reader (see [OrbitReviewReader]); only its run can call it. */
@@ -416,8 +394,9 @@ object OrbitTaskRunner {
             val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
             // The review's steps live in the app, so a stored copy of an older version is never run.
             val goal = if (review) OrbitRoutines.alignmentInstruction(english) else task.instruction
-            val limit = if (review) "Time limit for this run: $timeoutMinutes minutes. What you committed is kept: when time " +
-                "runs short, commit the pages you read and call $FINISH; the review goes on from there in a new run."
+            val limit = if (review) "Time limit for this run: $timeoutMinutes minutes, enough to read the whole window: " +
+                "read on to the end in this run, then call $FINISH. What you committed is kept if the run stops early, " +
+                "and the next review reads on from there."
             else "Time limit for this run: $timeoutMinutes minutes. Finish or call orbit_wait_for_user before it runs out; " +
                 "a run that hits the limit is stopped and the task is paused."
             val userInput = AppDatabase.getDatabase(context).orbitTaskDao().input(task.id)

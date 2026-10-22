@@ -157,11 +157,6 @@ internal class OrbitReviewReader private constructor(private val context: Contex
     /** True while a review has begun and is not finished. */
     suspend fun isOpen(): Boolean = locked { state().optJSONObject("session") != null }
 
-    /** True when [runId] wrote something down, so a review that ran out of time is worth continuing soon. */
-    suspend fun progressedIn(runId: String): Boolean = locked {
-        state().optJSONObject("session")?.optString("last_run") == runId
-    }
-
     /** "read 40 of 120" for the run's checkpoint. */
     suspend fun summary(): String = locked {
         val session = state().optJSONObject("session") ?: return@locked ""
