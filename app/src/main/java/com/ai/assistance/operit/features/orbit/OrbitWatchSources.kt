@@ -69,7 +69,11 @@ object OrbitWatchSources {
             "calendar" -> calendar(context, arg.toIntOrNull() ?: 7)
             else -> script(context, orbitId, source)
         }
-        return text.take(MAX_TEXT)
+        if (text.length <= MAX_TEXT) return text
+        // Only the head is shown, but the full-text digest rides along so a change past the cut
+        // still changes the run fingerprint and is not mistaken for "unchanged".
+        return text.take(MAX_TEXT) + "\n…(${text.length - MAX_TEXT} more characters not shown; full text digest " +
+            hash(text) + ")"
     }
 
     private fun time(millis: Long) = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(millis))
@@ -112,7 +116,7 @@ object OrbitWatchSources {
             selection, args, "${Telephony.Sms.DATE} DESC",
         )?.use { cursor ->
             val lines = mutableListOf<String>()
-            while (cursor.moveToNext() && lines.size < 20) {
+            while (cursor.moveToNext() && lines.size < 50) {
                 lines += "[${time(cursor.getLong(2))}] ${cursor.getString(0).orEmpty()}: ${cursor.getString(1).orEmpty().replace('\n', ' ').take(500)}"
             }
             lines.joinToString("\n")
@@ -133,7 +137,7 @@ object OrbitWatchSources {
             null, null, "${CalendarContract.Instances.BEGIN} ASC",
         )?.use { cursor ->
             val lines = mutableListOf<String>()
-            while (cursor.moveToNext() && lines.size < 100) {
+            while (cursor.moveToNext() && lines.size < 500) {
                 val allDay = cursor.getInt(4) == 1
                 val begin = if (allDay) SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(Date(cursor.getLong(0))) + " (all day)"
                     else time(cursor.getLong(0)) + " - " + SimpleDateFormat("HH:mm", Locale.ROOT).format(Date(cursor.getLong(1)))

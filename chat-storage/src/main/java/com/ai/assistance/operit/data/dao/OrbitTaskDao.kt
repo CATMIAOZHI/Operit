@@ -312,12 +312,27 @@ interface OrbitTaskDao {
     @Query("SELECT COUNT(*) FROM messages WHERE chatId=:chatId AND sender='user'")
     suspend fun userMessageCount(chatId: String): Int
 
-    /** The newest messages of [chatIds] after [since], newest first; long ones are cut. */
-    @Query("SELECT messageId, chatId, sender, CASE WHEN sender='ai' THEN SUBSTR(content,-800) ELSE SUBSTR(content,1,1500) END AS content, timestamp, CASE WHEN sender='ai' THEN LENGTH(content) > 800 ELSE LENGTH(content) > 1500 END AS truncated FROM messages WHERE chatId IN (:chatIds) AND sender IN ('user','ai') AND displayMode='NORMAL' AND timestamp > :since ORDER BY timestamp DESC LIMIT :limit")
-    suspend fun windowSource(chatIds: List<String>, since: Long, limit: Int): List<OrbitWindowMessage>
+    /**
+     * The alignment review reads its window in order: the messages of [chatIds] in (since, until]
+     * after the position ([afterTs], [afterId]), oldest first. A message over 256 KB comes back empty
+     * and marked truncated, so one huge row cannot overflow the cursor; read it with [reviewMessageBytes].
+     */
+    @Query("SELECT messageId, chatId, sender, CASE WHEN LENGTH(CAST(content AS BLOB)) > 262144 THEN '' ELSE content END AS content, timestamp, LENGTH(CAST(content AS BLOB)) > 262144 AS truncated FROM messages WHERE chatId IN (:chatIds) AND sender IN ('user','ai') AND displayMode='NORMAL' AND timestamp > :since AND timestamp <= :until AND timestamp >= :afterTs AND (timestamp > :afterTs OR (timestamp = :afterTs AND messageId > :afterId)) ORDER BY timestamp, messageId LIMIT :limit")
+    suspend fun reviewMessages(chatIds: List<String>, since: Long, until: Long, afterTs: Long, afterId: Long, limit: Int): List<OrbitWindowMessage>
 
-    @Query("SELECT COUNT(*) FROM messages WHERE chatId IN (:chatIds) AND sender='user' AND displayMode='NORMAL' AND timestamp > :since")
-    suspend fun userTurnsSince(chatIds: List<String>, since: Long): Int
+    @Query("SELECT messageId, chatId, sender, CASE WHEN LENGTH(CAST(content AS BLOB)) > 262144 THEN '' ELSE content END AS content, timestamp, LENGTH(CAST(content AS BLOB)) > 262144 AS truncated FROM messages WHERE messageId = :messageId")
+    suspend fun reviewMessage(messageId: Long): OrbitWindowMessage?
+
+    /** 32 KB of a message's text from [byteOffset], for messages too large to read in one row. */
+    @Query("SELECT SUBSTR(CAST(content AS BLOB), :byteOffset + 1, 32768) FROM messages WHERE messageId = :messageId")
+    suspend fun reviewMessageBytes(messageId: Long, byteOffset: Long): ByteArray?
+
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId IN (:chatIds) AND sender IN (:senders) AND displayMode='NORMAL' AND timestamp > :since AND timestamp <= :until")
+    suspend fun reviewCount(chatIds: List<String>, since: Long, until: Long, senders: List<String>): Int
+
+    /** How many messages of the window come up to and including ([ts], [id]). */
+    @Query("SELECT COUNT(*) FROM messages WHERE chatId IN (:chatIds) AND sender IN ('user','ai') AND displayMode='NORMAL' AND timestamp > :since AND timestamp <= :until AND (timestamp < :ts OR (timestamp = :ts AND messageId <= :id))")
+    suspend fun reviewCountThrough(chatIds: List<String>, since: Long, until: Long, ts: Long, id: Long): Int
 
     /** The last run that ended well and really ran (not skipped); a review window starts where it began. */
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state = 'COMPLETED' AND decision != '" +

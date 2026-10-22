@@ -62,6 +62,8 @@ internal class MemoryLearningJournal(
     fun cursor(path: String) = LearningCursor.parse(state.optJSONObject(path))
     fun pending(path: String) = state.optBoolean("pending_$path")
     fun horizon() = state.optLong("horizon")
+    /** The enqueue count this copy was read at; a run that spans pages pins it when it starts. */
+    fun generation() = state.optInt("generation",0)
     /**
      * What the previous batch of this chat left for the next one: its own notes, not evidence.
      * Notes written before memory was corrected (another [generation]) may hold what was forgotten,
@@ -133,9 +135,9 @@ internal class MemoryLearningJournal(
      * [carryGeneration] is the memory correction generation the batch read under.
      */
     fun complete(paths: List<String>, next: LearningCursor, more: Boolean, changes: List<MemoryReviewChange>,
-        carry: String? = null, carryGeneration: Long = 0) {
+        carry: String? = null, carryGeneration: Long = 0, reviewed: Int? = null) {
         synchronized(lock) {
-            val reviewedGeneration = state.optInt("generation",0)
+            val reviewedGeneration = reviewed ?: state.optInt("generation",0)
             reload()
             check(!state.has("export")) { "Previous batch must be exported first" }
             // A range enqueued while this batch was running is newer than what it reviewed, so its
@@ -149,13 +151,22 @@ internal class MemoryLearningJournal(
             save()
         }
     }
+    /** Keeps the notes a run hands on when it stops between pages, with nothing to commit. */
+    fun keepCarry(carry: String, carryGeneration: Long) {
+        if (carry.isBlank()) return
+        synchronized(lock) {
+            reload()
+            state.put("carry",carry).put("carry_generation",carryGeneration)
+            save()
+        }
+    }
     /**
      * Stops retrying a range that can never be reviewed, keeping each cursor where it is so the next
      * normal trigger covers the same range again once the cause is gone.
      */
-    fun abandon(paths: List<String>) {
+    fun abandon(paths: List<String>, reviewed: Int? = null) {
         synchronized(lock) {
-            val reviewedGeneration = state.optInt("generation",0)
+            val reviewedGeneration = reviewed ?: state.optInt("generation",0)
             reload()
             val newerEnqueued = state.optInt("generation",0) > reviewedGeneration
             paths.forEach {

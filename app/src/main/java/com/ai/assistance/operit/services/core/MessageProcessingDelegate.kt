@@ -1155,7 +1155,10 @@ class MessageProcessingDelegate(
                 val effectiveMaxTokens = maxTokens
                 val effectiveEnableSummary = enableSummary && effectivePersistTurn
                 val effectiveTokenUsageThreshold =
-                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent) tokenUsageThreshold else Double.MAX_VALUE
+                    if (effectiveEnableSummary || turnOptions.isCollaborationAgent ||
+                        // Background reading runs compact themselves in place instead of stopping.
+                        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+                    ) tokenUsageThreshold else Double.MAX_VALUE
                 val effectiveOnTokenLimitExceeded = if (effectiveEnableSummary) {
                     suspend {
                         onTokenLimitExceeded(

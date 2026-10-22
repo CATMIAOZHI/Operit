@@ -32,6 +32,7 @@ internal object OrbitChatTools {
             ToolParameterSchema("before", description = "read：可选，上次返回的 next_before，用来往前翻更早的消息", required = false),
             ToolParameterSchema("message_id", description = "message：read 返回的 message_id", required = false),
             ToolParameterSchema("start_char", description = "message：可选，从第几个字开始读（从 1 开始），用上次返回的 next_start_char 接着读", required = false),
+            ToolParameterSchema("include_thinking", description = "read/message：可选，true 时连你当时的思考内容一起返回；默认不返回，省上下文", required = false),
         ),
         details = """
   - 侧聊是和用户的另一段一对一聊天，有自己的标题和记录。用户想为某件事单独开一个聊天时用 create；用户自己也能在页面上开。
@@ -79,6 +80,10 @@ internal object OrbitChatTools {
             }
             val args = tool.parameters.associate { it.name to it.value }
             val history = ChatHistoryManager.getInstance(context)
+            // Orbit's own thinking is left out unless asked for: it is long and rarely what is wanted.
+            val thinking = args["include_thinking"]?.trim()?.lowercase() == "true"
+            fun visible(m: com.ai.assistance.operit.data.model.ChatMessage) =
+                (if (thinking) m.content else ChatUtils.removeThinkingContent(m.content)).trim()
             val result: Any = when (args["action"]) {
                 "list" -> JSONArray().apply {
                     put(JSONObject().put("chat_id", orbit.chatId).put("title", "main").put("current", caller == orbit.chatId))
@@ -119,7 +124,7 @@ internal object OrbitChatTools {
                     JSONObject().put("chat_id", id).put("returned", picked.size).put("has_more", hasMore)
                         .put("next_before", if (hasMore) cursor else JSONObject.NULL)
                         .put("messages", JSONArray(picked.reversed().map {
-                            val text = ChatUtils.removeThinkingContent(it.content).trim()
+                            val text = visible(it)
                             JSONObject().put("message_id", it.timestamp)
                                 .put("from", if (it.sender == "user") "user" else "you").put("time", it.timestamp)
                                 .apply { if (it.displayMode != com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL) put("hidden", true) }
@@ -133,7 +138,7 @@ internal object OrbitChatTools {
                     val stamp = args["message_id"]?.trim()?.toLongOrNull() ?: error("message needs message_id from read")
                     val m = history.loadChatMessagesByTimestamps(id, listOf(stamp)).firstOrNull()
                         ?: error("No message $stamp in chat $id; read the chat again for current ids")
-                    val text = ChatUtils.removeThinkingContent(m.content).trim()
+                    val text = visible(m)
                     val from = args["start_char"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_char must be a whole number from 1")
                     } ?: 1
