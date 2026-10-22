@@ -276,6 +276,20 @@ fun ChatArea(
     }
 
     val messagesCount = chatHistory.size
+    // Orbit's cards sit after the shown message they followed; hidden steps do not count.
+    val orbitShown = remember(chatHistory, orbitLook) {
+        if (orbitLook) chatHistory.indices.filterNot { OrbitSpeech.hidden(chatHistory[it]) } else emptyList()
+    }
+    val orbitShownAt = remember(orbitShown) { orbitShown.withIndex().associate { it.value to it.index } }
+    val orbitShownTimes = remember(orbitShown, chatHistory) { orbitShown.mapTo(HashSet()) { chatHistory[it].timestamp } }
+    // The loaded page's edges; a card placed beyond them waits for its page.
+    val orbitLoadedFrom = if (hasOlderDisplayHistory) chatHistory.firstOrNull()?.timestamp ?: Long.MIN_VALUE else Long.MIN_VALUE
+    val orbitLoadedUntil = if (hasNewerDisplayHistory) chatHistory.lastOrNull()?.timestamp ?: Long.MAX_VALUE else Long.MAX_VALUE
+    val orbitCardReply = remember(onReplyToMessage) {
+        onReplyToMessage?.let { reply ->
+            { summary: String, time: Long -> reply(ChatMessage(sender = "ai", content = summary, timestamp = time)) }
+        }
+    }
     // A card belongs to the conversation that opened it: leaving that conversation closes it before
     // the next one composes, so coming back never flashes a card the user already left behind.
     DisposableEffect(currentChatId) { onDispose { SubagentDetailHost.clear() } }
@@ -354,6 +368,15 @@ fun ChatArea(
         modifier = modifier,
         renderMessage = { renderIndex ->
             val renderedMessage = chatHistory[renderIndex]
+            // Cards from before the first message sit above it, where they showed.
+            if (orbitLook && !hasOlderDisplayHistory && orbitShownAt[renderIndex] == 0 &&
+                com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.first != false) {
+                LocalOrbitChatFooter.current?.let { cards ->
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        cards(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, renderedMessage.timestamp, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil))
+                    }
+                }
+            }
                         MessageItem(
                             index = renderIndex,
                             currentChatId = currentChatId,
@@ -411,14 +434,31 @@ fun ChatArea(
                             bubbleAiContentPaddingLeft = bubbleAiContentPaddingLeft,
                             bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                         )
+            if (orbitLook) {
+                val cards = LocalOrbitChatFooter.current
+                val at = orbitShownAt[renderIndex]
+                if (cards != null && at != null &&
+                    com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice.current?.last != false) {
+                    val last = at == orbitShown.lastIndex
+                    val time = renderedMessage.timestamp
+                    // After the last loaded message, cards going by their time wait for the newer page
+                    // where they belong; cards already placed after this message stay.
+                    val slot = if (last && hasNewerDisplayHistory) OrbitCardSlot(time, Long.MAX_VALUE, Long.MAX_VALUE, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil)
+                    else OrbitCardSlot(time, time, if (last) null else chatHistory[orbitShown[at + 1]].timestamp, orbitShownTimes, orbitLoadedFrom, orbitLoadedUntil)
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        cards(aiMessageColor, slot)
+                    }
+                }
+            }
         },
         footer = {
             if (orbitLook) {
-                if (!hasNewerDisplayHistory) androidx.compose.runtime.CompositionLocalProvider(
-                    LocalOrbitLiveCardReply provides onReplyToMessage?.let { reply ->
-                        { summary: String, time: Long -> reply(ChatMessage(sender = "ai", content = summary, timestamp = time)) }
-                    },
-                ) { LocalOrbitChatFooter.current?.invoke(aiMessageColor) }
+                // A chat with no shown message yet still shows its cards.
+                if (orbitShown.isEmpty() && !hasNewerDisplayHistory && !hasOlderDisplayHistory) {
+                    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitLiveCardReply provides orbitCardReply) {
+                        LocalOrbitChatFooter.current?.invoke(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, null, emptySet()))
+                    }
+                }
                 // Orbit is typing for as long as it works on a reply, like a person would be.
                 if (isLoading && !hasNewerDisplayHistory) {
                     val typing = stringResource(R.string.orbit_typing, currentOrbitName())

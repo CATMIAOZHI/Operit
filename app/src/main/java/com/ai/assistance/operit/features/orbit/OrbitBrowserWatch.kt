@@ -65,6 +65,21 @@ internal object OrbitBrowserWatch {
 
     data class Caller(val talkChatId: String, val executorChatId: String, val orbitId: String, val orbitName: String)
 
+    /**
+     * A browser card as it sits in the chat. It stays where it first showed; once its page is gone,
+     * or the same task shows a newer card, it reads as expired. Kept across restarts.
+     */
+    data class Card(
+        val talkChatId: String,
+        val executorChatId: String,
+        val createdAt: Long,
+        val title: String = "",
+        val url: String = "",
+        val orbitName: String = "",
+        /** The time of the message it first showed after ([Long.MIN_VALUE]: above the first); null until shown. */
+        val anchorAt: Long? = null,
+    )
+
     /** Work counts as finished this long after its last action once its agent stopped running. */
     private const val GRACE_MS = 8_000L
     /** For an agent this cannot see running (a task run), the card stays this long after an action. */
@@ -72,9 +87,19 @@ internal object OrbitBrowserWatch {
     private const val PRUNE_MS = 3_000L
     /** A finished task's page stays this long after its last use. */
     private const val IDLE_KEEP_MS = 30 * 60_000L
+    /** Old cards beyond this many are forgotten, oldest first. */
+    private const val MAX_CARDS = 200
+    private const val CARDS_FILE = "orbit_browser_cards.json"
 
     private val _works = MutableStateFlow<Map<String, Work>>(emptyMap())
     val works: StateFlow<Map<String, Work>> = _works
+    private val _cards = MutableStateFlow<List<Card>>(emptyList())
+    /** Every card shown in Orbit chats, live or expired. */
+    val cards: StateFlow<List<Card>> = _cards
+    @Volatile private var cardsLoaded = false
+    /** True once the saved cards are in memory; saving earlier would overwrite them. */
+    @Volatile private var cardsRead = false
+    private var cardsSave: Job? = null
     /** The executor whose page the open watch screen shows, until it is closed. */
     private val _watching = MutableStateFlow<String?>(null)
     val watching: StateFlow<String?> = _watching
@@ -82,6 +107,95 @@ internal object OrbitBrowserWatch {
     private var pruner: Job? = null
 
     private val app: Context get() = OperitApplication.instance.applicationContext
+
+    /** Loads the saved cards once; cards added before loading finishes are kept. */
+    fun loadCards() {
+        if (cardsLoaded) return
+        synchronized(this) {
+            if (cardsLoaded) return
+            cardsLoaded = true
+        }
+        scope.launch(Dispatchers.IO) {
+            val saved = runCatching {
+                val file = java.io.File(app.filesDir, CARDS_FILE)
+                if (!file.exists()) return@runCatching emptyList()
+                val array = org.json.JSONArray(file.readText())
+                (0 until array.length()).mapNotNull { i ->
+                    val o = array.optJSONObject(i) ?: return@mapNotNull null
+                    Card(
+                        o.optString("talk"), o.optString("executor"), o.optLong("at"),
+                        o.optString("title"), o.optString("url"), o.optString("orbit"),
+                        if (o.has("anchor")) o.optLong("anchor") else null,
+                    ).takeIf { it.talkChatId.isNotBlank() && it.executorChatId.isNotBlank() && it.createdAt > 0 }
+                }
+            }.getOrElse {
+                AppLogger.w("OrbitBrowserWatch", "Could not read browser cards: ${it.message}")
+                emptyList()
+            }
+            val addedMeanwhile = _cards.value.isNotEmpty()
+            if (saved.isNotEmpty()) _cards.update { now ->
+                val known = now.map { it.executorChatId to it.createdAt }.toSet()
+                (saved.filter { (it.executorChatId to it.createdAt) !in known } + now).sortedBy { it.createdAt }.takeLast(MAX_CARDS)
+            }
+            cardsRead = true
+            if (addedMeanwhile) saveCardsSoon()
+        }
+    }
+
+    private fun saveCardsSoon() {
+        synchronized(this) {
+            cardsSave?.cancel()
+            cardsSave = scope.launch(Dispatchers.IO) {
+                delay(1_000)
+                if (!cardsRead) return@launch
+                runCatching {
+                    val array = org.json.JSONArray()
+                    _cards.value.forEach { card ->
+                        array.put(org.json.JSONObject()
+                            .put("talk", card.talkChatId).put("executor", card.executorChatId).put("at", card.createdAt)
+                            .put("title", card.title).put("url", card.url).put("orbit", card.orbitName)
+                            .apply { card.anchorAt?.let { put("anchor", it) } })
+                    }
+                    val file = java.io.File(app.filesDir, CARDS_FILE)
+                    val temp = java.io.File(app.filesDir, "$CARDS_FILE.tmp")
+                    temp.writeText(array.toString())
+                    if (!temp.renameTo(file)) {
+                        file.writeText(array.toString())
+                        temp.delete()
+                    }
+                }.onFailure { AppLogger.w("OrbitBrowserWatch", "Could not save browser cards: ${it.message}") }
+            }
+        }
+    }
+
+    /** [card] first showed after the message at [anchorAt]; it stays there from now on. */
+    fun place(card: Card, anchorAt: Long) {
+        var changed = false
+        _cards.update { all ->
+            all.map {
+                if (it.executorChatId == card.executorChatId && it.createdAt == card.createdAt && it.anchorAt == null) {
+                    changed = true
+                    it.copy(anchorAt = anchorAt)
+                } else it
+            }
+        }
+        if (changed) saveCardsSoon()
+    }
+
+    /** The live card's last page, so the card keeps showing it after it expires. */
+    private fun noteCard(work: Work) {
+        var changed = false
+        _cards.update { all ->
+            all.map { card ->
+                if (card.executorChatId == work.executorChatId && card.createdAt == work.createdAt &&
+                    (card.title != work.title || card.url != work.url)) {
+                    changed = true
+                    card.copy(title = work.title, url = work.url)
+                } else card
+            }
+        }
+        if (changed) saveCardsSoon()
+    }
 
     fun ownerId(talkChatId: String) = OrbitBrowserControl.WATCH + talkChatId
 
@@ -100,7 +214,9 @@ internal object OrbitBrowserWatch {
     /** An AI browser call for [caller] starts. */
     fun begin(caller: Caller?) {
         caller ?: return
+        loadCards()
         val now = System.currentTimeMillis()
+        var started: Work? = null
         _works.update { all ->
             val old = all[caller.executorChatId]
             check(old?.stopping != true) { "The user stopped this browser task. Do not continue it." }
@@ -109,10 +225,21 @@ internal object OrbitBrowserWatch {
             check((old != null && !old.finished) || all.values.count { !it.finished } < BrowserTaskScope.MAX_TASKS) {
                 "All 3 background browser tasks are occupied. No browser page was changed. Wait for a task to finish, then retry; do not start more browser agents."
             }
-            all + (caller.executorChatId to (old?.copy(
+            // A finished task used again shows a new card where the chat is now; the old one expires.
+            val next = old?.copy(
                 executorChatId = caller.executorChatId, orbitName = caller.orbitName,
                 lastActionAt = now, acting = old.acting + 1, finished = false,
-            ) ?: Work(caller.talkChatId, caller.orbitId, caller.orbitName, caller.executorChatId, lastActionAt = now, acting = 1)))
+                createdAt = if (old.finished) now else old.createdAt,
+            ) ?: Work(caller.talkChatId, caller.orbitId, caller.orbitName, caller.executorChatId, createdAt = now, lastActionAt = now, acting = 1)
+            started = next.takeIf { old == null || old.createdAt != next.createdAt }
+            all + (caller.executorChatId to next)
+        }
+        started?.let { work ->
+            _cards.update { all ->
+                (all + Card(work.talkChatId, work.executorChatId, work.createdAt, work.title, work.url, work.orbitName))
+                    .takeLast(MAX_CARDS)
+            }
+            saveCardsSoon()
         }
         ensurePruner()
         if (_works.value.size > BrowserTaskScope.MAX_TASKS) prune()
@@ -132,6 +259,7 @@ internal object OrbitBrowserWatch {
                 title = session?.pageTitle ?: work.title,
             ))
         }
+        _works.value[caller.executorChatId]?.let(::noteCard)
     }
 
     private fun change(talkChatId: String, transform: (Work) -> Work?) {
@@ -150,6 +278,7 @@ internal object OrbitBrowserWatch {
             if (it.sessionId == sessionId) it
             else it.copy(sessionId = sessionId, url = session.currentUrl ?: it.url, title = session.pageTitle ?: it.title)
         }
+        _works.value[talkChatId]?.let(::noteCard)
     }
 
     private fun ensurePruner() = synchronized(this) {
