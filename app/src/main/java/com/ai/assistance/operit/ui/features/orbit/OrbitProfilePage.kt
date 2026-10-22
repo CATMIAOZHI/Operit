@@ -78,6 +78,7 @@ import com.ai.assistance.operit.data.dao.OrbitActivityRow
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.pet.displayName
@@ -91,6 +92,7 @@ import kotlinx.coroutines.launch
 private enum class OrbitProfileTab(val icon: String, val label: Int) {
     ACTIVITY("list", R.string.orbit_profile_tab_activity),
     APPROVALS("shield-check", R.string.orbit_profile_tab_approvals),
+    BROWSER("monitor", R.string.orbit_profile_tab_browser),
     SCHEDULES("alarm-clock", R.string.orbit_profile_tab_schedules),
     IDENTITY("fingerprint", R.string.orbit_profile_tab_identity),
 }
@@ -124,6 +126,13 @@ internal fun OrbitProfilePage(
     val who = orbitName(orbit)
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val running by OrbitCompanion.running.collectAsState()
+    val doing = orbitActivity(orbit, null)
+    val scope = rememberCoroutineScope()
+    val browserWorks by OrbitBrowserWatch.works.collectAsState()
+    val pages = remember(browserWorks, orbit.id) {
+        browserWorks.values.filter { it.orbitId == orbit.id && !it.stopping && OrbitBrowserWatch.pageAlive(it) }
+            .sortedByDescending { it.lastActionAt }
+    }
     var tabIndex by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
     val tab = OrbitProfileTab.entries[tabIndex]
     // A failed read shows an empty list; the profile stays usable.
@@ -181,7 +190,7 @@ internal fun OrbitProfilePage(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    text = stringResource(if (running) R.string.orbit_profile_status_busy else R.string.orbit_profile_status_online),
+                    text = doing ?: stringResource(if (running) R.string.orbit_profile_status_busy else R.string.orbit_profile_status_online),
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -207,6 +216,13 @@ internal fun OrbitProfilePage(
                 activitySection(who, activity, chatTurns, onOpenProcess)
             }
             OrbitProfileTab.APPROVALS -> approvalsSection(tasks, approvals, onOpenTask) { openApproval = it }
+            OrbitProfileTab.BROWSER -> browserSection(who, pages) { work ->
+                if (OrbitBrowserWatch.pageAlive(work)) {
+                    scope.launch { OrbitBrowserWatch.open(context, work.executorChatId) }
+                } else {
+                    android.widget.Toast.makeText(context, R.string.orbit_profile_browser_gone, android.widget.Toast.LENGTH_SHORT).show()
+                }
+            }
             OrbitProfileTab.SCHEDULES -> schedulesSection(tasks, onOpenTask, onOpenAllTasks)
             OrbitProfileTab.IDENTITY -> item(key = "identity") {
                 IdentitySection(
@@ -777,6 +793,35 @@ private fun LazyListScope.approvalsSection(
 
 internal fun relativeTime(time: Long): String =
     DateUtils.getRelativeTimeSpanString(time, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString()
+
+/** The pages the Orbit has open in its browser; tapping one shows it, and the user can take over there. */
+private fun LazyListScope.browserSection(
+    who: String,
+    pages: List<OrbitBrowserWatch.Work>,
+    onOpen: (OrbitBrowserWatch.Work) -> Unit,
+) {
+    if (pages.isEmpty()) {
+        item(key = "browser-empty") {
+            EmptyHint(
+                stringResource(R.string.orbit_profile_browser_empty) + "\n" +
+                    stringResource(R.string.orbit_profile_browser_empty_desc, who),
+            )
+        }
+        return
+    }
+    item(key = "browser-count") { SectionTitle(stringResource(R.string.orbit_profile_browser_count, pages.size)) }
+    items(pages, key = { "browser-${it.executorChatId}" }) { work ->
+        val host = remember(work.url) { runCatching { Uri.parse(work.url).host }.getOrNull()?.removePrefix("www.") }
+        OrbitListRow(
+            icon = orbitIcon("monitor"),
+            title = work.title.ifBlank { host ?: work.url },
+            detail = host ?: work.url.takeIf { it.isNotBlank() },
+            meta = relativeTime(work.lastActionAt),
+            showChevron = true,
+            onClick = { onOpen(work) },
+        )
+    }
+}
 
 private fun LazyListScope.schedulesSection(
     tasks: List<OrbitTaskEntity>?,

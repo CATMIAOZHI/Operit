@@ -30,6 +30,8 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -48,6 +50,7 @@ internal object OrbitBrowserWatch {
         val orbitName: String,
         /** The chat whose agent does the browsing: the talk chat itself, a subagent or a task run. */
         val executorChatId: String,
+        /** The card shown for this page has this time (see [show]); it changes when a new card goes in. */
         val createdAt: Long = System.currentTimeMillis(),
         val sessionId: String? = null,
         val url: String = "",
@@ -63,6 +66,8 @@ internal object OrbitBrowserWatch {
         val finished: Boolean = false,
         /** When the AI asked the user to take over this page (see [askUser]); null when not asked. */
         val askAt: Long? = null,
+        /** When this browser work began; unlike [createdAt] it never changes. */
+        val startedAt: Long = System.currentTimeMillis(),
     )
 
     data class Caller(val talkChatId: String, val executorChatId: String, val orbitId: String, val orbitName: String)
@@ -269,35 +274,72 @@ internal object OrbitBrowserWatch {
         caller ?: return
         loadCards()
         val now = System.currentTimeMillis()
-        var started: Work? = null
         _works.update { all ->
             val old = all[caller.executorChatId]
             check(old?.stopping != true) { "The user stopped this browser task. Do not continue it." }
             // Finished tasks only keep their page for the user; a new task takes the room of the oldest.
-            // A finished one coming back counts as new again.
             // A page waiting for the user to take over still holds its place.
             check((old != null && !old.finished) || all.values.count { !it.finished || it.askAt != null } < BrowserTaskScope.MAX_TASKS) {
                 "All 3 background browser tasks are occupied. No browser page was changed. Wait for a task to finish, then retry; do not start more browser agents."
             }
-            // A finished task used again shows a new card where the chat is now; the old one expires.
+            // Browsing puts no card in the chat; the AI shows one with [show]. A card already shown
+            // keeps following this page, also when a stopped task is used again.
             val next = old?.copy(
                 executorChatId = caller.executorChatId, orbitName = caller.orbitName,
                 lastActionAt = now, acting = old.acting + 1, finished = false,
-                createdAt = if (old.finished) now else old.createdAt,
             ) ?: Work(caller.talkChatId, caller.orbitId, caller.orbitName, caller.executorChatId, createdAt = now, lastActionAt = now, acting = 1)
-            started = next.takeIf { old == null || old.createdAt != next.createdAt }
             all + (caller.executorChatId to next)
-        }
-        started?.let { work ->
-            _cards.update { all ->
-                (all + Card(work.talkChatId, work.executorChatId, work.createdAt, work.title, work.url, work.orbitName))
-                    .takeLast(MAX_CARDS)
-            }
-            saveCardsSoon()
         }
         ensurePruner()
         if (_works.value.size > BrowserTaskScope.MAX_TASKS) prune()
     }
+
+    /**
+     * The AI shows [caller]'s page in the chat as a browser card. Until the user writes again, showing
+     * it again keeps that card (it follows the page anyway); after that a new card goes in where the
+     * chat is now and the old one reads as expired. Returns true when a new card went in.
+     */
+    suspend fun show(caller: Caller): Boolean = showLock.withLock {
+        loadCards()
+        val work = checkNotNull(_works.value[caller.executorChatId]) {
+            "No browser page of yours is open. Open the page with the browser tools first, then show it."
+        }
+        check(!work.stopping) { "The user stopped this browser task. Do not continue it." }
+        check(work.sessionId?.let(StandardBrowserSessionTools.sessions::containsKey) == true) {
+            "Your browser page is no longer open. Open it again with the browser tools first, then show it."
+        }
+        val shown = _cards.value.lastOrNull {
+            it.kind == BROWSER && it.executorChatId == work.executorChatId && it.talkChatId == work.talkChatId &&
+                it.createdAt == work.createdAt
+        }
+        if (shown != null) {
+            val userWrote = withContext(Dispatchers.IO) {
+                com.ai.assistance.operit.data.db.AppDatabase.getDatabase(app).messageDao()
+                    .existsUserMessageAfter(work.talkChatId, shown.createdAt)
+            }
+            if (!userWrote) return false
+        }
+        val now = System.currentTimeMillis()
+        var next: Work? = null
+        change(work.executorChatId) { current ->
+            next = null
+            if (current.createdAt == work.createdAt && !current.stopping) current.copy(createdAt = now).also { next = it } else current
+        }
+        val showing = checkNotNull(next) { "The browser task changed meanwhile. Try again." }
+        _cards.update { all ->
+            (all + Card(showing.talkChatId, showing.executorChatId, now, showing.title, showing.url, showing.orbitName))
+                .takeLast(MAX_CARDS)
+        }
+        saveCardsSoon()
+        true
+    }
+
+    /** Checking for a card and putting a new one in happen as one step, so two shows never both add one. */
+    private val showLock = Mutex()
+
+    /** The page of [work] is still open in the browser. */
+    fun pageAlive(work: Work): Boolean =
+        work.sessionId?.let(StandardBrowserSessionTools.sessions::get)?.browserTaskId == work.executorChatId
 
     /** An AI browser call for [caller] ended; the card follows the tab it left in front. */
     fun end(caller: Caller?) {
@@ -308,7 +350,8 @@ internal object OrbitBrowserWatch {
             all + (caller.executorChatId to work.copy(
                 acting = (work.acting - 1).coerceAtLeast(0),
                 lastActionAt = System.currentTimeMillis(),
-                sessionId = session?.id ?: work.sessionId,
+                // With its last tab closed the page is gone; the work no longer points at it.
+                sessionId = session?.id ?: work.sessionId?.takeIf { pageAlive(work) },
                 url = session?.currentUrl ?: work.url,
                 title = session?.pageTitle ?: work.title,
             ))
@@ -531,7 +574,7 @@ internal object OrbitBrowserWatch {
                     // Not if the user stopped or closed the task, it was started anew, or they took over again
                     // (that hand-back tells it then).
                     val current = _works.value[work.executorChatId]
-                    if (current == null || current.stopping || current.createdAt != work.createdAt ||
+                    if (current == null || current.stopping || current.startedAt != work.startedAt ||
                         current.control != Control.NONE) return@launch
                 }
                 val coordinator = CollaborationCoordinator.getInstance(app)

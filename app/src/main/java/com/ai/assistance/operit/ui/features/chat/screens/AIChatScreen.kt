@@ -1852,7 +1852,8 @@ private fun ChatInputBottomBar(
                     showChatInputHookMessage(submitDecision.noticeMessage)
                     val finalText = submitDecision.text ?: item.text
 
-                    focusManager.clearFocus()
+                    // In an Orbit chat the keyboard stays up, so the user can keep typing like in a messenger.
+                    if (!orbitChat && currentChatId !in orbitOwnedChatIds) focusManager.clearFocus()
                     if (
                         !actualViewModel.trySendQueuedTextMessage(
                             finalText,
@@ -2049,7 +2050,8 @@ private fun ChatInputBottomBar(
                 onRequestAutoScrollToBottom()
                 return@launch
             }
-            focusManager.clearFocus()
+            // In an Orbit chat the keyboard stays up for the next message, like in a messenger.
+            if (!steerWhileBusy) focusManager.clearFocus()
             actualViewModel.sendUserMessage()
             actualViewModel.resetAttachmentPanelState()
             onRequestAutoScrollToBottom()
