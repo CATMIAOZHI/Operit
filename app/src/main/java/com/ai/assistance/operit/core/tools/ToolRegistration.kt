@@ -99,6 +99,13 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.submit(context, tool)
         } },
     )
+    handler.registerTool(
+        name = com.ai.assistance.operit.features.orbit.OrbitReviewReader.TOOL,
+        descriptionGenerator = { context.getString(R.string.orbit_review_read_tool) },
+        executor = { tool -> runBlockingIoPreservingToolRuntimeContext {
+            com.ai.assistance.operit.features.orbit.OrbitTaskRunner.read(context, tool)
+        } },
+    )
     com.ai.assistance.operit.features.orbit.OrbitTaskActionTools.names.forEach { name ->
         handler.registerTool(name = name, descriptionGenerator = { name }, executor = { tool ->
             runBlockingIoPreservingToolRuntimeContext {

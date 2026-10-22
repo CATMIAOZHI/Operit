@@ -15,9 +15,13 @@ internal object OrbitTaskExecution {
 
     /** Add task controls to normal tool discovery; never replace the ordinary tool set. */
     suspend fun additionalPrompts(context: Context, chatId: String?): List<com.ai.assistance.operit.data.model.ToolPrompt> {
-        val binding = chatId?.let { AppDatabase.getDatabase(context).orbitTaskDao().binding(it) }
+        val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+        val binding = chatId?.let { dao.binding(it) }
             ?: return emptyList()
-        return promptsForBinding(binding.chatId == binding.rootChatId)
+        val root = binding.chatId == binding.rootChatId
+        // Only the alignment review reads a window of chat page by page.
+        val reads = root && dao.run(binding.runId)?.let { dao.task(it.taskId) }?.source == OrbitRoutines.ALIGNMENT_SOURCE
+        return promptsForBinding(root) + if (reads) listOf(OrbitReviewReader.prompt) else emptyList()
     }
 
     internal fun promptsForBinding(root: Boolean) =
@@ -65,6 +69,7 @@ internal object OrbitTaskExecution {
 
     /** A CLI visibility exception, not a permission-review exemption. Execution rechecks the lease. */
     fun isTaskCapability(name: String) = name == OrbitTaskRunner.FINISH || name in OrbitTaskActionTools.names ||
+        name == OrbitReviewReader.TOOL ||
         name == com.ai.assistance.operit.core.tools.OrbitProductTools.ARTIFACT ||
         name == com.ai.assistance.operit.core.tools.OrbitProductTools.GOAL ||
         name in com.ai.assistance.operit.core.tools.OrbitBoardTools.names ||

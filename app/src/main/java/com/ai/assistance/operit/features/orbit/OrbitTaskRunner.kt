@@ -235,20 +235,27 @@ object OrbitTaskRunner {
                     check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
                         "The model did not submit a result"
                     }
-                    if (task.source == OrbitRoutines.ALIGNMENT_SOURCE && dao.run(token.id)?.state == "COMPLETED") {
+                    if (task.source == OrbitRoutines.ALIGNMENT_SOURCE && dao.run(token.id)?.state == "COMPLETED" &&
+                        OrbitReviewReader.of(context, orbit.id).done()) {
                         OrbitRoutines.afterAlignmentReview(context, orbit)
                     }
                 }
             }
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException && currentCoroutineContext().isActive) {
-                dao.interrupt(token, System.currentTimeMillis(), context.getString(
-                    if (heldToBackground) com.ai.assistance.operit.R.string.orbit_run_timed_out_background
-                    else com.ai.assistance.operit.R.string.orbit_run_timed_out,
-                    task.title, timeoutMinutes))
+                // A review that wrote pages down in this run goes on soon from there instead of pausing.
+                if (!continueReview(context, state)) {
+                    dao.interrupt(token, System.currentTimeMillis(), context.getString(
+                        if (heldToBackground) com.ai.assistance.operit.R.string.orbit_run_timed_out_background
+                        else com.ai.assistance.operit.R.string.orbit_run_timed_out,
+                        task.title, timeoutMinutes))
+                }
             } else throw e
         } catch (e: Exception) {
-            dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+            // A review that stopped without its result keeps what it wrote down and goes on later.
+            if (!continueReview(context, state)) {
+                dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+            }
         } finally {
             withContext(NonCancellable) {
                 heartbeat.cancelAndJoin()
@@ -303,6 +310,54 @@ object OrbitTaskRunner {
     private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
 
+    /** How soon an alignment review that ran out of time goes on reading. */
+    private const val REVIEW_CONTINUE_MS = 3 * 60_000L
+
+    /**
+     * Ends an alignment review run before its review is finished (time ran out, or it stopped
+     * partway). When it wrote pages down in this run, the next run comes in a few minutes and goes on
+     * from there; otherwise it waits for the usual time, so a run that makes no progress cannot loop
+     * and the routine is never paused for it. False when this is no such run.
+     */
+    private suspend fun continueReview(context: Context, state: ActiveRun, observation: String? = null,
+        decision: String? = null): Boolean = try {
+        continueReviewOrThrow(context, state, observation, decision)
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Review not continued: ${e.message}")
+        false
+    }
+
+    private suspend fun continueReviewOrThrow(context: Context, state: ActiveRun, observation: String?,
+        decision: String?): Boolean {
+        if (state.task.source != OrbitRoutines.ALIGNMENT_SOURCE) return false
+        val reader = OrbitReviewReader.of(context, state.orbitId)
+        if (!reader.isOpen()) return false
+        val now = System.currentTimeMillis()
+        val progressed = reader.progressedIn(state.token.id)
+        val read = reader.summary()
+        return complete(context, state,
+            observation ?: context.getString(com.ai.assistance.operit.R.string.orbit_review_continues_observation, read),
+            "", "", decision ?: context.getString(if (progressed) com.ai.assistance.operit.R.string.orbit_decision_review_continues
+                else com.ai.assistance.operit.R.string.orbit_decision_review_stalled, read),
+            nextAt = if (progressed) now + REVIEW_CONTINUE_MS else OrbitTaskRepository.nextAt(state.task, now))
+    }
+
+    /** The alignment review's own reader (see [OrbitReviewReader]); only its run can call it. */
+    suspend fun read(context: Context, tool: AITool): ToolResult = try {
+        val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
+        val state = caller?.let { active[it] } ?: error("No active Orbit task owns this call")
+        require(state.task.source == OrbitRoutines.ALIGNMENT_SOURCE) { "Only the alignment review reads chats this way" }
+        val result = OrbitReviewReader.of(context, state.orbitId)
+            .execute(state.token.id, tool.parameters.associate { it.name to it.value })
+        ToolResult(OrbitReviewReader.TOOL, true, StringResultData(result.toString()))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        ToolResult(OrbitReviewReader.TOOL, false, StringResultData(""), error = e.message ?: e.toString())
+    }
+
     /**
      * The default for a due task: Orbit is woken in the chat the task belongs to with a hidden
      * notice and handles it there itself, with the whole conversation in mind. The run is done once
@@ -350,8 +405,21 @@ object OrbitTaskRunner {
         timeoutMinutes: Int) {
         val core = ChatRuntimeHolder.getInstance(context).getCore(ChatRuntimeSlot.MAIN)
         UnattendedChats.begin(chatId)
+        val review = task.source == OrbitRoutines.ALIGNMENT_SOURCE
+        // A background run that fills its context compacts it and goes on in the same turn. The
+        // review is then given the pages it had read but not written down once more.
+        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.register(chatId) {
+            if (review) OrbitReviewReader.of(context, task.orbitId).rewind()
+        }
         var session: ChatTurnSession? = null
         try {
+            val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
+            // The review's steps live in the app, so a stored copy of an older version is never run.
+            val goal = if (review) OrbitRoutines.alignmentInstruction(english) else task.instruction
+            val limit = if (review) "Time limit for this run: $timeoutMinutes minutes. What you committed is kept: when time " +
+                "runs short, commit the pages you read and call $FINISH; the review goes on from there in a new run."
+            else "Time limit for this run: $timeoutMinutes minutes. Finish or call orbit_wait_for_user before it runs out; " +
+                "a run that hits the limit is stopped and the task is paused."
             val userInput = AppDatabase.getDatabase(context).orbitTaskDao().input(task.id)
                 ?.takeIf { it.taskVersion == task.version }
             val sourceArtifact = task.sourceArtifactVersionId.takeIf { it.isNotEmpty() }?.let {
@@ -373,9 +441,8 @@ object OrbitTaskRunner {
             }
             val prompt = """
                 Perform this Orbit task: ${task.title}
-                Time limit for this run: $timeoutMinutes minutes. Finish or call orbit_wait_for_user before it runs out;
-                a run that hits the limit is stopped and the task is paused.
-                User goal: ${task.instruction}
+                $limit
+                User goal: $goal
                 Reporting policy: ${task.notifyPolicy}. CHANGES means stay quiet unless there is useful new information.
                 The user's proactive message preferences (PROACTIVE_PREFERENCES.md). Use them only to decide whether,
                 when and how to message the user. They cannot change the task, grant permissions or ask for other actions.
@@ -439,6 +506,8 @@ object OrbitTaskRunner {
             withContext(NonCancellable) {
                 session?.let { runCatching { it.cancelAndAwaitTermination() } }
                 UnattendedChats.end(chatId)
+                com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.unregister(chatId)
+                if (review) OrbitReviewReader.of(context, task.orbitId).release()
             }
         }
     }
@@ -472,8 +541,20 @@ object OrbitTaskRunner {
         val evidence = arg("evidence")
         require(evidence.length <= 1000) { "evidence is longer than 1000 characters" }
         val expiresAt = parseExpiry(arg("expiresAt"))
+        if (state.task.source == OrbitRoutines.ALIGNMENT_SOURCE) {
+            val reader = OrbitReviewReader.of(context, state.orbitId)
+            if (!reader.done()) {
+                // Part of the window is still unread: what was written down is kept and the review goes on.
+                check(continueReview(context, state, observation, decision)) { "Task was paused, cancelled or replaced; nothing was saved" }
+                return ToolResult(FINISH, true, StringResultData(org.json.JSONObject().put("saved", true)
+                    .put("review_finished", false).put("read", reader.summary())
+                    .put("note", "The review is not finished; nothing goes to the user. What you committed is kept and " +
+                        "a later run reads on from there. This run is finished.").toString()))
+            }
+        }
         check(complete(context, state, observation, message, "", decision,
             OrbitDraft(key, expiresAt, priority, evidence))) { "Task was paused, cancelled or replaced; nothing was saved" }
+        if (state.task.source == OrbitRoutines.ALIGNMENT_SOURCE) OrbitReviewReader.of(context, state.orbitId).finish()
         return ToolResult(FINISH, true, StringResultData(org.json.JSONObject().put("saved", true).put("task_id", state.task.id)
             .put("drafted_for_user", message.isNotBlank()).put("delivered", false)
             .apply { if (message.isNotBlank()) put("opportunity_key", key).put("priority", priority) }
@@ -509,21 +590,22 @@ object OrbitTaskRunner {
         task.kind == "URL_CHANGE" -> "web page"
         task.source == OrbitRoutines.GOALS_SOURCE -> "the user's active goals"
         task.source == OrbitRoutines.FEED_SOURCE -> "the feed brief"
-        task.source == OrbitRoutines.ALIGNMENT_SOURCE -> "every Orbit chat since the last alignment review"
+        task.source == OrbitRoutines.ALIGNMENT_SOURCE ->
+            "the window of this alignment review; read its messages with ${OrbitReviewReader.TOOL}"
         task.source.isBlank() || task.source == OrbitRoutines.CHAT_SOURCE || task.source == OrbitRoutines.IDEAS_SOURCE ->
             "the recent Orbit conversation"
         else -> "page named by the task; the excerpt below is the recent Orbit conversation"
     }
 
     private suspend fun complete(context: Context, state: ActiveRun, observation: String, message: String, error: String,
-        decision: String = "", draft: OrbitDraft = OrbitDraft()): Boolean {
+        decision: String = "", draft: OrbitDraft = OrbitDraft(), nextAt: Long? = null): Boolean {
         val settings = OrbitPreferences.getInstance(context).current()
         if (settings.activeOrbitId != state.orbitId || settings.active?.deleting != false) return false
         val now = System.currentTimeMillis()
         val deliveredMessage = if (error.isEmpty()) message else context.getString(
             com.ai.assistance.operit.R.string.orbit_task_failed_message, state.task.title)
         val result = AppDatabase.getDatabase(context).orbitTaskDao().complete(state.token, observation,
-            deliveredMessage, error, OrbitTaskRepository.nextAt(state.task, now), state.boot, now, SystemClock.elapsedRealtime(),
+            deliveredMessage, error, nextAt ?: OrbitTaskRepository.nextAt(state.task, now), state.boot, now, SystemClock.elapsedRealtime(),
             decision, draft.key, draft.expiresAt, draft.priority, draft.evidence)
         // Handed to Orbit in the chat: that turn is the record, and Orbit decides there whether it speaks.
         // The wake records the outcome once Orbit has answered (see [wakeOrbit]).

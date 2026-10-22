@@ -393,7 +393,9 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         const val ALIGNMENT_STATE = "alignment/ALIGNMENT_STATE.yaml"
         const val PROGRESSION = "alignment/PROGRESSION_HISTORY.yaml"
         const val REPAIR = "alignment/REPAIR_THREADS.yaml"
-        val ALIGNMENT_DATA = listOf(ALIGNMENT_STATE, PROGRESSION, REPAIR)
+        /** What the review in progress has written down page by page; begun anew with each review. */
+        const val REVIEW_NOTES = "alignment/REVIEW_NOTES.md"
+        val ALIGNMENT_DATA = listOf(ALIGNMENT_STATE, PROGRESSION, REPAIR, REVIEW_NOTES)
         /** Not one of the files Orbit reads or writes; the app keeps the user's Library pins here. */
         private const val PINS = "library_pins.json"
         val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)

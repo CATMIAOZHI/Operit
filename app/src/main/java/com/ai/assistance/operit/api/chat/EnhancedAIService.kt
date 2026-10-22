@@ -128,6 +128,8 @@ class EnhancedAIService private constructor(
 
     companion object {
         private const val TAG = "EnhancedAIService"
+        /** A compacted background reading run keeps this share of its trigger free for the next pages. */
+        private const val IN_PLACE_ROOM = 0.7
 
         @Volatile private var INSTANCE: EnhancedAIService? = null
 
@@ -957,6 +959,42 @@ class EnhancedAIService private constructor(
         return dispatchHooks(initialContext)
     }
 
+    /**
+     * Compacts a background reading run in memory and keeps the same turn going (see
+     * [com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction]). The run's first request is
+     * its task, so it stays verbatim after the checkpoint.
+     */
+    private suspend fun compactInPlace(
+        chatId: String,
+        history: List<PromptTurn>,
+        service: AIService,
+        tools: List<ToolPrompt>?,
+        maxTokens: Int,
+        threshold: Double,
+    ): List<PromptTurn> {
+        val task = requireNotNull(history.firstOrNull { it.kind == PromptTurnKind.USER }) {
+            "Background run has no task to keep"
+        }
+        val summary = generateSummaryFromPromptTurns(
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCheckpoint.summaryInput(history),
+            previousSummary = null,
+            summaryConfig = ConversationSummaryConfig(
+                globalRules = com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.SUMMARY_RULES),
+        )
+        check(summary.isNotBlank()) { "Context compaction returned an empty checkpoint" }
+        val compacted = history.filter { it.kind == PromptTurnKind.SYSTEM } +
+            PromptTurn(PromptTurnKind.SUMMARY, summary) +
+            PromptTurn(PromptTurnKind.SUMMARY, com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.RESUME_NOTE) +
+            task
+        // The checkpoint must leave room for the next pages; one that does not would be compacted again
+        // after every tool call, so the run stops here instead and goes on in a later run.
+        check(estimatePreparedRequestWindow(service, compacted, tools, true) < maxTokens * threshold * IN_PLACE_ROOM) {
+            "Context is still too full after compaction to keep reading"
+        }
+        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.compacted(chatId)
+        return compacted
+    }
+
     private fun bypassPromptHooks(context: PromptHookContext): PromptHookContext = context
 
     private suspend fun buildPromptFinalizeMetadata(
@@ -1465,6 +1503,16 @@ class EnhancedAIService private constructor(
                     ) {
                         requestHistory = compactCollaborationHistory(
                             execContext, requireNotNull(chatId), requestHistory, serviceForFunction, availableTools, maxTokens,
+                        )
+                        execContext.conversationHistory.clear()
+                        execContext.conversationHistory.addAll(requestHistory)
+                    } else if (maxTokens > 0 && initialWindow.toDouble() / maxTokens >= tokenUsageThreshold &&
+                        com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)
+                    ) {
+                        // A reading run resumed from its stored transcript starts over the window.
+                        requestHistory = compactInPlace(
+                            requireNotNull(chatId), requestHistory, serviceForFunction, availableTools, maxTokens,
+                            tokenUsageThreshold,
                         )
                         execContext.conversationHistory.clear()
                         execContext.conversationHistory.addAll(requestHistory)
@@ -2733,6 +2781,14 @@ class EnhancedAIService private constructor(
                 if (com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(this@EnhancedAIService.context).isAgent(chatId)) {
                     currentChatHistory = compactCollaborationHistory(
                         context, requireNotNull(chatId), currentChatHistory, serviceForFunction, availableTools, maxTokens,
+                    )
+                    context.conversationHistory.clear()
+                    context.conversationHistory.addAll(currentChatHistory)
+                } else if (com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(chatId)) {
+                    // A background reading run compacts and keeps going in this same turn.
+                    currentChatHistory = compactInPlace(
+                        requireNotNull(chatId), currentChatHistory, serviceForFunction, availableTools, maxTokens,
+                        tokenUsageThreshold,
                     )
                     context.conversationHistory.clear()
                     context.conversationHistory.addAll(currentChatHistory)
