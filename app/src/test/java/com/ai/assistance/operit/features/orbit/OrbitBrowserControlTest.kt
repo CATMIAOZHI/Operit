@@ -27,4 +27,29 @@ class OrbitBrowserControlTest {
         try { assertTrue(OrbitBrowserControl.isOwner("task")) }
         finally { OrbitBrowserControl.release("task") }
     }
+
+    @Test fun `watch takeover makes AI calls wait until the user hands back`() {
+        assertTrue(OrbitBrowserControl.takeOver("watch:t"))
+        assertFalse(OrbitBrowserControl.takeOver("watch:other"))
+        val ran = java.util.concurrent.CountDownLatch(1)
+        val worker = Thread { OrbitBrowserControl.aiCall { ran.countDown() } }.apply { start() }
+        try {
+            assertFalse(ran.await(300, java.util.concurrent.TimeUnit.MILLISECONDS))
+        } finally {
+            OrbitBrowserControl.handBack("watch:t", "t", null)
+        }
+        assertTrue(ran.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        worker.join()
+        assertTrue(OrbitBrowserControl.idle())
+    }
+
+    @Test fun `hand back note goes once to the next call of that chat only`() {
+        assertTrue(OrbitBrowserControl.takeOver("watch:t"))
+        OrbitBrowserControl.handBack("watch:t", "t", "look again")
+        // A call for no Orbit chat runs normally and leaves the note for its chat.
+        OrbitBrowserControl.aiCall { }
+        val error = assertThrows(IllegalStateException::class.java) { OrbitBrowserControl.beginAi("t") }
+        assertEquals("look again", error.message)
+        assertTrue(OrbitBrowserControl.idle())
+    }
 }

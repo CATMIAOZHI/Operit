@@ -593,7 +593,7 @@ private fun buildMentionPackageOptions(
 ): List<MentionPackageSuggestion> {
     val options = linkedMapOf<String, MentionPackageSuggestion>()
 
-    packageManager.getAvailablePackages().toSortedMap().forEach { (packageName, toolPackage) ->
+    packageManager.withoutOrbitCopies(packageManager.getAvailablePackages()).toSortedMap().forEach { (packageName, toolPackage) ->
         if (packageManager.isToolPkgContainer(packageName)) {
             return@forEach
         }

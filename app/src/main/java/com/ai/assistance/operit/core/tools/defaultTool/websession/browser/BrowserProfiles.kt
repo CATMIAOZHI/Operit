@@ -39,14 +39,17 @@ internal object BrowserProfiles {
      */
     fun forCurrentCaller(context: Context, tool: AITool): String {
         if (!isSupported()) return MAIN
-        val chatId =
-            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId?.takeIf { it.isNotBlank() }
-                ?: tool.parameters.find { it.name == "__operit_package_chat_id" }?.value?.trim()?.takeIf { it.isNotBlank() }
+        val chatId = callerChatId(tool)
         val orbit =
             runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().ownerForChat(chatId) }
                 .getOrNull() ?: return MAIN
         return if (orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbit.id)
     }
+
+    /** The chat an AI browser call comes from: the tool runtime's, or the one a package call carries. */
+    fun callerChatId(tool: AITool): String? =
+        ToolExecutionManager.currentToolRuntimeContext()?.callerChatId?.takeIf { it.isNotBlank() }
+            ?: tool.parameters.find { it.name == "__operit_package_chat_id" }?.value?.trim()?.takeIf { it.isNotBlank() }
 
     /** The profile an Orbit's browser uses now. */
     fun forOrbit(context: Context, orbitId: String): String {

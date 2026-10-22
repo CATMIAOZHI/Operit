@@ -290,6 +290,10 @@ private fun OrbitChatPage(
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
+    // In the developer view: a subagent's chat shown instead of Orbit's own. Never an Orbit chat,
+    // so it stays out of the talk chats; leaving the developer view drops it.
+    var devSubChatId by remember(orbit.id) { mutableStateOf<String?>(null) }
+    LaunchedEffect(devView) { if (!devView) devSubChatId = null }
     // The developer view is opened from the profile and goes back to it, like a page pushed over it:
     // the profile stays where it was, kept but hidden, while the developer view shows. Leaving slides
     // it off to the right: 0 is in place, 1 is off screen. As the back starts, what the developer view
@@ -556,17 +560,40 @@ private fun OrbitChatPage(
             )
         ) {
             Box(Modifier.weight(1f).fillMaxWidth()) {
+                // A subagent's chat is switched to like a side chat, so back leaves the developer
+                // view the same way the top-left button does, with the same slide.
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides !devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
+                    // While Orbit works in the browser, its chat ends with a live card to watch it.
+                    com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatFooter provides
+                        if (devView) null else {
+                            // Covered chats stop redrawing the page picture.
+                            val cardVisible = chatOnScreen && stack.isEmpty() && editingFile == null
+                            remember(currentChatId, cardVisible) {
+                                { color: androidx.compose.ui.graphics.Color -> OrbitBrowserCard(currentChatId, color, cardVisible) }
+                            }
+                        },
+                    // In the developer view a subagent row opens that subagent's chat right here.
+                    com.ai.assistance.operit.ui.features.chat.components.LocalSubagentChatHost provides
+                        if (devView) {
+                            val parent = devSubChatId ?: currentChatId
+                            remember(parent) {
+                                com.ai.assistance.operit.ui.features.chat.components.SubagentChatHost(parent) { devSubChatId = it }
+                            }
+                        } else null,
                 ) {
-                    chatContent(currentChatId) {
+                    chatContent(if (devView) devSubChatId ?: currentChatId else currentChatId) {
                         if (devView) {
                             OrbitDevHeader(
-                                orbit = orbit, currentChatId = currentChatId,
-                                onSelectChat = { talkChatId = it },
+                                orbit = orbit, currentChatId = devSubChatId ?: currentChatId,
+                                onSelectChat = {
+                                    devSubChatId = null
+                                    talkChatId = it
+                                },
+                                onSelectSubagent = { devSubChatId = it },
                                 onExit = { leaveDevView() },
                             )
                         } else {
@@ -971,13 +998,30 @@ private fun OrbitDevHeader(
     orbit: OrbitProfile,
     currentChatId: String,
     onSelectChat: (String) -> Unit,
+    onSelectSubagent: (String) -> Unit,
     onExit: () -> Unit,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val mainTitle = stringResource(R.string.orbit_chats_main)
-    val currentTitle = orbit.sideChats.firstOrNull { it.chatId == currentChatId }?.title ?: mainTitle
-    val canSwitch = orbit.sideChats.isNotEmpty()
     var pickerOpen by remember { mutableStateOf(false) }
+    val context = LocalContext.current
+    // Subagents under Orbit's chats, read again each time the list opens.
+    val subagents by androidx.compose.runtime.produceState(
+        emptyList<com.ai.assistance.operit.data.model.SubagentRunEntity>(), orbit.talkChatIds, pickerOpen,
+    ) {
+        value = try {
+            OrbitSubagents.underChats(context, orbit.talkChatIds)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            value
+        }
+    }
+    val currentTitle = orbit.sideChats.firstOrNull { it.chatId == currentChatId }?.title
+        ?: subagents.firstOrNull { it.childChatId == currentChatId }?.let { OrbitSubagents.nameOf(it) }
+        ?: if (currentChatId in orbit.talkChatIds) mainTitle else stringResource(R.string.orbit_dev_chats_subagents)
+    // Always open: subagents may start after this header showed, and the list reloads on open.
+    val canSwitch = true
     Box(
         modifier =
             Modifier.fillMaxWidth()
@@ -1042,7 +1086,8 @@ private fun OrbitDevHeader(
         }
     }
     if (pickerOpen) {
-        OrbitDevChatSheet(orbit, currentChatId, onSelect = onSelectChat, onDismiss = { pickerOpen = false })
+        OrbitDevChatSheet(orbit, currentChatId, subagents, onSelect = onSelectChat, onSelectSubagent = onSelectSubagent,
+            onDismiss = { pickerOpen = false })
     }
 }
 
@@ -1218,6 +1263,8 @@ private fun OrbitSettingsPage(
                     val separateLoginsSupported = remember {
                         com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.isSupported()
                     }
+                    // Switching logins either way asks first: it changes which accounts Orbit acts as.
+                    var pendingShare by remember { mutableStateOf<Boolean?>(null) }
                     SettingsSwitchRow(
                         title = stringResource(R.string.orbit_browser_share_login),
                         subtitle =
@@ -1230,9 +1277,31 @@ private fun OrbitSettingsPage(
                         enabled = separateLoginsSupported,
                         searchable = false,
                         onCheckedChange = { shared ->
-                            scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
+                            pendingShare = shared
                         },
                     )
+                    pendingShare?.let { shared ->
+                        TaskConfirmSheet(
+                            icon = if (shared) "link" else "link-2-off",
+                            title = stringResource(
+                                if (shared) R.string.orbit_browser_share_confirm_on_title
+                                else R.string.orbit_browser_share_confirm_off_title
+                            ),
+                            message = stringResource(
+                                if (shared) R.string.orbit_browser_share_confirm_on
+                                else R.string.orbit_browser_share_confirm_off,
+                                orbit.name,
+                            ),
+                            confirmText = stringResource(R.string.orbit_browser_share_confirm_ok),
+                            dismissText = stringResource(R.string.cancel),
+                            destructive = false,
+                            onDismiss = { pendingShare = null },
+                            onConfirm = {
+                                pendingShare = null
+                                scope.launch { preferences.setBrowserSharesMainLogin(orbit.id, shared) }
+                            },
+                        )
+                    }
                 }
             }
 

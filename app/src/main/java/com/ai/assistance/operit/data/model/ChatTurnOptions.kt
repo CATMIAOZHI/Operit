@@ -49,6 +49,11 @@ data class ChatTurnOptions(
     val userRoleNameOverride: String? = null,
     /** Optional transcript-only role label for the persisted assistant response. */
     val assistantRoleNameOverride: String? = null,
+    /**
+     * The stored user turn is a collaboration report (a subagent's answer) shown as one, the same
+     * way a report steered into a running turn is shown.
+     */
+    val collaborationEvent: Boolean = false,
 )
 
 /**
@@ -69,6 +74,7 @@ internal fun ChatTurnOptions.userTurnDisplayMode(hidden: Boolean): ChatMessageDi
     when {
         hidden -> ChatMessageDisplayMode.HIDDEN_PLACEHOLDER
         isCollaborationAgent -> ChatMessageDisplayMode.COLLABORATION_TASK
+        collaborationEvent -> ChatMessageDisplayMode.COLLABORATION_EVENT
         deliveredByTool -> ChatMessageDisplayMode.TOOL_DELIVERED
         else -> ChatMessageDisplayMode.NORMAL
     }

@@ -56,6 +56,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
@@ -80,6 +81,8 @@ private class PackageRow(
     val name: String,
     val title: String,
     val description: String,
+    /** The main app deleted it; Orbit keeps its own copy. */
+    val copy: Boolean = false,
 ) {
     /** Orbit always keeps it on: no switch, no removal. */
     val required: Boolean get() = name in OrbitPackages.REQUIRED
@@ -124,6 +127,7 @@ private fun folders(
         name = name,
         title = pkg.displayName.resolve(context).ifBlank { name },
         description = pkg.description.resolve(context),
+        copy = packageManager.isOrbitCopy(name),
     )
     val byPlugin = linkedMapOf<String, MutableList<PackageRow>>()
     val byCategory = linkedMapOf<String, MutableList<PackageRow>>()
@@ -175,9 +179,10 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
         if (value?.isSuccess != true) value = null
         value = withContext(Dispatchers.IO) {
             try { Result.success(run {
-                val candidates = OrbitPackages.candidates(packageManager)
                 val all = packageManager.getAvailablePackages()
                 val state = OrbitPackages.state(context, orbit.id)
+                // What this Orbit has stays usable even if the main app archived or deleted it.
+                val candidates = OrbitPackages.candidates(packageManager, state.imported)
                 PackagesState(
                     folders = folders(context, packageManager, all, candidates.filterKeys { it in state.imported }),
                     // Dependency containers stay hidden; anything else Orbit can no longer use
@@ -187,7 +192,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                             !(it in all && packageManager.isToolPkgContainer(it))
                     }.sorted(),
                     enabled = state.enabled,
-                    importable = folders(context, packageManager, all, candidates.filterKeys { it !in state.imported }),
+                    importable = folders(context, packageManager, all,
+                        OrbitPackages.importable(packageManager).filterKeys { it !in state.imported }),
                 )
             }) } catch (cancelled: kotlinx.coroutines.CancellationException) {
                 throw cancelled
@@ -201,6 +207,9 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
     var query by remember { mutableStateOf("") }
     // Folders start closed so a long list stays short; a search opens every folder with a match.
     var opened by remember { mutableStateOf(emptySet<String>()) }
+    // The package whose details are open; kept while the page slides away.
+    var detail by remember { mutableStateOf<PackageRow?>(null) }
+    var detailShown by remember { mutableStateOf(false) }
 
     fun reason(e: Exception, fallback: Int): String = when (e) {
         is OrbitPackages.NeedsMissingException ->
@@ -257,7 +266,7 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
         item(key = "header") {
             OrbitPageHeader(stringResource(R.string.orbit_packages_title), onBack)
             Text(
-                stringResource(R.string.orbit_packages_help),
+                stringResource(R.string.orbit_packages_help) + "\n" + stringResource(R.string.orbit_packages_help_detail),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 14.dp),
@@ -340,7 +349,8 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
         folderItems(shown, searching, opened, { key -> opened = if (key in opened) opened - key else opened + key },
             countOf = { folder -> folder.rows.count { isOn(it.name) } }) { row ->
             val on = isOn(row.name)
-            PackageItem(row, on, onToggle = { toggle(row.name, it, on) }, onRemove = { remove(row.name) })
+            PackageItem(row, on, onToggle = { toggle(row.name, it, on) }, onRemove = { remove(row.name) },
+                onOpen = { detail = row; detailShown = true })
         }
         // Imported packages the app no longer has: they cannot be used, only taken out.
         if (state.missing.isNotEmpty() && !searching) {
@@ -405,6 +415,116 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 }
             },
         )
+    }
+
+    // A package's details slide in from the right: what it does, its tools, its switch.
+    OrbitCoverPage(visible = detailShown, onDismiss = { detailShown = false }) {
+        detail?.let { row ->
+            val state = loaded?.getOrNull()
+            val on = overrides[row.name] ?: (state?.enabled?.contains(row.name) == true)
+            OrbitPackageDetailPage(
+                row = row,
+                on = on,
+                packageManager = packageManager,
+                onBack = { detailShown = false },
+                onToggle = { toggle(row.name, it, on) },
+                onRemove = { detailShown = false; remove(row.name) },
+            )
+        }
+    }
+}
+
+/** What a package does: its description, where it came from, its tools, and Orbit's switch for it. */
+@Composable
+private fun OrbitPackageDetailPage(
+    row: PackageRow,
+    on: Boolean,
+    packageManager: PackageManager,
+    onBack: () -> Unit,
+    onToggle: (Boolean) -> Unit,
+    onRemove: () -> Unit,
+) {
+    val context = LocalContext.current
+    val pkg by produceState<ToolPackage?>(null, row.name) {
+        value = withContext(Dispatchers.IO) { runCatching { packageManager.resolvePackageForDisplay(row.name) }.getOrNull() }
+    }
+    LazyColumn(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding().navigationBarsPadding(),
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
+    ) {
+        item(key = "header") {
+            OrbitPageHeader(row.title, onBack)
+            Text(
+                row.name + (pkg?.version?.takeIf { it.isNotBlank() }?.let {
+                    " · " + context.getString(R.string.orbit_packages_detail_meta, it)
+                }.orEmpty()),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(start = 4.dp, top = 2.dp),
+            )
+            val description = pkg?.description?.resolve(context)?.ifBlank { null } ?: row.description
+            if (description.isNotBlank()) {
+                Text(description, style = MaterialTheme.typography.bodyMedium,
+                    modifier = Modifier.padding(start = 4.dp, top = 12.dp))
+            }
+            if (row.copy) {
+                Surface(shape = RoundedCornerShape(16.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(top = 14.dp)) {
+                    Text(stringResource(R.string.orbit_packages_copy_note), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp))
+                }
+            }
+            // Orbit's own switch for it, as on the list.
+            Surface(shape = RoundedCornerShape(20.dp), color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.fillMaxWidth().padding(top = 16.dp)) {
+                Row(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(20.dp))
+                        .then(if (row.required) Modifier else Modifier.toggleable(on, role = Role.Switch, onValueChange = onToggle))
+                        .padding(horizontal = 16.dp, vertical = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.orbit_packages_detail_switch), style = MaterialTheme.typography.bodyLarge,
+                        modifier = Modifier.weight(1f))
+                    if (row.required) {
+                        Text(stringResource(R.string.orbit_packages_required), style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(end = 8.dp))
+                    }
+                    Switch(checked = on || row.required, onCheckedChange = null, enabled = !row.required)
+                }
+            }
+        }
+        val tools = pkg?.tools.orEmpty()
+        if (tools.isNotEmpty()) {
+            item(key = "tools-title") {
+                Text(stringResource(R.string.orbit_packages_detail_tools, tools.size),
+                    style = MaterialTheme.typography.labelLarge, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(start = 4.dp, top = 22.dp, bottom = 8.dp))
+            }
+            itemsIndexed(tools, key = { _, tool -> "tool/" + tool.name }) { index, tool ->
+                FolderSlice(first = index == 0, last = index == tools.lastIndex) {
+                    if (index > 0) HorizontalDivider(Modifier.padding(horizontal = 16.dp),
+                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(tool.name, style = MaterialTheme.typography.bodyLarge, fontWeight = FontWeight.Medium)
+                        val what = tool.description.resolve(context)
+                        if (what.isNotBlank()) Text(what, style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (tool.parameters.isNotEmpty()) Text(
+                            stringResource(R.string.orbit_packages_detail_params,
+                                tool.parameters.joinToString(stringResource(R.string.orbit_packages_list_separator)) { it.name }),
+                            style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+        if (!row.required) item(key = "remove") {
+            androidx.compose.material3.TextButton(onClick = onRemove, modifier = Modifier.fillMaxWidth().padding(top = 20.dp)) {
+                Text(stringResource(R.string.orbit_packages_remove), color = MaterialTheme.colorScheme.error)
+            }
+        }
     }
 }
 
@@ -593,26 +713,20 @@ internal fun SearchPill(query: String, onChange: (String) -> Unit, placeholder: 
  */
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Unit, onRemove: () -> Unit) {
+private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Unit, onRemove: () -> Unit, onOpen: () -> Unit) {
     var menu by remember { mutableStateOf(false) }
     val requiredText = stringResource(R.string.orbit_packages_required)
-    val requiredState = stringResource(R.string.orbit_packages_required_state)
+    val copyText = stringResource(R.string.orbit_packages_copy)
     Box {
     Row(
         Modifier.fillMaxWidth()
-            // One target for screen readers: the package name and its on/off state together.
-            .then(
-                if (row.required) Modifier.semantics(mergeDescendants = true) {
-                    role = Role.Switch
-                    toggleableState = ToggleableState.On
-                    stateDescription = requiredState
-                    disabled()
-                } else Modifier.combinedClickable(
-                    role = Role.Switch,
-                    onClick = { onToggle(!on) },
-                    onLongClick = { menu = true },
-                    onLongClickLabel = stringResource(R.string.orbit_packages_remove),
-                ).semantics { toggleableState = if (on) ToggleableState.On else ToggleableState.Off }
+            // Tapping the package opens its details, like the main app; its switch turns it on or off.
+            .combinedClickable(
+                role = Role.Button,
+                onClickLabel = stringResource(R.string.orbit_packages_detail_open),
+                onClick = onOpen,
+                onLongClick = if (row.required) null else ({ menu = true }),
+                onLongClickLabel = if (row.required) null else stringResource(R.string.orbit_packages_remove),
             )
             .padding(start = 16.dp, end = 12.dp, top = 12.dp, bottom = 12.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -635,6 +749,14 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
                     }
                 }
+                if (row.copy) {
+                    Spacer(Modifier.width(8.dp))
+                    Surface(shape = RoundedCornerShape(50), color = MaterialTheme.colorScheme.surface) {
+                        Text(copyText, style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp))
+                    }
+                }
             }
             if (row.description.isNotBlank()) {
                 Text(
@@ -647,7 +769,13 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
             }
         }
         Spacer(Modifier.width(8.dp))
-        Switch(checked = on || row.required, onCheckedChange = null, enabled = !row.required)
+        Switch(
+            checked = on || row.required,
+            onCheckedChange = if (row.required) null else onToggle,
+            enabled = !row.required,
+            // Read out with the package's name, so the switch is not just "on" on its own.
+            modifier = Modifier.semantics { contentDescription = row.title },
+        )
     }
     if (!row.required) DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         DropdownMenuItem(

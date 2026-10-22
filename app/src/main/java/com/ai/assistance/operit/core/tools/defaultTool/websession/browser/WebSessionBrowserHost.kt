@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.view.Gravity
 import android.view.HapticFeedbackConstants
+import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
@@ -105,6 +106,11 @@ internal class WebSessionBrowserHost(
 
     private var isExpanded: Boolean = false
     private var hostState by mutableStateOf(WebSessionBrowserHostState())
+    /** True while Orbit's watch screen shows and the user has not taken control: the page takes no input. */
+    private var watchLocked = false
+    /** The Orbit chat whose watch screen showed last; when its work ends the browser closes instead of unlocking. */
+    private var lastWatchTalk: String? = null
+    private var a11yHiddenWebView: java.lang.ref.WeakReference<WebView>? = null
     fun ensureCreated(initialExpanded: Boolean = false) {
         if (rootView != null) {
             if (isExpanded != initialExpanded) {
@@ -137,10 +143,31 @@ internal class WebSessionBrowserHost(
                     val bookmarks by store.bookmarksFlow.collectAsState(initial = emptyList())
                     val history by store.historyFlow.collectAsState(initial = emptyList())
                     val userscriptUiState by userscriptStore.state.collectAsState()
+                    val orbitWorks by com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.works.collectAsState()
+                    val watchingTalk by com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.collectAsState()
+                    val watchWork = orbitWatchWork(orbitWorks, watchingTalk, hostState.browserState)
+                    val watch = watchWork?.let { orbitWatchUi(it, hostState.browserState) }
+                    val locked = watch != null && !watch.controlling
+                    androidx.compose.runtime.SideEffect {
+                        setWatchLocked(locked)
+                        root.onBackKey = watch?.takeIf { !it.controlling }?.onClose
+                        val active = hostState.browserState.activeSessionId
+                        if (watchWork != null && active != null && watchWork.sessionId != active) {
+                            // A tab the page opened (or the user switched to) while being watched stays watched.
+                            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(watchWork.talkChatId, active)
+                        }
+                        val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
+                        lastWatchTalk = watchWork?.talkChatId
+                        if (ended != null && isExpanded) {
+                            // The work is over: close the watch screen rather than leave an unlocked page behind.
+                            root.post { callbacks.onMinimize() }
+                        }
+                    }
 
                     WebSessionFloatingTheme {
                         WebSessionBrowserScreen(
                             hostState = hostState,
+                            watch = watch,
                             bookmarks = bookmarks,
                             globalHistory = history,
                             userscriptUiState = userscriptUiState,
@@ -258,6 +285,7 @@ internal class WebSessionBrowserHost(
             }
         }
         webViewHost.setActiveWebView(webView, viewportWidth, viewportHeight)
+        applyWatchAccessibility(webView)
     }
 
     fun showTextSelectionActionsOverlay(anchorX: Double, anchorY: Double) {
@@ -338,6 +366,8 @@ internal class WebSessionBrowserHost(
 
         if (!expanded) {
             hideTextSelectionActionsOverlay()
+            // Put away, the browser is no longer Orbit's watch screen; the card opens it again.
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
         }
 
         isExpanded = expanded
@@ -353,7 +383,8 @@ internal class WebSessionBrowserHost(
             }
 
         if (expanded) {
-            root.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
+            root.descendantFocusability =
+                if (watchLocked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
             root.setMinimizedMeasure(false)
             root.setBackgroundColor(AndroidColor.TRANSPARENT)
             compose.alpha = 1f
@@ -408,6 +439,75 @@ internal class WebSessionBrowserHost(
 
     fun showSheet(route: WebSessionBrowserSheetRoute) {
         updateHostState { it.copy(sheetRoute = route) }
+    }
+
+    /**
+     * The Orbit work the tab in front belongs to. A user in control keeps the watch screen on any
+     * tab they reach (a page may open a new one), so the hand-back button never disappears.
+     */
+    private fun orbitWatchWork(
+        works: Map<String, com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work>,
+        watchingTalk: String?,
+        browserState: WebSessionBrowserState,
+    ): com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work? {
+        // Opened from Orbit's card, the browser stays the watch screen on whatever tab shows,
+        // even before the first page is ready or after the last tab closed.
+        watchingTalk?.let(works::get)?.let { return it }
+        val active = browserState.activeSessionId
+        return active?.let { id -> works.values.firstOrNull { it.sessionId == id } }
+            ?: works.values.filter { it.control != com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.NONE }
+                .maxByOrNull { it.lastActionAt }
+    }
+
+    /** Orbit's watch screen for [work]. */
+    private fun orbitWatchUi(
+        work: com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Work,
+        browserState: WebSessionBrowserState,
+    ): BrowserWatchUi {
+        val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
+        val url = browserState.currentUrl.takeIf { it.isNotBlank() && it != "about:blank" } ?: work.url
+        return BrowserWatchUi(
+            host = runCatching { android.net.Uri.parse(url).host }.getOrNull()?.removePrefix("www.").orEmpty(),
+            orbitName = work.orbitName,
+            controlling = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.USER,
+            waiting = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.WAITING,
+            onClose = { watch.close(work.talkChatId) },
+            onTakeOver = { watch.takeOver(work.talkChatId) },
+            onHandBack = { watch.handBack(work.talkChatId) },
+            onStop = { watch.stop(work.talkChatId) },
+        )
+    }
+
+    /** While locked the page cannot take focus, so no keyboard opens over it and nothing is typed. */
+    private fun setWatchLocked(locked: Boolean) {
+        if (watchLocked == locked) return
+        watchLocked = locked
+        val root = rootView ?: return
+        if (locked) {
+            webViewHost.currentWebView()?.let { webView ->
+                webView.clearFocus()
+                (appContext.getSystemService(Context.INPUT_METHOD_SERVICE) as? android.view.inputmethod.InputMethodManager)
+                    ?.hideSoftInputFromWindow(webView.windowToken, 0)
+            }
+        }
+        if (isExpanded) {
+            root.descendantFocusability =
+                if (locked) ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
+        }
+        applyWatchAccessibility(webViewHost.currentWebView())
+    }
+
+    /** While locked, screen readers skip the page too, so it cannot be clicked through TalkBack. */
+    private fun applyWatchAccessibility(webView: WebView?) {
+        val hidden = a11yHiddenWebView?.get()
+        if (hidden != null && (hidden !== webView || !watchLocked)) {
+            hidden.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_AUTO
+            a11yHiddenWebView = null
+        }
+        if (watchLocked && webView != null) {
+            webView.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            a11yHiddenWebView = java.lang.ref.WeakReference(webView)
+        }
     }
 
     private fun updateHostState(transform: (WebSessionBrowserHostState) -> WebSessionBrowserHostState) {
@@ -820,10 +920,21 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     var minimizedMeasureEnabled: Boolean = false
     var fakeWidthPx: Int = 1
     var fakeHeightPx: Int = 1
+    /** Takes the back key while set; Orbit's watch screen closes with it. */
+    var onBackKey: (() -> Unit)? = null
 
     init {
         clipChildren = false
         clipToPadding = false
+    }
+
+    override fun dispatchKeyEvent(event: KeyEvent): Boolean {
+        val back = onBackKey
+        if (back != null && event.keyCode == KeyEvent.KEYCODE_BACK) {
+            if (event.action == KeyEvent.ACTION_UP && !event.isCanceled) back()
+            return true
+        }
+        return super.dispatchKeyEvent(event)
     }
 
     fun setMinimizedMeasure(enabled: Boolean, fakeWidth: Int = fakeWidthPx, fakeHeight: Int = fakeHeightPx) {

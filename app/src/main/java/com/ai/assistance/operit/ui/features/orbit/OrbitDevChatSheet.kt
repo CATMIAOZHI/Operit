@@ -74,24 +74,31 @@ private fun groups(orbit: OrbitProfile, mainTitle: String): DevChatGroups {
 internal fun OrbitDevChatSheet(
     orbit: OrbitProfile,
     currentChatId: String,
+    /** Subagents working under Orbit's chats, newest first. */
+    subagents: List<com.ai.assistance.operit.data.model.SubagentRunEntity>,
     onSelect: (String) -> Unit,
+    onSelectSubagent: (String) -> Unit,
     onDismiss: () -> Unit,
 ) {
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val scope = rememberCoroutineScope()
     val mainTitle = stringResource(R.string.orbit_chats_main)
     val all = remember(orbit, mainTitle) { groups(orbit, mainTitle) }
+    val agents = remember(subagents) {
+        subagents.map { DevChat(it.childChatId, OrbitSubagents.nameOf(it), "bot", it.createdAt) }
+    }
     var query by remember { mutableStateOf("") }
     val needle = query.trim().lowercase()
     fun List<DevChat>.match() = if (needle.isEmpty()) this else filter { it.title.lowercase().contains(needle) }
     val side = all.side.match()
     val archived = all.archived.match()
+    val agentsShown = agents.match()
     val showMain = needle.isEmpty() || all.main.title.lowercase().contains(needle)
-    fun pick(id: String) {
+    fun pick(id: String, subagent: Boolean = false) {
         // The sheet slides down first, then the chat changes under it.
         scope.launch { sheetState.hide() }.invokeOnCompletion {
             onDismiss()
-            if (id != currentChatId) onSelect(id)
+            if (id != currentChatId) if (subagent) onSelectSubagent(id) else onSelect(id)
         }
     }
     ModalBottomSheet(
@@ -106,7 +113,7 @@ internal fun OrbitDevChatSheet(
                 modifier = Modifier.padding(start = 24.dp, end = 24.dp, bottom = 12.dp),
             )
             // A search box only helps once there are enough chats to look for one.
-            if (orbit.sideChats.size > 5) {
+            if (orbit.sideChats.size + agents.size > 5) {
                 Box(Modifier.padding(horizontal = 20.dp).padding(bottom = 8.dp)) {
                     SearchPill(query, { query = it }, placeholder = stringResource(R.string.orbit_dev_chats_search))
                 }
@@ -124,7 +131,13 @@ internal fun OrbitDevChatSheet(
                     item(key = "archived-title") { DevChatSection(stringResource(R.string.orbit_chats_archived_title)) }
                     items(archived, key = { it.id }) { chat -> DevChatRow(chat, chat.id == currentChatId) { pick(chat.id) } }
                 }
-                if (!showMain && side.isEmpty() && archived.isEmpty()) {
+                if (agentsShown.isNotEmpty()) {
+                    item(key = "agents-title") { DevChatSection(stringResource(R.string.orbit_dev_chats_subagents)) }
+                    items(agentsShown, key = { "agent:" + it.id }) { chat ->
+                        DevChatRow(chat, chat.id == currentChatId) { pick(chat.id, subagent = true) }
+                    }
+                }
+                if (!showMain && side.isEmpty() && archived.isEmpty() && agentsShown.isEmpty()) {
                     item(key = "none") {
                         Text(
                             stringResource(R.string.orbit_dev_chats_none),

@@ -819,7 +819,7 @@ private fun buildAttachmentPackageOptions(
 ): List<AttachmentPackageOption> {
     val options = linkedMapOf<String, AttachmentPackageOption>()
 
-    packageManager.getAvailablePackages().toSortedMap().forEach { (packageName, toolPackage) ->
+    packageManager.withoutOrbitCopies(packageManager.getAvailablePackages()).toSortedMap().forEach { (packageName, toolPackage) ->
         if (packageManager.isToolPkgContainer(packageName)) {
             return@forEach
         }

@@ -413,6 +413,7 @@ fun ChatArea(
         },
         footer = {
             if (orbitLook) {
+                if (!hasNewerDisplayHistory) LocalOrbitChatFooter.current?.invoke(aiMessageColor)
                 // Orbit is typing for as long as it works on a reply, like a person would be.
                 if (isLoading && !hasNewerDisplayHistory) {
                     val typing = stringResource(R.string.orbit_typing, currentOrbitName())

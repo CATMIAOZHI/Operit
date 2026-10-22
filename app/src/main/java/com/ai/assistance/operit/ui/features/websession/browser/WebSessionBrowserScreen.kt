@@ -53,6 +53,7 @@ import java.util.Locale
 @Composable
 internal fun WebSessionBrowserScreen(
     hostState: WebSessionBrowserHostState,
+    watch: com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi? = null,
     bookmarks: List<WebSessionBookmark>,
     globalHistory: List<WebSessionHistoryEntry>,
     userscriptUiState: WebSessionUserscriptUiState,
@@ -137,6 +138,39 @@ internal fun WebSessionBrowserScreen(
     val activeSheetRoute = hostState.sheetRoute
     var promptDraft by remember(browserState.pendingDialog?.message, browserState.pendingDialog?.defaultValue) {
         mutableStateOf(browserState.pendingDialog?.defaultValue.orEmpty())
+    }
+
+    if (watch != null) {
+        // An Orbit works in this tab: the watch screen replaces the browser's own bars.
+        Box(modifier.fillMaxSize()) {
+            WebSessionWatchScreen(
+                watch = watch,
+                webViewHost = webViewHost,
+                hasSession = browserState.activeSessionId != null,
+                onTotalHeight = { totalHeightPx = it },
+                onBrowserArea = { width, height ->
+                    browserAreaHeightPx = height
+                    if (width != hostState.browserAreaWidthPx) {
+                        onHostStateChange { current ->
+                            if (current.browserAreaWidthPx == width) current else current.copy(browserAreaWidthPx = width)
+                        }
+                    }
+                },
+            )
+            // A page dialog needs an answer from whoever holds the page; the user only once in control.
+            if (watch.controlling) {
+                browserState.pendingDialog?.let { pendingDialog ->
+                    PendingDialogOverlay(
+                        dialog = pendingDialog,
+                        promptValue = promptDraft,
+                        onPromptValueChange = { promptDraft = it },
+                        onConfirm = { onHandlePendingDialog(true, promptDraft) },
+                        onDismiss = { onHandlePendingDialog(false, null) },
+                    )
+                }
+            }
+        }
+        return
     }
 
     Box(

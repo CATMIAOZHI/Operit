@@ -47,7 +47,7 @@ fun PackageManager.getInstalledArtifactSnapshots(
     val publishableSourcesByName =
         getPublishablePackageSources().associateBy { source -> source.packageName }
 
-    return getTopLevelAvailablePackages()
+    return withoutOrbitCopies(getTopLevelAvailablePackages())
         .filterKeys { packageName ->
             targetPackageNames == null || targetPackageNames.any { sameArtifactRuntimePackageId(packageName, it) }
         }

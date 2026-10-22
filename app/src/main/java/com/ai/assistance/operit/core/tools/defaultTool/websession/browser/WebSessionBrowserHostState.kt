@@ -104,6 +104,22 @@ internal data class ExternalOpenPromptState(
     val target: String
 )
 
+/**
+ * Orbit's watch screen over a tab an Orbit is working in. Until [controlling] the user only looks;
+ * [waiting] is the moment between asking for control and the AI's current action ending.
+ */
+@Immutable
+internal data class BrowserWatchUi(
+    val host: String,
+    val orbitName: String,
+    val controlling: Boolean,
+    val waiting: Boolean,
+    val onClose: () -> Unit,
+    val onTakeOver: () -> Unit,
+    val onHandBack: () -> Unit,
+    val onStop: () -> Unit,
+)
+
 @Immutable
 internal data class WebSessionBrowserHostState(
     val browserState: WebSessionBrowserState = WebSessionBrowserState(),

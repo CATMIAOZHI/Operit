@@ -79,6 +79,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         private const val TAG = "PackageManager"
         private const val TOOLPKG_TAG = "ToolPkg"
         private const val PACKAGES_DIR = "packages" // Directory for packages
+        /** Inside the packages folder: packages the main app deleted that an Orbit still has. */
+        private const val ORBIT_COPIES_DIR = ".orbit_copies"
         private const val ASSETS_PACKAGES_DIR = "packages" // Directory in assets for packages
         private const val PACKAGE_PREFS = "com.ai.assistance.operit.core.tools.PackageManager"
         private const val ENABLED_PACKAGES_KEY = "imported_packages"
@@ -1283,11 +1285,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             }
         val previousCache = externalPackageScanCache
         val nextCache = LinkedHashMap<String, ExternalPackageScanCacheEntry>()
-        val candidateResults =
-            externalFiles.map { file ->
+        fun scanFile(file: File): PackageScanCandidateResult {
                 val rejectionMessage = pluginDenylistRejection(file)
                 if (rejectionMessage != null) {
-                    return@map PackageScanCandidateResult(
+                    return PackageScanCandidateResult(
                         phase = "external",
                         packageLoadErrors =
                             mapOf(
@@ -1318,13 +1319,94 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                         signature = signature,
                         result = result
                     )
-                result
-            }
+                return result
+        }
+        val candidateResults = externalFiles.map(::scanFile)
         externalPackageScanCache = nextCache
-        return mergePackageScanCandidateResults(
+        val mainSnapshot = mergePackageScanCandidateResults(
             candidateResults = candidateResults,
             baseSnapshot = baseSnapshot
         )
+        // Copies kept for Orbit of packages the main app deleted. One the main app has again (it
+        // was reinstalled) is no longer needed: the main app's runtime serves Orbit too.
+        val copies = LinkedHashMap<String, Set<String>>()
+        val copyResults = orbitCopyFiles().mapNotNull { file ->
+            val result = scanFile(file).copy(phase = "orbit_copy")
+            val names = scannedNames(result)
+            when {
+                names.isEmpty() -> null
+                names.any { it in mainSnapshot.availablePackages } -> {
+                    if (file.delete()) AppLogger.d(TAG, "Dropped Orbit copy now back in the app: ${file.name}")
+                    null
+                }
+                else -> result.also { copies[file.absolutePath] = names }
+            }
+        }
+        externalPackageScanCache = nextCache
+        orbitCopies = copies
+        orbitCopyNames = copies.values.flatten().toSet()
+        if (copyResults.isEmpty()) return mainSnapshot
+        return mergePackageScanCandidateResults(candidateResults = copyResults, baseSnapshot = mainSnapshot)
+    }
+
+    /** Every package a scanned file gives: a package, or a plugin with its subpackages. */
+    private fun scannedNames(result: PackageScanCandidateResult): Set<String> =
+        listOfNotNull(result.toolPackage?.name).toSet() +
+            result.toolPkgLoadResult?.let { load ->
+                listOf(load.containerPackage.name) + load.subpackagePackages.map { it.name }
+            }.orEmpty()
+
+    // ---- Copies kept for Orbit ----
+
+    /** Packages the main app deleted while an Orbit had them imported; only Orbit sees these. */
+    private val orbitCopiesDir: File
+        get() = File(externalPackagesDir, ORBIT_COPIES_DIR).also { if (!it.exists()) it.mkdirs() }
+
+    private fun orbitCopyFiles(): List<File> =
+        File(externalPackagesDir, ORBIT_COPIES_DIR).listFiles()?.filter(File::isFile).orEmpty()
+
+    /** Each copy file with the packages it gives. */
+    @Volatile private var orbitCopies: Map<String, Set<String>> = emptyMap()
+    @Volatile private var orbitCopyNames: Set<String> = emptySet()
+
+    /** Whether [packageName] is only here as Orbit's copy: the main app does not show or use it. */
+    fun isOrbitCopy(packageName: String): Boolean {
+        ensureInitialized()
+        return normalizePackageName(packageName) in orbitCopyNames
+    }
+
+    /** [packages] as the main app lists them, without Orbit's copies. */
+    fun <V> withoutOrbitCopies(packages: Map<String, V>): Map<String, V> {
+        ensureInitialized()
+        val copies = orbitCopyNames
+        return if (copies.isEmpty()) packages else packages.filterKeys { it !in copies }
+    }
+
+    /**
+     * Instead of deleting [file], moves it among Orbit's copies when an Orbit imported any package
+     * it gives ([names]). True if it was kept.
+     */
+    private fun keepForOrbit(file: File, names: Collection<String>): Boolean {
+        val imported = runCatching {
+            com.ai.assistance.operit.features.orbit.OrbitPackages.importedByAnyOrbit(context)
+        }.getOrElse { return false }
+        if (names.none { it in imported }) return false
+        val dir = orbitCopiesDir
+        var target = File(dir, file.name)
+        var n = 1
+        while (target.exists()) target = File(dir, "${file.nameWithoutExtension}-${n++}.${file.extension}")
+        val moved = file.renameTo(target) || runCatching { file.copyTo(target); file.delete() }.getOrDefault(false)
+        if (moved) AppLogger.d(TAG, "Kept ${file.name} as an Orbit copy")
+        return moved
+    }
+
+    /** Deletes the copies no Orbit has imported any more ([inUse] is every Orbit's imports). */
+    fun pruneOrbitCopies(inUse: Set<String>) {
+        ensureInitialized()
+        val unused = orbitCopies.filterValues { names -> names.none { it in inUse } }.keys
+        if (unused.isEmpty()) return
+        unused.forEach { path -> File(path).delete() }
+        loadAvailablePackages(refreshExternalOnly = true)
     }
 
     fun resolvePackageForDisplay(packageName: String): ToolPackage? {
@@ -2378,10 +2460,15 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
             return false
         }
 
-        if (targetFile.exists() && (!targetFile.isFile || !targetFile.delete())) {
+        val givenNames = externalPackageScanCache.entries
+            .firstOrNull { runCatching { File(it.key).canonicalPath }.getOrNull().equals(targetCanonicalPath, ignoreCase = true) }
+            ?.value?.result?.let(::scannedNames).orEmpty()
+        val kept = targetFile.isFile && givenNames.isNotEmpty() && keepForOrbit(targetFile, givenNames)
+        if (!kept && targetFile.exists() && (!targetFile.isFile || !targetFile.delete())) {
             AppLogger.e(TAG, "Failed to delete external package source: $targetCanonicalPath")
             return false
         }
+        if (kept) givenNames.forEach { disablePackage(it) }
         externalPackageScanCache =
             externalPackageScanCache.filterKeys { cachedPath ->
                 val cachedCanonicalPath =
@@ -3005,6 +3092,10 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         val normalizedPackageName = normalizePackageName(packageName)
 
         if (!availablePackages.containsKey(normalizedPackageName)) {
+            return "Package not found in available packages: $normalizedPackageName"
+        }
+        // The main app deleted it; only Orbit keeps it.
+        if (normalizedPackageName in orbitCopyNames) {
             return "Package not found in available packages: $normalizedPackageName"
         }
         val archivedOwnerPackageName =
@@ -4035,6 +4126,16 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         }
 
         AppLogger.d(TAG, "Found package file to delete: ${packageFile.absolutePath}")
+
+        // An Orbit that imported it keeps a copy; the main app no longer has it.
+        val givenNames = toolPkgContainers[normalizedPackageName]?.subpackages?.map { it.packageName }.orEmpty() +
+            normalizedPackageName
+        if (keepForOrbit(packageFile, givenNames)) {
+            disablePackage(normalizedPackageName)
+            removeFromCachesAfterDelete(normalizedPackageName)
+            loadAvailablePackages(refreshExternalOnly = true)
+            return true
+        }
 
         val fileDeleted = packageFile.delete()
 

@@ -179,9 +179,11 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
 
     fun listSandboxPackages(tool: AITool, packageManager: PackageManager): ToolResult {
         return try {
-            val availablePackages = packageManager.getAvailablePackages(forceRefresh = true)
             // Called from an Orbit chat, "enabled" means the Orbit's own switches.
             val orbit = callerOrbit()
+            // Copies kept for Orbit of packages the main app deleted are Orbit's only.
+            val availablePackages = packageManager.getAvailablePackages(forceRefresh = true)
+                .let { all -> if (orbit == null) packageManager.withoutOrbitCopies(all) else all }
             val enabledSet = orbit?.let {
                 kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
                     com.ai.assistance.operit.features.orbit.OrbitPackages.enabled(context, it.id, packageManager)
