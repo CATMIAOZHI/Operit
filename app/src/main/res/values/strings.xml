@@ -9761,6 +9761,10 @@
     <string name="orbit_chat_image_save">保存到相册</string>
     <string name="orbit_chat_image_saving">正在保存…</string>
     <string name="orbit_chat_image_save_failed">没能保存到相册</string>
+    <string name="orbit_chat_image_save_short">保存</string>
+    <string name="orbit_chat_text_desc">文件 %1$s，轻点查看</string>
+    <string name="orbit_chat_text_open_other">在其他应用打开</string>
+    <string name="orbit_chat_text_cut">文件太长，这里只显示开头。点右上角可以在其他应用里看完整内容。</string>
     <string name="orbit_chat_file_desc">文件 %1$s，轻点用其他应用打开</string>
     <string name="orbit_chat_file_open">轻点打开</string>
     <string name="orbit_chat_file_missing">文件已经不在了</string>

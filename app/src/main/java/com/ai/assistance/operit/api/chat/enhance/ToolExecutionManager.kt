@@ -326,6 +326,8 @@ object ToolExecutionManager {
         val callerName: String? = null,
         val callerChatId: String? = null,
         val callerCardId: String? = null,
+        /** MCP server names; null when they could not be read, which keeps unloaded packages fail-closed. */
+        val mcpServerNames: Set<String>? = null,
     ) {
         val hasHostContext: Boolean
             get() =
@@ -342,7 +344,10 @@ object ToolExecutionManager {
          * receives internal conversation metadata. Rejecting per exact tool name (instead of per
          * prefix) keeps colliding JS/MCP prefixes from vetoing tools that genuinely belong to the
          * JavaScript package. Advice-only tools are never registered and therefore never
-         * injected. A not-yet-registered tool fails closed (no injection).
+         * injected. A package that is only loaded on its first call (the executor auto-activates
+         * it) counts too when no MCP server uses its name, so that first call already carries
+         * its chat; otherwise a not-yet-registered tool fails closed (no injection). The proxy
+         * executor strips the values again if the final executor is not a package executor.
          */
         fun isJsPackageTool(toolName: String): Boolean {
             val toolNameParts = toolName.split(':', limit = 2)
@@ -360,7 +365,9 @@ object ToolExecutionManager {
             if (!declaredExecutableTools.contains(targetToolName)) {
                 return false
             }
-            return toolHandler.getToolExecutor(toolName) is JsPackageToolExecutorMarker
+            val executor = toolHandler.getToolExecutor(toolName)
+            if (executor is JsPackageToolExecutorMarker) return true
+            return executor == null && mcpServerNames != null && packageName !in mcpServerNames
         }
     }
 
@@ -410,6 +417,7 @@ object ToolExecutionManager {
             callerName = callerName,
             callerChatId = callerChatId,
             callerCardId = callerCardId,
+            mcpServerNames = runCatching { packageManager.getAvailableServerPackages().keys.toSet() }.getOrNull(),
         )
     }
 

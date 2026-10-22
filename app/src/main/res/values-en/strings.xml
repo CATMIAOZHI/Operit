@@ -9784,6 +9784,10 @@
     <string name="orbit_chat_image_save">Save to gallery</string>
     <string name="orbit_chat_image_saving">Saving…</string>
     <string name="orbit_chat_image_save_failed">Couldn\'t save to the gallery</string>
+    <string name="orbit_chat_image_save_short">Save</string>
+    <string name="orbit_chat_text_desc">File %1$s, tap to view</string>
+    <string name="orbit_chat_text_open_other">Open in another app</string>
+    <string name="orbit_chat_text_cut">This file is long, so only its beginning shows here. Use the top-right button to read all of it in another app.</string>
     <string name="orbit_chat_file_desc">File %1$s, tap to open in another app</string>
     <string name="orbit_chat_file_open">Tap to open</string>
     <string name="orbit_chat_file_missing">This file is gone</string>
