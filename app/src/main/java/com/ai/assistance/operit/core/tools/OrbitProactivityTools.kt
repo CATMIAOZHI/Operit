@@ -27,7 +27,8 @@ internal object OrbitProactivityTools {
         name = NAME,
         description = "后台备好的条目交给你时，先用它给每一条登记发（send）还是不发（skip）和理由，再开口；history 查以前每条发没发、为什么。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", "string", "select（默认）或 history", false),
+            ToolParameterSchema("action", "string", "select（默认）或 history；task 为当前到点任务登记开口的理由", false),
+            ToolParameterSchema("reason", "string", "task：这次为什么值得告诉用户，最多300字；安静结束直接用 orbit_nothing_to_do 的 reason", false),
             ToolParameterSchema("offset", "integer", "history 可选：从第几条开始（从0开始，最新的在前），用上次返回的 next_offset；每次20条", false),
             ToolParameterSchema("decisions", "string",
                 "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"note\":\"查了什么，最多300字\"}", false),
@@ -51,6 +52,15 @@ internal object OrbitProactivityTools {
             val args = tool.parameters.associate { it.name to it.value }
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             val text = when (args["action"]?.trim()?.ifEmpty { null } ?: "select") {
+                "task" -> {
+                    val reason = args["reason"]?.trim().orEmpty()
+                    require(reason.isNotBlank() && reason.length <= MAX_NOTE) { "task needs reason, 1 to $MAX_NOTE characters" }
+                    check(com.ai.assistance.operit.features.orbit.OrbitChatDecision.record(chatId, reason)) {
+                        "No scheduled task is being handled in this chat right now"
+                    }
+                    JSONObject().put("reason_recorded", true).put("delivered", false)
+                        .put("next", "The reason will be saved in this task's run. Now tell the user in your own words.").toString()
+                }
                 "history" -> {
                     val offset = args["offset"]?.trim()?.takeIf { it.isNotEmpty() }?.let {
                         it.toIntOrNull()?.takeIf { n -> n in 0..1000 } ?: error("offset must be a whole number from 0 to 1000; got \"$it\"")
@@ -112,7 +122,7 @@ internal object OrbitProactivityTools {
                             else "Nothing has reached the user yet. Now tell only the selected_for_send items in your reply.")
                         .toString()
                 }
-                else -> error("Unknown action \"${args["action"]}\". Use select or history.")
+                else -> error("Unknown action \"${args["action"]}\". Use select, history or task.")
             }
             ToolResult(NAME, true, StringResultData(text))
         } catch (e: kotlinx.coroutines.CancellationException) {

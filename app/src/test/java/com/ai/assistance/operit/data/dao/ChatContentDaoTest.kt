@@ -18,6 +18,25 @@ import org.mockito.kotlin.mock
 import org.mockito.kotlin.whenever
 
 class ChatContentDaoTest {
+    @Test fun `Orbit fork metadata respects cutoff visibility and selected variant`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id="fork", title="Fork"))
+        database.chatDao().insertChat(ChatEntity(id="other", title="Other"))
+        val rows = listOf(
+            MessageEntity(chatId="fork", sender="user", content="Earlier", timestamp=1, orderIndex=0),
+            MessageEntity(chatId="fork", sender="ai", content="Sealed", timestamp=2, orderIndex=1,
+                displayMode="ASSISTANT_INTERMEDIATE", selectedVariantIndex=2),
+            MessageEntity(chatId="fork", sender="user", content="Hidden", timestamp=3, orderIndex=2,
+                displayMode="HIDDEN_PLACEHOLDER"),
+            MessageEntity(chatId="fork", sender="user", content="Later", timestamp=4, orderIndex=3),
+            MessageEntity(chatId="other", sender="user", content="Other chat", timestamp=2, orderIndex=0),
+        )
+        rows.forEach { database.messageDao().insertMessage(it) }
+        val result = database.messageDao().getOrbitForkSources("fork", 3, 80)
+        assertEquals(listOf(2L, 1L), result.map { it.timestamp })
+        assertEquals(2, result.first().selectedVariantIndex)
+        assertEquals(listOf(2L), database.messageDao().getOrbitForkSources("fork", 3, 1).map { it.timestamp })
+    }
+
     @Test fun `learning cutoff filters before pagination and direct reads but not ordinary history`() = runBlocking {
         val dao = database.chatContentDao()
         database.chatDao().insertChat(ChatEntity(id="learning",title="Learning"))

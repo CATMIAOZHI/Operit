@@ -1,16 +1,9 @@
 package com.ai.assistance.operit.features.orbit
 
-import android.app.NotificationChannel
 import android.app.NotificationManager
-import android.app.PendingIntent
 import android.content.Context
-import android.content.Intent
-import androidx.core.app.NotificationCompat
-import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.core.application.OperitApplication
-import com.ai.assistance.operit.data.preferences.OrbitPreferences
-import com.ai.assistance.operit.ui.main.MainActivity
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -29,13 +22,14 @@ import kotlinx.coroutines.launch
  *
  * Two lanes run side by side, so a run of hours never holds back a reminder (see
  * [OrbitTaskRepository.isLongRun]). When Android refuses the foreground service (Operit in the
- * background without keep-alive or a battery exemption), nothing runs in a cut-down way: the user
- * gets a notification saying why, and the tasks run once Operit is opened or a later wake-up works.
+ * background without keep-alive or a battery exemption), nothing runs in a cut-down way: the
+ * refusal is written down ([OrbitTaskBlock]), and the tasks run once Operit is opened or a later
+ * wake-up works. Opening Operit also tells Orbit, in its chat, which tasks ran late and why.
  */
 object OrbitTaskHost {
     private const val TAG = "OrbitTasks"
-    private const val BLOCKED_CHANNEL = "orbit_task_blocked"
-    private const val OLD_LONG_TASK_CHANNEL = "orbit_long_task"
+    /** Channels of earlier versions, removed once: a refusal no longer shows a notification. */
+    private val OLD_CHANNELS = listOf("orbit_task_blocked", "orbit_long_task")
     private const val BLOCKED_NOTIFICATION_ID = 0x0B18
     /** How soon a wake-up that could not start the service tries again. */
     private const val BLOCKED_RETRY_MS = 15 * 60_000L
@@ -54,14 +48,26 @@ object OrbitTaskHost {
     /** Keeps the CPU awake while lanes run; a foreground service alone does not, with the screen off. */
     private var wakeLock: android.os.PowerManager.WakeLock? = null
 
-    /** Kept on disk, so tasks held back before the process died still run when Operit is opened. */
-    private fun blockedPrefs(app: Context) = app.getSharedPreferences("orbit_task_host", Context.MODE_PRIVATE)
-    private const val KEY_BLOCKED = "blocked"
+    @Volatile private var oldChannelsRemoved = false
+    /**
+     * True while opening Operit reads which tasks were late; a wake-up from the scheduler in that
+     * moment waits, so nothing runs before it is read. The foreground path wakes right after.
+     */
+    /** How many foreground reads are running; wake-ups wait while any is (Operit can come back twice quickly). */
+    private val readingLate = java.util.concurrent.atomic.AtomicInteger(0)
+    /** A wake-up that came while [readingLate]; the foreground path runs it once the read is done. */
+    @Volatile private var wakeWaiting = false
 
     /** Starts the lanes that are not running yet. Safe to call any number of times. */
     fun wake(context: Context) {
         val app = context.applicationContext
         synchronized(lock) {
+            // Checked under the lock the foreground path takes the late tasks in, so a wake-up that
+            // got here first runs before the read and one that comes after waits for it.
+            if (readingLate.get() > 0) {
+                wakeWaiting = true
+                return
+            }
             val idle = listOf(false, true).filter { lanes[it]?.isActive != true }
             if (idle.isEmpty()) {
                 // Still running: the next safety wake-up covers the process dying before the lanes end.
@@ -70,16 +76,14 @@ object OrbitTaskHost {
                 return
             }
             if (lanes.values.none { it.isActive } && !AIForegroundService.holdForOrbitTasks(app)) {
-                onBlocked(app)
+                onBlocked(app, AIForegroundService.lastOrbitTasksRefusal)
                 return
             }
             // Set before this wake-up ends: if the process dies mid-run, the tasks are picked up again.
             OrbitTaskScheduler.armSafetyWake(app)
             acquireWakeLock(app)
-            if (blockedPrefs(app).getBoolean(KEY_BLOCKED, false)) {
-                blockedPrefs(app).edit().putBoolean(KEY_BLOCKED, false).apply()
-                app.getSystemService(NotificationManager::class.java)?.cancel(BLOCKED_NOTIFICATION_ID)
-            }
+            // Started after all, without the user opening Operit: the delay passed on its own.
+            OrbitTaskBlock.clear(app)
             for (lane in idle) {
                 // Registered before it starts, so a lane that ends at once still finds itself.
                 val job = scope.launch(start = CoroutineStart.LAZY) { runLane(app, lane) }
@@ -90,9 +94,53 @@ object OrbitTaskHost {
         }
     }
 
-    /** Operit came to the screen: tasks a refused start held back can run now. */
+    /**
+     * Operit came to the screen: tasks a refused start held back can run now. Which ones were late is
+     * read first, while they are still waiting, and Orbit hears about them in its chat afterwards.
+     */
     fun onAppForeground(context: Context) {
-        if (blockedPrefs(context.applicationContext).getBoolean(KEY_BLOCKED, false)) wake(context)
+        val app = context.applicationContext
+        removeOldChannels(app)
+        // Set at once (no disk read on the main thread), so a background start in the meantime
+        // waits and cannot clear the refusal unseen.
+        readingLate.incrementAndGet()
+        scope.launch {
+            var episode: OrbitTaskBlock.Episode? = null
+            val pending = try {
+                episode = synchronized(lock) { OrbitTaskBlock.take(app) }
+                episode?.let { OrbitTaskBlock.prepare(app, it) }.orEmpty()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Late tasks not read: ${e.message}")
+                emptyList()
+            } finally {
+                synchronized(lock) { readingLate.decrementAndGet() }
+            }
+            val waited = wakeWaiting
+            wakeWaiting = false
+            if (episode != null || waited) wake(app)
+            // After the late tasks were read: settings may have changed while Operit was away (a
+            // permission granted, a place to watch), and a rescheduled wake-up could run them first.
+            try {
+                OrbitTaskScheduler.reschedule(app)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Reschedule on foreground failed: ${e.message}")
+            }
+            if (pending.isNotEmpty()) OrbitTaskBlock.deliver(app, pending)
+        }
+    }
+
+    private fun removeOldChannels(app: Context) {
+        if (oldChannelsRemoved) return
+        oldChannelsRemoved = true
+        runCatching {
+            val manager = app.getSystemService(NotificationManager::class.java) ?: return
+            manager.cancel(BLOCKED_NOTIFICATION_ID)
+            OLD_CHANNELS.forEach { manager.deleteNotificationChannel(it) }
+        }
     }
 
     private fun laneEnded(app: Context, lane: Boolean, job: Job) {
@@ -158,41 +206,18 @@ object OrbitTaskHost {
         OrbitTaskScheduler.reschedule(app, fromWorker = true)
     }
 
-    private fun onBlocked(app: Context) {
-        // Only the first refusal is told; the retries after it stay quiet until a start works.
-        val first = !blockedPrefs(app).getBoolean(KEY_BLOCKED, false)
-        blockedPrefs(app).edit().putBoolean(KEY_BLOCKED, true).apply()
+    private fun onBlocked(app: Context, refusal: String?) {
+        // Written down at once, so a refusal right before the process dies is still known.
+        OrbitTaskBlock.record(app, refusal)
         scope.launch {
             try {
-                if (first) showBlocked(app)
+                OrbitTaskBlock.classify(app)
                 OrbitTaskScheduler.wakeAfter(app, BLOCKED_RETRY_MS)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                AppLogger.w(TAG, "Blocked notice not shown: ${e.message}")
+                AppLogger.w(TAG, "Refused start not recorded fully: ${e.message}")
             }
         }
-    }
-
-    private suspend fun showBlocked(app: Context) {
-        val manager = app.getSystemService(NotificationManager::class.java) ?: return
-        manager.deleteNotificationChannel(OLD_LONG_TASK_CHANNEL)
-        manager.createNotificationChannel(NotificationChannel(BLOCKED_CHANNEL,
-            app.getString(R.string.orbit_task_blocked_channel), NotificationManager.IMPORTANCE_DEFAULT))
-        val name = OrbitPreferences.getInstance(app).current().active?.name.orEmpty()
-            .ifBlank { app.getString(R.string.nav_orbit) }
-        val open = PendingIntent.getActivity(app, BLOCKED_NOTIFICATION_ID,
-            Intent(app, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val text = app.getString(R.string.orbit_task_blocked_text)
-        manager.notify(BLOCKED_NOTIFICATION_ID, NotificationCompat.Builder(app, BLOCKED_CHANNEL)
-            .setSmallIcon(R.drawable.ic_launcher_simple_foreground)
-            .setContentTitle(app.getString(R.string.orbit_task_blocked_title, name))
-            .setContentText(text)
-            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
-            .setContentIntent(open)
-            .setAutoCancel(true)
-            .setOnlyAlertOnce(true)
-            .build())
     }
 }

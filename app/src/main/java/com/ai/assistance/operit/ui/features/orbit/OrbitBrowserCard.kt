@@ -45,6 +45,7 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.repeatOnLifecycle
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
+import com.ai.assistance.operit.ui.features.chat.components.*
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -58,7 +59,17 @@ private const val PREVIEW_MS = 2_000L
 @Composable
 internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boolean = true) {
     val works by OrbitBrowserWatch.works.collectAsState()
-    val work = works[chatId] ?: return
+    Column {
+        works.values.filter { it.talkChatId == chatId }.sortedBy { it.createdAt }.forEach { work ->
+            androidx.compose.runtime.key(work.executorChatId, work.createdAt) {
+                BrowserTaskCard(work, bubbleColor, visible)
+            }
+        }
+    }
+}
+
+@Composable
+private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, visible: Boolean) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
@@ -75,12 +86,32 @@ internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boole
             }
         }
     }
-    val status = when (work.control) {
+    val status = if (work.stopping) stringResource(R.string.orbit_browser_task_stopping) else when (work.control) {
         OrbitBrowserWatch.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
         OrbitBrowserWatch.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, work.orbitName.ifBlank { orbitNameFallback() })
         OrbitBrowserWatch.Control.NONE -> stringResource(R.string.orbit_browser_watch_working)
     }
     val host = runCatching { android.net.Uri.parse(work.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
+    val title = work.title.ifBlank { host }.ifBlank { work.orbitName }.take(160)
+        .replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim()
+    val summary = stringResource(R.string.orbit_browser_task_card_summary, title)
+    val piece = OrbitPiece(summary, "browser:${work.createdAt}:${work.executorChatId}", summary, true)
+    val reactions = LocalOrbitUserReactions.current
+    val reply = LocalOrbitLiveCardReply.current
+    var menu by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(false) }
+    fun react(emoji: String) {
+        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
+        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        menu = false
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
+        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
+        menu = { menu = true },
+        reply = reply?.let { action -> { action(summary, work.createdAt) } },
+    )) {
+    OrbitPieceFrame(piece) {
+    Box {
     Surface(
         shape = RoundedCornerShape(20.dp),
         color = bubbleColor,
@@ -96,8 +127,8 @@ internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boole
                 Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        stringResource(R.string.orbit_browser_card_title),
-                        style = MaterialTheme.typography.titleMedium, maxLines = 1,
+                        title.ifBlank { stringResource(R.string.orbit_browser_card_title) },
+                        style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     Text(
                         if (host.isNotBlank()) "$status · $host" else status,
@@ -117,7 +148,10 @@ internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boole
             }
             Spacer(Modifier.height(12.dp))
             Surface(
-                onClick = { scope.launch { OrbitBrowserWatch.open(context, chatId) } },
+                onClick = { scope.launch { OrbitBrowserWatch.open(context, work.executorChatId) } },
+                enabled = !work.stopping && work.sessionId?.let {
+                    com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.containsKey(it)
+                } == true,
                 shape = RoundedCornerShape(50),
                 color = colors.surface,
                 modifier = Modifier.fillMaxWidth().height(48.dp),
@@ -128,6 +162,21 @@ internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boole
             }
         }
     }
+    androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
+        if (reply != null) androidx.compose.material3.DropdownMenuItem(
+            text = { Text(stringResource(R.string.reply_message)) },
+            onClick = { menu = false; reply(summary, work.createdAt) },
+        )
+    }
+    }
+    }
+    }
+    if (picker) OrbitEmojiPickerSheet(
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = { react(it); picker = false },
+        onDismiss = { picker = false },
+    )
 }
 
 @Composable

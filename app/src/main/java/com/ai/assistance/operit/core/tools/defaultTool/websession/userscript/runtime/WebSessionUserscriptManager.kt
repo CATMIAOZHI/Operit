@@ -58,7 +58,7 @@ import org.json.JSONObject
 internal class WebSessionUserscriptManager(
     private val context: Context,
     private val onOpenUserscriptUi: () -> Unit,
-    private val onOpenTab: (url: String, active: Boolean) -> String?,
+    private val onOpenTab: (sourceSessionId: String, url: String, active: Boolean) -> String?,
     private val onActivateSession: (sessionId: String) -> Unit,
     private val onCloseSession: (sessionId: String) -> Boolean,
     private val onDownload: (sessionId: String, url: String, fileName: String?) -> Unit,
@@ -723,7 +723,7 @@ internal class WebSessionUserscriptManager(
                     return
                 }
                 mainHandler.post {
-                    val openedSessionId = onOpenTab(url, payload.optBoolean("active", true))
+                    val openedSessionId = onOpenTab(sessionId, url, payload.optBoolean("active", true))
                     if (!openedSessionId.isNullOrBlank()) {
                         openedTabOwners[openedSessionId] = sessionId
                         if (requestId.isNotBlank()) {

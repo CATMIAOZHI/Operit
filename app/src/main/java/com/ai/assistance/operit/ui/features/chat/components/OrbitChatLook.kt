@@ -57,6 +57,8 @@ val LocalOrbitChatLook = compositionLocalOf { false }
  * It gets the color of Orbit's bubbles.
  */
 val LocalOrbitChatFooter = compositionLocalOf<(@Composable (bubbleColor: androidx.compose.ui.graphics.Color) -> Unit)?> { null }
+/** Reply to one live browser card using the same composer as ordinary messages. */
+val LocalOrbitLiveCardReply = compositionLocalOf<((String, Long) -> Unit)?> { null }
 
 /** The name the user gave the Orbit on screen; empty outside an Orbit, where words say "Orbit". */
 val LocalOrbitName = compositionLocalOf { "" }
@@ -227,7 +229,7 @@ object OrbitSpeech {
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
     private val cardToolResult = Regex(
-        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval)\"[^>]*\\bstatus=\"success\"",
+        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval|orbit_permission_card)\"[^>]*\\bstatus=\"success\"",
         RegexOption.IGNORE_CASE,
     )
     private val placeholder = Regex("\uE000(\\d+)\uE001")

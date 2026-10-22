@@ -17,16 +17,17 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONObject
 
 /**
- * What a WATCH task looks at. Each check reads the source without the model; only when the text
- * changed since the last check is Orbit woken with it, so quiet checks cost no tokens.
+ * What a WATCH task looks at. Phone sources wake Orbit when they change; scripts explicitly
+ * choose silent or wake. Quiet checks cost no model tokens.
  *
  * - `notifications` or `notifications:<package>,<package>`: notifications now on the phone
  * - `sms` or `sms:<sender>`: the latest received text messages
  * - `calendar` or `calendar:<days>`: calendar events in the next days (1 to 30, default 7)
- * - `script:files/hooks/<name>.sh@<hash>`: a small shell script Orbit wrote; its output is the
- *   source. The hash pins the reviewed script: if the file is edited, the check stops until the
+ * - `script:files/hooks/<name>.sh@<hash>`: a small shell script Orbit wrote; its final verdict
+ *   chooses whether to wake. The hash pins the reviewed script: if edited, the check stops until the
  *   task is updated with the new script.
  */
 object OrbitWatchSources {
@@ -39,6 +40,31 @@ object OrbitWatchSources {
     class NotReady(message: String) : IllegalStateException(message)
     private val PACKAGE = Regex("[A-Za-z0-9_.]{1,120}")
     val SCRIPT = Regex("script:(files/hooks/[^/@]{1,80}\\.sh)@([0-9a-f]{16})")
+    fun isScript(source: String) = SCRIPT.matches(source)
+
+    data class ScriptResult(val outcome: String, val reason: String, val payload: String, val output: String) {
+        val wake get() = outcome == "wake"
+        fun observation() = "$reason\n$payload"
+    }
+    private const val RESULT_MARKER = "__ORBIT_HOOK_RESULT__"
+
+    /** Logs may precede the verdict; a missing, repeated or malformed final verdict is a failure. */
+    fun parseScriptOutput(output: String): ScriptResult {
+        val lines = output.trim().lines()
+        val verdicts = lines.filter { it.startsWith("$RESULT_MARKER\t") }
+        require(verdicts.size == 1 && lines.lastOrNull() == verdicts.singleOrNull()) {
+            "End the script with exactly one silent \"reason\" '<json>' or wake \"reason\" '<json>'"
+        }
+        val fields = verdicts.single().split('\t')
+        require(fields.size == 4 && fields[1] in setOf("silent", "wake")) { "Invalid hook verdict" }
+        fun decode(text: String) = String(java.util.Base64.getDecoder().decode(text), Charsets.UTF_8)
+        val reason = decode(fields[2])
+        require(reason.isNotBlank() && reason.length <= 300) { "Hook reason must be 1 to 300 characters" }
+        val payload = decode(fields[3])
+        require(payload.length <= 8000) { "Hook payload must be at most 8000 characters" }
+        JSONObject(payload) // Require an object, like Muse's terminal verdict payload.
+        return ScriptResult(fields[1], reason, payload, lines.dropLast(1).joinToString("\n"))
+    }
 
     fun validate(source: String) {
         require(source.length <= 2048) { "watch source is too long" }
@@ -67,7 +93,7 @@ object OrbitWatchSources {
             "notifications" -> notifications(context, arg)
             "sms" -> sms(context, arg)
             "calendar" -> calendar(context, arg.toIntOrNull() ?: 7)
-            else -> script(context, orbitId, source)
+            else -> readScript(context, orbitId, source).observation()
         }
         if (text.length <= MAX_TEXT) return text
         // Only the head is shown, but the full-text digest rides along so a change past the cut
@@ -148,7 +174,7 @@ object OrbitWatchSources {
         }.orEmpty().ifEmpty { "(no events in the next $days days)" }
     }
 
-    private suspend fun script(context: Context, orbitId: String, source: String): String {
+    suspend fun readScript(context: Context, orbitId: String, source: String, dryRun: Boolean = false): ScriptResult {
         val match = checkNotNull(SCRIPT.matchEntire(source))
         val path = match.groupValues[1]
         val text = OrbitFiles.of(context, orbitId).read(path)
@@ -158,7 +184,23 @@ object OrbitWatchSources {
         // The checked text travels as base64 so no shell (plain, root or Shizuku) re-splits its quotes,
         // and the pipe makes the plain executor hand the whole line to `sh -c`. `timeout` stops the
         // script itself where the device has it; the coroutine timeout is only a backstop.
-        val encoded = android.util.Base64.encodeToString(text.toByteArray(), android.util.Base64.NO_WRAP)
+        // A soft read-only contract, not an OS sandbox. Preserve the configured shell identity and
+        // network access for public API polling. The terminal functions end the script immediately.
+        val runtime = """
+            silent() {
+                [ "${'$'}#" = 2 ] || { echo 'silent needs reason and JSON payload' >&2; exit 2; }
+                printf '\n$RESULT_MARKER\tsilent\t%s\t%s\n' "${'$'}(printf '%s' "${'$'}1" | base64 | tr -d '\n')" "${'$'}(printf '%s' "${'$'}2" | base64 | tr -d '\n')"
+                exit 0
+            }
+            wake() {
+                [ "${'$'}#" = 2 ] || { echo 'wake needs reason and JSON payload' >&2; exit 2; }
+                printf '\n$RESULT_MARKER\twake\t%s\t%s\n' "${'$'}(printf '%s' "${'$'}1" | base64 | tr -d '\n')" "${'$'}(printf '%s' "${'$'}2" | base64 | tr -d '\n')"
+                exit 0
+            }
+            export HATCH_HOOK_DRY_RUN=${if (dryRun) 1 else 0}
+            $text
+        """.trimIndent()
+        val encoded = android.util.Base64.encodeToString(runtime.toByteArray(), android.util.Base64.NO_WRAP)
         val command = "s=\"\$(echo $encoded | base64 -d)\" && " +
             "if command -v timeout > /dev/null 2>&1; then timeout $SCRIPT_SECONDS sh -c \"\$s\"; else sh -c \"\$s\"; fi"
         val result = withTimeoutOrNull((SCRIPT_SECONDS + 10) * 1000L) { AndroidShellExecutor.executeShellCommand(command) }
@@ -170,6 +212,12 @@ object OrbitWatchSources {
         check(result.success) {
             context.getString(R.string.orbit_watch_script_failed, result.stderr.ifBlank { result.stdout }.trim().take(300))
         }
-        return result.stdout.trim().ifEmpty { "(no output)" }
+        check(result.stdout.length <= MAX_TEXT) { "Hook output exceeds $MAX_TEXT characters; keep logs and payload short" }
+        return try { parseScriptOutput(result.stdout) }
+        catch (e: IllegalArgumentException) {
+            error("${e.message}\nScript output:\n${result.stdout.take(2000)}")
+        } catch (e: org.json.JSONException) {
+            error("The terminal payload must be a JSON object.\nScript output:\n${result.stdout.take(2000)}")
+        }
     }
 }

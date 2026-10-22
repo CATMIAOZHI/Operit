@@ -31,7 +31,7 @@ status: in-progress
 | 技能按需加载 | `orbit_skills` 查目录，再加载正文 |
 | 沉淀新技能 | `memory_review` 工具包的 `manage`（action=skill_create） |
 | 提醒、每日、每周、每月、每年、间隔、接力任务 | `orbit_task`（ONCE / DAILY / WEEKLY / MONTHLY / YEARLY / INTERVAL / EVENT）[DONE 5414eec65] |
-| 任务执行时限 | `orbit_task` 的 `timeout_minutes`（1–1440 分钟，默认 5，和 Muse 一样最多 24 小时；后台任务都在 Operit 的保活服务里跑，没有系统 10 分钟上限；超过 8 分钟的任务走单独的队列，提醒不会被长任务耽误；夜间对齐复盘固定 2 小时，一次读完）[DONE edaf27ee7, ca6626aaf，保活服务运行见本批] |
+| 任务执行时限 | `orbit_task` 的 `timeout_minutes`（1–1440 分钟，默认 5，和 Muse 一样最多 24 小时；只对 `use_subagent=true` 的子代理任务生效，叫醒主聊天的任务用固定等待；后台任务都在 Operit 的保活服务里跑，没有系统 10 分钟上限；超过 8 分钟的任务走单独的队列，提醒不会被长任务耽误；夜间对齐复盘固定 2 小时，一次读完）[DONE edaf27ee7, ca6626aaf] |
 | 网页变化监测 | `orbit_task` 的 `kind=URL_CHANGE` |
 | 汇报方式 | `notify_policy`：有变化才说 / 每次都说 / 每日汇总 |
 | 运行记录、暂停、取消、继续 | `orbit_task` 的 detail / pause / resume / cancel |
@@ -51,8 +51,13 @@ status: in-progress
 | 技能管理 | 详情页「技能与学习」里查看、编辑、删除 Orbit 自己的技能 [DONE] |
 | 富格式成果 | `orbit_file` 的 export，把 `files/` 里的 Markdown 导出成网页、Word、PDF；import 把应用里别处的文件收进 `files/` [DONE batch2] |
 | 多音色播客 / 语音消息 | `orbit_voice` 用手机自带语音引擎做语音消息和多人对话，存在 `files/voice/`，聊天里能直接播放 [DONE batch2] |
-| Hook 轻量脚本 / 跨来源推送 | `orbit_task` 的 `kind=WATCH`：盯通知、短信、日历或 `files/hooks/` 里按哈希钉住的只读脚本，内容没变不叫醒 Orbit；缺权限时任务详情有「去打开权限」[DONE batch3a] |
-| 主动消息逐条决定 | 每次后台运行都记下 `decision`（发 / 不发和理由），任务详情显示「为什么」[DONE batch3a] |
+| Hook 轻量脚本 / 跨来源推送 | `orbit_task` 的 `kind=WATCH`：盯通知、短信、日历或 `files/hooks/` 里按哈希钉住的只读脚本，内容没变不叫醒 Orbit；缺权限时任务详情有「去打开权限」。新脚本默认停用，`dry_run` 试跑看输出，核对后 `resume` 启用，换脚本要重新试跑；每轮以 silent 或 wake 结束，silent 不叫醒、不触发后续任务 [DONE batch3a，试跑流程 batch8] |
+| 主动消息逐条决定 | 每次后台运行都记下 `decision`（发 / 不发和理由），任务详情显示「为什么」；叫醒主聊天的普通任务也按那一回合记下开口 / 静默 / 未确认和理由 [DONE batch3a，主聊天任务 batch8] |
+| 位置提醒 | `orbit_task` 的 `kind=GEOFENCE`：到家、离开公司这类到达 / 离开提醒，一次或每次；用系统定位（不依赖 GMS），双半径加约 60 秒确认防抖；缺后台定位权限时任务保留，详情页有「去打开权限」[DONE batch8，待 HyperOS 真机验证] |
+| 后台并行浏览器 | 每个子代理有自己的浏览器页，最多同时 3 个任务、每个任务最多 2 页；每个任务一张卡片，可查看、接管、停止，结束自动回收，结果走子代理通道回到主聊天 [DONE batch8] |
+| OAuth 登录卡 | `orbit_vault` 的 `request_oauth`：聊天里放登录卡，PKCE + 一次性 state，令牌加密存进保险箱，`http_request` 只发往登记主机并自动刷新；只支持公开客户端 [DONE batch8，待真实服务验证] |
+| 从主聊天分出侧聊 | 长按消息「从这里分出侧聊」或 `orbit_chat` 的 fork；侧聊只记来源位置，按需带入最多 6 条原话，不复制历史；来源条点一下跳回原消息 [DONE batch8] |
+| 保活引导和受阻提醒 | 起名之后 Orbit 用自己的口吻提一次后台保活；任务被系统拦下不再弹通知，用户回到 Operit 时给 Orbit 一条隐藏消息，由它按 PROACTIVE_PREFERENCES.md 决定说不说；`orbit_permission_card` 放保活权限卡（后台保活、忽略电池优化、以后别提醒），「别提醒」由 Orbit 写进偏好文件 [DONE batch8] |
 | 待审批 / 等待中的任务 | `orbit_task` 的 `pending`：等用户答复、等核实、失败后停下的任务 [DONE batch3a] |
 | 目标简报和进展记录 | `orbit_goal_note`：log 记进展，后台「目标简报」任务每天早上给每个进行中的目标写一封简报，显示在目标页；没有进行中的目标时自动跳过 [DONE batch3b] |
 | 后台自我提升 | 任务列表里的「夜间自我整理」：有新对话的夜里整理记忆、人物笔记、经验本、对齐总结，检查技能，合适时提点子；对话没变就不唤醒模型 [DONE batch3b] |
@@ -73,14 +78,12 @@ status: in-progress
 | 专项技能 | 预装 8 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息），按 Operit 真实工具改写，付款一律交给用户；每个 Orbit 只装一次，删了不装回 [DONE batch5] |
 ## 部分有，需要接进 Orbit
 
-- [ ] 后台并行浏览器任务（Muse 的 `browser.spawn_task`）——暂不做
 - [ ] 深度研究（Muse 的 `browser.deep_research`）——暂不做
 - [ ] 图片生成工具接进 Orbit（已有 `features/draw/CodexDrawBridge.kt`）——暂缓
 - [x] Tracking：跟踪预订、快递、承诺这类具体事项，并在目标页显示（25d778e8c）
 
 ## 还没做，可以做
 
-- [ ] 首次初始化 Orbit 时用 Orbit 的口吻引导打开后台保活和忽略电池优化——等初始化流程做好后再做，见 [1_BackgroundKeepAliveOnboarding.md](1_BackgroundKeepAliveOnboarding.md)
 - [ ] 文件分享链接：上传文件生成有效期链接——不做
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）

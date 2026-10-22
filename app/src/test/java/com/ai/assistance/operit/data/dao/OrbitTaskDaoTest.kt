@@ -15,6 +15,7 @@ import com.ai.assistance.operit.data.stats.JdbcSQLiteDriver
 import java.io.File
 import java.sql.DriverManager
 import kotlinx.coroutines.*
+import kotlinx.coroutines.flow.first
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Before
@@ -47,6 +48,76 @@ class OrbitTaskDaoTest {
     private suspend fun claim(id: String = "task", owner: String = "worker", boot: String = "boot",
         now: Long = 1000, elapsed: Long = 10) =
         dao.claim(checkNotNull(dao.enqueueDue(id, now)), owner, boot, now, elapsed, 100)
+
+    @Test fun `geofence never runs by clock and one shot finishes after a real event`() = runBlocking {
+        dao.insertTask(definition(kind = "GEOFENCE").copy(scheduleMode = "ONCE", nextRunAt = 0))
+        assertNull(dao.enqueueDue("task", 1000))
+        assertFalse(dao.enqueueGeofence("task", 2, "crossing", 1000))
+        assertTrue(dao.enqueueGeofence("task", 1, "crossing", 1000))
+        assertFalse(dao.enqueueGeofence("task", 1, "crossing", 1000))
+        val token = checkNotNull(claim())
+        assertFalse(token.eventId.contains(":manual:"))
+        assertTrue(dao.complete(token, "Arrived", "", "", 0, "boot", 1010, 20))
+        assertEquals("DONE", dao.task("task")?.state)
+        assertFalse(dao.enqueueGeofence("task", 1, "next-crossing", 2000))
+    }
+
+    @Test fun `repeating geofence stays armed but waits for another crossing`() = runBlocking {
+        dao.insertTask(definition(kind = "GEOFENCE").copy(nextRunAt = 0))
+        assertTrue(dao.enqueueGeofence("task", 1, "first", 1000))
+        val token = checkNotNull(claim())
+        assertTrue(dao.complete(token, "Left", "", "", 0, "boot", 1010, 20))
+        assertEquals("ACTIVE", dao.task("task")?.state)
+        assertNull(dao.enqueueDue("task", 2000))
+        assertFalse(dao.enqueueGeofence("task", 1, "first", 2000))
+        assertTrue(dao.enqueueGeofence("task", 1, "second", 2000))
+    }
+
+    @Test fun `repeating geofence retains crossings while an earlier event waits`() = runBlocking {
+        dao.insertTask(definition(kind = "GEOFENCE").copy(nextRunAt = 0))
+        assertTrue(dao.enqueueGeofence("task", 1, "first", 1000))
+        assertTrue(dao.enqueueGeofence("task", 1, "second", 2000))
+        assertFalse(dao.enqueueGeofence("task", 1, "second", 2000))
+        val first = checkNotNull(claim())
+        assertTrue(dao.complete(first, "Arrived", "", "", 0, "boot", 1010, 20))
+        assertEquals("task:1:geofence:second", dao.pendingEvent("task", 1)?.id)
+    }
+
+    @Test fun `chat decision enriches only the matching completed run and stays out of duplicate activity`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val decision = """@in_chat:{"outcome":"skip","reason":"already handled"}"""
+        assertEquals(0, dao.recordChatDecision(token.id, token.generation, token.owner, decision))
+        assertTrue(dao.complete(token, "in chat", "", "", 2000, "boot", 1010, 20, OrbitRunEntity.IN_CHAT))
+        assertEquals(0, dao.recordChatDecision(token.id, token.generation + 1, token.owner, decision))
+        assertEquals(0, dao.recordChatDecision(token.id, token.generation, "stale", decision))
+        assertEquals(1, dao.recordChatDecision(token.id, token.generation, token.owner, decision))
+        assertEquals(decision, dao.run(token.id)?.decision)
+        assertEquals(0, dao.recordChatDecision(token.id, token.generation, token.owner, "overwritten"))
+        assertTrue(dao.observeActivity("orbit").first().isEmpty())
+    }
+
+    @Test fun `a silent hook cannot wake a model through its follow-on tasks`() = runBlocking {
+        dao.insertTask(definition("source", kind = "WATCH"))
+        dao.insertTask(definition("follower", kind = "ASSIST").copy(scheduleMode = "EVENT", triggerTaskId = "source"))
+        val token = checkNotNull(claim("source"))
+        assertTrue(dao.complete(token, "nothing new", "", "", 2000, "boot", 1010, 20,
+            decision = "stayed quiet", triggerFollowers = false))
+        assertEquals("COMPLETED", dao.run(token.id)?.state)
+        assertNull(dao.enqueueDue("follower", 1011))
+        assertTrue(dao.pendingDeliveries("orbit").isEmpty())
+    }
+
+    @Test fun `registered task reply excludes a later user conversation`() = runBlocking {
+        database.chatDao().insertChat(ChatEntity(id = "chat", title = "Orbit"))
+        listOf(10L to "before", 20L to "task intermediate", 30L to "task final", 40L to "later reply")
+            .forEachIndexed { index, (timestamp, content) ->
+                database.messageDao().insertMessage(MessageEntity(chatId = "chat", sender = "ai",
+                    content = content, timestamp = timestamp, orderIndex = index))
+            }
+        assertEquals(listOf("task intermediate", "task final"), dao.aiSaidThrough("chat", 10, 30))
+        assertTrue(dao.aiSaidThrough("chat", 10, 10).isEmpty())
+    }
 
     @Test fun `lost general tool turn pauses with one report instead of replaying after reboot`() = runBlocking {
         dao.insertTask(definition(kind = "ASSIST"))

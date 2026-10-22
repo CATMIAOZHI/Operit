@@ -458,6 +458,11 @@ class AIForegroundService : Service() {
          * not bound by the background worker limit. False when Android does not let the app start
          * a foreground service now (in the background without keep-alive or a battery exemption).
          */
+        /** Why the last [holdForOrbitTasks] was refused, as the system put it; null after a start worked. */
+        @Volatile
+        var lastOrbitTasksRefusal: String? = null
+            private set
+
         fun holdForOrbitTasks(context: Context): Boolean {
             val appContext = context.applicationContext
             orbitTasksBusy.set(true)
@@ -467,6 +472,7 @@ class AIForegroundService : Service() {
                 // stopped a moment ago falls through to a foreground start.
                 try {
                     appContext.startService(intent)
+                    lastOrbitTasksRefusal = null
                     return true
                 } catch (e: Exception) {
                     AppLogger.w(TAG, "Orbit tasks: running service not reachable, starting it again", e)
@@ -478,9 +484,11 @@ class AIForegroundService : Service() {
                 } else {
                     appContext.startService(intent)
                 }
+                lastOrbitTasksRefusal = null
                 true
             } catch (e: Exception) {
                 orbitTasksBusy.set(false)
+                lastOrbitTasksRefusal = "${e.javaClass.simpleName}: ${e.message.orEmpty()}"
                 AppLogger.w(TAG, "Orbit tasks: foreground service start refused: ${e.message}")
                 false
             }

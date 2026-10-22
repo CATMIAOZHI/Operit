@@ -20,9 +20,12 @@ internal object OrbitChatCards {
     const val KEY = "orbit_card"
     const val VAULT_LOGIN = "vault_login"
     const val VAULT_KEY = "vault_api_key"
+    const val VAULT_OAUTH = "vault_oauth"
     const val IMAGE = "image"
     const val FILE = "file"
     const val APPROVAL = "approval"
+    /** A phone setting Orbit needs, turned on from the card ([OrbitPermissionCards]). */
+    const val PERMISSION = "permission"
 
     val imageTypes = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
     /** Which bubble a card is, set when the chat moves cards to the end of a turn (see OrbitSpeech.history). */
@@ -37,8 +40,11 @@ internal object OrbitChatCards {
         fun field(name: String) = o?.optString(name).orEmpty().replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim().take(60)
         val (what, title) = when (o?.optString("kind")) {
             APPROVAL -> (if (english) "Approval card" else "批准卡片") to field("title")
+            PERMISSION -> (if (english) "Permission card" else "权限卡片") to
+                (if (o?.optString("permission") == OrbitPermissionCards.KEEP_ALIVE) (if (english) "background keep-alive" else "后台保活") else "")
             VAULT_LOGIN -> (if (english) "Vault login card" else "登录保险箱卡片") to field("site")
             VAULT_KEY -> (if (english) "API key card" else "API 密钥卡片") to field("site")
+            VAULT_OAUTH -> (if (english) "OAuth login card" else "OAuth 登录卡片") to field("site")
             IMAGE -> (if (english) "Picture" else "图片") to field("name")
             FILE -> (if (english) "File" else "文件") to field("name")
             else -> (if (english) "Card" else "卡片") to ""
@@ -62,7 +68,11 @@ internal object OrbitChatCards {
     }
 
     fun vault(request: OrbitVault.Request): JSONObject = JSONObject()
-        .put("kind", if (request.kind == OrbitVault.LOGIN) VAULT_LOGIN else VAULT_KEY)
+        .put("kind", when (request.kind) {
+            OrbitVault.LOGIN -> VAULT_LOGIN
+            OrbitVault.OAUTH -> VAULT_OAUTH
+            else -> VAULT_KEY
+        })
         .put("orbit_id", request.orbitId)
         .put("chat_id", request.chatId)
         .put("site", request.site)
@@ -73,6 +83,10 @@ internal object OrbitChatCards {
         .put("new_password", request.newPassword)
         .put("requested_at", request.requestedAt)
         .apply { if (request.envName.isNotEmpty()) put("env_name", request.envName).put("env_reason", request.envReason) }
+        .apply { if (request.kind == OrbitVault.OAUTH) {
+            put("authorization_url", request.authorizationUrl).put("token_url", request.tokenUrl)
+                .put("client_id", request.clientId).put("scope", request.scope)
+        } }
 
     /** [width] and [height] of a picture let the chat size it before it loads, so nothing jumps. */
     fun attachment(orbitId: String, path: String, name: String, size: Long, width: Int = 0, height: Int = 0): JSONObject = JSONObject()
@@ -91,11 +105,20 @@ internal object OrbitChatCards {
         .put("title", approval.title)
         .put("detail", approval.detail.take(400))
 
+    /** A card that turns on [permission] (see [OrbitPermissionCards]); [cardId] keeps its own state. */
+    fun permission(orbitId: String, chatId: String, permission: String, cardId: String): JSONObject = JSONObject()
+        .put("kind", PERMISSION)
+        .put("orbit_id", orbitId)
+        .put("chat_id", chatId)
+        .put("permission", permission)
+        .put("card_id", cardId)
+
     /** The entry sheet a vault card opens, or null when [card] is not a complete vault card. */
     fun vaultRequest(card: JSONObject): OrbitVault.Request? {
         val kind = when (card.optString("kind")) {
             VAULT_LOGIN -> OrbitVault.LOGIN
             VAULT_KEY -> OrbitVault.API_KEY
+            VAULT_OAUTH -> OrbitVault.OAUTH
             else -> return null
         }
         val orbitId = card.optString("orbit_id").takeIf { it.isNotBlank() } ?: return null
@@ -112,7 +135,9 @@ internal object OrbitChatCards {
             requestedAt = card.optLong("requested_at"),
             envName = envName,
             envReason = if (envName.isEmpty()) "" else card.optString("env_reason").take(200),
-        )
+            authorizationUrl = card.optString("authorization_url"), tokenUrl = card.optString("token_url"),
+            clientId = card.optString("client_id"), scope = card.optString("scope"),
+        ).takeIf { kind != OrbitVault.OAUTH || runCatching { OrbitOAuthProtocol.validate(it) }.isSuccess }
     }
 }
 
@@ -160,6 +185,7 @@ internal object OrbitVaultNotice {
             val title = when {
                 fresh -> "New password for ${request.site} saved"
                 login -> "Login for ${request.site} saved"
+                request.kind == OrbitVault.OAUTH -> "OAuth login for ${request.site} saved"
                 else -> "API key for ${request.site} saved"
             }
             "$MARKER $title\n" +
@@ -167,6 +193,7 @@ internal object OrbitVaultNotice {
                 (when {
                     fresh -> "a new password for ${request.site}, to fill into its sign-up or reset form"
                     login -> "a login for ${request.site}"
+                    request.kind == OrbitVault.OAUTH -> "an OAuth login for ${request.site}$hostsEn"
                     else -> "an API key for ${request.site}$hostsEn"
                 }) +
                 " (credential_id $id). This is not a message from the user; they typed nothing here and cannot see this note.\n" +
@@ -187,6 +214,7 @@ internal object OrbitVaultNotice {
             val title = when {
                 fresh -> "已保存 ${request.site} 的新密码"
                 login -> "已保存 ${request.site} 的登录"
+                request.kind == OrbitVault.OAUTH -> "已保存 ${request.site} 的 OAuth 登录"
                 else -> "已保存 ${request.site} 的 API 密钥"
             }
             "$MARKER $title\n" +
@@ -194,6 +222,7 @@ internal object OrbitVaultNotice {
                 (when {
                     fresh -> " ${request.site} 的新密码，用来填进注册或重设密码的表单"
                     login -> " ${request.site} 的登录"
+                    request.kind == OrbitVault.OAUTH -> " ${request.site} 的 OAuth 登录$hostsZh"
                     else -> " ${request.site} 的 API 密钥$hostsZh"
                 }) +
                 "（credential_id $id）。这不是用户发的消息，用户没有在这里打字，也看不到这段话。\n" +

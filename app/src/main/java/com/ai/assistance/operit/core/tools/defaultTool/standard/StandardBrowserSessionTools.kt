@@ -140,6 +140,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         @Volatile internal var browserHost: WebSessionBrowserHost? = null
         /** The last tab each login profile had in front, so an Orbit returns to its own tab. */
         internal val lastActiveByProfile = ConcurrentHashMap<String, String>()
+        internal val lastActiveByTask = ConcurrentHashMap<String, String>()
         @Volatile internal var activeSessionId: String? = null
             set(value) {
                 field = value
@@ -157,7 +158,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val title: String,
         val profileName: String,
         val at: Long,
-        val crashed: Boolean
+        val crashed: Boolean,
+        val browserTaskId: String? = null,
     )
 
     internal val historyStore by lazy { WebSessionHistoryStore.getInstance(context.applicationContext) }
@@ -171,14 +173,22 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                     openUserscriptSheetOnMain()
                 }
             },
-            onOpenTab = { url, active ->
+            onOpenTab = { sourceSessionId, url, active ->
                 runOnMainSync<String?> {
-                    openUserscriptTabOnMain(context.applicationContext, url, active)
+                    val source = sessions[sourceSessionId] ?: return@runOnMainSync null
+                    runCatching {
+                        BrowserProfiles.withScope(source.profileName) { BrowserTaskScope.withScope(source.browserTaskId) {
+                            openUserscriptTabOnMain(context.applicationContext, url, active)
+                        } }
+                    }.getOrNull()
                 }
             },
             onActivateSession = { sessionId ->
                 runOnMainSync<Unit> {
-                    activateSessionOnMain(sessionId)
+                    val source = sessions[sessionId] ?: return@runOnMainSync
+                    BrowserProfiles.withScope(source.profileName) { BrowserTaskScope.withScope(source.browserTaskId) {
+                        activateSessionOnMain(sessionId)
+                    } }
                 }
             },
             onCloseSession = { sessionId ->
@@ -210,7 +220,8 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
         val customUserAgent: String? = null,
         val createdAt: Long = System.currentTimeMillis(),
         /** Whose saved logins this tab uses; see [BrowserProfiles]. */
-        val profileName: String = BrowserProfiles.MAIN
+        val profileName: String = BrowserProfiles.MAIN,
+        val browserTaskId: String? = null,
     ) {
         @Volatile var currentUrl: String = "about:blank"
         @Volatile var pageTitle: String = ""
@@ -1718,8 +1729,9 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             session.viewportWidthPx = width
             session.viewportHeightPx = height
             session.hasExplicitViewportSize = true
-            browserHost?.setViewportSize(width, height)
+            if (BrowserTaskScope.current() == null || activeSessionId == session.id) browserHost?.setViewportSize(width, height)
             applyViewportOverride(session)
+            ensureSessionAttachedOnMain(session.id)
             refreshSessionUiOnMain(session.id)
         }
         Thread.sleep(100)
@@ -1840,7 +1852,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
                 ensureOverlayPermission(tool.name)?.let { return it }
                 val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
                 val crashed =
-                    crashedTabs.lastOrNull { it.profileName == profile }
+                    crashedTabs.lastOrNull { it.profileName == profile && it.browserTaskId == BrowserTaskScope.current() }
                         ?: return error(tool.name, "No crashed tab to restore.")
                 crashedTabs.remove(crashed)
                 val session =
@@ -2474,6 +2486,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
     internal fun <T> runOnMainSync(timeoutMs: Long = 8_000L, block: () -> T): T {
         val orbitToken = com.ai.assistance.operit.features.orbit.OrbitBrowserControl.token()
         val profileScope = BrowserProfiles.currentScope()
+        val taskScope = BrowserTaskScope.current()
         if (Looper.myLooper() == Looper.getMainLooper()) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
             return block()
@@ -2489,7 +2502,7 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
             if (!state.compareAndSet(0, 1)) return@post
             try {
                 com.ai.assistance.operit.features.orbit.OrbitBrowserControl.check(orbitToken)
-                result = BrowserProfiles.withScope(profileScope, block)
+                result = BrowserProfiles.withScope(profileScope) { BrowserTaskScope.withScope(taskScope, block) }
             } catch (t: Throwable) {
                 error = t
             } finally {

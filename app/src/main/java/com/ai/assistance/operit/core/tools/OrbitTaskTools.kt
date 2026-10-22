@@ -13,10 +13,11 @@ internal object OrbitTaskTools {
         name = NAME,
         description = "安排当前 Orbit 以后继续处理的事情。到点时默认在安排它的聊天里叫醒你本人处理；也可以交给后台子代理做完再把结果交回给你。可暂停、取消、查询执行记录或根据用户答复继续。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run/pending（列出在等用户答复、等核实、或最近一次运行失败的任务；waiting_for 是在等什么或失败原因，unverified_actions 是还没核实结果的操作）"),
-            ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查，无变化可跳过模型；WATCH：盯通知、短信、日历或小脚本，内容没变就不叫醒你", required = false),
+            ToolParameterSchema("action", description = "create/list/detail/update/pause/resume/cancel/run/dry_run/pending（列出在等用户答复、等核实、或最近一次运行失败的任务；waiting_for 是在等什么或失败原因，unverified_actions 是还没核实结果的操作）"),
+            ToolParameterSchema("kind", description = "ASSIST（默认）：使用现有工具推进事情；URL_CHANGE：网页变化预检查；WATCH：盯通知、短信、日历或脚本；GEOFENCE：进入/离开地点时唤醒，需 location", required = false),
+            ToolParameterSchema("location", description = "GEOFENCE 地点 JSON：{\"name\":\"家\",\"latitude\":31.2,\"longitude\":121.4,\"radius\":200,\"transition\":\"ENTER\"}。坐标用 WGS84，不直接用地图 GCJ02/BD09。或用 {\"name\":\"家\",\"current\":true,\"radius\":200,\"transition\":\"EXIT\"} 取当前位置。radius 100-10000米，默认200；ENTER进入/EXIT离开。ONCE一次（默认）/INTERVAL每次，不填 run_at；update 传完整 location。后台监测需要精准位置和始终允许定位", required = false),
             ToolParameterSchema("watch", description = "WATCH 必填：notifications（通知栏里还在的通知）或 notifications:包名,包名；sms 或 sms:发件人；calendar 或 calendar:天数（1-30，默认7）；script（同时填 script）", required = false),
-            ToolParameterSchema("script", description = "watch=script 时的 shell 脚本全文（最多8000字符），不要同时填别的 watch 来源。以 Operit 当前的 shell 权限运行（开了 root/Shizuku 就是那个身份；只有无障碍权限时不能运行脚本），只能做只读检查：不改文件、不发送数据。每次检查运行它，输出就是要盯的内容，输出变了才叫醒你；运行超过25秒算失败。输出要短，自己截断（如 | head -c 4000）。不要放密码", required = false),
+            ToolParameterSchema("script", description = "watch=script 时 shell 脚本全文，最多8000字符。沿用 Operit 当前 shell 权限（含 root/Shizuku），没有系统沙箱：必须只读，不改文件、不上传数据、不放密码，可 GET 公开接口。每轮以 silent \"理由\" '{\"数据\":1}' 或 wake \"理由\" '{}' 结束；函数已注入，无需 source，调用后立即退出。silent 不叫醒 Orbit；wake 将理由和 JSON 对象交给 Orbit。25秒超时，输出最多20000字符，JSON最多8000字符。新建/换脚本后暂停，先 dry_run 看输出，核对通过再 resume；试跑 HATCH_HOOK_DRY_RUN=1，不叫醒 Orbit", required = false),
             ToolParameterSchema("schedule_mode", description = "ONCE 一次执行（ASSIST默认，配 run_at 即日程提醒）；DAILY 每天；WEEKLY 每周；MONTHLY 每月；YEARLY 每年（这四种在 daily_time 执行）；INTERVAL 每隔 interval_minutes 执行（网页监控默认）；EVENT 指定任务成功后执行。update 时也能改，但只能在 INTERVAL/DAILY/WEEKLY/MONTHLY/YEARLY 之间改", required = false),
             ToolParameterSchema("run_at", description = "ONCE 的执行时间，本地时间 yyyy-MM-dd HH:mm；不填则立即执行。到点时你会被唤醒处理并提醒用户", required = false),
             ToolParameterSchema("daily_time", description = "DAILY/WEEKLY/MONTHLY/YEARLY 必填：执行的本地时间 HH:mm", required = false),
@@ -52,7 +53,8 @@ internal object OrbitTaskTools {
             "子代理的工具过程保存在执行记录，它的结果先交给你，由你在安排它的聊天（主聊天或侧聊）里告诉用户。" +
             "用户说“有某某消息/短信/日程变化就告诉我”时用 WATCH+INTERVAL+notify_policy=CHANGES，间隔按急不急定（最少15分钟）。" +
             "通知、短信、日历需要用户在系统设置里给 Operit 对应权限，没给时任务会记下原因并提醒用户一次。" +
-            "现成来源不够时写一个只读的小脚本（比如查一个接口、看一个文件），只输出要比较的内容，不要输出时间戳这类每次都变的东西。" +
+            "现成来源不够时写一个只读的小脚本（比如 GET 公开接口、看文件），每轮用 silent 或 wake 给出理由和 JSON 对象。" +
+            "脚本新建后默认暂停；先 dry_run，核对返回的 outcome、reason、payload 和 output，再明确 resume 启用。修改脚本后也要重走这两步。通知/短信/日历不用试跑。" +
             "读短信、通知必须是用户明确要求的；汇报时只说和任务有关的内容，不要照抄无关的私密消息。" +
             "用户问“还有什么在等我”时用 pending。",
     )
@@ -67,11 +69,13 @@ internal object OrbitTaskTools {
         val payload: Any = when (action) {
             "create" -> {
                 val kind = arguments["kind"] ?: "ASSIST"
-                val mode = arguments["schedule_mode"] ?: if (kind == "ASSIST") "ONCE" else "INTERVAL"
+                val mode = arguments["schedule_mode"] ?: if (kind in setOf("ASSIST", OrbitGeofence.KIND)) "ONCE" else "INTERVAL"
                 val runAt = arguments["run_at"]?.takeIf { it.isNotBlank() }?.let(::parseRunAt)
                 val calendar = mode in OrbitCalendarSchedule.modes
                 val requestId = runtime?.callId ?: java.util.UUID.randomUUID().toString()
-                val source = if (kind == OrbitWatchSources.KIND) {
+                val source = if (kind == OrbitGeofence.KIND) {
+                    OrbitGeofence.source(context, arguments["location"] ?: error("GEOFENCE needs location"))
+                } else if (kind == OrbitWatchSources.KIND) {
                     watchSource(context, orbit.id, arguments, arguments["title"].orEmpty(), requestId)
                 } else arguments["url"].orEmpty()
                 json(repository.create(orbit,
@@ -79,7 +83,7 @@ internal object OrbitTaskTools {
                 arguments["instruction"] ?: error("create needs instruction: what the task should do each run"),
                 source, parseInterval(arguments["interval_minutes"]) ?: 60,
                 // A reminder exists to reach the user, so it always reports unless told otherwise.
-                arguments["notify_policy"] ?: if (runAt != null || calendar) "ALWAYS" else "CHANGES",
+                arguments["notify_policy"] ?: if (runAt != null || calendar || kind == OrbitGeofence.KIND) "ALWAYS" else "CHANGES",
                 requestId, kind,
                 mode,
                 arguments["goal_id"].orEmpty(), arguments["trigger_task_id"].orEmpty(), arguments["source_artifact_version_id"].orEmpty(),
@@ -91,17 +95,22 @@ internal object OrbitTaskTools {
                 useSubagent = parseFlag(arguments["use_subagent"]) ?: false,
                 // Made in a side chat: its reports go back to that side chat, like Muse. Made by a
                 // running task: its reports go where that task reports.
-                chatId = reportChatId(context, orbit, runtime?.callerChatId)))
+                chatId = reportChatId(context, orbit, runtime?.callerChatId))).apply {
+                    if (kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(source)) {
+                        put("next", "Created paused. Call dry_run with task_id, inspect the output, then call resume only if the read-only check is correct.")
+                    }
+                }
             }
             // A list is for finding a task; detail reads one in full.
-            "list" -> JSONObject().put("timezone", zone()).put("tasks", JSONArray(repository.dao.tasks(orbit.id).map { summary(it) }))
+            "list" -> JSONObject().put("timezone", zone()).put("tasks", JSONArray(repository.dao.tasks(orbit.id).map { summary(it, context) }))
                 .put("note", "instruction and last_observation are cut to $EXCERPT characters here; detail gives them in full")
             "pending" -> JSONArray(repository.dao.tasks(orbit.id).mapNotNull { task ->
                 val last = repository.dao.latestRun(task.id)
+                val locationProblem = if (task.kind == OrbitGeofence.KIND) OrbitGeofence.status(context, task) else null
                 // Waiting for the user, waiting to be checked, or failing (stopped or still retrying).
                 val waiting = task.state in setOf("WAITING_USER", "VERIFY") ||
-                    (task.state in setOf("PAUSED", "ACTIVE") && last?.state == "FAILED")
-                if (!waiting) null else summary(task).put("waiting_for", last?.error.orEmpty())
+                    (task.state in setOf("PAUSED", "ACTIVE") && last?.state == "FAILED") || locationProblem != null
+                if (!waiting) null else summary(task, context).put("waiting_for", locationProblem ?: last?.error.orEmpty())
                     .put("unverified_actions", JSONArray(repository.dao.unresolvedActions(task.id).map { it.summary }))
             })
             else -> {
@@ -117,9 +126,28 @@ internal object OrbitTaskTools {
                         .put("changed_fields", JSONArray(fields)).put("timezone", zone())
                         .apply { if (!applied) put("note", "Nothing was saved because the task changed meanwhile; call detail and try again.") }
                         .apply { if (applied && !force && fields.isEmpty()) put("note", "The task was already like this; nothing changed.") }
+                        .apply {
+                            if (OrbitHookChecks.needed(now)) {
+                                val passed = OrbitHookChecks.passed(context, now)
+                                put("dry_run_passed", passed)
+                                if (applied && now.state == "PAUSED") put("next", if (passed)
+                                    "The pinned script passed dry_run. Review its output, then explicitly resume to enable."
+                                    else "The script is paused. Call dry_run, inspect the output, then resume if correct.")
+                            }
+                        }
                         .apply(extra)
                 }
                 when (action) {
+                    "dry_run" -> {
+                        val result = repository.dryRun(task)
+                        after(true) {
+                            put("dry_run_passed", true).put("orbit_woken", false)
+                            put("outcome", result.outcome).put("reason", result.reason)
+                            put("payload", JSONObject(result.payload)).put("output", result.output)
+                            put("note", "The script ran once with HATCH_HOOK_DRY_RUN=1 using the configured shell identity. It is still paused.")
+                            put("next", "Review the output and confirm the script only reads. If correct, call resume; otherwise update the script and dry_run again.")
+                        }
+                    }
                     "update" -> {
                         val mode = arguments["schedule_mode"]?.trim()?.uppercase()?.takeIf { it.isNotEmpty() } ?: task.scheduleMode
                         val timed = mode == "DAILY" || mode in OrbitCalendarSchedule.modes
@@ -131,7 +159,9 @@ internal object OrbitTaskTools {
                             ?: if (mode == task.scheduleMode) task.calendarRule else ""
                         after(repository.edit(task,
                         arguments["title"] ?: task.title, arguments["instruction"] ?: task.instruction,
-                        if (task.kind == OrbitWatchSources.KIND &&
+                        if (task.kind == OrbitGeofence.KIND) {
+                            arguments["location"]?.let { OrbitGeofence.source(context, it) } ?: task.source
+                        } else if (task.kind == OrbitWatchSources.KIND &&
                             (arguments["watch"] != null || arguments["script"] != null || arguments["url"] != null)) {
                             watchSource(context, orbit.id, arguments, task.title, runtime?.callId ?: java.util.UUID.randomUUID().toString())
                         } else arguments["url"] ?: task.source,
@@ -145,12 +175,14 @@ internal object OrbitTaskTools {
                         scheduleMode = mode))
                     }
                     "detail" -> json(task).put("timezone", zone()).put("execution_record", repository.executionRecord(id))
+                        .apply { if (OrbitHookChecks.needed(task)) put("dry_run_passed", OrbitHookChecks.passed(context, task)) }
                         .put("last_run", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
                             .put("error", it.error)
                             .put("finished_at", if (it.finishedAt > 0) java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT)
                                 .format(java.util.Date(it.finishedAt)) else JSONObject.NULL)
-                            .put("decision", when (it.decision) {
+                            .put("decision", if (OrbitChatDecision.isChat(it.decision)) OrbitChatDecision.describe(context, it.decision, orbit.name)
+                            else when (it.decision) {
                                 OrbitRunEntity.UNCHANGED -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_unchanged)
                                 OrbitRunEntity.IN_CHAT -> context.getString(com.ai.assistance.operit.R.string.orbit_decision_in_chat, orbit.name.ifBlank { context.getString(com.ai.assistance.operit.R.string.nav_orbit) })
                                 OrbitRunEntity.SKIPPED -> com.ai.assistance.operit.features.orbit.OrbitRoutines.skippedReason(context, task)
@@ -190,10 +222,15 @@ internal object OrbitTaskTools {
                 }
             }
         }
+        if (payload is JSONObject && payload.optString("kind") == OrbitGeofence.KIND) {
+            repository.dao.task(payload.getString("task_id"))?.let { saved ->
+                locationStatus(payload, context, saved)
+            }
+        }
         ToolResult(NAME, true, StringResultData(payload.toString()))
     }
 
-    private val ACTIONS = listOf("create", "list", "detail", "update", "pause", "resume", "cancel", "run", "pending")
+    private val ACTIONS = listOf("create", "list", "detail", "update", "pause", "resume", "cancel", "run", "dry_run", "pending")
     private const val EXCERPT = 200
 
     private fun zone(): String = java.util.TimeZone.getDefault().id
@@ -201,10 +238,20 @@ internal object OrbitTaskTools {
     private fun excerpt(text: String) = if (text.length <= EXCERPT) text else text.take(EXCERPT) + "…"
 
     /** One task in a list: how to find it and what it is doing, with long texts cut. */
-    private fun summary(task: OrbitTaskEntity) = json(task).apply {
+    private fun summary(task: OrbitTaskEntity, context: Context) = json(task).apply {
+        locationStatus(this, context, task)
         put("instruction", excerpt(task.instruction))
         put("last_observation", excerpt(task.lastObservation))
         if (task.instruction.length > EXCERPT || task.lastObservation.length > EXCERPT) put("cut", true)
+    }
+
+    private fun locationStatus(json: JSONObject, context: Context, task: OrbitTaskEntity) {
+        if (task.kind != OrbitGeofence.KIND) return
+        val problem = OrbitGeofence.status(context, task)
+        json.put("monitoring", task.state == "ACTIVE" && problem == null)
+            .put("monitoring_problem", problem ?: JSONObject.NULL)
+            .put("next", if (task.state != "ACTIVE") "Saved; the task is ${task.state} and is not monitoring location."
+                else problem ?: "Saved. Wait for the next location transition; ONCE finishes after one trigger, INTERVAL stays armed. Already being there does not trigger it. Android may delay detection.")
     }
 
     /** The fields of a task that differ between [before] and [after], by their tool names. */
@@ -321,6 +368,11 @@ internal object OrbitTaskTools {
         .put("interval_minutes", task.intervalMinutes).put("notify_policy", task.notifyPolicy)
         .put("timeout_minutes", OrbitTaskRepository.timeoutMinutes(task))
         .apply {
+            if (task.kind == OrbitGeofence.KIND) {
+                remove("url")
+                remove("interval_minutes")
+                put("location", OrbitGeofenceDefinition.parse(task.source).json())
+            }
             if (task.scheduleMode == "DAILY" || task.scheduleMode in OrbitCalendarSchedule.modes)
                 put("daily_time", String.format(java.util.Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60))
             if (task.calendarRule.isNotEmpty()) put("repeat_on", task.calendarRule)

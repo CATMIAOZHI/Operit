@@ -36,6 +36,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.filled.ContentCopy
+import androidx.compose.material.icons.filled.CallSplit
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Extension
 import androidx.compose.material.icons.filled.Info
@@ -413,7 +414,11 @@ fun ChatArea(
         },
         footer = {
             if (orbitLook) {
-                if (!hasNewerDisplayHistory) LocalOrbitChatFooter.current?.invoke(aiMessageColor)
+                if (!hasNewerDisplayHistory) androidx.compose.runtime.CompositionLocalProvider(
+                    LocalOrbitLiveCardReply provides onReplyToMessage?.let { reply ->
+                        { summary: String, time: Long -> reply(ChatMessage(sender = "ai", content = summary, timestamp = time)) }
+                    },
+                ) { LocalOrbitChatFooter.current?.invoke(aiMessageColor) }
                 // Orbit is typing for as long as it works on a reply, like a person would be.
                 if (isLoading && !hasNewerDisplayHistory) {
                     val typing = stringResource(R.string.orbit_typing, currentOrbitName())
@@ -514,6 +519,7 @@ private fun MessageItem(
     val isHiddenUserMessage = isHiddenUserPlaceholder(message)
     val orbitLook = LocalOrbitChatLook.current
     val orbitUserReactions = LocalOrbitUserReactions.current
+    val forkOrbitMessage = com.ai.assistance.operit.ui.features.orbit.LocalOrbitForkMessage.current
     // Developer view of an Orbit chat: label the rows the Orbit chat would hide.
     val showHiddenRows = LocalShowHiddenChatRows.current
     val quietOrbitReply = showHiddenRows && message.sender == "ai" && message.contentStream == null &&
@@ -854,8 +860,26 @@ private fun MessageItem(
             }
 
             // Orbit's chat is one long conversation: nothing here may rewrite what was said
-            // (edit, roll back, regenerate, delete, summarize, branch). Replying still works.
+            // (edit, roll back, regenerate, delete, summarize). Reply and a reference-only fork work.
             if (allowTranscriptMutation && orbitLook && !isHiddenUserMessage) {
+                if (forkOrbitMessage != null && !isWriting && com.ai.assistance.operit.features.orbit.OrbitChatFork.canFork(message)) {
+                    DropdownMenuItem(
+                        text = { Text(stringResource(R.string.orbit_fork_here), style = MaterialTheme.typography.bodyMedium) },
+                        onClick = {
+                            showContextMenu = false
+                            // Cards move to the end of a reply on screen; their key keeps the source row.
+                            val sourceTime = menuPiece?.key?.let {
+                                com.ai.assistance.operit.features.orbit.OrbitReactions.timeOf(it)
+                            }?.takeIf { it > 0 } ?: message.timestamp
+                            forkOrbitMessage(message.copy(timestamp = sourceTime))
+                        },
+                        leadingIcon = {
+                            Icon(Icons.Default.CallSplit, null, Modifier.size(20.dp),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        },
+                        modifier = Modifier.heightIn(min = 44.dp),
+                    )
+                }
                 DropdownMenuItem(
                     text = {
                         Text(

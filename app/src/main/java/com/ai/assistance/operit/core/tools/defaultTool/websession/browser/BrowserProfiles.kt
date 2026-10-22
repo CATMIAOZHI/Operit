@@ -40,8 +40,13 @@ internal object BrowserProfiles {
     fun forCurrentCaller(context: Context, tool: AITool): String {
         if (!isSupported()) return MAIN
         val chatId = callerChatId(tool)
+        val root = chatId?.let {
+            com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).rootChatOf(it)
+        }
         val orbit =
-            runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().ownerForChat(chatId) }
+            runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().let {
+                it.ownerForChat(chatId) ?: it.ownerForChat(root)
+            } }
                 .getOrNull() ?: return MAIN
         return if (orbit.browserSharesMainLogin) MAIN else orbitProfileName(orbit.id)
     }

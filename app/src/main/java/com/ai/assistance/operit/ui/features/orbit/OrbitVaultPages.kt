@@ -105,6 +105,10 @@ private fun strongPassword(): String {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Request) {
+    if (request.kind == OrbitVault.OAUTH) {
+        OrbitOAuthSheet(orbit, request)
+        return
+    }
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val login = request.kind == OrbitVault.LOGIN

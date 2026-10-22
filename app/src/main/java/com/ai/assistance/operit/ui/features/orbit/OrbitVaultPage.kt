@@ -164,7 +164,7 @@ private fun VaultRow(entry: OrbitVault.Entry, showTime: Boolean, onClick: () -> 
                 maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 (if (entry.isLogin()) OrbitVault.masked(entry.username).ifBlank { stringResource(R.string.orbit_vault_password) }
-                else stringResource(R.string.orbit_vault_api_key)) +
+                else stringResource(if (entry.kind == OrbitVault.OAUTH) R.string.orbit_oauth_login else R.string.orbit_vault_api_key)) +
                     (if (entry.envName.isNotEmpty()) " · " + stringResource(R.string.orbit_vault_env_badge) else "") +
                     (if (showTime) " · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
                         .format(Date(entry.savedAt)) else ""),
@@ -253,14 +253,26 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
                             )
                             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = divider)
                         }
-                        VaultField(
-                            label = stringResource(if (entry.isLogin()) R.string.orbit_vault_password else R.string.orbit_vault_api_key),
-                            value = if (revealed) entry.secret else "••••••••",
-                            monospace = revealed,
-                            onCopy = { copy(entry.secret) },
-                            reveal = revealed,
-                            onToggleReveal = { revealed = !revealed },
-                        )
+                        if (entry.kind == OrbitVault.OAUTH) {
+                            VaultField(label = stringResource(R.string.orbit_oauth_login),
+                                value = stringResource(R.string.orbit_oauth_protected))
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = divider)
+                            VaultField(
+                                label = stringResource(R.string.orbit_oauth_expires),
+                                value = entry.oauth?.expiresAt?.takeIf { it > 0 }?.let {
+                                    DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(it))
+                                } ?: stringResource(R.string.orbit_oauth_expiry_unknown),
+                            )
+                        } else {
+                            VaultField(
+                                label = stringResource(if (entry.isLogin()) R.string.orbit_vault_password else R.string.orbit_vault_api_key),
+                                value = if (revealed) entry.secret else "••••••••",
+                                monospace = revealed,
+                                onCopy = { copy(entry.secret) },
+                                reveal = revealed,
+                                onToggleReveal = { revealed = !revealed },
+                            )
+                        }
                         if (!entry.isLogin() && entry.apiHosts.isNotEmpty()) {
                             HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = divider)
                             VaultField(

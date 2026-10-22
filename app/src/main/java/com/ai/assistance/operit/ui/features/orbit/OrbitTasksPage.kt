@@ -47,6 +47,10 @@ import com.ai.assistance.operit.data.model.OrbitRunEntity
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.model.OrbitTaskInputEntity
 import com.ai.assistance.operit.features.orbit.OrbitRoutines
+import com.ai.assistance.operit.features.orbit.OrbitGeofence
+import com.ai.assistance.operit.features.orbit.OrbitGeofenceDefinition
+import com.ai.assistance.operit.features.orbit.OrbitChatDecision
+import com.ai.assistance.operit.features.orbit.OrbitHookChecks
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskScheduler
 import kotlinx.coroutines.CancellationException
@@ -234,7 +238,7 @@ private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
         run.state == "FAILED" -> stringResource(R.string.orbit_run_failed_unknown)
         run.decision == OrbitRunEntity.SKIPPED -> OrbitRoutines.skippedReason(context, task)
         run.decision == OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
-        run.decision == OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(task.orbitId))
+        OrbitChatDecision.isChat(run.decision) -> OrbitChatDecision.describe(context, run.decision, rememberOrbitName(task.orbitId))
         run.observation.isNotBlank() -> run.observation
         run.decision.isNotBlank() -> run.decision
         else -> stringResource(R.string.orbit_task_no_result)
@@ -247,7 +251,7 @@ private fun runIcon(run: OrbitRunEntity): String = when {
     run.state == "CANCELLED" -> "circle-slash"
     run.state == "FAILED" || run.error.isNotBlank() -> "circle-alert"
     run.decision == OrbitRunEntity.SKIPPED -> "skip-forward"
-    run.decision == OrbitRunEntity.IN_CHAT -> "message-circle"
+    OrbitChatDecision.isChat(run.decision) -> "message-circle"
     else -> "circle-check"
 }
 
@@ -258,6 +262,7 @@ private fun runIcon(run: OrbitRunEntity): String = when {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: OrbitTaskRepository, onDismiss: () -> Unit) {
+    val context = LocalContext.current
     // A read that fails says so with a retry; it is never shown as "no runs" or "no record".
     var reload by remember { mutableIntStateOf(0) }
     var listFailed by remember { mutableStateOf<String?>(null) }
@@ -333,10 +338,10 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
                                 // No background transcript: what the run saw, and why there is nothing more.
                                 listOf(
                                     openRun.error.ifBlank { openRun.observation.takeIf { openRun.decision != OrbitRunEntity.SKIPPED }.orEmpty() },
-                                    stringResource(when (openRun.decision) {
-                                        OrbitRunEntity.IN_CHAT -> R.string.orbit_run_record_in_chat
-                                        else -> R.string.orbit_run_record_none
-                                    }, rememberOrbitName(orbitId)),
+                                    if (OrbitChatDecision.isChat(openRun.decision))
+                                        OrbitChatDecision.describe(context, openRun.decision, rememberOrbitName(orbitId)) + "\n" +
+                                            stringResource(R.string.orbit_run_record_in_chat, rememberOrbitName(orbitId))
+                                    else stringResource(R.string.orbit_run_record_none, rememberOrbitName(orbitId)),
                                 ).filter { it.isNotBlank() }.joinToString("\n\n")
                             },
                             style = MaterialTheme.typography.bodyMedium,
@@ -544,13 +549,19 @@ private fun TaskDetail(
             TaskCard(contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), spacing = 0.dp) {
                 val (icon, whenText) = taskIconAndSchedule(task, tasks)
                 InfoRow(taskIconName(task, icon), stringResource(R.string.orbit_task_row_when), whenText, divider, first = true)
-                if (task.state == "ACTIVE" && task.scheduleMode != "EVENT") {
+                if (task.state == "ACTIVE" && task.scheduleMode != "EVENT" &&
+                    (task.kind != OrbitGeofence.KIND || dueAt != null)) {
                     val next = dueAt ?: task.nextRunAt
                     InfoRow("clock", stringResource(R.string.orbit_task_row_next),
                         DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT).format(Date(next)) +
                             " · " + relativeTime(next), divider)
                 }
-                if (task.source.isNotBlank()) InfoRow("eye", stringResource(R.string.orbit_task_row_watch), watchLabel(task), divider)
+                if (task.kind == OrbitGeofence.KIND) {
+                    val place = remember(task.source) { OrbitGeofenceDefinition.parse(task.source) }
+                    InfoRow("map-pin", stringResource(R.string.orbit_geofence_place),
+                        stringResource(R.string.orbit_geofence_place_detail, place.name, place.radius.toInt(),
+                            place.latitude.toString(), place.longitude.toString()), divider)
+                } else if (task.source.isNotBlank()) InfoRow("eye", stringResource(R.string.orbit_task_row_watch), watchLabel(task), divider)
                 InfoRow("message-circle", stringResource(R.string.orbit_task_row_report), stringResource(when (task.notifyPolicy) {
                     "ALWAYS" -> R.string.orbit_task_report_always
                     "DIGEST" -> R.string.orbit_report_digest
@@ -565,6 +576,7 @@ private fun TaskDetail(
                 }, divider)
             }
         }
+        if (task.kind == OrbitGeofence.KIND) item(key = "location-status") { GeofenceStatus(task) }
         item(key = "result") {
             val run = lastRun
             val running = run?.state == "RUNNING"
@@ -590,7 +602,9 @@ private fun TaskDetail(
                     )
                 }
                 run?.decision?.takeIf { it.isNotBlank() && !running && it != OrbitRunEntity.SKIPPED }?.let { decision ->
-                    Text(stringResource(R.string.orbit_task_decision, when (decision) {
+                    Text(stringResource(R.string.orbit_task_decision,
+                        if (OrbitChatDecision.isChat(decision)) OrbitChatDecision.describe(context, decision, rememberOrbitName(orbitId))
+                        else when (decision) {
                         OrbitRunEntity.UNCHANGED -> stringResource(R.string.orbit_decision_unchanged)
                         OrbitRunEntity.IN_CHAT -> stringResource(R.string.orbit_decision_in_chat, rememberOrbitName(orbitId))
                         else -> decision
@@ -676,6 +690,10 @@ private fun TaskDetail(
         }
         if (task.state !in setOf("CANCELLED", "DONE")) item(key = "actions") {
             Column(Modifier.fillMaxWidth().padding(top = 4.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                if (task.state == "PAUSED" && OrbitHookChecks.needed(task) && !OrbitHookChecks.passed(context, task)) {
+                    Text(stringResource(R.string.orbit_hook_needs_dry_run), style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (task.state != "WAITING_USER") {
                     val active = task.state == "ACTIVE"
                     val blocked = !active && receipts.any { it.state in setOf("STARTED", "UNKNOWN") }
@@ -884,7 +902,8 @@ private fun TaskLoading() {
 }
 @Composable
 private fun taskSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>, dueAt: Long?): String =
-    if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
+    if (task.kind == OrbitGeofence.KIND) geofenceSchedule(task)
+    else if (task.scheduleMode == "EVENT") stringResource(R.string.orbit_task_event_wait,
         tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId)
     else stringResource(R.string.orbit_task_next, DateFormat.getDateTimeInstance(
         DateFormat.SHORT, DateFormat.SHORT).format(Date(dueAt ?: task.nextRunAt))) +
@@ -903,6 +922,7 @@ internal fun taskState(task: OrbitTaskEntity): String = stringResource(when (tas
 /** What a task reads: a web page as is, a WATCH task's source in words. */
 @Composable
 internal fun watchLabel(task: OrbitTaskEntity): String {
+    if (task.kind == OrbitGeofence.KIND) return OrbitGeofenceDefinition.parse(task.source).name
     when (task.source) {
         com.ai.assistance.operit.features.orbit.OrbitRoutines.CHAT_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
         com.ai.assistance.operit.features.orbit.OrbitRoutines.IDEAS_SOURCE -> return stringResource(R.string.orbit_routine_source_chat)
@@ -921,6 +941,41 @@ internal fun watchLabel(task: OrbitTaskEntity): String {
         else -> stringResource(R.string.orbit_watch_script,
             com.ai.assistance.operit.features.orbit.OrbitWatchSources.SCRIPT.matchEntire(task.source)?.groupValues?.get(1)
                 ?.substringAfterLast('/')?.replace(SCRIPT_SUFFIX, "") ?: task.source)
+    }
+}
+
+@Composable
+internal fun geofenceSchedule(task: OrbitTaskEntity): String {
+    val place = remember(task.source) { OrbitGeofenceDefinition.parse(task.source) }
+    return stringResource(if (place.transition == "ENTER") R.string.orbit_geofence_enter else R.string.orbit_geofence_exit,
+        place.name) + " · " + stringResource(if (task.scheduleMode == "ONCE")
+        R.string.orbit_geofence_once else R.string.orbit_geofence_repeat)
+}
+
+@Composable
+private fun GeofenceStatus(task: OrbitTaskEntity) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var problem by remember(task.id, task.version) { mutableStateOf(OrbitGeofence.status(context, task)) }
+    LaunchedEffect(context, task.id, task.version) {
+        OrbitGeofence.observeStatus(context, task).collect { problem = it }
+    }
+    androidx.lifecycle.compose.LifecycleEventEffect(androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+        if (task.state == "ACTIVE") scope.launch {
+            try {
+                OrbitTaskScheduler.reschedule(context)
+                problem = OrbitGeofence.status(context, task)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { problem = context.getString(R.string.orbit_geofence_unavailable) }
+        }
+    }
+    TaskCard {
+        Text(problem ?: stringResource(R.string.orbit_geofence_help), style = MaterialTheme.typography.bodyMedium)
+        if (task.state == "ACTIVE" && OrbitGeofence.permissionProblem(context) != null) {
+            TaskButton(stringResource(R.string.orbit_watch_open_settings), "settings", primary = true) {
+                openWatchPermission(context, if (problem == context.getString(R.string.orbit_geofence_needs_location)) "location" else "app")
+            }
+        }
     }
 }
 
@@ -978,6 +1033,7 @@ private fun watchPermissionOf(context: android.content.Context, error: String): 
 private fun openWatchPermission(context: android.content.Context, permission: String) {
     val intent = if (permission == "notifications")
         android.content.Intent(android.provider.Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+    else if (permission == "location") android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS)
     else android.content.Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
         android.net.Uri.fromParts("package", context.packageName, null))
     try {

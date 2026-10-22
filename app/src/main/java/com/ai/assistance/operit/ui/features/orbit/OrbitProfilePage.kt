@@ -801,7 +801,8 @@ private fun LazyListScope.schedulesSection(
         return
     }
     val groups = listOf(
-        R.string.orbit_profile_schedule_once to live.filter { it.kind != "DAILY" && it.scheduleMode == "ONCE" }
+        R.string.orbit_geofence_group to live.filter { it.kind == com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND },
+        R.string.orbit_profile_schedule_once to live.filter { it.kind != "DAILY" && it.kind != com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND && it.scheduleMode == "ONCE" }
             .sortedBy { it.nextRunAt },
         R.string.orbit_profile_schedule_daily to live.filter { it.kind == "DAILY" || it.scheduleMode == "DAILY" }
             .sortedBy { it.dailyMinute },
@@ -811,7 +812,7 @@ private fun LazyListScope.schedulesSection(
             .sortedBy { it.nextRunAt },
         R.string.orbit_profile_schedule_yearly to live.filter { it.kind != "DAILY" && it.scheduleMode == "YEARLY" }
             .sortedBy { it.nextRunAt },
-        R.string.orbit_profile_schedule_interval to live.filter { it.kind != "DAILY" && it.scheduleMode == "INTERVAL" },
+        R.string.orbit_profile_schedule_interval to live.filter { it.kind != "DAILY" && it.kind != com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND && it.scheduleMode == "INTERVAL" },
         R.string.orbit_profile_schedule_event to live.filter { it.kind != "DAILY" && it.scheduleMode == "EVENT" },
     )
     groups.forEach { (label, group) ->
@@ -825,7 +826,7 @@ private fun LazyListScope.schedulesSection(
                 title = task.title,
                 detail = detail,
                 meta = if (paused) taskState(task)
-                    else if (task.scheduleMode == "EVENT") null
+                    else if (task.scheduleMode == "EVENT" || task.kind == com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND) null
                     else if (task.scheduleMode == "ONCE") DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(task.nextRunAt))
                     else stringResource(R.string.orbit_task_next, relativeTime(task.nextRunAt)),
                 showChevron = true,
@@ -837,6 +838,7 @@ private fun LazyListScope.schedulesSection(
 
 /** The icon for a task's schedule; cheap, for rows that do not show the time text. */
 internal fun taskScheduleIcon(task: OrbitTaskEntity): String = when {
+    task.kind == com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND -> "map-pin"
     task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock"
     task.scheduleMode == "WEEKLY" -> "calendar-range"
     task.scheduleMode == "MONTHLY" -> "calendar-days"
@@ -852,6 +854,7 @@ internal fun taskScheduleIcon(task: OrbitTaskEntity): String = when {
 internal fun taskIconAndSchedule(task: OrbitTaskEntity, tasks: List<OrbitTaskEntity>): Pair<String, String> {
     val trigger = tasks.firstOrNull { it.id == task.triggerTaskId }?.title ?: task.triggerTaskId
     return when {
+        task.kind == com.ai.assistance.operit.features.orbit.OrbitGeofence.KIND -> "map-pin" to geofenceSchedule(task)
         task.kind == "DAILY" || task.scheduleMode == "DAILY" -> "calendar-clock" to stringResource(
             R.string.orbit_profile_schedule_daily_at,
             String.format(Locale.ROOT, "%02d:%02d", task.dailyMinute / 60, task.dailyMinute % 60),
