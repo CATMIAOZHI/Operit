@@ -9738,6 +9738,13 @@
     <string name="orbit_vault_card_saved">Saved in the vault</string>
     <string name="orbit_vault_card_update">Update</string>
     <string name="orbit_vault_card_link">Connect</string>
+    <string name="orbit_vault_env_allow">Let %1$s use this key directly in the terminal</string>
+    <string name="orbit_vault_env_desc">It is loaded as the terminal variable %1$s. Only for what the vault proxy cannot do, such as signed requests or SDKs.</string>
+    <string name="orbit_vault_env_reason">%1$s says: %2$s</string>
+    <string name="orbit_vault_entry_promise_env">What you type never shows in the chat. With this on, %1$s can use the real key in the terminal; it is masked when it shows up in tool output.</string>
+    <string name="orbit_vault_env_label">Terminal variable</string>
+    <string name="orbit_vault_env_badge">Usable in the terminal</string>
+    <string name="orbit_vault_env_required">This key can only be used in the terminal. Turn on the switch above to save it.</string>
     <string name="orbit_chat_image_desc">Picture %1$s, tap to save to the gallery</string>
     <string name="orbit_chat_image_saved">Saved to the gallery</string>
     <string name="orbit_chat_image_save_failed">Couldn\'t save to the gallery</string>

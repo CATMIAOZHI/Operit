@@ -9715,6 +9715,13 @@
     <string name="orbit_vault_card_saved">已存进保险箱</string>
     <string name="orbit_vault_card_update">更新</string>
     <string name="orbit_vault_card_link">关联</string>
+    <string name="orbit_vault_env_allow">允许 %1$s 在终端里直接用这把密钥</string>
+    <string name="orbit_vault_env_desc">会载入成终端变量 %1$s。只在保险箱代理做不到的时候用，比如要签名的接口或 SDK。</string>
+    <string name="orbit_vault_env_reason">%1$s 说：%2$s</string>
+    <string name="orbit_vault_entry_promise_env">你输入的内容不会出现在聊天里。打开后 %1$s 能在终端里用到真实密钥，工具输出里出现时会自动打码。</string>
+    <string name="orbit_vault_env_label">终端变量</string>
+    <string name="orbit_vault_env_badge">可在终端直接用</string>
+    <string name="orbit_vault_env_required">这把密钥只能在终端里用，打开上面的开关才能保存。</string>
     <string name="orbit_chat_image_desc">图片 %1$s，轻点保存到相册</string>
     <string name="orbit_chat_image_saved">已保存到相册</string>
     <string name="orbit_chat_image_save_failed">没能保存到相册</string>

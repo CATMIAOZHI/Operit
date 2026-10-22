@@ -165,6 +165,7 @@ private fun VaultRow(entry: OrbitVault.Entry, showTime: Boolean, onClick: () -> 
             Text(
                 (if (entry.isLogin()) OrbitVault.masked(entry.username).ifBlank { stringResource(R.string.orbit_vault_password) }
                 else stringResource(R.string.orbit_vault_api_key)) +
+                    (if (entry.envName.isNotEmpty()) " · " + stringResource(R.string.orbit_vault_env_badge) else "") +
                     (if (showTime) " · " + DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.MEDIUM)
                         .format(Date(entry.savedAt)) else ""),
                 style = MaterialTheme.typography.bodySmall,
@@ -265,6 +266,14 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
                             VaultField(
                                 label = stringResource(R.string.orbit_vault_hosts_label),
                                 value = entry.apiHosts.joinToString("\n"),
+                            )
+                        }
+                        if (entry.envName.isNotEmpty()) {
+                            HorizontalDivider(Modifier.padding(horizontal = 16.dp), color = divider)
+                            VaultField(
+                                label = stringResource(R.string.orbit_vault_env_label),
+                                value = "$" + entry.envName,
+                                monospace = true,
                             )
                         }
                     }

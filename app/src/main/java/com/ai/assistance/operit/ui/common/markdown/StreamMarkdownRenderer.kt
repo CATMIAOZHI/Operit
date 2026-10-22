@@ -1136,6 +1136,35 @@ private fun UnifiedMarkdownCanvas(
     onlyItems: List<MarkdownGroupedItem>? = null,
     preparedInvocationIndices: List<Int?>? = null,
 ) {
+    // The node list a block's index refers to, for a block that needs to know what came before it.
+    CompositionLocalProvider(LocalMarkdownCanvasNodes provides nodes) {
+        UnifiedMarkdownCanvasBody(
+            nodes, rendererId, nodeAnimationStates, textColor, fontSize, onLinkClick, xmlRenderer,
+            xmlStreamsByIndex, nodeGrouper, enableDialogs, modifier, fillMaxWidth, collapseCompletedProcess,
+            responseDurationMs, onlyItems, preparedInvocationIndices,
+        )
+    }
+}
+
+@Composable
+private fun UnifiedMarkdownCanvasBody(
+    nodes: List<MarkdownNodeStable>,
+    rendererId: String,
+    nodeAnimationStates: Map<String, Boolean>,
+    textColor: Color,
+    fontSize: TextUnit,
+    onLinkClick: ((String) -> Unit)?,
+    xmlRenderer: XmlContentRenderer,
+    xmlStreamsByIndex: Map<Int, Stream<String>>,
+    nodeGrouper: MarkdownNodeGrouper,
+    enableDialogs: Boolean,
+    modifier: Modifier = Modifier,
+    fillMaxWidth: Boolean = true,
+    collapseCompletedProcess: Boolean = false,
+    responseDurationMs: Long = 0L,
+    onlyItems: List<MarkdownGroupedItem>? = null,
+    preparedInvocationIndices: List<Int?>? = null,
+) {
     val lastRenderableIndex = run {
         val idx = nodes.indexOfLast { it.content.isNotEmpty() || it.children.isNotEmpty() }
         if (idx >= 0) idx else nodes.lastIndex

@@ -39,6 +39,16 @@ internal object OrbitVault {
         val savedAt: Long,
         /** Saved from a new-password card: that card's [Request.requestedAt]; 0 for any other save. */
         val card: Long = 0,
+        /**
+         * API key: the environment variable the user let Orbit load it into in the terminal, for uses
+         * the proxy cannot cover (signing, SDKs). Empty when the key stays behind the proxy only.
+         */
+        val envName: String = "",
+        /**
+         * API key: the variable name its card asked for, allowed or not. Two keys for one service
+         * (an id and a secret) are told apart by it, so saving one never replaces the other.
+         */
+        val slot: String = "",
     )
 
     /** What one card asks the user for. The value never passes through the request. */
@@ -56,7 +66,14 @@ internal object OrbitVault {
         val newPassword: Boolean = false,
         /** New password: when the card was made, so it shows done once a password is saved after it. */
         val requestedAt: Long = 0,
+        /** API key: the variable Orbit asks to load the key into; the user decides on the card. */
+        val envName: String = "",
+        /** Why Orbit needs the key itself, shown next to that choice. */
+        val envReason: String = "",
     )
+
+    /** A shell variable name: letters, digits and underscores, not starting with a digit. */
+    val ENV_NAME = Regex("[A-Z_][A-Z0-9_]{1,63}")
 
     private val pending = MutableStateFlow<Request?>(null)
     /** The entry sheet the Orbit page shows, opened from a card in the chat. */
@@ -98,7 +115,7 @@ internal object OrbitVault {
             Entry(o.getString("id"), o.getString("kind"), o.getString("site"), o.optString("username"),
                 o.getString("secret"),
                 o.optJSONArray("apiHosts")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
-                o.optString("placement"), o.optLong("savedAt"), o.optLong("card"))
+                o.optString("placement"), o.optLong("savedAt"), o.optLong("card"), o.optString("envName"), o.optString("slot"))
         }
     }
 
@@ -107,7 +124,7 @@ internal object OrbitVault {
             entries.forEach {
                 put(JSONObject().put("id", it.id).put("kind", it.kind).put("site", it.site).put("username", it.username)
                     .put("secret", it.secret).put("apiHosts", JSONArray(it.apiHosts)).put("placement", it.placement)
-                    .put("savedAt", it.savedAt).put("card", it.card))
+                    .put("savedAt", it.savedAt).put("card", it.card).put("envName", it.envName).put("slot", it.slot))
             }
         }).toString())
     }
@@ -115,20 +132,24 @@ internal object OrbitVault {
     /**
      * Saves what the user typed. A second login for the same site and user name replaces the first,
      * except a new password: a change-password form still asks for the old one, so it stays until
-     * Orbit deletes it.
+     * Orbit deletes it. [allowEnv] is the user's choice on a key card that asked for a variable.
      */
-    suspend fun save(context: Context, orbitId: String, request: Request, username: String, secret: String): String =
+    suspend fun save(context: Context, orbitId: String, request: Request, username: String, secret: String,
+        allowEnv: Boolean = false): String =
         withContext(Dispatchers.IO) {
             require(secret.isNotEmpty() && secret.length <= 4000) { "Empty value" }
             lock(orbitId).withLock {
                 val current = read(context, orbitId)
                 val name = username.trim().take(200)
                 val same = if (request.newPassword) null else current.firstOrNull {
-                    it.kind == request.kind && it.site == request.site && (request.kind == API_KEY || it.username == name)
+                    it.kind == request.kind && it.site == request.site &&
+                        (if (request.kind == API_KEY) it.slot == request.envName else it.username == name)
                 }
                 val entry = Entry(same?.id ?: UUID.randomUUID().toString().take(8), request.kind, request.site,
                     name, secret, request.apiHosts, request.placement, System.currentTimeMillis(),
-                    card = if (request.newPassword) request.requestedAt else 0)
+                    card = if (request.newPassword) request.requestedAt else 0,
+                    envName = if (allowEnv && request.kind == API_KEY && request.envName.matches(ENV_NAME)) request.envName else "",
+                    slot = if (request.kind == API_KEY) request.envName else "")
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, orbitId, next)
@@ -157,9 +178,9 @@ internal object OrbitVault {
         pending.compareAndSet(request, null)
     }
 
-    /** True when a login for [site], or the key for that provider, is already saved. */
-    fun has(entries: List<Entry>, kind: String, site: String): Boolean =
-        entries.any { it.kind == kind && it.site.equals(site, true) }
+    /** True when a login for [site], or that provider's key for [slot] (its variable name), is already saved. */
+    fun has(entries: List<Entry>, kind: String, site: String, slot: String = ""): Boolean =
+        entries.any { it.kind == kind && it.site.equals(site, true) && (kind != API_KEY || it.slot == slot) }
 
     /** True when this new-password card itself was filled in (and that password is still saved). */
     fun newPasswordSaved(entries: List<Entry>, request: Request): Boolean = request.requestedAt > 0 &&
@@ -179,6 +200,20 @@ internal object OrbitVault {
     /** True when [text] carries any saved value, so it must not be sent or stored. */
     suspend fun containsSecret(context: Context, orbitId: String, text: String): Boolean =
         entries(context, orbitId).any { it.secret.length >= 4 && text.contains(it.secret) }
+
+    private class EnvCache(val version: Int, val secrets: List<String>)
+    private val envCache = ConcurrentHashMap<String, EnvCache>()
+
+    /**
+     * The keys the user let into the terminal, which can turn up in a command's output; a tool's
+     * output is masked with [redact] before Orbit reads it. A soft guard against seeing one by accident.
+     */
+    suspend fun envKeys(context: Context, orbitId: String): List<String> {
+        val now = changes.value
+        return envCache[orbitId]?.takeIf { it.version == now }?.secrets
+            ?: entries(context, orbitId).filter { it.envName.isNotEmpty() && it.secret.length >= 6 }.map { it.secret }
+                .also { envCache[orbitId] = EnvCache(now, it) }
+    }
 
     /** Masks each value and the escaped forms a page or snapshot may show it in. */
     fun redact(text: String, secrets: Collection<String>): String =
@@ -226,6 +261,8 @@ internal object OrbitVault {
         secret,
         runCatching { java.net.URLEncoder.encode(secret, "UTF-8") }.getOrNull(),
         runCatching { java.net.URLEncoder.encode(secret, "UTF-8").replace("+", "%20") }.getOrNull(),
+        // How the terminal proxy writes a key into a URL path.
+        OrbitVaultBroker.encodePathSegment(secret),
         secret.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&#39;"),
         JSONObject.quote(secret).let { it.substring(1, it.length - 1) },
         secret.trim().replace(Regex("\\s+"), " "),

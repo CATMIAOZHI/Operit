@@ -127,6 +127,15 @@ private fun String.trimAll(): String {
     return this.trim { it.isWhitespace() }
 }
 
+/** The card a Dynamic UI code block holds, trimmed, read as the block is drawn; null for any other node. */
+private fun a2uiSourceOf(node: MarkdownNodeStable): String? {
+    if (node.type != MarkdownProcessorType.CODE_BLOCK) return null
+    val lines = node.content.trimAll().lines()
+    val first = lines.firstOrNull() ?: return null
+    if (!first.startsWith("```") || first.removePrefix("```").trim().substringBefore(' ') != "a2ui") return null
+    return lines.drop(1).let { if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it }.joinToString("\n").trim()
+}
+
 private fun CharSequence.trimAllPreservingSpans(): CharSequence {
     var start = 0
     var end = length
@@ -677,13 +686,36 @@ private fun renderNodeContent(
             // 不使用 key()，让 Compose 根据位置自然识别组件
             // 这样可以保留内部状态（如"已复制"提示、Mermaid 渲染状态）
             if (fenceTag == "a2ui") {
+                val uiSource = codeLines.drop(1).let {
+                    if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it
+                }.joinToString("\n")
+                // In an Orbit chat a card is numbered among its message's cards, the same in its own
+                // bubble, in the developer view and while Orbit is still writing.
+                val orbitChat = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current ||
+                    com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
+                val ownerContent = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner.current?.content
+                val pieceIndex = com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiBlockIndex.current
+                val canvasNodes = LocalMarkdownCanvasNodes.current
+                val orbitIndex = if (pieceIndex == null && orbitChat && ownerContent != null) {
+                    // A card with the same content earlier in the message: this one is the next of them.
+                    // Counted once per card (nodes before it do not change as Orbit writes on), so a
+                    // growing reply does not redraw it.
+                    androidx.compose.runtime.remember(canvasNodes, index, ownerContent, uiSource) {
+                        val wanted = uiSource.trim()
+                        // Read without watching the list, so later nodes Orbit writes never redraw this card.
+                        val earlier = androidx.compose.runtime.snapshots.Snapshot.withoutReadObservation {
+                            canvasNodes?.let { list ->
+                                (0 until index.coerceAtMost(list.size)).count { list[it].content.contains(wanted) && a2uiSourceOf(list[it]) == wanted }
+                            } ?: 0
+                        }
+                        com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.uiIndexOf(ownerContent, uiSource, earlier)
+                    }
+                } else null
                 com.ai.assistance.operit.ui.common.dynamicui.DynamicUiCard(
-                    source = codeLines.drop(1).let {
-                        if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it
-                    }.joinToString("\n"),
+                    source = uiSource,
                     closed = codeLines.size > 1 && codeLines.last().trim() == "```",
                     streaming = LocalMarkdownRenderMode.current == MarkdownRenderMode.STREAMING,
-                    blockIndex = index,
+                    blockIndex = pieceIndex ?: orbitIndex ?: index,
                     ink = textColor,
                 )
             } else if (firstLine == "```" + com.ai.assistance.operit.ui.features.chat.components.ORBIT_CARD_FENCE &&

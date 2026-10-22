@@ -17,32 +17,33 @@ import org.json.JSONObject
 
 /**
  * Emoji reactions Orbit puts on the user's messages, like a tap on a message in a chat app
- * (Muse's react_to_user_message). Kept in Orbit's own folder, keyed by chat and message time,
- * so the chat history itself is not changed.
+ * (Muse's react_to_user_message), and the user's on Orbit's. Kept in Orbit's own folder, keyed by
+ * chat and bubble, so the chat history itself is not changed. A bubble key is the message time
+ * for the message's words, or [pieceKey] for a card inside it.
  */
 internal class OrbitReactions private constructor(private val file: File) {
     private val mutex = Mutex()
-    private val state = MutableStateFlow<Map<String, Map<Long, String>>?>(null)
+    private val state = MutableStateFlow<Map<String, Map<String, String>>?>(null)
 
-    /** Message timestamp -> emoji for one chat. */
-    fun observe(chatId: String): Flow<Map<Long, String>> =
+    /** Bubble key -> emoji for one chat. */
+    fun observe(chatId: String): Flow<Map<String, String>> =
         state.asStateFlow().onStart { if (state.value == null) load() }.map { it?.get(chatId).orEmpty() }
 
-    suspend fun set(chatId: String, timestamp: Long, emoji: String) = mutex.withLock {
+    suspend fun set(chatId: String, key: String, emoji: String) = mutex.withLock {
         val all = read().toMutableMap()
         val chat = all[chatId].orEmpty().toMutableMap()
-        chat[timestamp] = emoji
+        chat[key] = emoji
         // Old reactions are only decoration; keep the newest ones.
-        all[chatId] = chat.entries.sortedByDescending { it.key }.take(MAX_PER_CHAT).associate { it.key to it.value }
+        all[chatId] = chat.entries.sortedByDescending { timeOf(it.key) }.take(MAX_PER_CHAT).associate { it.key to it.value }
         write(all)
     }
 
     /** Sets [emoji] on a message, or takes it off when it is already the one there, like a tapback. */
-    suspend fun toggle(chatId: String, timestamp: Long, emoji: String) = mutex.withLock {
+    suspend fun toggle(chatId: String, key: String, emoji: String) = mutex.withLock {
         val all = read().toMutableMap()
         val chat = all[chatId].orEmpty().toMutableMap()
-        if (chat[timestamp] == emoji) chat.remove(timestamp) else chat[timestamp] = emoji
-        all[chatId] = chat.entries.sortedByDescending { it.key }.take(MAX_PER_CHAT).associate { it.key to it.value }
+        if (chat[key] == emoji) chat.remove(key) else chat[key] = emoji
+        all[chatId] = chat.entries.sortedByDescending { timeOf(it.key) }.take(MAX_PER_CHAT).associate { it.key to it.value }
         write(all)
     }
 
@@ -56,19 +57,19 @@ internal class OrbitReactions private constructor(private val file: File) {
         mutex.withLock { read() }
     }
 
-    private suspend fun read(): Map<String, Map<Long, String>> = state.value ?: withContext(Dispatchers.IO) {
+    private suspend fun read(): Map<String, Map<String, String>> = state.value ?: withContext(Dispatchers.IO) {
         val json = runCatching { JSONObject(file.readText()) }.getOrNull() ?: JSONObject()
         json.keys().asSequence().toList().associateWith { chatId ->
             val chat = json.optJSONObject(chatId) ?: JSONObject()
-            chat.keys().asSequence().toList().mapNotNull { key -> key.toLongOrNull()?.let { it to chat.optString(key) } }
+            chat.keys().asSequence().toList().map { key -> key to chat.optString(key) }
                 .filter { it.second.isNotEmpty() }.toMap()
         }
     }.also { state.value = it }
 
-    private suspend fun write(all: Map<String, Map<Long, String>>) {
+    private suspend fun write(all: Map<String, Map<String, String>>) {
         val json = JSONObject()
         all.forEach { (chatId, chat) ->
-            if (chat.isNotEmpty()) json.put(chatId, JSONObject().apply { chat.forEach { (t, e) -> put(t.toString(), e) } })
+            if (chat.isNotEmpty()) json.put(chatId, JSONObject().apply { chat.forEach { (t, e) -> put(t, e) } })
         }
         withContext(Dispatchers.IO) {
             file.parentFile?.mkdirs()
@@ -86,6 +87,12 @@ internal class OrbitReactions private constructor(private val file: File) {
         private const val MAX_PER_CHAT = 300
         const val MAX_EMOJI_LENGTH = 16
         private val instances = ConcurrentHashMap<String, OrbitReactions>()
+
+        /** A card or Dynamic UI bubble inside the message sent at [timestamp]: `card:<time>:<n>` or `ui:<time>:<n>`. */
+        fun pieceKey(kind: String, timestamp: Long, ordinal: Int) = "$kind:$timestamp:$ordinal"
+
+        /** The message time a bubble key belongs to, used to keep the newest reactions. */
+        fun timeOf(key: String): Long = key.toLongOrNull() ?: key.substringAfter(':').substringBefore(':').toLongOrNull() ?: 0L
 
         /** Orbit's reactions on the user's messages. */
         fun of(context: Context, orbitId: String): OrbitReactions = instances.computeIfAbsent(orbitId) {

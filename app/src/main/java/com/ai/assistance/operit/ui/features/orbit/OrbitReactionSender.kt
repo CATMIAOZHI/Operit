@@ -37,15 +37,19 @@ internal object OrbitReactionSender {
     private val pending = ConcurrentHashMap<String, Job>()
     private val told = ConcurrentHashMap.newKeySet<String>()
 
-    fun onReacted(context: Context, orbitId: String, chatId: String, timestamp: Long, emoji: String) {
+    /**
+     * [key] is the bubble: a message time for its words, or a card's key. [said] is what Orbit hears
+     * the reaction was on, for a card; null reads the message's words.
+     */
+    fun onReacted(context: Context, orbitId: String, chatId: String, key: String, emoji: String, said: String? = null) {
         val app = context.applicationContext
-        val key = "$chatId:$timestamp"
-        pending.remove(key)?.cancel()
+        val pendingKey = "$chatId:$key"
+        pending.remove(pendingKey)?.cancel()
         val job = scope.launch {
             delay(SETTLE_MS)
             // The user may have taken it off or picked another one meanwhile.
-            suspend fun stillThere() = OrbitReactions.ofUser(app, orbitId).observe(chatId).first()[timestamp] == emoji
-            if (!stillThere() || !told.add("$key:$emoji")) return@launch
+            suspend fun stillThere() = OrbitReactions.ofUser(app, orbitId).observe(chatId).first()[key] == emoji
+            if (!stillThere() || !told.add("$pendingKey:$emoji")) return@launch
             try {
                 val core = ChatRuntimeHolder.getInstance(app).getCore(ChatRuntimeSlot.MAIN)
                 // Never cut into a reply being written; Orbit hears about it once that reply ends.
@@ -61,20 +65,23 @@ internal object OrbitReactionSender {
                     ?: error("The chat stayed busy")
                 // Taken off while waiting: say nothing, and let a later tap of the same emoji count.
                 if (!stillThere()) {
-                    told.remove("$key:$emoji")
+                    told.remove("$pendingKey:$emoji")
                     return@launch
                 }
-                val message = withContext(Dispatchers.IO) {
-                    ChatHistoryManager.getInstance(app).loadChatMessagesByTimestamps(chatId, listOf(timestamp)).firstOrNull()
-                } ?: return@launch
-                val said = OrbitSpeech.words(message.content, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
-                if (said.isBlank()) return@launch
+                val words = said ?: run {
+                    val timestamp = key.toLongOrNull() ?: return@launch
+                    val message = withContext(Dispatchers.IO) {
+                        ChatHistoryManager.getInstance(app).loadChatMessagesByTimestamps(chatId, listOf(timestamp)).firstOrNull()
+                    } ?: return@launch
+                    OrbitSpeech.words(message.content, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
+                }
+                if (words.isBlank()) return@launch
                 // Says whether the send was taken. If the chat just got busy, it is refused without
                 // touching anything (no summary or message is cancelled), and the catch below lets
                 // the same emoji be told later.
                 val taken = core.trySendUserMessageToExistingChat(
                     chatId = chatId,
-                    messageText = OrbitReactionNotice.build(LocaleUtils.usesEnglishPrompt(app), emoji, said),
+                    messageText = OrbitReactionNotice.build(LocaleUtils.usesEnglishPrompt(app), emoji, words),
                     // Hidden in the chat but kept in the conversation. It is not typed by the user,
                     // so it leaves the composer, its reply selection and attachments alone. A quiet
                     // ending must not pop a "reply finished" notification either.
@@ -87,14 +94,14 @@ internal object OrbitReactionSender {
                 )
                 if (!taken) error("The chat was busy")
             } catch (e: kotlinx.coroutines.CancellationException) {
-                told.remove("$key:$emoji")
+                told.remove("$pendingKey:$emoji")
                 throw e
             } catch (e: Exception) {
-                told.remove("$key:$emoji")
+                told.remove("$pendingKey:$emoji")
                 AppLogger.w(TAG, "Could not tell Orbit about a reaction: ${e.message}")
             }
         }
-        pending[key] = job
-        job.invokeOnCompletion { pending.remove(key, job) }
+        pending[pendingKey] = job
+        job.invokeOnCompletion { pending.remove(pendingKey, job) }
     }
 }
