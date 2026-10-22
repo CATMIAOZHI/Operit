@@ -243,7 +243,7 @@ class MessageProcessingDelegate(
     private data class ChatRuntime(
         @Volatile var inputInbox: TurnInputInbox? = null,
         @Volatile var canSteer: Boolean = false,
-        @Volatile var prepareSteeringInput: (suspend (String, List<AttachmentInfo>) -> String)? = null,
+        @Volatile var prepareSteeringInput: (suspend (String, List<AttachmentInfo>, ChatMessage?) -> String)? = null,
         val transcriptMutex: Mutex = Mutex(),
         val steeredTranscript: SteeredTranscript = SteeredTranscript(),
         var sendJob: Job? = null,
@@ -267,12 +267,14 @@ class MessageProcessingDelegate(
         chatRuntimes[chatId]?.takeIf { it.canSteer }?.inputInbox?.turnId
 
     suspend fun prepareSteeringInput(
-        chatId: String, expectedTurnId: String, text: String, attachments: List<AttachmentInfo>
+        chatId: String, expectedTurnId: String, text: String, attachments: List<AttachmentInfo>,
+        replyToMessage: ChatMessage? = null,
     ): String? {
         val runtime = chatRuntimes[chatId] ?: return null
         if (!runtime.canSteer || runtime.inputInbox?.turnId != expectedTurnId) return null
-        if (attachments.isEmpty()) return text
-        return runtime.prepareSteeringInput?.invoke(text, attachments)
+        if (attachments.isEmpty() && replyToMessage == null) return text
+        val prepare = runtime.prepareSteeringInput ?: return null
+        return withContext(Dispatchers.IO) { prepare(text, attachments, replyToMessage) }
     }
 
     fun pendingTurnInputKind(chatId: String): TurnInputInbox.PendingInputKind? =
@@ -1367,10 +1369,11 @@ class MessageProcessingDelegate(
                 val collaborationEnabled =
                     com.ai.assistance.operit.core.agent.collaboration.CollaborationToolPolicy
                         .visibility(context, chatId, turnOptions.isSubTask)["spawn_agent"] == true
-                chatRuntime.prepareSteeringInput = { text, inputAttachments ->
+                chatRuntime.prepareSteeringInput = { text, inputAttachments, reply ->
                     AIMessageManager.buildUserMessageContent(
                         context = context, messageText = text, attachments = inputAttachments,
                         workspacePath = workspacePath, workspaceEnv = workspaceEnv,
+                        replyToMessage = reply,
                         enableDirectAudioProcessing = multimodalCapabilities.audio,
                         enableDirectVideoProcessing = multimodalCapabilities.video,
                         chatId = chatId, roleCardId = roleCardId,

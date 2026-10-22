@@ -1859,6 +1859,7 @@ private fun ChatInputBottomBar(
                             chatId = queueChatId,
                             chatGeneration = item.chatGeneration,
                             attachments = item.attachments,
+                            replyToMessage = item.replyToMessage,
                         )
                     ) {
                         restorePendingQueueItem(queueChatId, item)
@@ -1960,13 +1961,32 @@ private fun ChatInputBottomBar(
         if (draftText.isBlank() && attachments.isEmpty()) return
         val chatId = currentChatId ?: return
 
-        if (!actualViewModel.enqueuePendingQueueMessage(
+        actualViewModel.enqueuePendingQueueMessage(
             chatId = chatId,
             text = draftText,
             isQueueBlocked = isQueueBlocked,
-        )) return
+        ) ?: return
         actualViewModel.updateUserMessage(TextFieldValue(""))
         actualViewModel.showToast(queueAddedMessage)
+    }
+
+    // In an Orbit chat a message sent while Orbit is replying goes straight into the current turn.
+    // If that turn can no longer take it, it stays in the queue and is sent when the turn ends.
+    val steerWhileBusy = orbitChat || currentChatId in orbitOwnedChatIds
+    fun steerDraftIntoCurrentTurn() {
+        val draftText = userMessage.text.trim()
+        if (draftText.isBlank() && attachments.isEmpty()) return
+        val chatId = currentChatId ?: return
+        val id = actualViewModel.enqueuePendingQueueMessage(
+            chatId = chatId,
+            text = draftText,
+            isQueueBlocked = isQueueBlocked,
+        ) ?: return
+        actualViewModel.updateUserMessage(TextFieldValue(""))
+        steerPendingQueueMessage(id)
+    }
+    val queueOrSteerDraft: () -> Unit = {
+        if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
     }
 
     val pleaseCreateNewChatMessage = stringResource(R.string.chat_please_create_new_chat)
@@ -2064,7 +2084,7 @@ private fun ChatInputBottomBar(
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
                 enableEnterToSend = enableEnterToSend,
                 onSendMessage = sendMessage,
-                onQueueMessage = { enqueueDraftToPendingQueue() },
+                onQueueMessage = queueOrSteerDraft,
                 onCancelMessage = actualViewModel::cancelCurrentMessage,
                 isLoading = isLoading,
                 inputState = inputState,
@@ -2155,7 +2175,7 @@ private fun ChatInputBottomBar(
                 onUserMessageChange = { value -> handleUserMessageChange(value) },
                 enableEnterToSend = enableEnterToSend,
                 onSendMessage = sendMessage,
-                onQueueMessage = { enqueueDraftToPendingQueue() },
+                onQueueMessage = queueOrSteerDraft,
                 onCancelMessage = actualViewModel::cancelCurrentMessage,
                 isLoading = isLoading,
                 inputState = inputState,

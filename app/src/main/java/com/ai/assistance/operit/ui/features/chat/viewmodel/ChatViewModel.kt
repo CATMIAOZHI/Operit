@@ -1873,7 +1873,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         val preparedText = try {
             messageProcessingDelegate.prepareSteeringInput(
-                chatId, expectedTurnId, item.text, item.attachments
+                chatId, expectedTurnId, item.text, item.attachments, item.replyToMessage
             ) ?: return false
         } catch (e: CancellationException) {
             throw e
@@ -1921,6 +1921,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         chatGeneration: Long,
         attachments: List<AttachmentInfo> = emptyList(),
         promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
+        replyToMessage: ChatMessage? = null,
     ): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
@@ -1931,6 +1932,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             chatId = chatId,
             messageText = text,
             attachments = attachments,
+            // A queued message took its quote (or none) along when it was queued.
+            turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
+            replyToMessage = replyToMessage,
         )
     }
 
@@ -1946,15 +1950,22 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             sendTriggeredSummaryForThisChat
     }
 
-    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Boolean {
+    /**
+     * Queues the composer's draft and its attachments; returns the queued item's id.
+     * The quoted message moves from the composer into the queued item, so it goes with this message.
+     */
+    fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Long? {
         val snapshot = attachmentDelegate.attachments.value.toList()
-        if (!pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot)) return false
+        val reply = _replyToMessage.value
+        val id = pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot, reply) ?: return null
         snapshot.forEach { attachmentDelegate.removeAttachment(it.filePath) }
-        return true
+        if (reply != null && _replyToMessage.value == reply) _replyToMessage.value = null
+        return id
     }
 
     fun restoreQueuedAttachments(item: PendingQueueMessageItem) {
         attachmentDelegate.addAttachments(item.attachments)
+        item.replyToMessage?.let { _replyToMessage.value = it }
     }
 
     fun removePendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =

@@ -3,6 +3,7 @@ package com.ai.assistance.operit.ui.features.websession.browser
 import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -18,15 +19,22 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
@@ -54,6 +62,14 @@ internal fun WebSessionWatchScreen(
     watch: BrowserWatchUi,
     webViewHost: WebSessionWebViewHost,
     hasSession: Boolean,
+    url: String,
+    isLoading: Boolean,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    onNavigate: (String) -> Unit,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onRefreshOrStop: () -> Unit,
     onTotalHeight: (Int) -> Unit,
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
@@ -95,6 +111,10 @@ internal fun WebSessionWatchScreen(
                 }
             }
             Spacer(Modifier.size(48.dp))
+        }
+        // Once the user drives the page, they get a browser's own controls.
+        if (watch.controlling) {
+            WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
         }
         Box(
             Modifier.weight(1f).fillMaxWidth()
@@ -162,5 +182,99 @@ private fun WatchButton(text: String, color: Color, textColor: Color, busy: Bool
             }
             Text(text, color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
+    }
+}
+
+/** Back, forward, reload and an address bar for the user driving the page. */
+@Composable
+private fun WatchControls(
+    url: String,
+    isLoading: Boolean,
+    canGoBack: Boolean,
+    canGoForward: Boolean,
+    onNavigate: (String) -> Unit,
+    onBack: () -> Unit,
+    onForward: () -> Unit,
+    onRefreshOrStop: () -> Unit,
+) {
+    val colors = MaterialTheme.colorScheme
+    var editing by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf(false) }
+    var draft by androidx.compose.runtime.saveable.rememberSaveable { androidx.compose.runtime.mutableStateOf("") }
+    val focus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
+    val keyboard = androidx.compose.ui.platform.LocalSoftwareKeyboardController.current
+    fun submit() {
+        val target = normalizeNavigationUrl(draft)
+        editing = false
+        keyboard?.hide()
+        if (target != "about:blank") onNavigate(target)
+    }
+    Row(
+        Modifier.fillMaxWidth().padding(start = 8.dp, end = 12.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        if (!editing) {
+            WatchIcon(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.web_session_back), canGoBack, onBack)
+            WatchIcon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.web_session_forward), canGoForward, onForward)
+            WatchIcon(
+                if (isLoading) Icons.Filled.Close else Icons.Filled.Refresh,
+                stringResource(if (isLoading) R.string.web_session_stop else R.string.web_session_refresh),
+                true, onRefreshOrStop,
+            )
+        }
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = colors.surfaceVariant,
+            modifier = Modifier.weight(1f).height(40.dp).padding(start = if (editing) 4.dp else 6.dp),
+        ) {
+            if (editing) {
+                Row(Modifier.fillMaxSize().padding(start = 14.dp, end = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+                    val inputLabel = stringResource(R.string.web_session_address_input)
+                    // Leaving the field (tapping the page) ends editing, once it had focus.
+                    var hadFocus by androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(false) }
+                    androidx.compose.foundation.text.BasicTextField(
+                        value = draft,
+                        onValueChange = { draft = it },
+                        singleLine = true,
+                        textStyle = MaterialTheme.typography.bodyMedium.copy(color = colors.onSurface),
+                        cursorBrush = androidx.compose.ui.graphics.SolidColor(colors.primary),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Uri,
+                            imeAction = androidx.compose.ui.text.input.ImeAction.Go,
+                        ),
+                        keyboardActions = androidx.compose.foundation.text.KeyboardActions(onGo = { submit() }),
+                        modifier = Modifier.weight(1f).focusRequester(focus)
+                            .onFocusChanged {
+                                if (it.isFocused) hadFocus = true
+                                else if (hadFocus) editing = false
+                            }
+                            .semantics { contentDescription = inputLabel },
+                    )
+                    WatchIcon(Icons.AutoMirrored.Filled.ArrowForward, stringResource(R.string.web_session_open_address), true) { submit() }
+                }
+                androidx.compose.runtime.LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
+            } else {
+                val barLabel = stringResource(R.string.web_session_address_bar)
+                Box(
+                    Modifier.fillMaxSize().clickable {
+                        draft = url
+                        editing = true
+                    }.padding(horizontal = 14.dp).semantics { contentDescription = barLabel },
+                    contentAlignment = Alignment.CenterStart,
+                ) {
+                    Text(
+                        url.removePrefix("https://").removePrefix("http://").ifBlank { "about:blank" },
+                        style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun WatchIcon(icon: androidx.compose.ui.graphics.vector.ImageVector, label: String, enabled: Boolean, onClick: () -> Unit) {
+    androidx.compose.material3.IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(40.dp)) {
+        Icon(icon, label, modifier = Modifier.size(22.dp))
     }
 }

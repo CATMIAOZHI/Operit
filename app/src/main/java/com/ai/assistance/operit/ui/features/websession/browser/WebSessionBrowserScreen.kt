@@ -147,6 +147,14 @@ internal fun WebSessionBrowserScreen(
                 watch = watch,
                 webViewHost = webViewHost,
                 hasSession = browserState.activeSessionId != null,
+                url = browserState.currentUrl,
+                isLoading = browserState.isLoading,
+                canGoBack = browserState.canGoBack,
+                canGoForward = browserState.canGoForward,
+                onNavigate = onNavigate,
+                onBack = onBack,
+                onForward = onForward,
+                onRefreshOrStop = onRefreshOrStop,
                 onTotalHeight = { totalHeightPx = it },
                 onBrowserArea = { width, height ->
                     browserAreaHeightPx = height
@@ -767,7 +775,7 @@ private fun BrowserDownloadSummaryBar(
     }
 }
 
-private fun normalizeNavigationUrl(raw: String): String {
+internal fun normalizeNavigationUrl(raw: String): String {
     val trimmed = raw.trim()
     if (trimmed.isBlank()) {
         return "about:blank"
