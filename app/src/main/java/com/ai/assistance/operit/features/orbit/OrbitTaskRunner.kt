@@ -79,6 +79,7 @@ object OrbitTaskRunner {
 
     /** True while this process is executing [runId]; its own lane reschedules when it ends. */
     internal fun isRunningHere(runId: String): Boolean = active.values.any { it.token.id == runId }
+    internal fun isChatRunningHere(chatId: String): Boolean = active[chatId]?.job?.isActive == true
 
     /** True while this process runs a task in that lane; the lane reschedules when it ends. */
     internal fun laneBusyHere(longLane: Boolean): Boolean =
@@ -157,7 +158,24 @@ object OrbitTaskRunner {
                     val source = try {
                         when (task.kind) {
                             "URL_CHANGE" -> readUrl(task.source)
-                            OrbitWatchSources.KIND -> OrbitWatchSources.read(context, task.orbitId, task.source)
+                            OrbitWatchSources.KIND -> if (OrbitWatchSources.isScript(task.source)) {
+                                val result = OrbitWatchSources.readScript(context, task.orbitId, task.source)
+                                if (!result.wake) {
+                                    complete(context, state, result.observation(), "", "",
+                                        context.getString(com.ai.assistance.operit.R.string.orbit_hook_silent, result.reason),
+                                        triggerFollowers = false)
+                                    return@withTimeout
+                                }
+                                result.observation()
+                            } else OrbitWatchSources.read(context, task.orbitId, task.source)
+                            OrbitGeofence.KIND -> {
+                                val place = OrbitGeofenceDefinition.parse(task.source)
+                                (if (token.eventId.startsWith("${task.id}:${task.version}:geofence:")) "Location trigger: "
+                                    else "Manual run requested by the user; no location transition verified: ") +
+                                    "${place.transition} ${place.name}; radius ${place.radius.toInt()} m. " +
+                                    "Coordinates: ${place.latitude}, ${place.longitude}. " +
+                                    "The user may have moved since this event."
+                            }
                             // The conversation the task was made in: a side chat, or the main chat.
                             else -> OrbitRoutines.source(context, task) ?: dao.recentSource(
                                 task.chatId.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
@@ -199,7 +217,8 @@ object OrbitTaskRunner {
                         System.currentTimeMillis(), SystemClock.elapsedRealtime()))
                     checkpoint = checkNotNull(dao.run(token.id))
                 }
-                if (OrbitTaskRepository.prechecked(task) && checkpoint.fingerprint == task.lastFingerprint &&
+                if (OrbitTaskRepository.prechecked(task) && !OrbitWatchSources.isScript(task.source) &&
+                    checkpoint.fingerprint == task.lastFingerprint &&
                     task.notifyPolicy == "CHANGES") {
                     complete(context, state, task.lastObservation, "", "", OrbitRunEntity.UNCHANGED)
                 } else if (!task.useSubagent) {
@@ -355,16 +374,29 @@ object OrbitTaskRunner {
         val observation = context.getString(com.ai.assistance.operit.R.string.orbit_run_in_chat)
         val dao = AppDatabase.getDatabase(context).orbitTaskDao()
         // Ends a little before the run's own time limit, so the outcome is still recorded.
-        val told = OrbitWake.tell(context, orbit, chatId, notice, idleWaitMs = WAKE_IDLE_WAIT_MS,
+        val decision = OrbitChatDecision.Turn()
+        val told = try { OrbitWake.tell(context, orbit, chatId, notice, idleWaitMs = WAKE_IDLE_WAIT_MS,
             totalWaitMs = (leftMs - 20_000).coerceAtLeast(5_000),
             // Paused, cancelled or replaced while the chat was busy: say nothing.
-            ready = { dao.currentLease(state.token, state.boot, System.currentTimeMillis(), SystemClock.elapsedRealtime()) != null },
+            ready = {
+                (dao.currentLease(state.token, state.boot, System.currentTimeMillis(), SystemClock.elapsedRealtime()) != null)
+                    .also { if (it) OrbitChatDecision.begin(chatId, decision) }
+            },
             onSent = {
                 check(complete(context, state, observation, "", "", OrbitRunEntity.IN_CHAT)) { "Task was paused, cancelled or replaced" }
-            })
+            }, decision = decision)
+        } finally { OrbitChatDecision.end(chatId, decision) }
         if (told.sent) {
+            val outcome = when {
+                told == OrbitWake.Told.SPOKE -> "send"
+                decision.confirmed -> "skip"
+                else -> "pending"
+            }
+            dao.recordChatDecision(state.token.id, state.token.generation, state.token.owner,
+                OrbitChatDecision.encode(outcome, decision.reason))
             if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, System.currentTimeMillis())
-            logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
+            // A wait that ran out is not evidence that Orbit chose silence.
+            if (decision.confirmed) logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
         }
         return told
     }
@@ -577,7 +609,7 @@ object OrbitTaskRunner {
     }
 
     private suspend fun complete(context: Context, state: ActiveRun, observation: String, message: String, error: String,
-        decision: String = "", draft: OrbitDraft = OrbitDraft(), nextAt: Long? = null): Boolean {
+        decision: String = "", draft: OrbitDraft = OrbitDraft(), nextAt: Long? = null, triggerFollowers: Boolean = true): Boolean {
         val settings = OrbitPreferences.getInstance(context).current()
         if (settings.activeOrbitId != state.orbitId || settings.active?.deleting != false) return false
         val now = System.currentTimeMillis()
@@ -585,7 +617,7 @@ object OrbitTaskRunner {
             com.ai.assistance.operit.R.string.orbit_task_failed_message, state.task.title)
         val result = AppDatabase.getDatabase(context).orbitTaskDao().complete(state.token, observation,
             deliveredMessage, error, nextAt ?: OrbitTaskRepository.nextAt(state.task, now), state.boot, now, SystemClock.elapsedRealtime(),
-            decision, draft.key, draft.expiresAt, draft.priority, draft.evidence)
+            decision, draft.key, draft.expiresAt, draft.priority, draft.evidence, triggerFollowers)
         // Handed to Orbit in the chat: that turn is the record, and Orbit decides there whether it speaks.
         // The wake records the outcome once Orbit has answered (see [wakeOrbit]).
         if (decision == OrbitRunEntity.IN_CHAT) return result

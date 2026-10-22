@@ -46,8 +46,12 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     sessionId: String,
     sessionName: String?,
     customUserAgent: String?,
-    profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
+    profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN,
+    browserTaskId: String? = BrowserTaskScope.current(),
 ): BrowserToolSession {
+    if (browserTaskId != null) check(
+        StandardBrowserSessionTools.sessions.values.count { it.browserTaskId == browserTaskId } < BrowserTaskScope.MAX_TABS_PER_TASK
+    ) { "This browser task already has 2 tabs. Close an unused tab with browser_tabs before opening another." }
     BrowserCdp.enableDebuggingOnMain()
     val webView = WebView(resolveWebViewContext(appContext))
     try {
@@ -62,7 +66,8 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
             webView = webView,
             sessionName = sessionName,
             customUserAgent = customUserAgent,
-            profileName = profileName
+            profileName = profileName,
+            browserTaskId = browserTaskId,
         )
     if (StandardBrowserSessionTools.desktopModeEnabled) {
         session.viewportWidthPx = StandardBrowserSessionTools.DEFAULT_DESKTOP_VIEWPORT_WIDTH
@@ -455,7 +460,8 @@ internal fun StandardBrowserSessionTools.configureWebView(
                             title = session.pageTitle,
                             profileName = session.profileName,
                             at = System.currentTimeMillis(),
-                            crashed = detail.didCrash()
+                            crashed = detail.didCrash(),
+                            browserTaskId = session.browserTaskId,
                         )
                     )
                     while (StandardBrowserSessionTools.crashedTabs.size > 10) {
@@ -548,17 +554,31 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
 
         override fun onSelectTab(sessionId: String) {
             runOnMainSync<Unit> {
+                val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+                if (watched != null && StandardBrowserSessionTools.sessions[sessionId]?.browserTaskId != watched) return@runOnMainSync
                 ensureSessionAttachedOnMain(sessionId)
             }
         }
 
         override fun onCloseTab(sessionId: String) {
+            val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+            if (watched != null && StandardBrowserSessionTools.sessions[sessionId]?.browserTaskId != watched) return
             closeSession(sessionId)
         }
 
         override fun onNewTab() {
             runOnMainSync<Unit> {
-                createSessionTabOnMain(appContext, initialUrl = "about:blank")
+                val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+                val work = watched?.let { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.works.value[it] }
+                val profile = work?.let { BrowserProfiles.forOrbit(appContext, it.orbitId) }
+                    ?: getActiveSessionOnMain()?.profileName
+                if (watched != null && StandardBrowserSessionTools.sessions.values.count { it.browserTaskId == watched } >= BrowserTaskScope.MAX_TABS_PER_TASK) {
+                    showToast(appContext.getString(R.string.orbit_browser_task_tab_limit))
+                    return@runOnMainSync
+                }
+                BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(watched) {
+                    createSessionTabOnMain(appContext, initialUrl = "about:blank")
+                } }
             }
         }
 
@@ -573,7 +593,8 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
         }
 
         override fun onCloseAllTabs() {
-            val ids = orderedSessionIds()
+            val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+            val ids = BrowserTaskScope.withScope(watched) { orderedSessionIds() }
             ids.forEach { closeSession(it) }
         }
 
@@ -762,7 +783,6 @@ internal fun StandardBrowserSessionTools.createSessionTabOnMain(
     val session = createSessionOnMain(appContext, sessionId, sessionName, customUserAgent)
     StandardBrowserSessionTools.sessions[sessionId] = session
     addSessionOrder(sessionId)
-    StandardBrowserSessionTools.activeSessionId = sessionId
     ensureOverlayOnMain(appContext)
     navigateSessionOnMain(session, initialUrl)
     ensureSessionAttachedOnMain(sessionId)
@@ -774,7 +794,7 @@ internal fun StandardBrowserSessionTools.openUserscriptTabOnMain(
     url: String,
     active: Boolean
 ): String {
-    val previousActiveId = StandardBrowserSessionTools.activeSessionId
+    val previousActiveId = getSession(null)?.id
     val newSession = createSessionTabOnMain(appContext, initialUrl = url)
     if (!active && !previousActiveId.isNullOrBlank() && previousActiveId != newSession.id) {
         activateSessionOnMain(previousActiveId)
@@ -836,7 +856,7 @@ internal fun StandardBrowserSessionTools.handleUserscriptDownloadOnMain(
 internal fun StandardBrowserSessionTools.activateSessionOnMain(sessionId: String) {
     val session = sessionById(sessionId) ?: return
     ensureOverlayOnMain(context.applicationContext)
-    StandardBrowserSessionTools.activeSessionId = sessionId
+    selectSessionForCallerOnMain(session)
     updateNavigationState(session)
     syncProjectedBrowserStateOnMain()
 }
@@ -844,7 +864,7 @@ internal fun StandardBrowserSessionTools.activateSessionOnMain(sessionId: String
 internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: String) {
     val session = sessionById(sessionId) ?: return
     ensureOverlayOnMain(context.applicationContext)
-    StandardBrowserSessionTools.activeSessionId = sessionId
+    selectSessionForCallerOnMain(session)
     runCatching {
         session.webView.onResume()
         session.webView.resumeTimers()
@@ -853,6 +873,21 @@ internal fun StandardBrowserSessionTools.ensureSessionAttachedOnMain(sessionId: 
     }
     updateNavigationState(session)
     syncProjectedBrowserStateOnMain()
+}
+
+private fun StandardBrowserSessionTools.selectSessionForCallerOnMain(session: BrowserToolSession) {
+    session.browserTaskId?.let { task ->
+        StandardBrowserSessionTools.lastActiveByTask[task] = session.id
+        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(task, session.id)
+    }
+    val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+    val visibleTask = StandardBrowserSessionTools.activeSessionId?.let(StandardBrowserSessionTools.sessions::get)?.browserTaskId
+    if (BrowserTaskScope.current() == null || watched == session.browserTaskId ||
+        (watched == null && session.browserTaskId != null && visibleTask == session.browserTaskId)) {
+        StandardBrowserSessionTools.activeSessionId = session.id
+    }
+    if (session.browserTaskId != null) StandardBrowserSessionTools.browserHost?.attachBackgroundWebView(
+        session.webView, session.viewportWidthPx, session.viewportHeightPx)
 }
 
 internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: String? = null) {
@@ -864,7 +899,7 @@ internal fun StandardBrowserSessionTools.refreshSessionUiOnMain(sessionId: Strin
 
 internal fun StandardBrowserSessionTools.syncProjectedBrowserStateOnMain() {
     // The overlay always shows every tab, whoever's call is running.
-    BrowserProfiles.withScope(null) { syncProjectedBrowserStateUnscoped() }
+    BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) { syncProjectedBrowserStateUnscoped() } }
 }
 
 private fun StandardBrowserSessionTools.syncProjectedBrowserStateUnscoped() {
@@ -1122,12 +1157,13 @@ internal fun StandardBrowserSessionTools.createPopupSessionOnMain(
             sessionId = UUID.randomUUID().toString(),
             sessionName = parentSession.sessionName,
             customUserAgent = parentSession.customUserAgent,
-            profileName = parentSession.profileName
+            profileName = parentSession.profileName,
+            browserTaskId = parentSession.browserTaskId,
         )
     StandardBrowserSessionTools.sessions[popupSession.id] = popupSession
     addSessionOrder(popupSession.id)
-    StandardBrowserSessionTools.activeSessionId = popupSession.id
     ensureOverlayOnMain(context.applicationContext)
+    BrowserTaskScope.withScope(parentSession.browserTaskId) { selectSessionForCallerOnMain(popupSession) }
     syncProjectedBrowserStateOnMain()
     return popupSession
 }
@@ -1455,37 +1491,56 @@ internal fun StandardBrowserSessionTools.forgetOrbitBrowser(orbitId: String) {
     BrowserProfiles.deleteOrbitData(context, orbitId)
 }
 
-internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolean {
+internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolean = runOnMainSync {
+    // Registry removal and WebView destruction must share the checked main-thread operation:
+    // a cancelled callback must not leave a live view outside the registry and its task limit.
     // Tabs of other logins stay open, so the overlay and the next tab follow every tab.
-    val orderedBeforeClose = BrowserProfiles.withScope(null) { orderedSessionIds() }
+    if (sessionById(sessionId) == null) return@runOnMainSync false
+    val orderedBeforeClose = BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) { orderedSessionIds() } }
     val closedIndex = orderedBeforeClose.indexOf(sessionId)
     val wasActive = StandardBrowserSessionTools.activeSessionId == sessionId
     val previouslyActiveId = StandardBrowserSessionTools.activeSessionId
-    val session = StandardBrowserSessionTools.sessions.remove(sessionId) ?: return false
+    val session = StandardBrowserSessionTools.sessions.remove(sessionId) ?: return@runOnMainSync false
+    val wasTaskActive = session.browserTaskId?.let {
+        StandardBrowserSessionTools.lastActiveByTask.remove(it, sessionId)
+    } == true
     removeSessionOrder(sessionId)
     BrowserCdp.forget(sessionId)
 
-    runOnMainSync<Unit> {
-        userscriptManager.detachSession(sessionId)
-        if (wasActive) {
-            StandardBrowserSessionTools.activeSessionId = null
-            StandardBrowserSessionTools.browserHost?.attachActiveWebView(null)
-        }
+    val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
+    if (watched != null && session.browserTaskId == watched &&
+        StandardBrowserSessionTools.sessions.values.none { it.browserTaskId == watched }) {
+        com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.handBack(watched)
+        setExpandedOnMain(false)
+    }
+    userscriptManager.detachSession(sessionId)
+    if (wasActive) {
+        StandardBrowserSessionTools.activeSessionId = null
+        StandardBrowserSessionTools.browserHost?.attachActiveWebView(null)
+    }
 
-        val parent = session.webView.parent
-        if (parent is ViewGroup) {
-            parent.removeView(session.webView)
-        }
-        session.pendingFileChooserCallback?.onReceiveValue(null)
-        session.pendingFileChooserCallback = null
-        session.pendingDialog?.jsPromptResult?.cancel()
-        session.pendingDialog?.jsResult?.cancel()
-        session.pendingDialog = null
-        notifySessionStateChanged(session)
-        cleanupWebViewOnMain(session.webView)
+    val parent = session.webView.parent
+    if (parent is ViewGroup) {
+        parent.removeView(session.webView)
+    }
+    session.pendingFileChooserCallback?.onReceiveValue(null)
+    session.pendingFileChooserCallback = null
+    session.pendingDialog?.jsPromptResult?.cancel()
+    session.pendingDialog?.jsResult?.cancel()
+    session.pendingDialog = null
+    notifySessionStateChanged(session)
+    cleanupWebViewOnMain(session.webView)
 
-        BrowserProfiles.withScope(null) {
-        val remainingIds = orderedSessionIds().filter { sessionById(it) != null }
+    BrowserProfiles.withScope(null) { BrowserTaskScope.withScope(null) {
+        val allRemaining = orderedSessionIds().filter { sessionById(it) != null }
+        val sameTask = allRemaining.filter { StandardBrowserSessionTools.sessions[it]?.browserTaskId == session.browserTaskId }
+        if (wasTaskActive && session.browserTaskId != null) {
+            sameTask.firstOrNull()?.let { nextTaskSession ->
+                StandardBrowserSessionTools.lastActiveByTask[session.browserTaskId] = nextTaskSession
+                com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(session.browserTaskId, nextTaskSession)
+            }
+        }
+        val remainingIds = if (session.browserTaskId != null && sameTask.isNotEmpty()) sameTask else allRemaining
         val nextSessionId =
             if (wasActive) {
                 when {
@@ -1507,10 +1562,8 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
             destroyOverlayOnMain()
         }
         refreshSessionUiOnMain()
-        }
-    }
-
-    return true
+    } }
+    true
 }
 
 internal fun StandardBrowserSessionTools.cleanupWebViewOnMain(webView: WebView) {

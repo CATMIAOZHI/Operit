@@ -395,9 +395,11 @@ internal fun VirtualTranscript(
     }
     LaunchedEffect(pendingJump, rows.map { it.key }) {
         val timestamp = pendingJump ?: return@LaunchedEffect
+        val shownTimestamp = if (look) com.ai.assistance.operit.features.orbit.OrbitChatFork
+            .displayTimestamp(messages, timestamp) else timestamp
         val index = rows.indexOfFirst { row ->
             row.section != ResponseMessageSection.HEADER &&
-                messages.getOrNull(row.messageIndex)?.timestamp == timestamp
+                messages.getOrNull(row.messageIndex)?.timestamp == shownTimestamp
         }
         if (index >= 0) {
             listState.scrollToItem(index)

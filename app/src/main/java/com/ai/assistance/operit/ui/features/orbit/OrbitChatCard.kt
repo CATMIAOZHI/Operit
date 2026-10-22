@@ -63,9 +63,11 @@ import java.io.File
 fun OrbitChatCard(source: String) {
     val card = remember(source) { runCatching { JSONObject(source.trim()) }.getOrNull() } ?: return
     when (card.optString("kind")) {
-        OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY -> OrbitChatCards.vaultRequest(card)?.let { VaultCard(it) }
+        OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY, OrbitChatCards.VAULT_OAUTH ->
+            OrbitChatCards.vaultRequest(card)?.let { VaultCard(it) }
         OrbitChatCards.IMAGE, OrbitChatCards.FILE -> AttachmentCard(card)
         OrbitChatCards.APPROVAL -> OrbitApprovalCard(card)
+        OrbitChatCards.PERMISSION -> OrbitPermissionCard(card)
     }
 }
 
@@ -93,13 +95,19 @@ private fun VaultCard(request: OrbitVault.Request) {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val login = request.kind == OrbitVault.LOGIN
+    val oauth = request.kind == OrbitVault.OAUTH
     val fresh = login && request.newPassword
     val version by OrbitVault.version.collectAsState()
     val saved by produceState(false, request, version) {
         // A new-password card is done once a password is saved after it; an older login does not count.
         value = runCatching {
             val entries = OrbitVault.entries(context, request.orbitId)
-            if (fresh) OrbitVault.newPasswordSaved(entries, request) else OrbitVault.has(entries, request.kind, request.site, request.envName)
+            when {
+                fresh -> OrbitVault.newPasswordSaved(entries, request)
+                oauth -> entries.any { it.kind == OrbitVault.OAUTH && it.card == request.requestedAt &&
+                    it.site == request.site && it.oauth?.clientId == request.clientId }
+                else -> OrbitVault.has(entries, request.kind, request.site, request.envName)
+            }
         }.getOrDefault(false)
     }
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
@@ -117,6 +125,7 @@ private fun VaultCard(request: OrbitVault.Request) {
                         fresh -> stringResource(R.string.orbit_vault_card_new_password_sub, request.site)
                         saved -> stringResource(R.string.orbit_vault_card_saved)
                         login -> stringResource(R.string.orbit_vault_card_login_sub, request.site)
+                        oauth -> stringResource(R.string.orbit_oauth_card_sub)
                         else -> stringResource(R.string.orbit_vault_card_key_sub)
                     },
                     style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
@@ -126,15 +135,17 @@ private fun VaultCard(request: OrbitVault.Request) {
         }
         Spacer(Modifier.height(14.dp))
         Surface(
-            onClick = { OrbitVault.open(request) },
             shape = RoundedCornerShape(50),
             color = colors.surface,
-            modifier = Modifier.fillMaxWidth().height(48.dp),
+            modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50))
+                .orbitCardGestures(onClick = { OrbitVault.open(request) }),
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     stringResource(
                         when {
+                            oauth && saved -> R.string.orbit_oauth_reconnect
+                            oauth -> R.string.orbit_oauth_connect
                             fresh && saved -> R.string.orbit_vault_reset
                             fresh -> R.string.orbit_vault_set
                             saved -> R.string.orbit_vault_card_update

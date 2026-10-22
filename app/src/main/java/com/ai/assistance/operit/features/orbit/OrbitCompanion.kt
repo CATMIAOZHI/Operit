@@ -160,6 +160,29 @@ object OrbitCompanion {
         runCatching { core(appContext).getChatHistoryDelegate().updateChatTitleAndWait(chatId, clean) }
     }
 
+    /** Navigation only: starts no model turn and copies no source messages into the new history. */
+    suspend fun forkSideChat(context: Context, orbitId: String, messageId: Long): OrbitChatFork.Created {
+        val appContext = context.applicationContext
+        return chatMutex.withLock {
+            val preferences = OrbitPreferences.getInstance(appContext)
+            val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
+                ?: error("Orbit no longer exists")
+            check(orbit.canAddSideChat) { "Too many side chats" }
+            val origin = com.ai.assistance.operit.data.preferences.OrbitChatOrigin(orbit.chatId, messageId)
+            require(!core(appContext).getMessageProcessingDelegate().isStreamingMessage(origin.chatId, messageId)) {
+                "That reply is still being written; choose an earlier finished message or wait for it to finish"
+            }
+            val excerpts = OrbitChatFork.read(appContext, origin)
+            require(excerpts.any { it.messageId == messageId }) { "Choose an existing, visible user or Orbit message" }
+            // Keeping the standard placeholder enables the existing first-message title generator.
+            val title = appContext.getString(R.string.new_conversation)
+            val chatId = createChat(appContext, null, title, titled = false)
+            preferences.rememberChatOwner(chatId, orbit.id)
+            preferences.addSideChat(orbit.id, chatId, title, origin)
+            OrbitChatFork.Created(chatId, title, origin, excerpts)
+        }
+    }
+
     suspend fun setSideChatPinned(context: Context, orbitId: String, chatId: String, pinned: Boolean) =
         OrbitPreferences.getInstance(context.applicationContext).setSideChatPinned(orbitId, chatId, pinned)
 

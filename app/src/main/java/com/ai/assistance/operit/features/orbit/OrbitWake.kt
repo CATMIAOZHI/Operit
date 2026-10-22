@@ -9,6 +9,8 @@ import com.ai.assistance.operit.data.model.OrbitDeliveryEntity
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech
+import com.ai.assistance.operit.services.core.ChatTurnTerminalSignal
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.flow.combine
@@ -61,6 +63,7 @@ object OrbitWake {
             append("$MARKER ${task.title}\n")
             append("A task you scheduled is due. This is not a message from the user; they typed nothing and cannot see this note.\n")
             append("Task: ${task.instruction}\n")
+            append("Before speaking, record why with orbit_proactivity_select action=task reason=...; if staying quiet, give reason to ${OrbitReactionNotice.NOTHING_TO_DO}. This goes in the task's run details.\n")
             if (task.source.startsWith("http")) append("Related page: ${task.source}\n")
             append(when (task.notifyPolicy) {
                 "ALWAYS" -> "Say something to the user this time.\n"
@@ -75,6 +78,7 @@ object OrbitWake {
             append("$MARKER ${task.title}\n")
             append("你安排的定时任务到点了。这不是用户发的消息，用户没有打字，也看不到这段话。\n")
             append("任务说明：${task.instruction}\n")
+            append("开口前用 orbit_proactivity_select action=task reason=... 登记理由；保持安静时给 ${OrbitReactionNotice.NOTHING_TO_DO} 填 reason。这会记进任务详情。\n")
             if (task.source.startsWith("http")) append("相关网页：${task.source}\n")
             append(when (task.notifyPolicy) {
                 "ALWAYS" -> "这次一定要跟用户说点什么。\n"
@@ -179,7 +183,8 @@ object OrbitWake {
      * Orbit's reply so it can be shown as a notification when the app is in the background.
      * The chat may stay busy for up to [idleWaitMs]; waiting for the reply ends at [totalWaitMs].
      * Right before sending, [ready] checks the notice is still wanted; [onSent] runs as soon as
-     * the turn is taken.
+     * the turn is taken. With [announce] false the notice is only for the chat: nothing waits for
+     * the reply and nothing is shown as a notification.
      */
     suspend fun tell(
         context: Context,
@@ -190,6 +195,8 @@ object OrbitWake {
         totalWaitMs: Long,
         ready: suspend () -> Boolean = { true },
         onSent: suspend () -> Unit = {},
+        decision: OrbitChatDecision.Turn? = null,
+        announce: Boolean = true,
     ): Told {
         val app = context.applicationContext
         val holder = ChatRuntimeHolder.getInstance(app)
@@ -210,11 +217,20 @@ object OrbitWake {
         // Waiting for a quiet chat holds no lock, so a busy chat never holds up another chat.
         withTimeoutOrNull(minOf(idleWaitMs, totalWaitMs)) { quiet.first { it } } ?: return Told.BUSY
         var before = 0L
+        val turnId = decision?.turnId
+        var terminal: CompletableDeferred<ChatTurnTerminalSignal>? = null
+        try {
         val taken = locks.computeIfAbsent(chatId) { Mutex() }.withLock {
             // Another notice may have taken the chat while this one waited for the lock.
             if (!quietNow()) return@withLock Told.BUSY
             if (!ready()) return@withLock Told.DROPPED
             before = withContext(Dispatchers.IO) { dao.latestAiTimestamp(chatId) } ?: 0L
+            if (turnId != null) {
+                terminal = core.registerChatTurn(turnId).also { signal ->
+                    // Also closes here when no subsequent turn has started in this chat.
+                    signal.invokeOnCompletion { decision?.accepting = false }
+                }
+            }
             // A notice that went out is always recorded: nothing can cancel in between.
             withContext(NonCancellable) {
                 val sent = withContext(Dispatchers.Main.immediate) {
@@ -226,7 +242,7 @@ object OrbitWake {
                             // announced below.
                             turnOptions = ChatTurnOptions(
                                 hideUserMessage = true, useComposerReply = false, deliveredByTool = true,
-                                notifyReply = false, disableSummary = true,
+                                notifyReply = false, disableSummary = true, turnId = turnId,
                             ),
                         )
                     }
@@ -239,7 +255,21 @@ object OrbitWake {
             }
         }
         if (!taken.sent) return taken
+        if (!announce) return taken
         val left = totalWaitMs - (android.os.SystemClock.elapsedRealtime() - startedAt)
+        if (terminal != null) {
+            val signal = withTimeoutOrNull(left.coerceAtLeast(0)) { terminal!!.await() }
+            // Failed/cancelled/timed-out turns do not borrow a later reply as their result.
+            if (signal !is ChatTurnTerminalSignal.Completed) return Told.QUIET
+            decision?.confirmed = true
+            val reply = withContext(Dispatchers.IO) {
+                dao.aiSaidThrough(chatId, before, signal.assistantMessageTimestamp).joinToString("\n\n")
+            }
+            val said = OrbitSpeech.words(reply, app.getString(com.ai.assistance.operit.R.string.orbit_sent_card))
+            if (said.isBlank()) return Told.QUIET
+            OrbitDelivery.announce(app, chatId, orbit.name, said)
+            return Told.SPOKE
+        }
         // Orbit's answer is the first message it writes after the notice, read once the chat is
         // quiet again; the turn may start late when the model is slow to begin.
         val reply = withTimeoutOrNull(left.coerceAtLeast(0)) {
@@ -258,5 +288,12 @@ object OrbitWake {
         if (said.isBlank()) return Told.QUIET
         OrbitDelivery.announce(app, chatId, orbit.name, said)
         return Told.SPOKE
+        } finally {
+            decision?.accepting = false
+            // Unregister the waiter without stopping the user's chat if our bounded wait ended.
+            if (turnId != null && terminal?.isCompleted == false) {
+                core.failRegisteredChatTurn(turnId, chatId, "Orbit stopped waiting for this scheduled turn")
+            }
+        }
     }
 }

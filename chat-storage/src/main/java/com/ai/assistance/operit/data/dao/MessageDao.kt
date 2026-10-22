@@ -8,9 +8,26 @@ import androidx.room.Update
 import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.data.model.MessageEntity
 
+data class OrbitForkSource(
+    val timestamp: Long,
+    val sender: String,
+    val displayMode: String,
+    val selectedVariantIndex: Int,
+)
+
 /** 消息DAO接口，定义对消息表的数据访问方法 */
 @Dao
 interface MessageDao {
+    /** Select source identities before reading any potentially large body or unused variants. */
+    @Query("""
+        SELECT timestamp, sender, displayMode, selectedVariantIndex FROM messages
+        WHERE chatId = :chatId AND timestamp <= :cutoff AND
+            ((sender IN ('user','ai') AND displayMode='NORMAL')
+                OR (sender='ai' AND displayMode='ASSISTANT_INTERMEDIATE'))
+        ORDER BY timestamp DESC LIMIT :limit
+    """)
+    suspend fun getOrbitForkSources(chatId: String, cutoff: Long, limit: Int): List<OrbitForkSource>
+
     @Query("""
         SELECT m.timestamp, m.sender, m.displayMode,
             COALESCE(v.sentAt, m.sentAt) AS sentAt,

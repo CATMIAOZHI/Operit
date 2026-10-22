@@ -1140,12 +1140,13 @@ internal fun StandardBrowserSessionTools.getSession(sessionId: String?): Browser
 /** An AI call only sees tabs that use its own logins; the user's own actions see every tab. */
 internal fun StandardBrowserSessionTools.sessionById(sessionId: String): BrowserToolSession? =
     StandardBrowserSessionTools.sessions[sessionId]?.takeIf { session ->
-        BrowserProfiles.currentScope().let { it == null || it == session.profileName }
+        BrowserTaskScope.canAccess(BrowserProfiles.currentScope(), BrowserTaskScope.current(),
+            session.profileName, session.browserTaskId)
     }
 
 internal fun StandardBrowserSessionTools.resolvePreferredSessionId(): String? {
     val registry = buildPageRegistry()
-    StandardBrowserSessionTools.activeSessionId = registry.activeSessionId
+    if (BrowserTaskScope.current() == null) StandardBrowserSessionTools.activeSessionId = registry.activeSessionId
     return registry.activeSessionId
 }
 
@@ -1919,7 +1920,8 @@ internal fun StandardBrowserSessionTools.buildPageRegistry(): BrowserPageRegistr
     val orderedIds = orderedSessionIdsFromState()
     val scope = BrowserProfiles.currentScope()
     val activeId =
-        StandardBrowserSessionTools.activeSessionId?.takeIf { sessionById(it) != null }
+        BrowserTaskScope.current()?.let { StandardBrowserSessionTools.lastActiveByTask[it] }?.takeIf { sessionById(it) != null }
+            ?: StandardBrowserSessionTools.activeSessionId?.takeIf { sessionById(it) != null }
             ?: scope?.let { StandardBrowserSessionTools.lastActiveByProfile[it] }?.takeIf { sessionById(it) != null }
             ?: orderedIds.firstOrNull()
     return BrowserPageRegistry(
@@ -2036,7 +2038,9 @@ internal fun StandardBrowserSessionTools.renderOpenTabs(
 private fun renderRecentCrashes(): String {
     val profile = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN
     val since = System.currentTimeMillis() - 30 * 60_000L
-    val recent = StandardBrowserSessionTools.crashedTabs.filter { it.profileName == profile && it.at >= since }.takeLast(3)
+    val recent = StandardBrowserSessionTools.crashedTabs.filter {
+        it.profileName == profile && it.browserTaskId == BrowserTaskScope.current() && it.at >= since
+    }.takeLast(3)
     if (recent.isEmpty()) return ""
     return "\nRecently closed because the page crashed (reopen the newest with browser_tabs action=restore):\n" +
         recent.asReversed().joinToString("\n") { tab ->
@@ -2047,7 +2051,7 @@ private fun renderRecentCrashes(): String {
 
 internal fun StandardBrowserSessionTools.renderPageState(session: BrowserToolSession): String {
     val viewport =
-        StandardBrowserSessionTools.browserHost?.currentViewportSize()
+        StandardBrowserSessionTools.browserHost?.takeIf { session.browserTaskId == null }?.currentViewportSize()
             ?: Pair(
                 (session.viewportWidthPx ?: session.webView.width).coerceAtLeast(0),
                 (session.viewportHeightPx ?: session.webView.height).coerceAtLeast(0)

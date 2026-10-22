@@ -130,6 +130,7 @@ import com.ai.assistance.operit.data.preferences.OrbitRunOutcome
 import com.ai.assistance.operit.data.preferences.OrbitSettings
 import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
+import com.ai.assistance.operit.data.preferences.canAddSideChat
 import com.ai.assistance.operit.ui.common.dynamicui.CardIcons
 import com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
@@ -388,6 +389,27 @@ private fun OrbitChatPage(
         userReactionStore.observe(currentChatId)
     }.collectAsState(initial = emptyMap())
     val reactionScope = rememberCoroutineScope()
+    var forkingMessage by remember(orbit.id) { mutableStateOf(false) }
+    fun forkMessage(message: com.ai.assistance.operit.data.model.ChatMessage) {
+        if (forkingMessage) return
+        forkingMessage = true
+        reactionScope.launch {
+            try {
+                val created = OrbitCompanion.forkSideChat(context, orbit.id, message.timestamp)
+                // The reply chip is global, unlike per-chat drafts; do not carry an unrelated quote.
+                chatViewModel.clearReplyToMessage()
+                justCreatedChatId = created.chatId
+                talkChatId = created.chatId
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                android.widget.Toast.makeText(context, context.getString(R.string.orbit_chats_failed),
+                    android.widget.Toast.LENGTH_SHORT).show()
+            } finally {
+                forkingMessage = false
+            }
+        }
+    }
     val userReactions = remember(userReactionMap, currentChatId) {
         com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
@@ -564,6 +586,9 @@ private fun OrbitChatPage(
                 // view the same way the top-left button does, with the same slide.
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides !devView,
+                    LocalOrbitForkMessage provides
+                        if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
+                            ::forkMessage else null,
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
@@ -597,10 +622,19 @@ private fun OrbitChatPage(
                                 onExit = { leaveDevView() },
                             )
                         } else {
-                            OrbitHeader(
-                                orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
-                                onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
-                            )
+                            Column {
+                                OrbitHeader(
+                                    orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
+                                    onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                                )
+                                currentSide?.forkOrigin?.let { origin ->
+                                    OrbitForkReference(origin, onOpenMain = {
+                                        com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost
+                                            .requestMessage(origin.chatId, origin.messageId)
+                                        talkChatId = orbit.chatId
+                                    })
+                                }
+                            }
                         }
                     }
                 }

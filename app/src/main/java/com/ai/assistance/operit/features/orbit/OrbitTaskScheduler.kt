@@ -29,6 +29,7 @@ object OrbitTaskScheduler {
         OrbitTaskRunner.cancelUnlessActive(active?.id)
         val manager = WorkManager.getInstance(context)
         if (active == null) {
+            OrbitGeofence.sync(context)
             manager.cancelUniqueWork(WAKE)
             return
         }
@@ -39,7 +40,7 @@ object OrbitTaskScheduler {
         for (task in tasks) {
             if (task.goalId.isNotEmpty() && repo.dao.goal(task.goalId)?.state != "ACTIVE") continue
             val event = repo.dao.pendingEvent(task.id, task.version)
-            if (event == null && task.scheduleMode == "EVENT") continue
+            if (event == null && (task.scheduleMode == "EVENT" || task.kind == OrbitGeofence.KIND)) continue
             val run = event?.let { repo.dao.eventRun(it.id) }
             val retryAt = when {
                 event == null -> task.nextRunAt
@@ -65,6 +66,7 @@ object OrbitTaskScheduler {
         }
         if (due == null) {
             manager.cancelUniqueWork(WAKE)
+            OrbitGeofence.sync(context)
             return
         }
         val request = OneTimeWorkRequestBuilder<OrbitTaskWakeWorker>()
@@ -72,6 +74,7 @@ object OrbitTaskScheduler {
             .build()
         manager.enqueueUniqueWork(WAKE,
             if (restore) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, request)
+        OrbitGeofence.sync(context)
     }
 
     fun wake(context: Context) {

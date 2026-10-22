@@ -23,19 +23,20 @@ internal object OrbitChatTools {
 
     val chatPrompt = ToolPrompt(
         name = CHAT,
-        description = "你和用户的聊天：主聊天和侧聊。list 列出所有聊天；create 新开一个侧聊；read 读另一个聊天最近的消息；message 读一条消息的全文。",
+        description = "你和用户的聊天：主聊天和侧聊。list 列出所有聊天；create 新开侧聊；fork 从主聊天某条消息处分出侧聊；read 读最近的消息；message 读一条消息的全文。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/create/read/message", required = true),
+            ToolParameterSchema("action", description = "list/create/fork/read/message", required = true),
             ToolParameterSchema("title", description = "create：侧聊的标题，最多40字符", required = false),
             ToolParameterSchema("chat_id", description = "read/message：聊天编号（来自 list）", required = false),
             ToolParameterSchema("limit", description = "read：读最近几条，1-40，默认20", required = false),
             ToolParameterSchema("before", description = "read：可选，上次返回的 next_before，用来往前翻更早的消息", required = false),
-            ToolParameterSchema("message_id", description = "message：read 返回的 message_id", required = false),
+            ToolParameterSchema("message_id", description = "message/fork：read 返回的 message_id；fork 必须是主聊天中一条已完成的可见消息", required = false),
             ToolParameterSchema("start_char", description = "message：可选，从第几个字开始读（从 1 开始），用上次返回的 next_start_char 接着读", required = false),
             ToolParameterSchema("include_thinking", description = "read/message：可选，true 时连你当时的思考内容一起返回；默认不返回，省上下文", required = false),
         ),
         details = """
   - 侧聊是和用户的另一段一对一聊天，有自己的标题和记录。用户想为某件事单独开一个聊天时用 create；用户自己也能在页面上开。
+  - 只在主聊天中用 fork + message_id 从某条消息处分出侧聊。它引用截至该消息的上下文，预览最多6条近期原话、每条最多1000字；不复制历史、不发送消息、不切走当前聊天。返回来源、预览消息编号和新侧聊编号；用户可从侧边栏打开，首条消息后自动取标题。更早上下文按来源 read/message 读取。
   - 主聊天和所有侧聊共用你的同一份记忆。找用户以前说过的话，用 search_chat_history，它会一起搜主聊天和全部侧聊。要读某个聊天最近的原话，先 list 找到它，再 read。
   - read 按时间从旧到新返回。hidden=true 的是用户看不到的系统提示（比如表情回应、到点的任务），不是用户说的话。单条超过2000字会截断并标 cut=true，用 message 带上 chat_id 和 message_id 读全文。has_more=true 时把 next_before 传给 before 再读更早的（这一页可能是空的，照样接着翻）。
   - 在哪个聊天里安排的提醒和定时任务，结果就回到哪个聊天。
@@ -59,7 +60,7 @@ internal object OrbitChatTools {
     val nothingToDoPrompt = ToolPrompt(
         name = NOTHING_TO_DO,
         description = "这一轮什么都不做、什么都不说，安静结束。用户只是点表情表示满意、喜欢，不需要你回应时调用。",
-        parametersStructured = emptyList(),
+        parametersStructured = listOf(ToolParameterSchema("reason", description = "可选：这次保持安静的理由，最多300字；到点任务会把它记在任务详情里", required = false)),
         details = """
   - 调用后这一轮立刻结束，用户在聊天里看不到任何东西。
   - 不要先写一段话再调用它；要安静就只调用它。
@@ -68,8 +69,14 @@ internal object OrbitChatTools {
     )
 
     /** Ends the turn without a word, so a pleased tapback gets no reply. */
-    fun executeNothingToDo(context: Context, tool: AITool): ToolResult =
-        ToolResult(NOTHING_TO_DO, true, StringResultData("Staying quiet."), interruptTurn = true)
+    fun executeNothingToDo(context: Context, tool: AITool): ToolResult {
+        val reason = tool.parameters.firstOrNull { it.name == "reason" }?.value.orEmpty().trim()
+        if (reason.length > 300) return ToolResult(NOTHING_TO_DO, false, StringResultData(""),
+            error = "reason must be at most 300 characters")
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.record(
+            ToolExecutionManager.currentToolRuntimeContext()?.callerChatId, reason, silent = true)
+        return ToolResult(NOTHING_TO_DO, true, StringResultData("Staying quiet."), interruptTurn = true)
+    }
 
     fun executeChat(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         try {
@@ -89,7 +96,9 @@ internal object OrbitChatTools {
                     put(JSONObject().put("chat_id", orbit.chatId).put("title", "main").put("current", caller == orbit.chatId))
                     orbit.sideChats.forEach {
                         put(JSONObject().put("chat_id", it.chatId).put("title", it.title).put("current", caller == it.chatId)
-                            .put("archived", it.archived))
+                            .put("archived", it.archived).apply { it.forkOrigin?.let { source ->
+                                put("source_chat_id", source.chatId).put("source_message_id", source.messageId)
+                            } })
                     }
                 }
                 "create" -> {
@@ -100,6 +109,24 @@ internal object OrbitChatTools {
                         .firstOrNull { it.id == orbit.id }?.sideChats?.firstOrNull { it.chatId == id }?.title ?: title
                     JSONObject().put("chat_id", id).put("title", saved)
                         .put("note", "The user opens it from the menu button at the top left of the Orbit page.")
+                }
+                "fork" -> {
+                    require(caller == orbit.chatId) { "fork is only available from the main chat" }
+                    require(args["chat_id"].isNullOrBlank() || args["chat_id"] == orbit.chatId) {
+                        "fork only references the main chat; use its message_id from read"
+                    }
+                    val stamp = args["message_id"]?.trim()?.toLongOrNull()?.takeIf { it > 0 }
+                        ?: error("fork needs a message_id from reading the main chat")
+                    val created = OrbitCompanion.forkSideChat(context, orbit.id, stamp)
+                    JSONObject().put("status", "created").put("chat_id", created.chatId).put("title", created.title)
+                        .put("title_status", "automatic_after_first_message")
+                        .put("source_chat_id", created.origin.chatId).put("source_message_id", stamp)
+                        .put("context_mode", "reference")
+                        .put("preview_message_ids", JSONArray(created.excerpts.map { it.messageId }))
+                        .put("preview_chars", created.excerpts.sumOf { it.text.length })
+                        .put("truncated_message_ids", JSONArray(created.excerpts.filter { it.truncated }.map { it.messageId }))
+                        .put("copied_messages", 0).put("message_sent", false)
+                        .put("next_step", "Tell the user the side chat is ready in the top-left chat menu. It references main-chat history through source_message_id; earlier words remain readable with read/message. No turn was started there.")
                 }
                 "read" -> {
                     val id = args["chat_id"]?.trim().orEmpty()
@@ -151,7 +178,7 @@ internal object OrbitChatTools {
                         .put("next_start_char", if (end < text.length) end + 1 else JSONObject.NULL)
                         .put("text", text.substring(from - 1, end))
                 }
-                else -> error("Unknown action \"${args["action"]}\". Use list, create, read or message.")
+                else -> error("Unknown action \"${args["action"]}\". Use list, create, fork, read or message.")
             }
             ToolResult(CHAT, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -23,6 +23,7 @@ import java.util.concurrent.ConcurrentHashMap
 internal object OrbitVault {
     const val LOGIN = "login"
     const val API_KEY = "api_key"
+    const val OAUTH = "oauth"
     const val MAX_ENTRIES = 100
 
     data class Entry(
@@ -49,6 +50,16 @@ internal object OrbitVault {
          * (an id and a secret) are told apart by it, so saving one never replaces the other.
          */
         val slot: String = "",
+        val oauth: OAuth? = null,
+    )
+
+    data class OAuth(
+        val tokenUrl: String,
+        val clientId: String,
+        val scope: String,
+        val refreshToken: String,
+        /** Zero means the provider did not report an expiry. */
+        val expiresAt: Long,
     )
 
     /** What one card asks the user for. The value never passes through the request. */
@@ -70,6 +81,10 @@ internal object OrbitVault {
         val envName: String = "",
         /** Why Orbit needs the key itself, shown next to that choice. */
         val envReason: String = "",
+        val authorizationUrl: String = "",
+        val tokenUrl: String = "",
+        val clientId: String = "",
+        val scope: String = "",
     )
 
     /** A shell variable name: letters, digits and underscores, not starting with a digit. */
@@ -82,6 +97,7 @@ internal object OrbitVault {
     /** Bumped on every save or delete, so cards and lists read the vault again. */
     val version: StateFlow<Int> = changes
     private val locks = ConcurrentHashMap<String, Mutex>()
+    private val refreshLocks = ConcurrentHashMap<String, Mutex>()
 
     private fun store(context: Context, orbitId: String) = OrbitSecretFile.forOrbit(context, orbitId, "vault")
     private fun lock(orbitId: String) = locks.computeIfAbsent(orbitId) { Mutex() }
@@ -95,6 +111,10 @@ internal object OrbitVault {
         val s = site.lowercase().removePrefix("www.")
         return s.isNotEmpty() && (h == s || h.endsWith(".$s"))
     }
+
+    /** OAuth grants exactly the listed API hosts; existing password/key site matching stays compatible. */
+    fun permitsApiHost(kind: String, host: String, allowed: List<String>): Boolean =
+        allowed.any { if (kind == OAUTH) host.equals(it, ignoreCase = true) else matchesHost(host, it) }
 
     fun masked(username: String): String = when {
         username.isBlank() -> ""
@@ -115,7 +135,11 @@ internal object OrbitVault {
             Entry(o.getString("id"), o.getString("kind"), o.getString("site"), o.optString("username"),
                 o.getString("secret"),
                 o.optJSONArray("apiHosts")?.let { a -> (0 until a.length()).map { a.getString(it) } }.orEmpty(),
-                o.optString("placement"), o.optLong("savedAt"), o.optLong("card"), o.optString("envName"), o.optString("slot"))
+                o.optString("placement"), o.optLong("savedAt"), o.optLong("card"), o.optString("envName"), o.optString("slot"),
+                o.optJSONObject("oauth")?.let { auth ->
+                    OAuth(auth.getString("tokenUrl"), auth.getString("clientId"), auth.optString("scope"),
+                        auth.optString("refreshToken"), auth.optLong("expiresAt"))
+                })
         }
     }
 
@@ -124,7 +148,11 @@ internal object OrbitVault {
             entries.forEach {
                 put(JSONObject().put("id", it.id).put("kind", it.kind).put("site", it.site).put("username", it.username)
                     .put("secret", it.secret).put("apiHosts", JSONArray(it.apiHosts)).put("placement", it.placement)
-                    .put("savedAt", it.savedAt).put("card", it.card).put("envName", it.envName).put("slot", it.slot))
+                    .put("savedAt", it.savedAt).put("card", it.card).put("envName", it.envName).put("slot", it.slot)
+                    .apply { it.oauth?.let { auth ->
+                        put("oauth", JSONObject().put("tokenUrl", auth.tokenUrl).put("clientId", auth.clientId)
+                            .put("scope", auth.scope).put("refreshToken", auth.refreshToken).put("expiresAt", auth.expiresAt))
+                    } })
             }
         }).toString())
     }
@@ -168,6 +196,58 @@ internal object OrbitVault {
         }
     }
 
+    suspend fun saveOAuth(context: Context, request: Request, tokens: OrbitOAuthProtocol.Tokens): String =
+        withContext(Dispatchers.IO) {
+            require(request.kind == OAUTH)
+            lock(request.orbitId).withLock {
+                val current = read(context, request.orbitId)
+                val same = current.firstOrNull {
+                    it.kind == OAUTH && it.site == request.site && it.oauth?.clientId == request.clientId
+                }
+                val entry = Entry(same?.id ?: UUID.randomUUID().toString().take(8), OAUTH, request.site,
+                    "", tokens.accessToken, request.apiHosts, "bearer", System.currentTimeMillis(),
+                    card = request.requestedAt,
+                    oauth = OAuth(request.tokenUrl, request.clientId, tokens.scope ?: request.scope,
+                        tokens.refreshToken.orEmpty(), tokens.expiresAt))
+                val next = current.filterNot { it.id == entry.id } + entry
+                require(next.size <= MAX_ENTRIES) { "The vault is full" }
+                write(context, request.orbitId, next)
+                changes.value++
+                entry.id
+            }
+        }
+
+    /** One rotation per credential. Network waits never hold the vault's read/save/delete lock. */
+    suspend fun forHttp(context: Context, orbitId: String, id: String, rejectedToken: String? = null): Entry = withContext(Dispatchers.IO) {
+        refreshLocks.computeIfAbsent("$orbitId/$id") { Mutex() }.withLock {
+            val entry = lock(orbitId).withLock { read(context, orbitId).firstOrNull { it.id == id } }
+                ?: error("Credential was deleted; use list")
+            val auth = entry.oauth ?: return@withLock entry
+            // A 401 can reveal expiry when a provider did not give expires_in. Another caller may already have refreshed it.
+            if (rejectedToken != null && rejectedToken != entry.secret) return@withLock entry
+            if (rejectedToken == null && !OrbitOAuthProtocol.needsRefresh(auth.expiresAt)) return@withLock entry
+            check(auth.refreshToken.isNotEmpty()) {
+                "OAuth login expired and the provider supplied no refresh token. Use request_oauth to reconnect."
+            }
+            val tokens = OrbitOAuth.refresh(auth)
+            // The provider may have rotated its refresh token already; finish saving even if the API task was cancelled.
+            withContext(kotlinx.coroutines.NonCancellable) {
+                lock(orbitId).withLock update@ {
+                    val current = read(context, orbitId)
+                    val latest = current.firstOrNull { it.id == id } ?: error("Credential was deleted; use list")
+                    // Deletion or a new user authorization wins over an older refresh response.
+                    if (latest != entry) return@update latest
+                    val updated = entry.copy(secret = tokens.accessToken, oauth = auth.copy(
+                        refreshToken = tokens.refreshToken ?: auth.refreshToken,
+                        scope = tokens.scope ?: auth.scope, expiresAt = tokens.expiresAt))
+                    write(context, orbitId, current.map { if (it.id == id) updated else it })
+                    changes.value++
+                    updated
+                }
+            }
+        }
+    }
+
     /** A tap on a card in the chat: shows its entry sheet. */
     fun open(request: Request) {
         pending.value = request
@@ -199,7 +279,9 @@ internal object OrbitVault {
 
     /** True when [text] carries any saved value, so it must not be sent or stored. */
     suspend fun containsSecret(context: Context, orbitId: String, text: String): Boolean =
-        entries(context, orbitId).any { it.secret.length >= 4 && text.contains(it.secret) }
+        entries(context, orbitId).any { e ->
+            listOf(e.secret, e.oauth?.refreshToken.orEmpty()).any { it.length >= 4 && text.contains(it) }
+        }
 
     private class EnvCache(val version: Int, val secrets: List<String>)
     private val envCache = ConcurrentHashMap<String, EnvCache>()
@@ -216,9 +298,12 @@ internal object OrbitVault {
     }
 
     /** Masks each value and the escaped forms a page or snapshot may show it in. */
-    fun redact(text: String, secrets: Collection<String>): String =
-        secrets.filter { it.isNotEmpty() }.flatMap(::variants).distinct().sortedByDescending { it.length }
-            .fold(text) { acc, s -> acc.replace(s, "••••") }
+    fun redact(text: String, secrets: Collection<String>, maxChars: Int = Int.MAX_VALUE): String {
+        val forms = secrets.filter { it.isNotEmpty() }.flatMap(::variants).distinct().sortedByDescending { it.length }
+        // Keep enough lookahead to mask a value crossing the display boundary, without scanning a whole large API response.
+        val input = text.take(minOf(text.length.toLong(), maxChars.toLong() + (forms.firstOrNull()?.length ?: 0)).toInt())
+        return forms.fold(input) { acc, s -> acc.replace(s, "••••") }.take(maxChars)
+    }
 
     /**
      * [redact] for raw bytes (a response of any type): each form of a value is masked where it appears.

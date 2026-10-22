@@ -52,8 +52,11 @@ data class OrbitActionRow(
 
 @Dao
 interface OrbitTaskDao {
-    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') ORDER BY r.startedAt DESC LIMIT 200")
+    @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' ORDER BY r.startedAt DESC LIMIT 200")
     fun observeActivity(orbitId: String): Flow<List<OrbitActivityRow>>
+    /** A sent turn cannot be replayed; enrich only that completed run after its chat reply ends. */
+    @Query("UPDATE orbit_runs SET decision=:decision WHERE id=:runId AND generation=:generation AND owner=:owner AND state='COMPLETED' AND decision='" + OrbitRunEntity.IN_CHAT + "'")
+    suspend fun recordChatDecision(runId: String, generation: Long, owner: String, decision: String): Int
     @Query("SELECT a.id AS id, a.taskId AS taskId, t.title AS taskTitle, a.toolName AS toolName, a.state AS state, a.summary AS summary, a.updatedAt AS updatedAt FROM orbit_actions a INNER JOIN orbit_tasks t ON t.id = a.taskId WHERE t.orbitId = :orbitId ORDER BY a.updatedAt DESC LIMIT 200")
     fun observeOrbitActions(orbitId: String): Flow<List<OrbitActionRow>>
     @Query("SELECT * FROM orbit_notifications WHERE orbitId=:orbitId")
@@ -434,6 +437,10 @@ interface OrbitTaskDao {
     @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp ASC")
     suspend fun aiSaidAfter(chatId: String, after: Long): List<String>
 
+    /** Bound a registered turn by its terminal assistant timestamp, excluding later chat turns. */
+    @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after AND timestamp <= :through ORDER BY timestamp ASC")
+    suspend fun aiSaidThrough(chatId: String, after: Long, through: Long): List<String>
+
     @Query("SELECT * FROM orbit_runs WHERE taskId = :taskId AND state IN ('COMPLETED','FAILED') ORDER BY finishedAt DESC LIMIT 1")
     suspend fun lastFinishedRun(taskId: String): OrbitRunEntity?
 
@@ -618,7 +625,7 @@ interface OrbitTaskDao {
     suspend fun enqueueDue(taskId: String, now: Long): OrbitEventEntity? {
         val current = task(taskId)?.takeIf { it.state == "ACTIVE" } ?: return null
         pendingEvent(current.id, current.version)?.let { return it }
-        if (current.scheduleMode == "EVENT") return null
+        if (current.scheduleMode == "EVENT" || current.kind == "GEOFENCE") return null
         if (current.nextRunAt > now) return null
         val event = OrbitEventEntity("${current.id}:${current.version}:${current.nextRunAt}",
             current.id, current.version, current.nextRunAt, now)
@@ -635,6 +642,20 @@ interface OrbitTaskDao {
         // The completed run retains this key after the pending event is removed.
         if (eventRun(eventId) != null) return false
         return insertEvent(OrbitEventEntity(eventId, current.id, current.version, now, now)) != -1L
+    }
+
+    /** A stale boundary callback must never run an edited or resumed task definition. */
+    @Transaction
+    suspend fun enqueueGeofence(taskId: String, version: Long, requestId: String, now: Long): Boolean {
+        val current = task(taskId) ?: return false
+        if (current.kind != "GEOFENCE" || current.version != version || current.state != "ACTIVE") return false
+        if (current.goalId.isNotEmpty() && goal(current.goalId)?.state != "ACTIVE") return false
+        if (current.scheduleMode == "ONCE" && pendingEvent(taskId, version) != null) return false
+        // These are automatic events, so they obey quiet hours like time-based reminders.
+        // The manual prefix would bypass that policy.
+        val eventId = "$taskId:$version:geofence:$requestId"
+        if (eventRun(eventId) != null) return false
+        return insertEvent(OrbitEventEntity(eventId, taskId, version, now, now)) != -1L
     }
 
     @Transaction
@@ -731,7 +752,8 @@ interface OrbitTaskDao {
     @Transaction
     suspend fun complete(token: OrbitRunEntity, observation: String, message: String, error: String,
         nextRunAt: Long, bootId: String, now: Long, elapsed: Long, decision: String = "",
-        opportunityKey: String = "", expiresAt: Long = 0, priority: String = "regular", evidence: String = ""): Boolean {
+        opportunityKey: String = "", expiresAt: Long = 0, priority: String = "regular", evidence: String = "",
+        triggerFollowers: Boolean = true): Boolean {
         val current = currentLease(token, bootId, now, elapsed) ?: return false
         if (unresolvedActions(token.taskId).isNotEmpty()) return false
         val task = checkNotNull(task(current.taskId))
@@ -758,7 +780,7 @@ interface OrbitTaskDao {
         ))
         deleteEvent(current.eventId)
         // A check skipped because its source was not ready is not a success that relays to EVENT tasks.
-        if (error.isEmpty() && decision != OrbitRunEntity.SKIPPED) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
+        if (triggerFollowers && error.isEmpty() && decision != OrbitRunEntity.SKIPPED) subscribers(task.id).filter { it.orbitId == task.orbitId }.forEach { subscriber ->
             insertEvent(OrbitEventEntity(
                 "${subscriber.id}:${subscriber.version}:completed:${current.id}",
                 subscriber.id, subscriber.version, now, now, current.id))

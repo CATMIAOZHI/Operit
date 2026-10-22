@@ -436,6 +436,16 @@ class MessageProcessingDelegate(
         return chatRuntimes[chatKey(chatId)]?.responseStream
     }
 
+    /** Disk snapshots carry no stream, so reference forks must check the live segment here. */
+    suspend fun isStreamingMessage(chatId: String, timestamp: Long): Boolean {
+        val runtime = chatRuntimes[chatKey(chatId)] ?: return false
+        return runtime.transcriptMutex.withLock {
+            runtime.isLoading.value && runtime.streamingAiMessage?.let {
+                runtime.steeredTranscript.finalTimestamp(it.timestamp) == timestamp
+            } == true
+        }
+    }
+
     private fun resolveFinalContent(aiMessage: ChatMessage): String {
         val sharedStream = aiMessage.contentStream as? SharedStream<String>
         val replayChunks = sharedStream?.replayCache
@@ -870,6 +880,8 @@ class MessageProcessingDelegate(
             clearUserMessageDraft(chatId)
         }
         resetCurrentTurnToolInvocationCount(chatId)
+        // A task's terminal signal may still be pending after loading ended; never give it this turn's reasons.
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, turnOptions.turnId)
         chatRuntime.responseStream = null
         chatRuntime.streamingAiMessage = null
         chatRuntime.toolBoundarySnapshot = null
@@ -1853,6 +1865,10 @@ class MessageProcessingDelegate(
                     details = "chatId=$activeChatId, notifyTurnComplete=$shouldNotifyTurnComplete"
                 )
 
+                // cleanup permits another turn to clear the shared transcript before terminal bookkeeping.
+                val completedAssistantTimestamp = assistantMessageTimestampForTurn?.let {
+                    chatRuntime.steeredTranscript.finalTimestamp(it)
+                }
                 val cleanupRuntimeStartTime = messageTimingNow()
                 cleanupRuntimeAfterSend(chatId, chatRuntime)
                 logMessageTiming(
@@ -1918,9 +1934,7 @@ class MessageProcessingDelegate(
                                     turnId = turnId,
                                     chatId = activeChatId,
                                     assistantMessageTimestamp =
-                                        chatRuntime.steeredTranscript.finalTimestamp(
-                                            requireNotNull(assistantMessageTimestampForTurn)
-                                        ),
+                                        requireNotNull(completedAssistantTimestamp),
                                 )
                             else ->
                                 ChatTurnTerminalSignal.Failed(
@@ -1994,6 +2008,7 @@ class MessageProcessingDelegate(
         var shouldResetInputStateToIdle = false
         chatRuntime.sendJob = currentJob
         resetCurrentTurnToolInvocationCount(chatId)
+        com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, null)
         chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
         chatRuntime.isLoading.value = true
         updateGlobalLoadingState()

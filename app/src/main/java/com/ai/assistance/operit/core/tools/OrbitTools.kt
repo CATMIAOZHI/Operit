@@ -154,7 +154,10 @@ internal object OrbitTools {
         }.orEmpty()
         val firstTalk = com.ai.assistance.operit.features.orbit.OrbitOnboarding.hint(context, orbit, chatId, useEnglish)
             ?.let { "\n$it" }.orEmpty()
-        val runtime = "<orbit>\n$body$sideNote$firstTalk\n${controls.joinToString("\n")}\n</orbit>"
+        val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
+            com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)
+        }.orEmpty()
+        val runtime = "<orbit>\n$body$sideNote$firstTalk\n${controls.joinToString("\n")}\n</orbit>$forkReference"
         return PromptParts(handbook, runtime, identity, soul, alignment)
     }
 

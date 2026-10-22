@@ -438,6 +438,7 @@ dependencies {
     implementation(libs.androidx.appcompat)
     implementation(libs.material)
     implementation(libs.lifecycle.runtime.ktx)
+    implementation("androidx.browser:browser:1.8.0")
 
     // Kotlin Serialization
     implementation(libs.kotlinx.serialization)

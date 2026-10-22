@@ -79,9 +79,13 @@ data class OrbitSideChat(
     val createdAt: Long,
     val pinnedAt: Long = 0L,
     val archived: Boolean = false,
+    /** A reference only: inherited words are never inserted as new chat or memory rows. */
+    val forkOrigin: OrbitChatOrigin? = null,
 ) {
     val pinned: Boolean get() = pinnedAt > 0L
 }
+
+data class OrbitChatOrigin(val chatId: String, val messageId: Long)
 
 /** The side chats still in the menu, which the side chat limit counts. */
 val OrbitProfile.openSideChats: List<OrbitSideChat> get() = sideChats.filterNot { it.archived }
@@ -338,12 +342,12 @@ class OrbitPreferences private constructor(context: Context) {
         current()
     }
 
-    suspend fun addSideChat(orbitId: String, chatId: String, title: String) {
+    suspend fun addSideChat(orbitId: String, chatId: String, title: String, forkOrigin: OrbitChatOrigin? = null) {
         updateOrbits { orbits ->
             orbits.map {
                 if (it.id != orbitId) return@map it
                 check(it.canAddSideChat) { "Too many side chats" }
-                it.copy(sideChats = it.sideChats + OrbitSideChat(chatId, title, System.currentTimeMillis()),
+                it.copy(sideChats = it.sideChats + OrbitSideChat(chatId, title, System.currentTimeMillis(), forkOrigin = forkOrigin),
                     ownedChatIds = it.ownedChatIds + chatId)
             }
         }
@@ -549,6 +553,11 @@ class OrbitPreferences private constructor(context: Context) {
                                             it, side.optString("title"), side.optLong("createdAt"),
                                             pinnedAt = side.optLong("pinnedAt", 0L),
                                             archived = side.optBoolean("archived", false),
+                                            forkOrigin = side.optJSONObject("forkOrigin")?.let { origin ->
+                                                val source = origin.optString("chatId")
+                                                val message = origin.optLong("messageId")
+                                                if (source.isNotBlank() && message > 0) OrbitChatOrigin(source, message) else null
+                                            },
                                         )
                                     }
                                 }
@@ -577,6 +586,9 @@ class OrbitPreferences private constructor(context: Context) {
                             put("sideChats", JSONArray(orbit.sideChats.map {
                                 JSONObject().put("chatId", it.chatId).put("title", it.title).put("createdAt", it.createdAt)
                                     .put("pinnedAt", it.pinnedAt).put("archived", it.archived)
+                                    .apply { it.forkOrigin?.let { origin ->
+                                        put("forkOrigin", JSONObject().put("chatId", origin.chatId).put("messageId", origin.messageId))
+                                    } }
                             }))
                             put("browserSharesMainLogin", orbit.browserSharesMainLogin)
                         }

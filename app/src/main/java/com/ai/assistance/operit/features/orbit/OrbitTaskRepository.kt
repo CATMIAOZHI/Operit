@@ -38,13 +38,14 @@ class OrbitTaskRepository(private val context: Context) {
     suspend fun create(
         orbit: OrbitProfile, title: String, instruction: String, source: String,
         intervalMinutes: Int, notifyPolicy: String, requestId: String, kind: String = "URL_CHANGE",
-        scheduleMode: String = if (kind == "ASSIST") "ONCE" else "INTERVAL",
+        scheduleMode: String = if (kind in setOf("ASSIST", OrbitGeofence.KIND)) "ONCE" else "INTERVAL",
         goalId: String = "", triggerTaskId: String = "", sourceArtifactVersionId: String = "",
         runAt: Long? = null, dailyMinute: Int = 0, calendarRule: String = "",
         timeoutMinutes: Int = 0, chatId: String? = null, useSubagent: Boolean = false,
     ): OrbitTaskEntity {
         checkTaskFields(title, instruction, intervalMinutes, notifyPolicy, dailyMinute)
-        require(kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND)) { "kind must be URL_CHANGE, ASSIST or ${OrbitWatchSources.KIND}" }
+        require(kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND, OrbitGeofence.KIND)) { "kind must be URL_CHANGE, ASSIST, WATCH or GEOFENCE" }
+        checkLocationSchedule(kind, scheduleMode, runAt)
         val modes = setOf("ONCE", "INTERVAL", "EVENT", "DAILY") + OrbitCalendarSchedule.modes
         require(scheduleMode in modes) { "schedule_mode must be one of ${modes.joinToString()}" }
         checkTimeout(timeoutMinutes)
@@ -58,14 +59,15 @@ class OrbitTaskRepository(private val context: Context) {
         val id = UUID.nameUUIDFromBytes("${orbit.id}:$requestId".toByteArray()).toString()
         dao.task(id)?.let { return it }
         val now = System.currentTimeMillis()
-        val firstRun = when (scheduleMode) {
+        val firstRun = if (kind == OrbitGeofence.KIND) 0L else when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: now, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
             in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
             else -> now
         }
         val task = OrbitTaskEntity(id, orbit.id, reportChatId, title.trim(), instruction.trim(),
-            kind, source, intervalMinutes, dailyMinute, notifyPolicy, "ACTIVE", 1, firstRun,
+            kind, source, intervalMinutes, dailyMinute, notifyPolicy,
+            if (kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(source)) "PAUSED" else "ACTIVE", 1, firstRun,
             "", "", now, now, scheduleMode, goalId, triggerTaskId, sourceArtifactVersionId, rule, timeoutMinutes,
             useSubagent = useSubagent)
         OrbitExecutionGate.serialized {
@@ -106,13 +108,17 @@ class OrbitTaskRepository(private val context: Context) {
         val now = System.currentTimeMillis()
         val targetState = if (task.kind == "DAILY" && state == "CANCELLED") "PAUSED" else state
         val changed = OrbitExecutionGate.serialized {
+            if (state == "ACTIVE") check(OrbitHookChecks.passed(context, task)) {
+                context.getString(com.ai.assistance.operit.R.string.orbit_hook_needs_dry_run)
+            }
             if (state == "ACTIVE" && task.goalId.isNotEmpty()) check(dao.goal(task.goalId)?.state == "ACTIVE") {
                 "Resume the goal before continuing this task"
             }
             if (state == "ACTIVE") check(dao.unresolvedActions(taskId).isEmpty()) {
                 "Verify the unfinished operation in task details before resuming"
             }
-            val resumeAt = if (task.scheduleMode in timedModes && task.kind != "DAILY") nextAt(task, now) else now
+            val resumeAt = if (task.kind == OrbitGeofence.KIND ||
+                (task.scheduleMode in timedModes && task.kind != "DAILY")) nextAt(task, now) else now
             dao.replaceDefinition(task.copy(state = targetState, nextRunAt = if (state == "ACTIVE") resumeAt else nextAt(task, now),
                 updatedAt = now), task.version)
         }
@@ -130,11 +136,12 @@ class OrbitTaskRepository(private val context: Context) {
         calendarRule: String = task.calendarRule, timeoutMinutes: Int = task.timeoutMinutes,
         useSubagent: Boolean = task.useSubagent, scheduleMode: String = task.scheduleMode): Boolean {
         check(task.state != "CANCELLED") { "A cancelled task cannot be edited; create a new one" }
-        check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND)) { "This kind of task (${task.kind}) cannot be edited" }
+        check(task.kind in setOf("URL_CHANGE", "ASSIST", OrbitWatchSources.KIND, OrbitGeofence.KIND)) { "This kind of task (${task.kind}) cannot be edited" }
+        checkLocationSchedule(task.kind, scheduleMode, runAt)
         check(task.state !in setOf("WAITING_USER", "VERIFY")) {
             "Complete or cancel the pending user request before editing this task"
         }
-        if (scheduleMode != task.scheduleMode) {
+        if (scheduleMode != task.scheduleMode && task.kind != OrbitGeofence.KIND) {
             // Only a repeating task changes how it repeats; one-off and chained tasks keep theirs.
             val repeating = setOf("INTERVAL", "DAILY") + OrbitCalendarSchedule.modes
             require(task.scheduleMode in repeating && scheduleMode in repeating) {
@@ -164,7 +171,7 @@ class OrbitTaskRepository(private val context: Context) {
         // Nothing to save: leave the task, its run and its pending results as they are.
         if (!timingChanged && title == task.title && instruction == task.instruction && source == task.source &&
             notifyPolicy == task.notifyPolicy && timeoutMinutes == task.timeoutMinutes && useSubagent == task.useSubagent) return true
-        val nextRun = if (!timingChanged && source == task.source) task.nextRunAt else when (scheduleMode) {
+        val nextRun = if (task.kind == OrbitGeofence.KIND) 0L else if (!timingChanged && source == task.source) task.nextRunAt else when (scheduleMode) {
             "ONCE" -> maxOf(runAt ?: task.nextRunAt, now)
             "DAILY" -> now + OrbitCompanion.delayUntilNextCheckIn(now, dailyMinute)
             in OrbitCalendarSchedule.modes -> OrbitCalendarSchedule.next(scheduleMode, rule, dailyMinute, now)
@@ -174,6 +181,8 @@ class OrbitTaskRepository(private val context: Context) {
         }
         val changed = OrbitExecutionGate.serialized {
             dao.replaceDefinition(task.copy(title = title, instruction = instruction, source = source,
+                state = if (task.kind == OrbitWatchSources.KIND && OrbitWatchSources.isScript(source) &&
+                    source != task.source) "PAUSED" else task.state,
                 intervalMinutes = intervalMinutes, notifyPolicy = notifyPolicy, nextRunAt = nextRun,
                 dailyMinute = dailyMinute, calendarRule = rule, timeoutMinutes = timeoutMinutes,
                 useSubagent = useSubagent, scheduleMode = scheduleMode,
@@ -186,6 +195,26 @@ class OrbitTaskRepository(private val context: Context) {
             OrbitTaskScheduler.reschedule(context)
         }
         return changed
+    }
+
+    /** Try the pinned script without creating an event, a run, or a chat wake. */
+    suspend fun dryRun(task: OrbitTaskEntity): OrbitWatchSources.ScriptResult {
+        require(OrbitHookChecks.needed(task)) { "dry_run is only for WATCH scripts; other watch sources do not need it" }
+        check(task.state == "PAUSED") { "Pause this hook before dry_run" }
+        OrbitExecutionGate.serialized {
+            check(dao.task(task.id)?.let { it.version == task.version && it.state == "PAUSED" } == true) {
+                "The task changed; read detail and retry"
+            }
+            OrbitHookChecks.forget(context, task.id)
+        }
+        val result = OrbitWatchSources.readScript(context, task.orbitId, task.source, dryRun = true)
+        OrbitExecutionGate.serialized {
+            check(dao.task(task.id)?.let { it.version == task.version && it.state == "PAUSED" } == true) {
+                "The task changed during dry_run; read detail and retry"
+            }
+            OrbitHookChecks.remember(context, task)
+        }
+        return result
     }
 
     suspend fun resolveAction(orbitId: String, taskId: String, actionId: String, completed: Boolean) {
@@ -280,7 +309,8 @@ class OrbitTaskRepository(private val context: Context) {
 
         /** A WATCH task names what it watches; other tasks may name a web page. */
         fun checkSource(kind: String, source: String) {
-            if (kind == OrbitWatchSources.KIND) OrbitWatchSources.validate(source)
+            if (kind == OrbitGeofence.KIND) OrbitGeofenceDefinition.parse(source)
+            else if (kind == OrbitWatchSources.KIND) OrbitWatchSources.validate(source)
             else if (kind == "ASSIST" && OrbitRoutines.isRoutineSource(source)) return
             else if (kind == "URL_CHANGE" || source.isNotBlank()) validateSource(source)
         }
@@ -296,8 +326,15 @@ class OrbitTaskRepository(private val context: Context) {
                 uri.userInfo == null && uri.fragment == null) { "Use an http(s) URL without credentials or a fragment" }
         }
 
+        private fun checkLocationSchedule(kind: String, mode: String, runAt: Long?) {
+            if (kind == OrbitGeofence.KIND) require(mode in setOf("ONCE", "INTERVAL") && runAt == null) {
+                "GEOFENCE uses ONCE (one arrival/departure) or INTERVAL (every arrival/departure), without run_at"
+            }
+        }
+
         fun nextAt(task: OrbitTaskEntity, now: Long): Long =
-            if (task.kind == "DAILY" || task.scheduleMode == "DAILY") now + OrbitCompanion.delayUntilNextCheckIn(now, task.dailyMinute)
+            if (task.kind == OrbitGeofence.KIND) 0L
+            else if (task.kind == "DAILY" || task.scheduleMode == "DAILY") now + OrbitCompanion.delayUntilNextCheckIn(now, task.dailyMinute)
             else if (task.scheduleMode in OrbitCalendarSchedule.modes)
                 OrbitCalendarSchedule.next(task.scheduleMode, task.calendarRule, task.dailyMinute, now)
             else if (task.scheduleMode == "ONCE") maxOf(task.nextRunAt, now)

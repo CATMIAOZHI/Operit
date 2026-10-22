@@ -94,6 +94,7 @@ internal class WebSessionBrowserHost(
     private val webViewHost = WebSessionWebViewHost()
 
     private var rootView: DeceptiveMinimizedLayout? = null
+    private var backgroundViews: FrameLayout? = null
     private var composeView: ComposeView? = null
     private var overlayParams: WindowManager.LayoutParams? = null
     private var overlayLifecycleOwner: WebSessionOverlayLifecycleOwner? = null
@@ -132,6 +133,18 @@ internal class WebSessionBrowserHost(
                 setOnClickListener {}
             }
         installViewTreeOwners(root, lifecycleOwner)
+        // Keep task pages attached and laid out for JavaScript, snapshots and native taps, without
+        // replacing the page the user is watching. The three-task/two-tab limits bound this cost.
+        val background = FrameLayout(appContext).apply {
+            // Off-screen/GONE views stop Chromium rendering, leaving screenshots stale. The
+            // pages stay faintly drawn underneath the opaque browser surface, like minimized mode.
+            alpha = 0.01f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO_HIDE_DESCENDANTS
+            descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
+        }
+        root.addView(background, FrameLayout.LayoutParams(
+            appContext.resources.displayMetrics.widthPixels, appContext.resources.displayMetrics.heightPixels))
+        backgroundViews = background
 
         val compose =
             ComposeView(appContext).apply {
@@ -151,13 +164,8 @@ internal class WebSessionBrowserHost(
                     androidx.compose.runtime.SideEffect {
                         setWatchLocked(locked)
                         root.onBackKey = watch?.takeIf { !it.controlling }?.onClose
-                        val active = hostState.browserState.activeSessionId
-                        if (watchWork != null && active != null && watchWork.sessionId != active) {
-                            // A tab the page opened (or the user switched to) while being watched stays watched.
-                            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.follow(watchWork.talkChatId, active)
-                        }
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
-                        lastWatchTalk = watchWork?.talkChatId
+                        lastWatchTalk = watchWork?.executorChatId
                         if (ended != null && isExpanded) {
                             // The work is over: close the watch screen rather than leave an unlocked page behind.
                             root.post { callbacks.onMinimize() }
@@ -166,7 +174,10 @@ internal class WebSessionBrowserHost(
 
                     WebSessionFloatingTheme {
                         WebSessionBrowserScreen(
-                            hostState = hostState,
+                            hostState = if (watchWork == null) hostState else hostState.copy(browserState =
+                                hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->
+                                    com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions[tab.sessionId]?.browserTaskId == watchWork.executorChatId
+                                })),
                             watch = watch,
                             bookmarks = bookmarks,
                             globalHistory = history,
@@ -248,6 +259,7 @@ internal class WebSessionBrowserHost(
         overlayLifecycleOwner = null
         composeView = null
         rootView = null
+        backgroundViews = null
         overlayParams = null
         indicatorParams = null
         webViewHost.clear()
@@ -277,6 +289,12 @@ internal class WebSessionBrowserHost(
     }
 
     fun attachActiveWebView(webView: WebView?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
+        webViewHost.currentWebView()?.takeIf { it !== webView }?.let { previous ->
+            com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+                .firstOrNull { it.webView === previous && it.browserTaskId != null }?.let {
+                    parkWebView(previous, it.viewportWidthPx, it.viewportHeightPx)
+                }
+        }
         updateHostState {
             if (it.viewportWidthPx == viewportWidth && it.viewportHeightPx == viewportHeight) {
                 it
@@ -288,6 +306,33 @@ internal class WebSessionBrowserHost(
         applyWatchAccessibility(webView)
     }
 
+    fun attachBackgroundWebView(webView: WebView, width: Int?, height: Int?) {
+        if (webViewHost.currentWebView() !== webView) parkWebView(webView, width, height)
+    }
+
+    private fun parkWebView(webView: WebView, width: Int?, height: Int?) {
+        val target = backgroundViews ?: return
+        if (webView.parent !== target) {
+            (webView.parent as? ViewGroup)?.removeView(webView)
+            target.addView(webView)
+        }
+        val density = appContext.resources.displayMetrics.density
+        val w = width?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.widthPixels
+        val h = height?.let { (it * density).roundToInt() } ?: appContext.resources.displayMetrics.heightPixels
+        webView.layoutParams = FrameLayout.LayoutParams(w, h)
+        val scale = minOf(appContext.resources.displayMetrics.widthPixels.toFloat() / w,
+            appContext.resources.displayMetrics.heightPixels.toFloat() / h)
+        webView.pivotX = 0f
+        webView.pivotY = 0f
+        webView.scaleX = scale
+        webView.scaleY = scale
+        webView.translationX = 0f
+        webView.translationY = 0f
+        webView.onResume()
+        webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
+            View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
+        webView.layout(0, 0, w, h)
+    }
     fun showTextSelectionActionsOverlay(anchorX: Double, anchorY: Double) {
         if (!isExpanded) {
             return
@@ -368,6 +413,8 @@ internal class WebSessionBrowserHost(
             hideTextSelectionActionsOverlay()
             // Put away, the browser is no longer Orbit's watch screen; the card opens it again.
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.unwatch()
+        } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
+            com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watchSession(hostState.browserState.activeSessionId)
         }
 
         isExpanded = expanded
@@ -471,10 +518,10 @@ internal class WebSessionBrowserHost(
             orbitName = work.orbitName,
             controlling = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.USER,
             waiting = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.WAITING,
-            onClose = { watch.close(work.talkChatId) },
-            onTakeOver = { watch.takeOver(work.talkChatId) },
-            onHandBack = { watch.handBack(work.talkChatId) },
-            onStop = { watch.stop(work.talkChatId) },
+            onClose = { watch.close(work.executorChatId) },
+            onTakeOver = { watch.takeOver(work.executorChatId) },
+            onHandBack = { watch.handBack(work.executorChatId) },
+            onStop = { watch.stop(work.executorChatId) },
         )
     }
 

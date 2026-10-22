@@ -11,6 +11,8 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitVault
+import com.ai.assistance.operit.features.orbit.OrbitOAuth
+import com.ai.assistance.operit.features.orbit.OrbitOAuthProtocol
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
 import okhttp3.OkHttpClient
@@ -30,13 +32,19 @@ internal object OrbitVaultTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "密码保险箱：保存和使用登录密码、API 密钥。你永远看不到保存的值。",
+        description = "密码保险箱：保存和使用登录密码、API 密钥、公开客户端 OAuth 登录。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/list/fill/http_request/terminal/env/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/list/fill/http_request/terminal/env/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
-            ToolParameterSchema("provider", description = "request_api_key：服务名，比如 OpenWeather", required = false),
-            ToolParameterSchema("api_hosts", description = "request_api_key：这个密钥只能发往的主机，逗号分隔，比如 api.openweathermap.org。给了 env_name 时可以不填", required = false),
+            ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather", required = false),
+            ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。API 密钥给了 env_name 时可以不填", required = false),
+            ToolParameterSchema("authorization_url", description = "request_oauth：服务商官方 https 授权地址，可含 access_type 等公开参数", required = false),
+            ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址", required = false),
+            ToolParameterSchema("client_id", description = "request_oauth：已注册的公开客户端 ID；回调 URI 必须登记为 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2", required = false),
+            ToolParameterSchema("scope", description = "request_oauth：最少需要的授权范围，空格分隔", required = false),
+            ToolParameterSchema("oauth_flow", description = "request_oauth：只支持 authorization_code_pkce（默认）；device flow 不支持，改用 request_api_key", required = false),
+            ToolParameterSchema("client_auth", description = "request_oauth：只支持 none（默认）。需要 client_secret 的服务不支持，改用 request_api_key，绝不向用户要 client_secret", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
             ToolParameterSchema("env_name", description = "request_api_key：可选，代理做不到时（要签名、SDK、多把密钥）请求把密钥载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许", required = false),
             ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填，一句话告诉用户为什么代理不够用", required = false),
@@ -54,7 +62,8 @@ internal object OrbitVaultTools {
   - 需要登录或 API 密钥时，先 list 看有没有存过；没有就用 request_login / request_api_key。要注册新账号或重设密码时用 request_new_password，用户在卡片里设一个新密码（输两遍，也可以一键生成）。这会立刻在聊天里放一张安全卡片，然后马上返回，不会等用户。用户点卡片、在弹出的输入框里填，值直接存进保险箱，不经过聊天。只能在和用户的聊天里用。
   - 放完卡片就结束这一轮，可以简单说一句“卡片在下面，填好我接着弄”。用户保存后你会收到一条隐藏通知，再接着做；用户不填或关掉卡片，你什么都不会收到，不要追问，也不要为同一个网站再放一张卡（再要会返回 already_sent，指向已经放的那张）。
   - request_api_key 之前，先从服务商的官方文档查清两件事：认证方式和 API 主机名（api_hosts），再定 placement。卡片建好后 placement 改不了，填错只能重新放一张让用户再填。保存时不会检查密钥对不对，第一次真实调用才知道；返回 401/403 时先查请求有没有带上密钥、placement 对不对，再怀疑密钥本身。
-  - 不支持的认证方式要直说并讲原因，不要硬套最接近的一种：需要签名的请求（如 AWS 签名）、一次要多个密钥、用账号密码做 API 认证、OAuth 授权。
+  - OAuth 用 request_oauth：先查服务商官方文档，确认公开客户端支持授权码 + PKCE S256、不需要 client_secret，并允许登记回调 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2。传 provider、authorization_url、token_url、client_id、scope、api_hosts。卡片马上返回，用户在系统浏览器授权，token 由 App 直接存保险箱，成功后收到隐藏通知；取消不通知。用 http_request 调 API，过期且有 refresh_token 时 App 自动刷新。OAuth 暂不支持 terminal/env。不能保证每家服务都支持；要 client_secret、device flow 或不接受此回调的服务，明确说明做不了，改用 request_api_key。不要索要或伪造客户端密钥，也不要在 Orbit 浏览器里走 OAuth。
+  - 不支持的认证方式要直说并讲原因，不要硬套最接近的一种：需要签名的请求（如 AWS 签名）、一次要多个密钥、用账号密码做 API 认证。
   - 要签名的请求（阿里云、AWS）、只认环境变量的 SDK、一次要两把密钥（每把各放一张卡）这类代理做不到的情况，可以在 request_api_key 里加 env_name 和 env_reason，请用户允许把密钥载入终端。用户打开了开关，保存后才能用 env；没打开就只能走代理，或者直说做不到。能用代理时不要要 env_name。
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
@@ -74,12 +83,24 @@ internal object OrbitVaultTools {
             suspend fun entry() = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == arg("credential_id") }
                 ?: error("No vault entry with that credential_id; use list")
             val result: Any = when (arg("action")) {
-                "request_login", "request_new_password", "request_api_key" -> {
+                "request_login", "request_new_password", "request_api_key", "request_oauth" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
                         "The secure entry card only works in a chat with the user; ask the user in chat"
                     }
                     val chatId = caller.orEmpty()
-                    val request = if (arg("action") != "request_api_key") {
+                    val request = if (arg("action") == "request_oauth") {
+                        require(arg("oauth_flow").ifEmpty { "authorization_code_pkce" } == "authorization_code_pkce" &&
+                            arg("client_auth").ifEmpty { "none" } == "none" && arg("client_secret").isEmpty()) {
+                            OrbitOAuthProtocol.UNSUPPORTED
+                        }
+                        val provider = arg("provider").take(60)
+                        require(provider.isNotEmpty()) { "Missing provider" }
+                        OrbitVault.Request(orbit.id, chatId, OrbitVault.OAUTH, provider, "", "",
+                            arg("api_hosts").split(',', ' ', '\n').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct(),
+                            "bearer", requestedAt = System.currentTimeMillis(), authorizationUrl = arg("authorization_url"),
+                            tokenUrl = arg("token_url"), clientId = arg("client_id"), scope = arg("scope"))
+                            .also { OrbitOAuthProtocol.validate(it) }
+                    } else if (arg("action") != "request_api_key") {
                         val url = arg("page_url")
                         val host = OrbitVault.httpsHost(url) ?: error("page_url must be an https address")
                         val fresh = arg("action") == "request_new_password"
@@ -111,7 +132,8 @@ internal object OrbitVaultTools {
                     }
                     // A key card asked again with other hosts or placement corrects the first one, so it is a new card.
                     val key = listOf(chatId, request.kind, request.newPassword, request.site.lowercase(),
-                        request.apiHosts.sorted().joinToString(","), request.placement, request.envName).joinToString("|")
+                        request.apiHosts.sorted().joinToString(","), request.placement, request.envName,
+                        request.authorizationUrl, request.tokenUrl, request.clientId, request.scope).joinToString("|")
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     // The card goes into the chat and the turn moves on; a save sends a hidden note.
@@ -120,7 +142,8 @@ internal object OrbitVaultTools {
                             .put("note", "A card for this site is already in the chat above. Do not send another; " +
                                 "the user fills that one in whenever they like. End this turn now.")
                     } else JSONObject().put("card_sent", true).put("site", request.site)
-                        .put("note", "A secure card is now in the chat. The user fills it in whenever they like; " +
+                        .apply { if (request.kind == OrbitVault.OAUTH) put("redirect_uri", OrbitOAuth.redirectUri(context)) }
+                        .put("note", "A secure card is now in the chat. The user fills it in or authorizes in their browser whenever they like; " +
                             "you get a hidden note once it is saved, and nothing if they skip it. End this turn now. " +
                             "Do not ask for the value in chat and do not send another card for this site.")
                         .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
@@ -132,12 +155,20 @@ internal object OrbitVaultTools {
                         .filter { domain.isEmpty() || it.site.contains(domain) || it.apiHosts.any { h -> h.contains(domain) } }
                         .map {
                             JSONObject().put("credential_id", it.id).put("kind", it.kind).put("site", it.site)
-                                .put("fields", JSONArray(if (it.kind == OrbitVault.LOGIN) listOf("username", "password") else listOf("api_key")))
+                                .put("fields", JSONArray(when (it.kind) {
+                                    OrbitVault.LOGIN -> listOf("username", "password")
+                                    OrbitVault.OAUTH -> listOf("oauth_login")
+                                    else -> listOf("api_key")
+                                }))
                                 .put("username", OrbitVault.masked(it.username))
-                                .apply { if (it.kind == OrbitVault.API_KEY) put("api_hosts", JSONArray(it.apiHosts)).put("placement", it.placement) }
+                                .apply { if (it.kind != OrbitVault.LOGIN) put("api_hosts", JSONArray(it.apiHosts)).put("placement", it.placement) }
+                                .apply { it.oauth?.let { auth ->
+                                    put("expires_at", auth.expiresAt).put("scope", auth.scope)
+                                        .put("can_refresh", auth.refreshToken.isNotEmpty())
+                                } }
                                 .apply { if (it.envName.isNotEmpty()) put("env_name", it.envName) }
                                 // A password set from a new-password card, which the site may not have taken yet.
-                                .apply { if (it.card != 0L) put("new_password", true) }
+                                .apply { if (it.kind == OrbitVault.LOGIN && it.card != 0L) put("new_password", true) }
                                 .put("saved_at", it.savedAt)
                         })
                 }
@@ -153,7 +184,17 @@ internal object OrbitVaultTools {
                     return@runBlockingIoPreservingToolRuntimeContext ToolGetter.getBrowserSessionTools(context)
                         .typeVaultValue(NAME, ref, value, e.site, arg("submit") == "true")
                 }
-                "http_request" -> request(entry(), arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
+                "http_request" -> {
+                    val e = OrbitVault.forHttp(context, orbit.id, arg("credential_id"))
+                    fun send(saved: OrbitVault.Entry) =
+                        request(saved, arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
+                    val response = send(e)
+                    // Retry only a definite authentication rejection, once; never a transport failure.
+                    if (response.optInt("status") == 401 && e.kind == OrbitVault.OAUTH &&
+                        !e.oauth?.refreshToken.isNullOrEmpty()) {
+                        send(OrbitVault.forHttp(context, orbit.id, e.id, rejectedToken = e.secret))
+                    } else response
+                }
                 "terminal" -> terminal(context, orbit.id, entry())
                 "env" -> {
                     val e = entry()
@@ -177,7 +218,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request, terminal, env or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, list, fill, http_request, terminal, env or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -195,7 +236,7 @@ internal object OrbitVaultTools {
 
     /** A surrogate and the loopback proxy for using an API key from terminal scripts; see [OrbitVaultBroker]. */
     private fun terminal(context: Context, orbitId: String, e: OrbitVault.Entry): JSONObject {
-        check(e.kind == OrbitVault.API_KEY) { "terminal only works with a saved API key; logins are filled in the browser with fill" }
+        check(e.kind == OrbitVault.API_KEY) { "terminal only works with a saved API key; OAuth uses http_request and logins use fill" }
         check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
         val base = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.base(context)
         val surrogate = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.surrogate(context, orbitId, e)
@@ -217,12 +258,12 @@ internal object OrbitVaultTools {
     }
 
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
-        check(e.kind == OrbitVault.API_KEY) { "http_request only works with a saved API key" }
+        check(e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.OAUTH) { "http_request only works with a saved API key or OAuth login" }
         check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
         require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported method $method; use GET, POST, PUT, PATCH or DELETE" }
         var parsed = url.toHttpUrlOrNull() ?: error("url \"${url.take(200)}\" is not a valid https address")
         require(parsed.isHttps) { "url must be https" }
-        require(e.apiHosts.any { OrbitVault.matchesHost(parsed.host, it) }) { "This key may only be sent to ${e.apiHosts.joinToString()}" }
+        require(OrbitVault.permitsApiHost(e.kind, parsed.host, e.apiHosts)) { "This credential may only be sent to ${e.apiHosts.joinToString()}" }
         val builder = Request.Builder()
         var contentType = "application/json"
         if (headers.isNotBlank()) {
@@ -241,10 +282,12 @@ internal object OrbitVaultTools {
             else (body ?: "").toRequestBody(contentType.toMediaTypeOrNull())
         client.newCall(builder.url(parsed).method(method, requestBody).build()).execute().use { response ->
             val text = response.body?.string().orEmpty()
-            val secrets = listOf(e.secret)
+            val secrets = listOf(e.secret, e.oauth?.refreshToken.orEmpty())
             val code = response.code
             val next = when {
                 code in 200..299 -> "The request worked."
+                (code == 401 || code == 403) && e.kind == OrbitVault.OAUTH ->
+                    "The service refused this OAuth login. Check the API and scope. If expired or revoked, use request_oauth to reconnect."
                 code == 401 || code == 403 -> "The service refused the key. First check the url is the right API and placement " +
                     "(${e.placement}) matches the service docs; if those are right, the key itself may be wrong or lack access. " +
                     "A wrong placement can only be fixed with a new request_api_key card."
@@ -255,9 +298,9 @@ internal object OrbitVaultTools {
             }
             return JSONObject().put("status", code).put("http_ok", code in 200..299)
                 .put("placement", e.placement).put("host", parsed.host).put("next_step", next)
-                .put("content_type", response.header("Content-Type").orEmpty())
+                .put("content_type", OrbitVault.redact(response.header("Content-Type").orEmpty(), secrets))
                 .apply { response.header("Location")?.let { put("redirect", OrbitVault.redact(it, secrets)) } }
-                .put("body", OrbitVault.redact(text.take(MAX_RESPONSE), secrets))
+                .put("body", OrbitVault.redact(text, secrets, MAX_RESPONSE))
                 .put("truncated", text.length > MAX_RESPONSE)
                 .apply { if (text.length > MAX_RESPONSE) put("body_chars", text.length) }
         }
