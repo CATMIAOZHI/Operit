@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.chat.components
 
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -62,7 +63,7 @@ fun currentOrbitName(): String = LocalOrbitName.current.ifBlank { androidx.compo
 const val ORBIT_CARD_FENCE = "orbit-card"
 
 /** Emoji reactions Orbit put on the user's messages in this chat, by message time. */
-val LocalOrbitReactions = compositionLocalOf<Map<Long, String>> { emptyMap() }
+val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
 
 /**
  * True in Orbit's developer view: rows the Orbit chat never shows (tapback notices, replies that
@@ -113,10 +114,95 @@ fun OrbitHiddenUserRow(content: String) {
     }
 }
 
-/** The user's own reactions on Orbit's messages and how to change them; null outside Orbit. */
-class OrbitUserReactions(val byMessage: Map<Long, String>, val toggle: (timestamp: Long, emoji: String) -> Unit)
+/**
+ * The user's own reactions on Orbit's bubbles and how to change them; null outside Orbit. A key
+ * is a message time for its words, or a card's [OrbitPiece.key]; [toggle] gets the card's
+ * [OrbitPiece.summary] as what Orbit hears, or null to read the message's words.
+ */
+class OrbitUserReactions(val byMessage: Map<String, String>, val toggle: (key: String, emoji: String, said: String?) -> Unit)
 
 val LocalOrbitUserReactions = compositionLocalOf<OrbitUserReactions?> { null }
+
+/**
+ * One bubble of an Orbit reply. Its words share the message's key ([key] is its time); each card
+ * and Dynamic UI card is a bubble of its own that can be liked, reacted to and replied to alone.
+ */
+data class OrbitPiece(
+    val content: String,
+    val key: String,
+    /** For a card: what it is, for a reply quote or a reaction notice. Null for words. */
+    val summary: String?,
+    /** Words: the last words bubble shows the message's reaction. */
+    val showsBadge: Boolean,
+    /** For a Dynamic UI card: which one of its message it is, so each keeps its own state. */
+    val uiIndex: Int? = null,
+    /** A reply with no words: its first card also shows a reaction given to the whole message. */
+    val fallbackBadgeKey: String? = null,
+) {
+    /**
+     * The key this bubble's reaction is kept under: the whole message's older reaction while that
+     * is all there is, so it is shown, changed and removed in one place; otherwise its own [key].
+     */
+    fun reactionKey(byMessage: Map<String, String>?): String =
+        fallbackBadgeKey?.takeIf { byMessage?.get(key) == null && byMessage?.get(it) != null } ?: key
+}
+
+/**
+ * What the long-press, double tap and swipe on one bubble do; given by the message row, so each
+ * bubble of a reply acts on itself. Null outside Orbit or while selecting messages.
+ */
+class OrbitPieceActions(
+    val like: ((OrbitPiece) -> Unit)?,
+    val menu: ((OrbitPiece) -> Unit)?,
+    val reply: ((OrbitPiece) -> Unit)?,
+)
+
+val LocalOrbitPieceActions = compositionLocalOf<OrbitPieceActions?> { null }
+
+/** One bubble with its own gestures and its own reaction under it. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+fun OrbitPieceFrame(piece: OrbitPiece, content: @Composable () -> Unit) {
+    // Every Dynamic UI card knows which one of its message it is, gestures or not (also while
+    // Orbit is still writing), so its state never moves to another card.
+    androidx.compose.runtime.CompositionLocalProvider(
+        com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiBlockIndex provides piece.uiIndex,
+    ) { OrbitPieceGestures(piece, content) }
+}
+
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
+@Composable
+private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Unit) {
+    val actions = LocalOrbitPieceActions.current
+    if (actions == null) {
+        content()
+        return
+    }
+    val like = actions.like?.let { { it(piece) } }
+    val menu = actions.menu?.let { { it(piece) } }
+    val source = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
+    OrbitSwipeToReply(enabled = actions.reply != null, onReply = { actions.reply?.invoke(piece) }) {
+        Column(Modifier.fillMaxWidth()) {
+            Box(
+                Modifier.fillMaxWidth().combinedClickable(
+                    interactionSource = source, indication = null,
+                    onClick = {}, onLongClick = menu, onDoubleClick = like,
+                ),
+            ) {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalOrbitMessageGestures provides OrbitMessageGestures(like, menu),
+                ) {
+                    content()
+                }
+            }
+            val byMessage = LocalOrbitUserReactions.current?.byMessage
+            val reaction = if (piece.showsBadge || piece.fallbackBadgeKey != null) byMessage?.get(piece.reactionKey(byMessage)) else null
+            if (reaction != null) {
+                ReactionBadge(reaction, stringResource(R.string.orbit_user_reaction_label, reaction), Alignment.CenterStart, start = 16.dp)
+            }
+        }
+    }
+}
 
 /**
  * The message's own double-tap (like) and long-press (menu), for a card inside it that takes
@@ -189,6 +275,62 @@ object OrbitSpeech {
         if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n")) return listOf(shown)
         val (parts, cards) = bubbles(shown)
         return parts + cards.map { "```$ORBIT_CARD_FENCE\n$it\n```" }
+    }
+
+    // A whole Dynamic UI card, which becomes a bubble of its own.
+    private val uiFence = Regex("(?m)^```a2ui(?:-ref)?[^\\n]*\\n[\\s\\S]*?\\n```[ \\t]*$")
+
+    /**
+     * Which Dynamic UI card of an Orbit message [source] is, counted as [pieceList] counts them, for
+     * a card drawn from the whole message (the developer view, or while Orbit is still writing) so
+     * it keeps the state it has in its own bubble. [earlier] is how many cards with the same content
+     * come before it. Null if it is not there.
+     */
+    fun uiIndexOf(content: String, source: String, earlier: Int = 0): Int? {
+        val wanted = source.trim()
+        var left = earlier
+        uiFence.findAll(of(content)).forEachIndexed { i, m ->
+            val body = m.value.lines().drop(1).let { if (it.lastOrNull()?.trim() == "```") it.dropLast(1) else it }
+            if (body.joinToString("\n").trim() == wanted && left-- == 0) return i
+        }
+        return null
+    }
+
+    /**
+     * [pieces] with what each bubble is: the words (split at message breaks and around Dynamic UI
+     * cards), each Dynamic UI card, then each tool card. [timestamp] is the message's.
+     */
+    fun pieceList(shown: String, timestamp: Long, english: Boolean): List<OrbitPiece> {
+        val whole = timestamp.toString()
+        if (!shown.contains("message_break", ignoreCase = true) && !shown.contains("```$ORBIT_CARD_FENCE\n") &&
+            !shown.contains("```a2ui")) return listOf(OrbitPiece(shown, whole, null, true))
+        val (parts, cards) = bubbles(shown)
+        val out = mutableListOf<OrbitPiece>()
+        var ui = 0
+        parts.forEach { part ->
+            var at = 0
+            fun words(text: String) { text.trim().takeIf { it.isNotEmpty() }?.let { out += OrbitPiece(it, whole, null, false) } }
+            uiFence.findAll(part).forEach { m ->
+                words(part.substring(at, m.range.first))
+                val n = ui++
+                out += OrbitPiece(m.value, com.ai.assistance.operit.features.orbit.OrbitReactions.pieceKey("ui", timestamp, n),
+                    if (english) "[Interactive card]" else "[交互卡片]", true, uiIndex = n)
+                at = m.range.last + 1
+            }
+            words(part.substring(at))
+        }
+        // The message's own reaction sits under its last words.
+        out.indexOfLast { it.summary == null }.takeIf { it >= 0 }?.let { out[it] = out[it].copy(showsBadge = true) }
+        cards.forEachIndexed { i, card ->
+            val key = runCatching { org.json.JSONObject(card).optString(com.ai.assistance.operit.features.orbit.OrbitChatCards.PIECE_KEY) }
+                .getOrNull()?.takeIf { it.isNotEmpty() }
+                ?: com.ai.assistance.operit.features.orbit.OrbitReactions.pieceKey("card", timestamp, i)
+            out += OrbitPiece("```$ORBIT_CARD_FENCE\n$card\n```", key,
+                com.ai.assistance.operit.features.orbit.OrbitChatCards.summary(card, english), true)
+        }
+        // A reaction given to the whole message before its cards were bubbles of their own.
+        if (out.none { it.summary == null } && out.isNotEmpty()) out[0] = out[0].copy(fallbackBadgeKey = whole)
+        return out
     }
 
     private fun clean(content: String): String {
@@ -266,7 +408,11 @@ object OrbitSpeech {
                 continue
             }
             val (speech, cards) = splitCards(of(message.content))
-            pending += cards
+            // Each card remembers the message it came from, so it keeps its reactions once moved.
+            pending += cards.mapIndexed { i, card ->
+                com.ai.assistance.operit.features.orbit.OrbitChatCards.withPieceKey(card,
+                    com.ai.assistance.operit.features.orbit.OrbitReactions.pieceKey("card", message.timestamp, i))
+            }
             lastAi = out.size
             out += message.copy(content = speech, contentStream = null)
         }
@@ -372,7 +518,7 @@ fun rememberOrbitLiveSpeech(message: ChatMessage?): androidx.compose.runtime.Sta
 /** One of Orbit's messages with the user's tapback, if any, tucked under the bubble's corner. */
 @Composable
 fun OrbitReactedAiMessage(timestamp: Long, content: @Composable () -> Unit) {
-    val reaction = LocalOrbitUserReactions.current?.byMessage?.get(timestamp)
+    val reaction = LocalOrbitUserReactions.current?.byMessage?.get(timestamp.toString())
     if (reaction == null) {
         content()
         return
@@ -409,7 +555,7 @@ private fun ReactionBadge(reaction: String, label: String, alignment: Alignment,
 /** A user's message with Orbit's reaction, if any, tucked under the bubble's corner like a chat app. */
 @Composable
 fun OrbitReactedUserMessage(timestamp: Long, content: @Composable () -> Unit) {
-    val reaction = LocalOrbitReactions.current[timestamp]
+    val reaction = LocalOrbitReactions.current[timestamp.toString()]
     if (reaction == null) {
         content()
         return

@@ -41,6 +41,11 @@ val LocalDynamicUiOwner = staticCompositionLocalOf<DynamicUiOwner?> { null }
 val LocalDynamicUiSubmit = staticCompositionLocalOf<((DynamicUiOwner, String) -> Boolean)?> { null }
 /** Solid color the card is drawn on (a plain chat bubble); unspecified for images, glass or no bubble. */
 val LocalDynamicUiBackdrop = staticCompositionLocalOf { Color.Unspecified }
+/**
+ * Which Dynamic UI card of its message this is, when the message is drawn in pieces and each card
+ * is rendered alone; null means the card's place in the text it is rendered from.
+ */
+val LocalDynamicUiBlockIndex = staticCompositionLocalOf<Int?> { null }
 
 @Composable
 fun DynamicUiCard(source: String, closed: Boolean, streaming: Boolean, blockIndex: Int, ink: Color = Color.Unspecified) {

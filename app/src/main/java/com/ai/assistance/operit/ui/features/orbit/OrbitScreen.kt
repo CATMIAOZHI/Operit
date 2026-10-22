@@ -385,14 +385,14 @@ private fun OrbitChatPage(
     }.collectAsState(initial = emptyMap())
     val reactionScope = rememberCoroutineScope()
     val userReactions = remember(userReactionMap, currentChatId) {
-        com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { timestamp, emoji ->
+        com.ai.assistance.operit.ui.features.chat.components.OrbitUserReactions(userReactionMap) { key, emoji, said ->
             // Taking a tapback off says nothing to Orbit; putting one on lets it decide what to do.
-            val adding = userReactionMap[timestamp] != emoji
+            val adding = userReactionMap[key] != emoji
             val chatId = currentChatId
             reactionScope.launch {
                 try {
-                    userReactionStore.toggle(chatId, timestamp, emoji)
-                    if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, timestamp, emoji)
+                    userReactionStore.toggle(chatId, key, emoji)
+                    if (adding) OrbitReactionSender.onReacted(context, orbit.id, chatId, key, emoji, said)
                 } catch (e: kotlinx.coroutines.CancellationException) {
                     throw e
                 } catch (e: Exception) {

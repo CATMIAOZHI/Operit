@@ -169,7 +169,7 @@ internal object OrbitChatTools {
             val latest = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(chatId, 24)
                 .firstOrNull { it.sender == "user" && it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL }
                 ?: error("No user message to react to")
-            OrbitReactions.of(context, orbit.id).set(chatId, latest.timestamp, emoji)
+            OrbitReactions.of(context, orbit.id).set(chatId, latest.timestamp.toString(), emoji)
             ToolResult(REACT, true, StringResultData(JSONObject().put("reacted", emoji).put("message_id", latest.timestamp)
                 .put("message_excerpt", latest.content.trim().take(80))
                 .put("note", "A reaction replaces any earlier one of yours on that message. You may still reply in words.").toString()))

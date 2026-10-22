@@ -18,6 +18,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
@@ -35,6 +36,7 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -113,6 +115,11 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     var again by remember(request) { mutableStateOf("") }
     var visible by remember(request) { mutableStateOf(false) }
     var saving by remember(request) { mutableStateOf(false) }
+    // Orbit asked to load the key into the terminal; off until the user turns it on.
+    val asksEnv = !login && request.envName.isNotEmpty()
+    var allowEnv by remember(request) { mutableStateOf(false) }
+    // A key with no hosts for the proxy is of use only in the terminal, so it needs the switch on.
+    val envOnly = asksEnv && request.apiHosts.isEmpty()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val colors = MaterialTheme.colorScheme
     SecureWindow()
@@ -160,7 +167,8 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         color = colors.onSurfaceVariant)
                     Text(
                         if (login) request.pageUrl.ifBlank { "https://${request.site}" }.substringBefore('?')
-                        else "${request.site} · ${request.apiHosts.joinToString(", ")}",
+                        else (listOf(request.site) + request.apiHosts.take(5).joinToString(", ").ifEmpty { null })
+                            .filterNotNull().joinToString(" · "),
                         style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -225,26 +233,56 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                     Text(stringResource(R.string.orbit_vault_generate))
                 }
             }
+            if (asksEnv) {
+                Spacer(Modifier.height(12.dp))
+                Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 14.dp)) {
+                        Row(
+                            Modifier.fillMaxWidth().toggleable(value = allowEnv, enabled = !saving, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = { allowEnv = it }),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(stringResource(R.string.orbit_vault_env_allow, orbit.name),
+                                style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
+                            Spacer(Modifier.width(8.dp))
+                            // The whole row is the switch, so a screen reader reads its words with it.
+                            Switch(checked = allowEnv, onCheckedChange = null, enabled = !saving)
+                        }
+                        Text(stringResource(R.string.orbit_vault_env_desc, "$" + request.envName),
+                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                            modifier = Modifier.padding(top = 4.dp, end = 6.dp))
+                        if (request.envReason.isNotBlank()) {
+                            Text(stringResource(R.string.orbit_vault_env_reason, orbit.name, request.envReason),
+                                style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 6.dp, end = 6.dp))
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(14.dp))
             Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.Top) {
                 Icon(orbitIcon("shield-check"), null, Modifier.size(16.dp).padding(top = 2.dp), tint = colors.primary)
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    if (login) stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
-                    else stringResource(R.string.orbit_vault_entry_promise_key, orbit.name),
+                    when {
+                        login -> stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
+                        envOnly && !allowEnv -> stringResource(R.string.orbit_vault_env_required)
+                        allowEnv -> stringResource(R.string.orbit_vault_entry_promise_env, orbit.name)
+                        else -> stringResource(R.string.orbit_vault_entry_promise_key, orbit.name)
+                    },
                     style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.height(28.dp))
             Button(
-                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()) && (!fresh || again == secret),
+                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()) && (!fresh || again == secret) &&
+                    (!envOnly || allowEnv),
                 shape = RoundedCornerShape(50),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 onClick = {
                     saving = true
                     scope.launch {
                         try {
-                            val id = OrbitVault.save(context, orbit.id, request, username, secret)
+                            val id = OrbitVault.save(context, orbit.id, request, username, secret, allowEnv = asksEnv && allowEnv)
                             secret = ""
                             again = ""
                             // The approval list notes the save (only the site and the time), before

@@ -291,6 +291,11 @@ internal object OrbitRoutines {
             .onFailure { e -> if (e is CancellationException) throw e }.getOrNull().orEmpty() }
         val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
         val fetched = dao.windowSource(chats, since, WINDOW_FETCH_LIMIT)
+        // Reactions on a card Orbit sent: keyed by the card, matched to the message it came from.
+        val cardReacted = reacted.mapValues { (_, byKey) ->
+            byKey.filterKeys { it.toLongOrNull() == null }.entries.groupBy({ OrbitReactions.timeOf(it.key) }, { it.value })
+        }
+        val cardShown = mutableSetOf<Pair<String, Long>>()
         val lines = mutableListOf<String>()
         var used = 0
         var userShown = 0
@@ -298,11 +303,14 @@ internal object OrbitRoutines {
         for (m in fetched) {
             val who = if (m.sender == "user") "user" else "orbit"
             val text = (if (m.sender == "ai") ChatUtils.removeThinkingContent(m.content) else m.content).trim()
-            val emoji = reacted[m.chatId]?.get(m.timestamp)?.let { " (user reacted $it)" }.orEmpty()
+            val cardEmoji = cardReacted[m.chatId]?.get(m.timestamp)
+                ?.joinToString("") { " (user reacted $it to a card Orbit sent)" }.orEmpty()
+            val emoji = reacted[m.chatId]?.get(m.timestamp.toString())?.let { " (user reacted $it)" }.orEmpty() + cardEmoji
             val line = "#${m.messageId} ${time.format(Date(m.timestamp))} [${label[m.chatId] ?: "main"}] $who: $text$emoji"
             if (used + line.length > WINDOW_TEXT_BUDGET) break
             lines += line
             used += line.length + 2
+            if (cardEmoji.isNotEmpty()) cardShown += m.chatId to m.timestamp
             if (m.sender == "user") {
                 userShown++
                 if (m.truncated) userCut = true
@@ -310,6 +318,15 @@ internal object OrbitRoutines {
         }
         // Nothing the user said fits: no rate can be counted, so this night is skipped.
         if (userShown == 0) return ""
+        // A card reaction whose message is not in the window above, inside the window's time.
+        cardReacted.forEach { (chatId, byTime) ->
+            byTime.forEach { (at, emojis) ->
+                if (at >= since && (chatId to at) !in cardShown) {
+                    val line = "${time.format(Date(at))} [${label[chatId] ?: "main"}] user reacted ${emojis.joinToString("")} to a card Orbit sent"
+                    if (used + line.length <= WINDOW_TEXT_BUDGET) { lines += line; used += line.length + 2 }
+                }
+            }
+        }
         val partial = userShown < userTurns || userCut
         val latestDream = runCatching { OrbitFiles.of(context, orbit.id).latestDream() }
             .onFailure { if (it is CancellationException) throw it }.getOrNull()

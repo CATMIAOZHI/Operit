@@ -32,14 +32,16 @@ internal object OrbitVaultTools {
         name = NAME,
         description = "密码保险箱：保存和使用登录密码、API 密钥。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/list/fill/http_request/terminal/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/list/fill/http_request/terminal/env/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
             ToolParameterSchema("provider", description = "request_api_key：服务名，比如 OpenWeather", required = false),
-            ToolParameterSchema("api_hosts", description = "request_api_key：这个密钥只能发往的主机，逗号分隔，比如 api.openweathermap.org", required = false),
+            ToolParameterSchema("api_hosts", description = "request_api_key：这个密钥只能发往的主机，逗号分隔，比如 api.openweathermap.org。给了 env_name 时可以不填", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
+            ToolParameterSchema("env_name", description = "request_api_key：可选，代理做不到时（要签名、SDK、多把密钥）请求把密钥载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许", required = false),
+            ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填，一句话告诉用户为什么代理不够用", required = false),
             ToolParameterSchema("domain", description = "list：可选，只列这个网站的", required = false),
-            ToolParameterSchema("credential_id", description = "fill/http_request/terminal/delete：保险箱条目编号（来自 list）", required = false),
+            ToolParameterSchema("credential_id", description = "fill/http_request/terminal/env/delete：保险箱条目编号（来自 list）", required = false),
             ToolParameterSchema("field", description = "fill：username 或 password", required = false),
             ToolParameterSchema("ref", description = "fill：浏览器快照里输入框的 ref", required = false),
             ToolParameterSchema("submit", description = "fill：填完后是否按回车，默认 false", required = false),
@@ -53,10 +55,12 @@ internal object OrbitVaultTools {
   - 放完卡片就结束这一轮，可以简单说一句“卡片在下面，填好我接着弄”。用户保存后你会收到一条隐藏通知，再接着做；用户不填或关掉卡片，你什么都不会收到，不要追问，也不要为同一个网站再放一张卡（再要会返回 already_sent，指向已经放的那张）。
   - request_api_key 之前，先从服务商的官方文档查清两件事：认证方式和 API 主机名（api_hosts），再定 placement。卡片建好后 placement 改不了，填错只能重新放一张让用户再填。保存时不会检查密钥对不对，第一次真实调用才知道；返回 401/403 时先查请求有没有带上密钥、placement 对不对，再怀疑密钥本身。
   - 不支持的认证方式要直说并讲原因，不要硬套最接近的一种：需要签名的请求（如 AWS 签名）、一次要多个密钥、用账号密码做 API 认证、OAuth 授权。
+  - 要签名的请求（阿里云、AWS）、只认环境变量的 SDK、一次要两把密钥（每把各放一张卡）这类代理做不到的情况，可以在 request_api_key 里加 env_name 和 env_reason，请用户允许把密钥载入终端。用户打开了开关，保存后才能用 env；没打开就只能走代理，或者直说做不到。能用代理时不要要 env_name。
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
   - API：用 http_request，宿主会把密钥加到请求里，只发往存密钥时登记的主机，返回里的密钥会被打码。
-  - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置（Authorization 头、自定义头或查询参数），把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
+  - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置：Authorization 头、Basic 认证的“用户名:密钥”（比如 curl -u 'api:<替身值>'）、自定义头、查询参数或网址路径（比如 Telegram 的 /bot<替身值>/sendMessage），再把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
+  - 用户允许载入终端的密钥（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读密钥。不要 echo、打印、写进文件或记忆，也不要把密钥值放进命令行参数；工具输出里出现密钥会被打码。
   - 汇报时只说用没用成，不要说出任何保存的值。
 """,
     )
@@ -85,18 +89,29 @@ internal object OrbitVaultTools {
                         val provider = arg("provider").take(60)
                         require(provider.isNotEmpty()) { "Missing provider" }
                         val hosts = arg("api_hosts").split(',', ' ', '\n').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
-                        require(hosts.isNotEmpty() && hosts.size <= 5 && hosts.all { it.matches(Regex("[a-z0-9.-]{3,120}")) && it.contains('.') }) {
-                            "api_hosts must list 1-5 host names"
+                        require((hosts.isNotEmpty() || arg("env_name").isNotEmpty()) && hosts.size <= 5 &&
+                            hosts.all { it.matches(Regex("[a-z0-9.-]{3,120}")) && it.contains('.') }) {
+                            "api_hosts must list 1-5 host names (it may be left out only with env_name)"
                         }
                         val placement = arg("placement").ifEmpty { "bearer" }
                         require(placement == "bearer" || placement.matches(Regex("(header|query):[A-Za-z0-9_-]{1,60}"))) {
                             "placement must be bearer, header:<name> or query:<name>"
                         }
-                        OrbitVault.Request(orbit.id, chatId, OrbitVault.API_KEY, provider, "", "", hosts, placement)
+                        val envName = arg("env_name").uppercase()
+                        if (envName.isNotEmpty()) {
+                            require(envName.matches(OrbitVault.ENV_NAME)) {
+                                "env_name must be a shell variable name in capitals, such as ALIYUN_ACCESS_KEY_SECRET"
+                            }
+                            require(arg("env_reason").isNotEmpty()) {
+                                "env_reason is required with env_name: one line telling the user why the proxy is not enough"
+                            }
+                        }
+                        OrbitVault.Request(orbit.id, chatId, OrbitVault.API_KEY, provider, "", "", hosts, placement,
+                            envName = envName, envReason = if (envName.isEmpty()) "" else arg("env_reason").take(200))
                     }
                     // A key card asked again with other hosts or placement corrects the first one, so it is a new card.
                     val key = listOf(chatId, request.kind, request.newPassword, request.site.lowercase(),
-                        request.apiHosts.sorted().joinToString(","), request.placement).joinToString("|")
+                        request.apiHosts.sorted().joinToString(","), request.placement, request.envName).joinToString("|")
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     // The card goes into the chat and the turn moves on; a save sends a hidden note.
@@ -120,6 +135,7 @@ internal object OrbitVaultTools {
                                 .put("fields", JSONArray(if (it.kind == OrbitVault.LOGIN) listOf("username", "password") else listOf("api_key")))
                                 .put("username", OrbitVault.masked(it.username))
                                 .apply { if (it.kind == OrbitVault.API_KEY) put("api_hosts", JSONArray(it.apiHosts)).put("placement", it.placement) }
+                                .apply { if (it.envName.isNotEmpty()) put("env_name", it.envName) }
                                 // A password set from a new-password card, which the site may not have taken yet.
                                 .apply { if (it.card != 0L) put("new_password", true) }
                                 .put("saved_at", it.savedAt)
@@ -139,6 +155,20 @@ internal object OrbitVaultTools {
                 }
                 "http_request" -> request(entry(), arg("url"), arg("method").ifEmpty { "GET" }.uppercase(), arg("headers"), args["body"])
                 "terminal" -> terminal(context, orbit.id, entry())
+                "env" -> {
+                    val e = entry()
+                    check(e.kind == OrbitVault.API_KEY) { "env only works with a saved API key" }
+                    check(e.envName.isNotEmpty()) {
+                        "The user has not allowed this key in the terminal. Use http_request or terminal (the proxy); if " +
+                            "those cannot do it, ask again with request_api_key and env_name + env_reason, or tell the user."
+                    }
+                    JSONObject().put("credential_id", e.id).put("site", e.site).put("env_name", e.envName)
+                        .put("command", com.ai.assistance.operit.features.orbit.OrbitVaultBroker.envCommand(context, orbit.id, e))
+                        .put("note", "Run command in the same terminal command as your script, e.g. `<command> && python " +
+                            "script.py`; the key is then in \$${e.envName}. Never echo, print or write it to a file or memory, " +
+                            "and do not pass its value as a command-line argument. If the command says the surrogate is out of " +
+                            "date or cannot connect, call env again.")
+                }
                 "delete" -> {
                     val id = arg("credential_id").ifEmpty { error("delete needs credential_id; get it from list") }
                     val e = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == id }
@@ -147,7 +177,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request, terminal or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, list, fill, http_request, terminal, env or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -166,6 +196,7 @@ internal object OrbitVaultTools {
     /** A surrogate and the loopback proxy for using an API key from terminal scripts; see [OrbitVaultBroker]. */
     private fun terminal(context: Context, orbitId: String, e: OrbitVault.Entry): JSONObject {
         check(e.kind == OrbitVault.API_KEY) { "terminal only works with a saved API key; logins are filled in the browser with fill" }
+        check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
         val base = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.base(context)
         val surrogate = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.surrogate(context, orbitId, e)
         val host = e.apiHosts.first()
@@ -187,6 +218,7 @@ internal object OrbitVaultTools {
 
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
         check(e.kind == OrbitVault.API_KEY) { "http_request only works with a saved API key" }
+        check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
         require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported method $method; use GET, POST, PUT, PATCH or DELETE" }
         var parsed = url.toHttpUrlOrNull() ?: error("url \"${url.take(200)}\" is not a valid https address")
         require(parsed.isHttps) { "url must be https" }

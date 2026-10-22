@@ -32,11 +32,14 @@ import kotlin.concurrent.thread
  * Lets terminal scripts use a saved API key without ever holding it, like Muse's authd surrogates.
  *
  * Orbit gets a surrogate for a key (`ovk.<orbit>.<entry>.<mac>`) and puts it where the key would go,
- * in a header or the query, then sends the request to this loopback proxy as
+ * in a header (also inside `Basic` user:password), the query or the path, then sends the request to this loopback proxy as
  * `http://127.0.0.1:<port>/https/<host>/<path>`. The proxy checks the surrogate and that the host is
  * one the key was saved for, swaps in the real key at the last moment, makes the https request, and
  * masks the key in what comes back. A request without a valid surrogate is refused, so this is not
  * an open proxy; the surrogate stops working once the key is deleted or saved again.
+ *
+ * A key the user let into the terminal is also served once as `export NAME='…'` from
+ * `/env/<surrogate>`, for uses the swap cannot cover, such as signing a request.
  *
  * A small server of its own: the path is forwarded exactly as the script encoded it (`%2F`, `+`).
  */
@@ -46,6 +49,7 @@ internal object OrbitVaultBroker {
     private const val MAX_REQUEST = 10 * 1024 * 1024
     private const val MAX_RESPONSE = 20 * 1024 * 1024
     private val SURROGATE = Regex("ovk\\.([A-Za-z0-9-]{1,64})\\.([A-Za-z0-9-]{1,40})\\.([0-9a-f]{32})")
+    private val BASIC = Regex("(?i)basic\\s+([A-Za-z0-9+/=_-]+)")
     private val HOST = Regex("[a-z0-9.-]{3,253}")
     private val METHODS = setOf("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE")
     /** Not forwarded: hop-by-hop headers and the ones the proxy sets itself. */
@@ -76,9 +80,16 @@ internal object OrbitVaultBroker {
     }
 
     /** The proxy's base address, starting it if needed: append `<host>/<path>`. */
+    fun base(context: Context): String = "${origin(context)}/https/"
+
+    /** The command that loads a key the user let into the terminal into its variable. */
+    fun envCommand(context: Context, orbitId: String, entry: OrbitVault.Entry): String =
+        // Fails, and stops what follows with &&, when the key cannot be fetched.
+        "orbit_env=\"\$(curl -fsS ${origin(context)}/env/${surrogate(context, orbitId, entry)})\" && eval \"\$orbit_env\" && unset orbit_env"
+
     @Synchronized
-    fun base(context: Context): String {
-        server?.takeIf { !it.isClosed }?.let { return "http://127.0.0.1:${it.localPort}/https/" }
+    private fun origin(context: Context): String {
+        server?.takeIf { !it.isClosed }?.let { return "http://127.0.0.1:${it.localPort}" }
         val app = context.applicationContext
         val loopback = InetAddress.getByName("127.0.0.1")
         // The same port each time when it is free, so a saved script keeps working after a restart.
@@ -95,7 +106,7 @@ internal object OrbitVaultBroker {
             }
             runCatching { socket.close() }
         }
-        return "http://127.0.0.1:${socket.localPort}/https/"
+        return "http://127.0.0.1:${socket.localPort}"
     }
 
     /** The stand-in for one saved API key; saving the key again gives a new one. */
@@ -230,6 +241,7 @@ internal object OrbitVaultBroker {
         if (incoming.headers.containsKey("origin")) throw Refused(403, "Requests from web pages are not allowed")
         if (incoming.method !in METHODS) throw Refused(400, "Unsupported method ${incoming.method}")
         val target = incoming.target
+        if (target.startsWith("/env/")) return env(context, incoming)
         if (!target.startsWith("/https/")) throw Refused(404,
             "Use http://127.0.0.1:<port>/https/<host>/<path>; get the address from orbit_vault action terminal")
         if (target.any { it <= ' ' || it.code == 0x7f } || '#' in target) throw Refused(400, "Bad characters in the address")
@@ -244,25 +256,35 @@ internal object OrbitVaultBroker {
         }
         if (!host.matches(HOST) || !host.contains('.')) throw Refused(400, "Bad host \"$authority\"")
 
-        // Every surrogate in the headers and query must be valid and allowed for this host.
+        // Every surrogate in the headers, Basic credentials, query and path must be valid and allowed for this host.
         val headers = incoming.headers.filterKeys { it !in DROPPED_REQUEST && !it.startsWith("proxy-") }
-        val found = (headers.values + listOfNotNull(query))
+        val basic = headers["authorization"]?.let { BASIC.matchEntire(it.trim()) }?.groupValues?.get(1)
+            ?.let { runCatching { String(java.util.Base64.getDecoder().decode(it), Charsets.UTF_8) }.getOrNull() }
+            ?.takeIf { SURROGATE.containsMatchIn(it) }
+        val found = (headers.values + listOfNotNull(query, rawPath, basic))
             .flatMap { text -> SURROGATE.findAll(text).map { it.value }.toList() }.distinct()
         if (found.isEmpty()) throw Refused(403,
             "No vault surrogate in the request. Put the surrogate from orbit_vault action terminal where the key goes.")
-        val swaps = found.associateWith { resolve(context, it, host) }
+        val swaps = found.associateWith { resolve(context, it, host) ?: throw Refused(403, "Invalid surrogate") }
         fun swap(text: String) = swaps.entries.fold(text) { acc, (surrogate, entry) -> acc.replace(surrogate, entry.secret) }
         // In the query the key goes in encoded, so characters like + & = keep their meaning.
         fun swapQuery(text: String) = swaps.entries.fold(text) { acc, (surrogate, entry) ->
             acc.replace(surrogate, URLEncoder.encode(entry.secret, "UTF-8").replace("+", "%20"))
         }
+        // In the path only what a path segment cannot hold is encoded, so `bot123:ABC` stays as written.
+        fun swapPath(text: String) = swaps.entries.fold(text) { acc, (surrogate, entry) ->
+            acc.replace(surrogate, encodePathSegment(entry.secret))
+        }
 
         val url = HttpUrl.Builder().scheme("https").host(host).apply { port?.let { port(it) } }
-            .encodedPath(rawPath).apply { if (query != null) encodedQuery(swapQuery(query)) }.build()
+            .encodedPath(swapPath(rawPath)).apply { if (query != null) encodedQuery(swapQuery(query)) }.build()
         val builder = Request.Builder().url(url)
+        // `curl -u user:<surrogate>`: the pair is decoded, the key swapped in, then encoded again.
+        val basicSent = basic?.let { "Basic " + java.util.Base64.getEncoder().encodeToString(swap(it).toByteArray(Charsets.UTF_8)) }
         headers.forEach { (name, value) ->
+            val sent = if (name == "authorization" && basicSent != null) basicSent else swap(value)
             try {
-                builder.addHeader(name, swap(value))
+                builder.addHeader(name, sent)
             } catch (e: IllegalArgumentException) {
                 throw Refused(400, "Header $name has characters that cannot be sent")
             }
@@ -276,7 +298,8 @@ internal object OrbitVaultBroker {
             else -> ByteArray(0).toRequestBody(mediaType)
         })
 
-        val secrets = swaps.values.map { it.secret }
+        // A service that echoes the request back must not show the Basic pair either.
+        val secrets = swaps.values.map { it.secret } + listOfNotNull(basicSent?.removePrefix("Basic "))
         // A failure message can quote what the service sent back; it is masked like the response.
         val call = try { client.newCall(builder.build()).execute() } catch (e: IOException) {
             throw Refused(502, "The request to the service failed: " +
@@ -304,8 +327,33 @@ internal object OrbitVaultBroker {
         }
     }
 
-    private fun resolve(context: Context, surrogate: String, host: String): OrbitVault.Entry {
-        val match = SURROGATE.matchEntire(surrogate) ?: throw Refused(403, "Invalid surrogate")
+    /** `export NAME='…'` for a key the user let into the terminal, read by `eval` in the shell. */
+    private fun env(context: Context, incoming: Incoming): Outgoing {
+        if (incoming.method != "GET") throw Refused(400, "Use GET for /env/")
+        val surrogate = incoming.target.removePrefix("/env/").substringBefore('?')
+        val entry = resolve(context, surrogate, null) ?: throw Refused(403, "Invalid surrogate")
+        if (entry.envName.isEmpty()) throw Refused(403,
+            "The user has not allowed this key in the terminal; use the proxy, or ask with a new request_api_key card")
+        val quoted = "'" + entry.secret.replace("'", "'\\''") + "'"
+        return Outgoing(200, listOf("Content-Type" to "text/plain; charset=utf-8", "Cache-Control" to "no-store"),
+            "export ${entry.envName}=$quoted\n".toByteArray(Charsets.UTF_8))
+    }
+
+    /** RFC 3986 path segment: unreserved, sub-delims, ':' and '@' stay; everything else is %XX. */
+    internal fun encodePathSegment(value: String): String {
+        val keep = "-._~!$&'()*+,;=:@"
+        val out = StringBuilder()
+        for (b in value.toByteArray(Charsets.UTF_8)) {
+            val c = (b.toInt() and 0xff).toChar()
+            if (c.code < 0x80 && (c.isLetterOrDigit() || c in keep)) out.append(c)
+            else out.append('%').append("%02X".format(b.toInt() and 0xff))
+        }
+        return out.toString()
+    }
+
+    /** The entry behind [surrogate]; [host] null means a terminal variable, which has no host check. */
+    private fun resolve(context: Context, surrogate: String, host: String?): OrbitVault.Entry? {
+        val match = SURROGATE.matchEntire(surrogate) ?: return null
         val (orbitId, entryId, given) = match.destructured
         val entries = runBlocking {
             OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == orbitId && !it.deleting }
@@ -317,8 +365,9 @@ internal object OrbitVaultBroker {
             throw Refused(403, "This surrogate is out of date; get a new one with orbit_vault action terminal")
         }
         if (entry.kind != OrbitVault.API_KEY) throw Refused(403, "Only saved API keys can be used from the terminal")
-        if (entry.apiHosts.none { OrbitVault.matchesHost(host, it) }) {
-            throw Refused(403, "This key may only be sent to ${entry.apiHosts.joinToString()}")
+        if (host != null && entry.apiHosts.none { OrbitVault.matchesHost(host, it) }) {
+            throw Refused(403, if (entry.apiHosts.isEmpty()) "This key has no API hosts; it can only be loaded with orbit_vault env"
+                else "This key may only be sent to ${entry.apiHosts.joinToString()}")
         }
         return entry
     }

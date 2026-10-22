@@ -99,7 +99,7 @@ private fun VaultCard(request: OrbitVault.Request) {
         // A new-password card is done once a password is saved after it; an older login does not count.
         value = runCatching {
             val entries = OrbitVault.entries(context, request.orbitId)
-            if (fresh) OrbitVault.newPasswordSaved(entries, request) else OrbitVault.has(entries, request.kind, request.site)
+            if (fresh) OrbitVault.newPasswordSaved(entries, request) else OrbitVault.has(entries, request.kind, request.site, request.envName)
         }.getOrDefault(false)
     }
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {

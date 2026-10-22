@@ -521,19 +521,27 @@ private fun MessageItem(
         OrbitSpeech.of(message.content).isBlank()
     var showEmojiPicker by remember { mutableStateOf(false) }
     val haptics = androidx.compose.ui.platform.LocalHapticFeedback.current
-    // Double-tapping one of Orbit's messages likes it, like a quick tapback.
-    val quickLike: (() -> Unit)? =
-        if (orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
-            !isMultiSelectMode && !isWriting && message.contentStream == null
-        ) {
-            {
-                if (orbitUserReactions.byMessage[message.timestamp] != OrbitQuickLike) {
-                    haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
-                    OrbitEmojiUsage.record(context, OrbitQuickLike)
-                    orbitUserReactions.toggle(message.timestamp, OrbitQuickLike)
-                }
-            }
-        } else null
+    // The bubble the long-press menu is for: a card inside the reply, or null for the message itself.
+    var menuPiece by remember { mutableStateOf<OrbitPiece?>(null) }
+    val reactionKey = menuPiece?.reactionKey(orbitUserReactions?.byMessage) ?: message.timestamp.toString()
+    val canReactToOrbit = orbitLook && message.sender == "ai" && orbitUserReactions != null && isActionable &&
+        !isMultiSelectMode && !isWriting && message.contentStream == null
+    // Double-tapping one of Orbit's bubbles likes it, like a quick tapback.
+    fun like(key: String, said: String?) {
+        val reactions = orbitUserReactions ?: return
+        if (reactions.byMessage[key] != OrbitQuickLike) {
+            haptics.performHapticFeedback(androidx.compose.ui.hapticfeedback.HapticFeedbackType.LongPress)
+            OrbitEmojiUsage.record(context, OrbitQuickLike)
+            reactions.toggle(key, OrbitQuickLike, said)
+        }
+    }
+    val quickLike: (() -> Unit)? = if (canReactToOrbit) { { like(message.timestamp.toString(), null) } } else null
+    /** What a reply to [piece] quotes: a card's summary, or the message's words without its cards. */
+    fun replyTarget(piece: OrbitPiece?): ChatMessage = when {
+        piece?.summary != null -> message.copy(content = piece.summary, contentStream = null)
+        message.sender == "ai" && orbitLook -> message.copy(content = OrbitSpeech.splitCards(message.content).first, contentStream = null)
+        else -> message
+    }
     var pluginMenuItems by remember(currentChatId, message.timestamp) {
         mutableStateOf<List<ChatMessageMenuItemDefinition>>(emptyList())
     }
@@ -549,6 +557,7 @@ private fun MessageItem(
         )
     val openMessageMenu: () -> Unit = {
         if (!isMultiSelectMode && isActionable) {
+            menuPiece = null
             pluginMenuItems =
                 if (!isHiddenUserMessage && allowTranscriptMutation) {
                     ChatMessageMenuItemRegistry.createMenuItems(buildPluginMenuItemParams())
@@ -558,6 +567,20 @@ private fun MessageItem(
             showContextMenu = true
         }
     }
+    // In an Orbit reply each bubble (words, a card, a Dynamic UI card) takes its own gestures.
+    val pieceActions: OrbitPieceActions? =
+        if (canReactToOrbit && !message.displayMode.isCollaborationEvent) {
+            OrbitPieceActions(
+                like = { piece -> like(piece.reactionKey(orbitUserReactions?.byMessage), piece.summary) },
+                menu = { piece ->
+                    openMessageMenu()
+                    menuPiece = piece.takeIf { it.summary != null }
+                },
+                reply = if (allowTranscriptMutation && onReplyToMessage != null) {
+                    { piece -> onReplyToMessage.invoke(replyTarget(piece.takeIf { it.summary != null })) }
+                } else null,
+            )
+        } else null
     // The statistics are drawn outside the card, and only by the row that closes it: drawn inside,
     // they landed on the reply's own background whenever the row shared its turn's card, and a reply
     // written as several messages (waifu mode) carries the same totals on every one of them. The
@@ -616,11 +639,12 @@ private fun MessageItem(
         androidx.compose.runtime.CompositionLocalProvider(
             LocalOrbitMessageGestures provides
                 if (orbitLook) OrbitMessageGestures(quickLike, openMessageMenu) else null,
+            LocalOrbitPieceActions provides pieceActions,
         ) {
         OrbitSwipeToReply(
             enabled = orbitLook && isActionable && !isHiddenUserMessage && !isMultiSelectMode &&
-                allowTranscriptMutation && onReplyToMessage != null,
-            onReply = { onReplyToMessage?.invoke(message) },
+                allowTranscriptMutation && onReplyToMessage != null && pieceActions == null,
+            onReply = { onReplyToMessage?.invoke(replyTarget(null)) },
             rightAligned = message.sender == "user",
         ) {
         Column {
@@ -709,13 +733,13 @@ private fun MessageItem(
             )
         ) {
             if (orbitLook && message.sender == "ai" && orbitUserReactions != null) {
-                val current = orbitUserReactions.byMessage[message.timestamp]
+                val current = orbitUserReactions.byMessage[reactionKey]
                 OrbitTapbackRow(
                     selected = current,
                     onPick = { emoji ->
                         // Taking a reaction off does not count as using that emoji.
                         if (emoji != current) OrbitEmojiUsage.record(context, emoji)
-                        orbitUserReactions.toggle(message.timestamp, emoji)
+                        orbitUserReactions.toggle(reactionKey, emoji, menuPiece?.summary)
                         showContextMenu = false
                     },
                     onMore = {
@@ -728,7 +752,8 @@ private fun MessageItem(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
                 )
             }
-            if (!isHiddenUserMessage) {
+            // A card has no words to copy or read out.
+            if (!isHiddenUserMessage && menuPiece == null) {
                 DropdownMenuItem(
                     text = {
                         Text(
@@ -838,7 +863,7 @@ private fun MessageItem(
                         )
                     },
                     onClick = {
-                        onReplyToMessage?.invoke(message)
+                        onReplyToMessage?.invoke(replyTarget(menuPiece))
                         showContextMenu = false
                     },
                     leadingIcon = {
@@ -1140,12 +1165,12 @@ private fun MessageItem(
         }
 
         if (showEmojiPicker && orbitUserReactions != null) {
-            val current = orbitUserReactions.byMessage[message.timestamp]
+            val current = orbitUserReactions.byMessage[reactionKey]
             OrbitEmojiPickerSheet(
                 selected = current,
                 onPick = { emoji ->
                     if (emoji != current) OrbitEmojiUsage.record(context, emoji)
-                    orbitUserReactions.toggle(message.timestamp, emoji)
+                    orbitUserReactions.toggle(reactionKey, emoji, menuPiece?.summary)
                     showEmojiPicker = false
                 },
                 onDismiss = { showEmojiPicker = false },

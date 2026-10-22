@@ -25,6 +25,41 @@ internal object OrbitChatCards {
     const val APPROVAL = "approval"
 
     val imageTypes = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
+    /** Which bubble a card is, set when the chat moves cards to the end of a turn (see OrbitSpeech.history). */
+    const val PIECE_KEY = "piece_key"
+
+    /**
+     * A card in a word or two, for a reply quote or a reaction notice: what it is and its title,
+     * never a path, a value or the card's code.
+     */
+    fun summary(card: String, english: Boolean): String {
+        val o = runCatching { JSONObject(card) }.getOrNull()
+        fun field(name: String) = o?.optString(name).orEmpty().replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim().take(60)
+        val (what, title) = when (o?.optString("kind")) {
+            APPROVAL -> (if (english) "Approval card" else "批准卡片") to field("title")
+            VAULT_LOGIN -> (if (english) "Vault login card" else "登录保险箱卡片") to field("site")
+            VAULT_KEY -> (if (english) "API key card" else "API 密钥卡片") to field("site")
+            IMAGE -> (if (english) "Picture" else "图片") to field("name")
+            FILE -> (if (english) "File" else "文件") to field("name")
+            else -> (if (english) "Card" else "卡片") to ""
+        }
+        return if (title.isEmpty()) "[$what]" else if (english) "[$what: $title]" else "[$what：$title]"
+    }
+
+    // The chat is shown again on every change; each card is marked only once.
+    private val keyed = object : java.util.LinkedHashMap<String, String>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > 256
+    }
+
+    /** [card] marked as bubble [key], so its reactions stay with it wherever the chat draws it. */
+    fun withPieceKey(card: String, key: String): String {
+        if (card.contains("\"$PIECE_KEY\"")) return card
+        val cacheKey = "$key\u0000$card"
+        synchronized(keyed) { keyed[cacheKey] }?.let { return it }
+        val marked = runCatching { JSONObject(card).put(PIECE_KEY, key).toString() }.getOrDefault(card)
+        synchronized(keyed) { keyed[cacheKey] = marked }
+        return marked
+    }
 
     fun vault(request: OrbitVault.Request): JSONObject = JSONObject()
         .put("kind", if (request.kind == OrbitVault.LOGIN) VAULT_LOGIN else VAULT_KEY)
@@ -37,6 +72,7 @@ internal object OrbitChatCards {
         .put("placement", request.placement)
         .put("new_password", request.newPassword)
         .put("requested_at", request.requestedAt)
+        .apply { if (request.envName.isNotEmpty()) put("env_name", request.envName).put("env_reason", request.envReason) }
 
     /** [width] and [height] of a picture let the chat size it before it loads, so nothing jumps. */
     fun attachment(orbitId: String, path: String, name: String, size: Long, width: Int = 0, height: Int = 0): JSONObject = JSONObject()
@@ -66,12 +102,16 @@ internal object OrbitChatCards {
         val site = card.optString("site").takeIf { it.isNotBlank() } ?: return null
         val hosts = card.optJSONArray("api_hosts")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
             .filter { it.isNotBlank() }
-        if (kind == OrbitVault.API_KEY && hosts.isEmpty()) return null
+        val envName = card.optString("env_name").takeIf { kind == OrbitVault.API_KEY && it.matches(OrbitVault.ENV_NAME) }.orEmpty()
+        // A key that only goes into the terminal may have no hosts for the proxy.
+        if (kind == OrbitVault.API_KEY && hosts.isEmpty() && envName.isEmpty()) return null
         return OrbitVault.Request(
             orbitId, card.optString("chat_id"), kind, site, card.optString("page_url"),
             card.optString("username_hint"), hosts, card.optString("placement").ifEmpty { "bearer" },
             newPassword = kind == OrbitVault.LOGIN && card.optBoolean("new_password"),
             requestedAt = card.optLong("requested_at"),
+            envName = envName,
+            envReason = if (envName.isEmpty()) "" else card.optString("env_reason").take(200),
         )
     }
 }
@@ -95,9 +135,27 @@ internal object OrbitVaultNotice {
      * place; [untried] are earlier new passwords for the same user.
      */
     fun build(english: Boolean, request: OrbitVault.Request, id: String, previous: String? = null,
-        untried: List<String> = emptyList()): String {
+        untried: List<String> = emptyList(), envName: String = ""): String {
         val login = request.kind == OrbitVault.LOGIN
         val fresh = login && request.newPassword
+        val hostsEn = request.apiHosts.takeIf { it.isNotEmpty() }?.let { " (sent only to ${it.joinToString()})" }.orEmpty()
+        val hostsZh = request.apiHosts.takeIf { it.isNotEmpty() }?.let { "（只发往 ${it.joinToString()}）" }.orEmpty()
+        val envEn = when {
+            request.envName.isEmpty() -> ""
+            envName.isNotEmpty() -> "The user allowed loading this key into the terminal as \$$envName; get the command with orbit_vault env.\n"
+            else -> "The user did not allow loading this key into the terminal; use it through http_request or the terminal " +
+                "proxy, or tell the user plainly what cannot be done without it.\n"
+        }
+        val envZh = when {
+            request.envName.isEmpty() -> ""
+            envName.isNotEmpty() -> "用户允许把这把密钥载入终端，变量名 \$$envName；用 orbit_vault 的 env 拿载入命令。\n"
+            else -> "用户没有允许把这把密钥载入终端；用 http_request 或终端代理来用它，做不到的就跟用户直说。\n"
+        }
+        val nextEn = when {
+            login -> "fill"
+            envName.isNotEmpty() -> "env"
+            else -> "http_request"
+        }
         return if (english) {
             val title = when {
                 fresh -> "New password for ${request.site} saved"
@@ -109,9 +167,10 @@ internal object OrbitVaultNotice {
                 (when {
                     fresh -> "a new password for ${request.site}, to fill into its sign-up or reset form"
                     login -> "a login for ${request.site}"
-                    else -> "an API key for ${request.site} (sent only to ${request.apiHosts.joinToString()})"
+                    else -> "an API key for ${request.site}$hostsEn"
                 }) +
                 " (credential_id $id). This is not a message from the user; they typed nothing here and cannot see this note.\n" +
+                envEn +
                 (previous?.let {
                     "The earlier password for this user is still saved as credential_id $it, for a form that asks for the " +
                         "current password. Once the site has taken the new one, delete $it with orbit_vault delete.\n"
@@ -121,7 +180,7 @@ internal object OrbitVaultNotice {
                         "said: one it took is the current password; delete the ones it did not take.\n"
                 }.orEmpty()) +
                 "If you were in the middle of something that needed it, carry on now with orbit_vault " +
-                (if (login) "fill" else "http_request") +
+                nextEn +
                 ". Otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO} if nothing needs saying. " +
                 "Never repeat a saved value, and do not mention hidden notes."
         } else {
@@ -135,16 +194,17 @@ internal object OrbitVaultNotice {
                 (when {
                     fresh -> " ${request.site} 的新密码，用来填进注册或重设密码的表单"
                     login -> " ${request.site} 的登录"
-                    else -> " ${request.site} 的 API 密钥（只发往 ${request.apiHosts.joinToString()}）"
+                    else -> " ${request.site} 的 API 密钥$hostsZh"
                 }) +
                 "（credential_id $id）。这不是用户发的消息，用户没有在这里打字，也看不到这段话。\n" +
+                envZh +
                 (previous?.let {
                     "这个用户原来的密码还留着（credential_id $it），表单要“当前密码”时用它；网站确认改好新密码后，用 orbit_vault 的 delete 删掉 $it。\n"
                 }.orEmpty()) +
                 (untried.takeIf { it.isNotEmpty() }?.let {
                     "之前设过的新密码也还在（credential_id ${it.joinToString()}）。按网站刚才的结果判断：网站采用了的就是当前密码，没采用的删掉。\n"
                 }.orEmpty()) +
-                "如果刚才有事情正等着它，现在就用 orbit_vault 的 " + (if (login) "fill" else "http_request") +
+                "如果刚才有事情正等着它，现在就用 orbit_vault 的 " + nextEn +
                 " 接着做；没有的话简短回一句，没什么要说就调用 ${OrbitReactionNotice.NOTHING_TO_DO}。" +
                 "绝不复述保存的值，也不要提“隐藏消息”这些内部说法。"
         }
@@ -157,13 +217,14 @@ internal object OrbitVaultNotice {
         val app = context.applicationContext
         scope.launch {
             try {
+                val entries = OrbitVault.entries(app, orbit.id)
                 val (previous, untried) = if (request.kind == OrbitVault.LOGIN && request.newPassword) {
-                    val entries = OrbitVault.entries(app, orbit.id)
                     entries.firstOrNull { it.id == id }?.let { saved ->
                         OrbitVault.earlierPasswords(entries, saved).let { (current, rest) -> current?.id to rest.map { it.id } }
                     } ?: (null to emptyList())
                 } else null to emptyList()
-                val notice = build(LocaleUtils.usesEnglishPrompt(app), request, id, previous, untried)
+                val envName = entries.firstOrNull { it.id == id }?.envName.orEmpty()
+                val notice = build(LocaleUtils.usesEnglishPrompt(app), request, id, previous, untried, envName)
                 // Another note or reply can take the chat at the same moment; wait for it and try again.
                 val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
                 while (true) {

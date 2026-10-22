@@ -79,13 +79,14 @@ fun BubbleStyleChatMessage(
             val backdrop = if (aiBubbleImageStyle == null && !aiMessageLiquidGlassEnabled && !aiMessageWaterGlassEnabled &&
                 aiMessageColor.alpha >= .95f) aiMessageColor.copy(alpha = 1f) else Color.Unspecified
             CompositionLocalProvider(LocalDynamicUiBackdrop provides backdrop) {
-            // An Orbit reply can be several messages sent one after another (and the cards its tools
-            // sent): each is its own bubble, stacked, all still this one message for long-press,
-            // reply and reactions.
+            // An Orbit reply can be several messages sent one after another, and the cards its tools
+            // sent: each is its own bubble, stacked. A card is liked, reacted to and replied to on
+            // its own; the words answer for the message.
             val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
-            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode) {
+            val english = !androidx.compose.ui.platform.LocalConfiguration.current.locales[0].language.startsWith("zh")
+            val pieces = remember(orbitLook, message.content, message.contentStream, message.displayMode, message.timestamp, english) {
                 if (orbitLook && message.contentStream == null && !message.displayMode.isCollaborationEvent)
-                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieces(message.content)
+                    com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.pieceList(message.content, message.timestamp, english)
                 else null
             }
             val bubble: @Composable (ChatMessage, ChatMessageHeightMemory?) -> Unit = { shown, memory ->
@@ -114,10 +115,11 @@ fun BubbleStyleChatMessage(
                 onAvatarLongPressMention = onRoleAvatarLongPress,
             )
             }
-            com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
-                if (pieces == null) {
+            if (pieces == null) {
+                com.ai.assistance.operit.ui.features.chat.components.OrbitReactedAiMessage(message.timestamp) {
                     bubble(message, heightMemory)
-                } else {
+                }
+            } else {
                     // Always the same stack, even for one bubble: a reply that grows a second bubble
                     // while streaming keeps the first one as it is drawn. The gap matches the one
                     // between saved messages, so nothing moves when the parts are saved apart.
@@ -128,9 +130,14 @@ fun BubbleStyleChatMessage(
                         ),
                         verticalArrangement = androidx.compose.foundation.layout.Arrangement.spacedBy(8.dp),
                     ) {
-                        pieces.forEachIndexed { i, piece -> key(i) { bubble(message.copy(content = piece), null) } }
+                        pieces.forEachIndexed { i, piece ->
+                            key(i) {
+                                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceFrame(piece) {
+                                    bubble(message.copy(content = piece.content), null)
+                                }
+                            }
+                        }
                     }
-                }
             }
             }
         }

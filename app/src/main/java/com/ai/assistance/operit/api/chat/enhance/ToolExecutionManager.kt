@@ -1799,6 +1799,12 @@ object ToolExecutionManager {
             var startedAtElapsedMs: Long? = null
             val collectedResults = BoundedToolResultAccumulator()
             var diagnosticError: String? = null
+            // Keys the user let into an Orbit's terminal are masked wherever a command's output goes:
+            // the result Orbit reads, a cancelled run's partial output, and the error log.
+            var envKeys: List<String> = emptyList()
+            fun masked(text: String?): String? =
+                if (text == null || envKeys.isEmpty()) text
+                else com.ai.assistance.operit.features.orbit.OrbitVault.redact(text, envKeys)
             // Parallel group members run with a deferred result sink and publish later from the
             // single driver coroutine so the shared collector, round manager and hook
             // notifications stay strictly ordered. The sink also captures cancellation/failure
@@ -1814,6 +1820,10 @@ object ToolExecutionManager {
             try {
                 com.ai.assistance.operit.features.orbit.OrbitTaskExecution.checkBeforeTool(
                     context, runtimeContext.callerChatId)
+                envKeys = try {
+                    com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, runtimeContext.callerChatId)
+                        ?.let { com.ai.assistance.operit.features.orbit.OrbitVault.envKeys(context, it.id) }.orEmpty()
+                } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
                 val executor = toolHandler.getToolExecutorOrActivate(toolName)
                 if (executor == null) {
                     // 如果仍然为 null，则构建错误消息
@@ -1906,7 +1916,7 @@ object ToolExecutionManager {
                 }
 
                 val lastResultSuccess = requireNotNull(collectedResults.lastResultSuccess)
-                val combinedResultString = collectedResults.combinedResultText()
+                val combinedResultString = masked(collectedResults.combinedResultText()).orEmpty()
 
                 val durationMs =
                     (SystemClock.elapsedRealtime() - executionStartedAtMs).coerceAtLeast(0L)
@@ -1915,7 +1925,7 @@ object ToolExecutionManager {
                         toolName = displayToolName,
                         success = lastResultSuccess,
                         result = StringResultData(combinedResultString),
-                        error = collectedResults.lastResultError,
+                        error = masked(collectedResults.lastResultError),
                         interruptTurn = collectedResults.anyInterruptTurn,
                     ).withExecutionMetadata(
                         invocation = invocation,
@@ -1929,7 +1939,7 @@ object ToolExecutionManager {
                     durationMs = durationMs,
                     state = ToolExecutionState.COMPLETED,
                 )
-                recordDiagnostic(invocation, finalResult.copy(error = diagnosticError))
+                recordDiagnostic(invocation, finalResult.copy(error = masked(diagnosticError)))
                 publishResult(finalResult)
                 return@withContext finalResult
             } catch (cancellation: CancellationException) {
@@ -1942,7 +1952,7 @@ object ToolExecutionManager {
                             displayToolName = displayToolName,
                             invocation = invocation,
                             durationMs = durationMs,
-                            partialResultText = collectedResults.combinedResultText(),
+                            partialResultText = masked(collectedResults.combinedResultText()).orEmpty(),
                         )
                     withContext(NonCancellable) {
                         ToolExecutionTimingRepository.markFinished(
