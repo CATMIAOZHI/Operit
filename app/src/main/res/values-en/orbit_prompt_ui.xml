@@ -78,6 +78,10 @@
     <string name="orbit_browser_card_title">Browser</string>
     <string name="orbit_browser_card_open">Open browser</string>
     <string name="orbit_browser_card_expired">This card has expired</string>
+    <string name="orbit_browser_handoff_title">%1$s asks you to take over the browser</string>
+    <string name="orbit_browser_handoff_take">Take over</string>
+    <string name="orbit_browser_handoff_done">Handed back to %1$s</string>
+    <string name="orbit_browser_handoff_summary">[Take-over request: %1$s]</string>
     <string name="orbit_browser_watch_working">Working</string>
     <string name="orbit_browser_watch_finished">Stopped, yours to take over</string>
     <string name="orbit_browser_watch_close_page">Close page</string>

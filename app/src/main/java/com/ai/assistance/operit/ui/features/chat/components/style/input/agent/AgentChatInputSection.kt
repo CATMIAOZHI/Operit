@@ -1070,7 +1070,7 @@ fun AgentChatInputSection(
                         val actionButtonBackground =
                             when {
                                 showCancelAction -> MaterialTheme.colorScheme.error
-                                showQueueAction -> MaterialTheme.colorScheme.tertiary
+                                showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                                 canSendMessage ->
                                     if (isOverTokenLimit) {
                                         MaterialTheme.colorScheme.secondary
@@ -1083,7 +1083,7 @@ fun AgentChatInputSection(
                         val actionButtonIconTint =
                             when {
                                 showCancelAction -> MaterialTheme.colorScheme.onError
-                                showQueueAction -> MaterialTheme.colorScheme.onTertiary
+                                showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiary
                                 canSendMessage ->
                                     if (isOverTokenLimit) {
                                         MaterialTheme.colorScheme.onSecondary
@@ -1146,14 +1146,14 @@ fun AgentChatInputSection(
                                     imageVector =
                                         when {
                                             showCancelAction -> Icons.Default.Close
-                                            showQueueAction -> Icons.Default.Add
+                                            showQueueAction -> if (isOrbitChat) Icons.AutoMirrored.Filled.Send else Icons.Default.Add
                                             canSendMessage -> Icons.AutoMirrored.Filled.Send
                                             else -> Icons.Rounded.GraphicEq
                                         },
                                     contentDescription =
                                         when {
                                             showCancelAction -> context.getString(R.string.cancel)
-                                            showQueueAction -> context.getString(R.string.chat_queue_add_message)
+                                            showQueueAction -> context.getString(if (isOrbitChat) R.string.chat_steer_turn else R.string.chat_queue_add_message)
                                             canSendMessage -> context.getString(R.string.send)
                                             else -> context.getString(R.string.voice_conversation_entry)
                                         },
@@ -1378,7 +1378,7 @@ fun AgentChatInputSection(
                             val actionButtonBackground =
                                 when {
                                     showCancelAction -> MaterialTheme.colorScheme.error
-                                    showQueueAction -> MaterialTheme.colorScheme.tertiary
+                                    showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.tertiary
                                     canSendMessage ->
                                         if (isOverTokenLimit) {
                                             MaterialTheme.colorScheme.secondary
@@ -1391,7 +1391,7 @@ fun AgentChatInputSection(
                             val actionButtonIconTint =
                                 when {
                                     showCancelAction -> MaterialTheme.colorScheme.onError
-                                    showQueueAction -> MaterialTheme.colorScheme.onTertiary
+                                    showQueueAction -> if (isOrbitChat) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onTertiary
                                     canSendMessage ->
                                         if (isOverTokenLimit) {
                                             MaterialTheme.colorScheme.onSecondary
@@ -1454,14 +1454,14 @@ fun AgentChatInputSection(
                                         imageVector =
                                             when {
                                                 showCancelAction -> Icons.Default.Close
-                                                showQueueAction -> Icons.Default.Add
+                                                showQueueAction -> if (isOrbitChat) Icons.AutoMirrored.Filled.Send else Icons.Default.Add
                                                 canSendMessage -> Icons.AutoMirrored.Filled.Send
                                                 else -> Icons.Rounded.GraphicEq
                                             },
                                         contentDescription =
                                             when {
                                                 showCancelAction -> context.getString(R.string.cancel)
-                                                showQueueAction -> context.getString(R.string.chat_queue_add_message)
+                                                showQueueAction -> context.getString(if (isOrbitChat) R.string.chat_steer_turn else R.string.chat_queue_add_message)
                                                 canSendMessage -> context.getString(R.string.send)
                                                 else -> context.getString(R.string.voice_conversation_entry)
                                             },

@@ -163,7 +163,12 @@ internal class WebSessionBrowserHost(
                     val locked = watch != null && !watch.controlling
                     androidx.compose.runtime.SideEffect {
                         setWatchLocked(locked)
-                        root.onBackKey = watch?.takeIf { !it.controlling }?.onClose
+                        // Back closes the watch screen like the X; a user driving the page goes back
+                        // in the page first, and closes it (handing it back) from its first page.
+                        val canGoBack = hostState.browserState.canGoBack
+                        root.onBackKey = watch?.let { w ->
+                            if (w.controlling && canGoBack) callbacks::onBack else w.onClose
+                        }
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
                         lastWatchTalk = watchWork?.executorChatId
                         if (ended != null && isExpanded) {
@@ -986,6 +991,46 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     var fakeHeightPx: Int = 1
     /** Takes the back key while set; Orbit's watch screen closes with it. */
     var onBackKey: (() -> Unit)? = null
+        set(value) {
+            field = value
+            syncBackCallback()
+        }
+
+    /**
+     * With the app's predictive back on, Android 13+ hands the back key to a window callback before
+     * it reaches the views, so [dispatchKeyEvent] alone never sees it. Registered only while
+     * [onBackKey] is set, so other times back goes where it always did.
+     */
+    private var backCallback: Any? = null
+
+    private fun syncBackCallback() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
+        val want = onBackKey != null && isAttachedToWindow
+        val dispatcher = findOnBackInvokedDispatcher()
+        if (want && backCallback == null && dispatcher != null) {
+            val callback = android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+            dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
+            backCallback = callback
+        } else if (!want && backCallback != null) {
+            runCatching { dispatcher?.unregisterOnBackInvokedCallback(backCallback as android.window.OnBackInvokedCallback) }
+            backCallback = null
+        }
+    }
+
+    override fun onAttachedToWindow() {
+        super.onAttachedToWindow()
+        syncBackCallback()
+    }
+
+    override fun onDetachedFromWindow() {
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            backCallback?.let { cb ->
+                runCatching { findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(cb as android.window.OnBackInvokedCallback) }
+            }
+        }
+        backCallback = null
+        super.onDetachedFromWindow()
+    }
 
     init {
         clipChildren = false

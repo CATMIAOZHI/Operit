@@ -83,7 +83,9 @@ internal object OrbitTools {
             OrbitBoardTools.FEED to (isOrbitChat || isTaskRoot), OrbitBoardTools.IDEA to (isOrbitChat || isTaskRoot),
             OrbitBoardTools.TRACKING to (isOrbitChat || isTaskRoot),
             com.ai.assistance.operit.features.orbit.OrbitTaskRunner.FINISH to false) +
-            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot)
+            OrbitExtraTools.visibility(isOrbitChat, isTaskRoot) +
+            // Browsing is mostly left to subagents, and they are the ones who meet a password page.
+            mapOf(OrbitBrowserHandoffTools.NAME to hasOrbitSkills)
     }
 
     /**

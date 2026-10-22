@@ -61,6 +61,8 @@ internal object OrbitBrowserWatch {
          * over; they go when the user closes them, after [IDLE_KEEP_MS], or when a new task needs the room.
          */
         val finished: Boolean = false,
+        /** When the AI asked the user to take over this page (see [askUser]); null when not asked. */
+        val askAt: Long? = null,
     )
 
     data class Caller(val talkChatId: String, val executorChatId: String, val orbitId: String, val orbitName: String)
@@ -78,7 +80,15 @@ internal object OrbitBrowserWatch {
         val orbitName: String = "",
         /** The time of the message it first showed after ([Long.MIN_VALUE]: above the first); null until shown. */
         val anchorAt: Long? = null,
+        /** [BROWSER]: the live browser card; [HANDOFF]: the AI asks the user to take over, for [reason]. */
+        val kind: String = BROWSER,
+        val reason: String = "",
+        /** A hand-off the user took and handed back. */
+        val handled: Boolean = false,
     )
+
+    const val BROWSER = "browser"
+    const val HANDOFF = "handoff"
 
     /** Work counts as finished this long after its last action once its agent stopped running. */
     private const val GRACE_MS = 8_000L
@@ -126,6 +136,7 @@ internal object OrbitBrowserWatch {
                         o.optString("talk"), o.optString("executor"), o.optLong("at"),
                         o.optString("title"), o.optString("url"), o.optString("orbit"),
                         if (o.has("anchor")) o.optLong("anchor") else null,
+                        o.optString("kind").ifBlank { BROWSER }, o.optString("reason"), o.optBoolean("handled"),
                     ).takeIf { it.talkChatId.isNotBlank() && it.executorChatId.isNotBlank() && it.createdAt > 0 }
                 }
             }.getOrElse {
@@ -154,6 +165,7 @@ internal object OrbitBrowserWatch {
                         array.put(org.json.JSONObject()
                             .put("talk", card.talkChatId).put("executor", card.executorChatId).put("at", card.createdAt)
                             .put("title", card.title).put("url", card.url).put("orbit", card.orbitName)
+                            .put("kind", card.kind).put("reason", card.reason).put("handled", card.handled)
                             .apply { card.anchorAt?.let { put("anchor", it) } })
                     }
                     val file = java.io.File(app.filesDir, CARDS_FILE)
@@ -187,7 +199,7 @@ internal object OrbitBrowserWatch {
         var changed = false
         _cards.update { all ->
             all.map { card ->
-                if (card.executorChatId == work.executorChatId && card.createdAt == work.createdAt &&
+                if (card.kind == BROWSER && card.executorChatId == work.executorChatId && card.createdAt == work.createdAt &&
                     (card.title != work.title || card.url != work.url)) {
                     changed = true
                     card.copy(title = work.title, url = work.url)
@@ -195,6 +207,47 @@ internal object OrbitBrowserWatch {
             }
         }
         if (changed) saveCardsSoon()
+    }
+
+    /**
+     * The AI asks the user to take over [caller]'s page (a password, a human check): a card saying so
+     * goes in the chat. Taking over and handing back works as from the browser card.
+     */
+    fun askUser(caller: Caller, reason: String) {
+        loadCards()
+        val now = System.currentTimeMillis()
+        var asked: Work? = null
+        _works.update { all ->
+            val work = all[caller.executorChatId]
+            checkNotNull(work) { "No browser page of yours is open. Open the page with the browser tools first, then ask." }
+            check(!work.stopping) { "The user stopped this browser task. Do not continue it." }
+            check(work.sessionId?.let(StandardBrowserSessionTools.sessions::containsKey) == true) {
+                "Your browser page is no longer open. Open it again with the browser tools first, then ask."
+            }
+            work.copy(askAt = now, lastActionAt = now).also { asked = it }.let { all + (caller.executorChatId to it) }
+        }
+        val work = asked ?: return
+        _cards.update { all ->
+            (all + Card(work.talkChatId, work.executorChatId, now, work.title, work.url, work.orbitName,
+                kind = HANDOFF, reason = reason)).takeLast(MAX_CARDS)
+        }
+        saveCardsSoon()
+    }
+
+    /** From a hand-off card: opens the page and gives the user control at once. */
+    suspend fun openAndTakeOver(context: Context, executorChatId: String) {
+        open(context, executorChatId)
+        if (_watching.value == executorChatId) withContext(Dispatchers.Main) { takeOver(executorChatId) }
+    }
+
+    /** The hand-off for [work] is over: the user handed the page back. */
+    private fun settleAsk(work: Work) {
+        val at = work.askAt ?: return
+        change(work.executorChatId) { if (it.askAt == at) it.copy(askAt = null) else it }
+        _cards.update { all ->
+            all.map { if (it.kind == HANDOFF && it.executorChatId == work.executorChatId && it.createdAt == at) it.copy(handled = true) else it }
+        }
+        saveCardsSoon()
     }
 
     fun ownerId(talkChatId: String) = OrbitBrowserControl.WATCH + talkChatId
@@ -222,7 +275,8 @@ internal object OrbitBrowserWatch {
             check(old?.stopping != true) { "The user stopped this browser task. Do not continue it." }
             // Finished tasks only keep their page for the user; a new task takes the room of the oldest.
             // A finished one coming back counts as new again.
-            check((old != null && !old.finished) || all.values.count { !it.finished } < BrowserTaskScope.MAX_TASKS) {
+            // A page waiting for the user to take over still holds its place.
+            check((old != null && !old.finished) || all.values.count { !it.finished || it.askAt != null } < BrowserTaskScope.MAX_TASKS) {
                 "All 3 background browser tasks are occupied. No browser page was changed. Wait for a task to finish, then retry; do not start more browser agents."
             }
             // A finished task used again shows a new card where the chat is now; the old one expires.
@@ -337,7 +391,8 @@ internal object OrbitBrowserWatch {
             it.finished && !it.stopping && it.control == Control.NONE && it.acting == 0 && _watching.value != it.executorChatId
         }.sortedBy { it.lastActionAt }
         val extra = (_works.value.size - BrowserTaskScope.MAX_TASKS).coerceAtLeast(0)
-        val done = (idle.take(extra) + idle.filter { now - it.lastActionAt > IDLE_KEEP_MS }).distinct()
+        // A page waiting for the user to take over is not given up for a new task.
+        val done = (idle.filter { it.askAt == null }.take(extra) + idle.filter { now - it.lastActionAt > IDLE_KEEP_MS }).distinct()
         if (done.isEmpty()) return
         // Destroy on the UI thread before freeing the slot; this bounds the number of WebViews
         // even when another agent starts immediately after a task finishes.
@@ -460,12 +515,25 @@ internal object OrbitBrowserWatch {
         val url = work.sessionId?.let(StandardBrowserSessionTools.sessions::get)?.currentUrl ?: work.url
         val english = LocaleUtils.usesEnglishPrompt(app)
         val busy = runCatching { running(work) }.getOrDefault(false)
+        // After asking, the AI ended its turn; if it is still saying its last words, the news waits
+        // for that turn to end and then wakes it, so it is told exactly once.
+        val asked = work.askAt != null
         // An agent still at work hears it on its next browser call; one that already stopped gets a turn.
-        OrbitBrowserControl.handBack(ownerId(talkChatId), talkChatId, if (busy) OrbitBrowserNotice.callNote(english, url) else null)
+        OrbitBrowserControl.handBack(ownerId(talkChatId), talkChatId, if (busy && !asked) OrbitBrowserNotice.callNote(english, url) else null)
         change(talkChatId) { it.copy(control = Control.NONE, lastActionAt = System.currentTimeMillis()) }
-        if (!busy) {
+        settleAsk(work)
+        if (!busy || asked) {
             val notice = OrbitBrowserNotice.handedBack(english, url)
             scope.launch {
+                if (busy) {
+                    val until = System.currentTimeMillis() + 10 * 60_000L
+                    while (runCatching { running(work) }.getOrDefault(false) && System.currentTimeMillis() < until) delay(500)
+                    // Not if the user stopped or closed the task, it was started anew, or they took over again
+                    // (that hand-back tells it then).
+                    val current = _works.value[work.executorChatId]
+                    if (current == null || current.stopping || current.createdAt != work.createdAt ||
+                        current.control != Control.NONE) return@launch
+                }
                 val coordinator = CollaborationCoordinator.getInstance(app)
                 val agent = coordinator.contextSnapshot(work.executorChatId)
                 if (agent == null) wake(work, notice)

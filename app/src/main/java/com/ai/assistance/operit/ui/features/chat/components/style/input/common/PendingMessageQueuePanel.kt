@@ -39,6 +39,8 @@ data class PendingQueueMessageItem(
     internal val chatGeneration: Long = 0L,
     val isSteering: Boolean = false,
     val attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
+    /** The message the user quoted when this was written; it goes along whenever this is sent. */
+    val replyToMessage: com.ai.assistance.operit.data.model.ChatMessage? = null,
 )
 
 @Composable

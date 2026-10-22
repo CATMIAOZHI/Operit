@@ -400,6 +400,7 @@ class MessageCoordinationDelegate(
         messageText: String,
         attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo> = emptyList(),
         turnOptions: ChatTurnOptions = ChatTurnOptions(),
+        replyToMessage: ChatMessage? = null,
     ): Boolean {
         if (chatId.isBlank()) return false
         return sendMessageInternal(
@@ -407,7 +408,9 @@ class MessageCoordinationDelegate(
             chatIdOverride = chatId,
             messageTextOverride = messageText,
             attachmentsOverride = attachments,
-            turnOptions = turnOptions,
+            // A message that carries its own quote leaves whatever the composer quotes now alone.
+            turnOptions = if (replyToMessage != null) turnOptions.copy(useComposerReply = false) else turnOptions,
+            replyToMessageOverride = replyToMessage,
         )
     }
 
@@ -557,7 +560,8 @@ class MessageCoordinationDelegate(
         enableGroupOrchestration: Boolean = true,
         isGroupOrchestrationTurn: Boolean = false,
         groupParticipantNamesText: String? = null,
-        turnOptions: ChatTurnOptions = ChatTurnOptions()
+        turnOptions: ChatTurnOptions = ChatTurnOptions(),
+        replyToMessageOverride: ChatMessage? = null,
     ): Boolean {
         if (_isSendTriggeredSummarizing.value || _isSummarizing.value) return false
         // 如果不是自动续写，更新当前的 promptFunctionType
@@ -725,7 +729,8 @@ class MessageCoordinationDelegate(
         }
 
         val pendingText = effectiveMessageTextOverride ?: messageProcessingDelegate.userMessage.value.text
-        val pendingReply = if (shouldReadComposerState && turnOptions.useComposerReply) uiBridge.getReplyToMessage() else null
+        val pendingReply = replyToMessageOverride
+            ?: if (shouldReadComposerState && turnOptions.useComposerReply) uiBridge.getReplyToMessage() else null
         fun sendPreparedMessage(afterSummary: Boolean = false): Boolean {
             // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
             val accepted = messageProcessingDelegate.sendUserMessage(

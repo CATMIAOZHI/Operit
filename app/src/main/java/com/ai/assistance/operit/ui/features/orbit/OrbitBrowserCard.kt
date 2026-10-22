@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Language
+import androidx.compose.material.icons.outlined.TouchApp
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -92,8 +93,135 @@ internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boole
 @Composable
 private fun BrowserCardSlot(card: OrbitBrowserWatch.Card, bubbleColor: Color, visible: Boolean) {
     val works by OrbitBrowserWatch.works.collectAsState()
+    if (card.kind == OrbitBrowserWatch.HANDOFF) {
+        val work = works[card.executorChatId]?.takeIf { it.askAt == card.createdAt && it.talkChatId == card.talkChatId }
+        HandoffCard(card, work, bubbleColor)
+        return
+    }
     val work = works[card.executorChatId]?.takeIf { it.createdAt == card.createdAt && it.talkChatId == card.talkChatId }
     if (work != null) BrowserTaskCard(work, bubbleColor, visible) else ExpiredBrowserCard(card, bubbleColor)
+}
+
+/**
+ * "<Orbit> asks you to take over": the AI needs the user on its page (a password, a human check).
+ * The button opens the page already in the user's control; after they hand it back it says so.
+ */
+@Composable
+private fun HandoffCard(card: OrbitBrowserWatch.Card, work: OrbitBrowserWatch.Work?, bubbleColor: Color) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val colors = MaterialTheme.colorScheme
+    val name = LocalOrbitName.current.ifBlank { card.orbitName }.ifBlank { orbitNameFallback() }
+    val host = runCatching { android.net.Uri.parse(work?.url ?: card.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
+    val reason = card.reason.replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim()
+    val summary = stringResource(R.string.orbit_browser_handoff_summary, reason)
+    val status = when {
+        card.handled -> stringResource(R.string.orbit_browser_handoff_done, name)
+        work == null -> stringResource(R.string.orbit_browser_card_expired)
+        work.control == OrbitBrowserWatch.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
+        // The page is still locked until the AI's last action ends.
+        work.control == OrbitBrowserWatch.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, name)
+        else -> null
+    }
+    OrbitCardPiece(summary, "handoff:${card.createdAt}:${card.executorChatId}", card.createdAt) {
+        Surface(
+            shape = RoundedCornerShape(20.dp),
+            color = bubbleColor,
+            modifier = Modifier.padding(top = 4.dp).widthIn(max = 320.dp),
+        ) {
+            Column(Modifier.padding(16.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Surface(shape = RoundedCornerShape(14.dp), color = colors.surface, modifier = Modifier.size(52.dp)) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(Icons.Outlined.TouchApp, null, Modifier.size(26.dp),
+                                tint = if (work != null) colors.onSurface else colors.onSurfaceVariant)
+                        }
+                    }
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            stringResource(R.string.orbit_browser_handoff_title, name),
+                            style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis,
+                            color = if (work != null) colors.onSurface else colors.onSurfaceVariant,
+                        )
+                        val line = listOfNotNull(status, host.takeIf { it.isNotBlank() }).joinToString(" · ")
+                        if (line.isNotEmpty()) Text(
+                            line, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                }
+                if (reason.isNotEmpty()) {
+                    Spacer(Modifier.height(10.dp))
+                    Text(reason, style = MaterialTheme.typography.bodyLarge,
+                        color = if (work != null) colors.onSurface else colors.onSurfaceVariant)
+                }
+                if (work != null) {
+                    Spacer(Modifier.height(12.dp))
+                    val take = work.control == OrbitBrowserWatch.Control.NONE
+                    Surface(
+                        onClick = {
+                            scope.launch {
+                                if (take) OrbitBrowserWatch.openAndTakeOver(context, work.executorChatId)
+                                else OrbitBrowserWatch.open(context, work.executorChatId)
+                            }
+                        },
+                        enabled = !work.stopping,
+                        shape = RoundedCornerShape(50),
+                        color = if (take) Color(0xFF3478F6) else colors.surface,
+                        modifier = Modifier.fillMaxWidth().height(48.dp),
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Text(
+                                stringResource(if (take) R.string.orbit_browser_handoff_take else R.string.orbit_browser_card_open),
+                                style = MaterialTheme.typography.titleSmall,
+                                color = if (take) Color.White else colors.onSurface,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/** The reply, double-tap like, menu and reactions every Orbit card has, around [content]. */
+@Composable
+private fun OrbitCardPiece(summary: String, key: String, time: Long, content: @Composable () -> Unit) {
+    val context = LocalContext.current
+    val piece = OrbitPiece(summary, key, summary, true)
+    val reactions = LocalOrbitUserReactions.current
+    val reply = LocalOrbitLiveCardReply.current
+    var menu by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(false) }
+    fun react(emoji: String) {
+        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
+        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        menu = false
+    }
+    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
+        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
+        menu = { menu = true },
+        reply = reply?.let { action -> { action(summary, time) } },
+    )) {
+        OrbitPieceFrame(piece) {
+            Box {
+                content()
+                androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
+                    if (reply != null) androidx.compose.material3.DropdownMenuItem(
+                        text = { Text(stringResource(R.string.reply_message)) },
+                        onClick = { menu = false; reply(summary, time) },
+                    )
+                }
+            }
+        }
+    }
+    if (picker) OrbitEmojiPickerSheet(
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = { react(it); picker = false },
+        onDismiss = { picker = false },
+    )
 }
 
 /** A card whose page is gone or replaced by a newer card: what it showed, no picture, no button. */
