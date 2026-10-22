@@ -114,6 +114,8 @@ internal data class BrowserWatchUi(
     val orbitName: String,
     val controlling: Boolean,
     val waiting: Boolean,
+    /** Orbit stopped working here; the page stays for the user to look at or take over. */
+    val finished: Boolean,
     val onClose: () -> Unit,
     val onTakeOver: () -> Unit,
     val onHandBack: () -> Unit,

@@ -328,7 +328,11 @@ internal class WebSessionBrowserHost(
         webView.scaleY = scale
         webView.translationX = 0f
         webView.translationY = 0f
-        webView.onResume()
+        // A page Orbit stopped using stays at rest when it goes back to the background.
+        val task = com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+            .firstOrNull { it.webView === webView }?.browserTaskId
+        val watch = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
+        if (watch.resting(task)) watch.rest(webView) else webView.onResume()
         webView.measure(View.MeasureSpec.makeMeasureSpec(w, View.MeasureSpec.EXACTLY),
             View.MeasureSpec.makeMeasureSpec(h, View.MeasureSpec.EXACTLY))
         webView.layout(0, 0, w, h)
@@ -518,6 +522,7 @@ internal class WebSessionBrowserHost(
             orbitName = work.orbitName,
             controlling = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.USER,
             waiting = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.WAITING,
+            finished = work.finished,
             onClose = { watch.close(work.executorChatId) },
             onTakeOver = { watch.takeOver(work.executorChatId) },
             onHandBack = { watch.handBack(work.executorChatId) },

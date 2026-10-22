@@ -21,6 +21,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -42,7 +43,6 @@ import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.Browse
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionWebViewHost
 
 private val WatchBlue = Color(0xFF3478F6)
-private val WatchGray = Color(0xFF2A2A2C)
 
 /**
  * Orbit's browser while it works, like watching over someone's shoulder: the page shows, but
@@ -57,8 +57,9 @@ internal fun WebSessionWatchScreen(
     onTotalHeight: (Int) -> Unit,
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
+    val colors = MaterialTheme.colorScheme
     Column(
-        Modifier.fillMaxSize().background(Color.Black).onSizeChanged { onTotalHeight(it.height) },
+        Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
     ) {
         Row(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
@@ -68,21 +69,27 @@ internal fun WebSessionWatchScreen(
             Surface(
                 onClick = watch.onClose,
                 shape = CircleShape,
-                color = WatchGray,
+                color = colors.surfaceVariant,
                 modifier = Modifier.size(48.dp).semantics { contentDescription = close },
             ) {
                 Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Close, null, tint = Color.White, modifier = Modifier.size(26.dp))
+                    Icon(Icons.Filled.Close, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(26.dp))
                 }
             }
             Column(Modifier.weight(1f).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    stringResource(if (watch.controlling) R.string.orbit_browser_watch_yours else R.string.orbit_browser_watch_working),
-                    color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, maxLines = 1,
+                    stringResource(when {
+                        watch.controlling -> R.string.orbit_browser_watch_yours
+                        watch.finished -> R.string.orbit_browser_watch_finished
+                        else -> R.string.orbit_browser_watch_working
+                    }),
+                    color = colors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                 )
                 if (watch.host.isNotBlank()) {
                     Text(
-                        watch.host, color = Color(0xFF9A9A9E), fontSize = 13.sp,
+                        watch.host, color = colors.onSurfaceVariant, fontSize = 13.sp,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                 }
@@ -127,16 +134,20 @@ internal fun WebSessionWatchScreen(
                     else -> stringResource(R.string.orbit_browser_watch_take_over)
                 },
                 color = WatchBlue,
+                textColor = Color.White,
                 busy = watch.waiting,
                 onClick = { if (watch.controlling) watch.onHandBack() else if (!watch.waiting) watch.onTakeOver() },
             )
-            WatchButton(stringResource(R.string.orbit_browser_watch_stop), WatchGray, busy = false, onClick = watch.onStop)
+            WatchButton(
+                stringResource(if (watch.finished) R.string.orbit_browser_watch_close_page else R.string.orbit_browser_watch_stop),
+                colors.surfaceVariant, textColor = colors.onSurfaceVariant, busy = false, onClick = watch.onStop,
+            )
         }
     }
 }
 
 @Composable
-private fun WatchButton(text: String, color: Color, busy: Boolean, onClick: () -> Unit) {
+private fun WatchButton(text: String, color: Color, textColor: Color, busy: Boolean, onClick: () -> Unit) {
     Surface(
         onClick = onClick,
         enabled = !busy,
@@ -146,10 +157,10 @@ private fun WatchButton(text: String, color: Color, busy: Boolean, onClick: () -
     ) {
         Row(horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
             if (busy) {
-                CircularProgressIndicator(Modifier.size(18.dp), color = Color.White, strokeWidth = 2.dp)
+                CircularProgressIndicator(Modifier.size(18.dp), color = textColor, strokeWidth = 2.dp)
                 Spacer(Modifier.size(10.dp))
             }
-            Text(text, color = Color.White, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, color = textColor, fontSize = 17.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
     }
 }

@@ -78,6 +78,8 @@
     <string name="orbit_browser_card_title">Browser</string>
     <string name="orbit_browser_card_open">Open browser</string>
     <string name="orbit_browser_watch_working">Working</string>
+    <string name="orbit_browser_watch_finished">Stopped, yours to take over</string>
+    <string name="orbit_browser_watch_close_page">Close page</string>
     <string name="orbit_browser_watch_yours">You\'re in control</string>
     <string name="orbit_browser_watch_take_over">Take control</string>
     <string name="orbit_browser_watch_hand_back">Hand back to %1$s</string>

@@ -9779,8 +9779,10 @@
     <string name="orbit_vault_env_label">Terminal variable</string>
     <string name="orbit_vault_env_badge">Usable in the terminal</string>
     <string name="orbit_vault_env_required">This key can only be used in the terminal. Turn on the switch above to save it.</string>
-    <string name="orbit_chat_image_desc">Picture %1$s, tap to save to the gallery</string>
+    <string name="orbit_chat_image_desc">Picture %1$s, tap to view</string>
     <string name="orbit_chat_image_saved">Saved to the gallery</string>
+    <string name="orbit_chat_image_save">Save to gallery</string>
+    <string name="orbit_chat_image_saving">Saving…</string>
     <string name="orbit_chat_image_save_failed">Couldn\'t save to the gallery</string>
     <string name="orbit_chat_file_desc">File %1$s, tap to open in another app</string>
     <string name="orbit_chat_file_open">Tap to open</string>

@@ -78,6 +78,8 @@
     <string name="orbit_browser_card_title">浏览器</string>
     <string name="orbit_browser_card_open">打开浏览器</string>
     <string name="orbit_browser_watch_working">正在工作</string>
+    <string name="orbit_browser_watch_finished">已停下，你可以接手</string>
+    <string name="orbit_browser_watch_close_page">关闭网页</string>
     <string name="orbit_browser_watch_yours">你在操作</string>
     <string name="orbit_browser_watch_take_over">控制浏览器</string>
     <string name="orbit_browser_watch_hand_back">交还给 %1$s</string>
