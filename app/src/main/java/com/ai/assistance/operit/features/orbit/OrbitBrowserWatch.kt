@@ -56,6 +56,11 @@ internal object OrbitBrowserWatch {
         val acting: Int = 0,
         val control: Control = Control.NONE,
         val stopping: Boolean = false,
+        /**
+         * Its agent stopped. The card and the page stay, so the user can still open it and take
+         * over; they go when the user closes them, after [IDLE_KEEP_MS], or when a new task needs the room.
+         */
+        val finished: Boolean = false,
     )
 
     data class Caller(val talkChatId: String, val executorChatId: String, val orbitId: String, val orbitName: String)
@@ -65,6 +70,8 @@ internal object OrbitBrowserWatch {
     /** For an agent this cannot see running (a task run), the card stays this long after an action. */
     private const val UNKNOWN_GRACE_MS = 60_000L
     private const val PRUNE_MS = 3_000L
+    /** A finished task's page stays this long after its last use. */
+    private const val IDLE_KEEP_MS = 30 * 60_000L
 
     private val _works = MutableStateFlow<Map<String, Work>>(emptyMap())
     val works: StateFlow<Map<String, Work>> = _works
@@ -97,15 +104,18 @@ internal object OrbitBrowserWatch {
         _works.update { all ->
             val old = all[caller.executorChatId]
             check(old?.stopping != true) { "The user stopped this browser task. Do not continue it." }
-            check(old != null || all.size < BrowserTaskScope.MAX_TASKS) {
+            // Finished tasks only keep their page for the user; a new task takes the room of the oldest.
+            // A finished one coming back counts as new again.
+            check((old != null && !old.finished) || all.values.count { !it.finished } < BrowserTaskScope.MAX_TASKS) {
                 "All 3 background browser tasks are occupied. No browser page was changed. Wait for a task to finish, then retry; do not start more browser agents."
             }
             all + (caller.executorChatId to (old?.copy(
                 executorChatId = caller.executorChatId, orbitName = caller.orbitName,
-                lastActionAt = now, acting = old.acting + 1,
+                lastActionAt = now, acting = old.acting + 1, finished = false,
             ) ?: Work(caller.talkChatId, caller.orbitId, caller.orbitName, caller.executorChatId, lastActionAt = now, acting = 1)))
         }
         ensurePruner()
+        if (_works.value.size > BrowserTaskScope.MAX_TASKS) prune()
     }
 
     /** An AI browser call for [caller] ended; the card follows the tab it left in front. */
@@ -174,18 +184,39 @@ internal object OrbitBrowserWatch {
 
     private fun prune() {
         val now = System.currentTimeMillis()
-        val done = _works.value.values.filter { work ->
+        val stopped = _works.value.values.filter { work ->
             val grace = if (known(work)) GRACE_MS else UNKNOWN_GRACE_MS
-            !work.stopping && work.control == Control.NONE && work.acting == 0 && now - work.lastActionAt > grace &&
+            !work.finished && !work.stopping && work.control == Control.NONE && work.acting == 0 && now - work.lastActionAt > grace &&
                 !runCatching { running(work) }.getOrDefault(false)
         }
+        stopped.forEach { work ->
+            _works.update { all -> if (all[work.executorChatId] == work) all + (work.executorChatId to work.copy(finished = true)) else all }
+        }
+        // A stopped page rests until someone opens it or the AI uses it again; both resume it.
+        if (stopped.isNotEmpty()) scope.launch(Dispatchers.Main) {
+            stopped.forEach { work ->
+                val now = _works.value[work.executorChatId]
+                if (now?.finished == true && now.control == Control.NONE && _watching.value != work.executorChatId) {
+                    StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == work.executorChatId }
+                        .forEach { rest(it.webView) }
+                }
+            }
+        }
+        // A finished page goes after a long rest, or the oldest ones when new tasks need the room.
+        // The one the user watches or drives stays.
+        val idle = _works.value.values.filter {
+            it.finished && !it.stopping && it.control == Control.NONE && it.acting == 0 && _watching.value != it.executorChatId
+        }.sortedBy { it.lastActionAt }
+        val extra = (_works.value.size - BrowserTaskScope.MAX_TASKS).coerceAtLeast(0)
+        val done = (idle.take(extra) + idle.filter { now - it.lastActionAt > IDLE_KEEP_MS }).distinct()
         if (done.isEmpty()) return
         // Destroy on the UI thread before freeing the slot; this bounds the number of WebViews
         // even when another agent starts immediately after a task finishes.
         scope.launch(Dispatchers.Main) {
             done.forEach { work ->
                 OrbitBrowserControl.retire(work.executorChatId) {
-                    if (_works.value[work.executorChatId] == work) {
+                    // Checked again here: the user may have opened it since it was picked.
+                    if (_works.value[work.executorChatId] == work && _watching.value != work.executorChatId) {
                         closePages(work.executorChatId)
                         _works.update { all -> if (all[work.executorChatId] == work) all - work.executorChatId else all }
                     }
@@ -251,12 +282,21 @@ internal object OrbitBrowserWatch {
         unwatch()
         scope.launch(Dispatchers.Main) {
             runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
+            // A stopped task's page rests again once nobody looks at it.
+            val work = _works.value[talkChatId]
+            if (work?.finished == true && work.control == Control.NONE && _watching.value != talkChatId) {
+                StandardBrowserSessionTools.sessions.values.filter { it.browserTaskId == talkChatId }
+                    .forEach { rest(it.webView) }
+            }
         }
     }
 
     /** The browser was put away; it is no longer the watch screen. */
     fun unwatch() {
+        // Looking counts as using it: however the watch screen ends, the 30 minutes start again here.
+        val task = _watching.value
         _watching.value = null
+        task?.let { change(it) { work -> work.copy(lastActionAt = System.currentTimeMillis()) } }
     }
 
     /** Opening from the floating browser button pins the same task as opening its chat card. */
@@ -315,6 +355,11 @@ internal object OrbitBrowserWatch {
     fun stop(talkChatId: String) {
         val work = _works.value[talkChatId] ?: return
         if (work.stopping) return
+        // Orbit already stopped here: only the page goes. Its chat may be on something else by now.
+        if (work.finished) {
+            closeFinished(work)
+            return
+        }
         val english = LocaleUtils.usesEnglishPrompt(app)
         // Released with a note, so a call that waited for the user ends instead of acting.
         OrbitBrowserControl.cancelTask(talkChatId, OrbitBrowserNotice.stoppedCall(english))
@@ -335,6 +380,36 @@ internal object OrbitBrowserWatch {
             }
             while (!OrbitBrowserControl.idle(work.executorChatId)) delay(150)
             withContext(Dispatchers.Main) {
+                closePages(work.executorChatId)
+                change(work.executorChatId) { null }
+            }
+        }
+    }
+
+    /** Hidden and paused, so Chromium slows the page down in the background; opening or the next AI call shows it again. */
+    /** True while [task]'s page should rest: Orbit stopped there and nobody watches or drives it. */
+    fun resting(task: String?): Boolean {
+        val work = task?.let { _works.value[it] } ?: return false
+        return work.finished && !work.stopping && work.control == Control.NONE && _watching.value != task
+    }
+
+    fun rest(webView: android.webkit.WebView) {
+        runCatching {
+            webView.onPause()
+            webView.visibility = android.view.View.GONE
+        }
+    }
+
+    /** Closes a finished task's page: control goes back without telling anyone, and no reply is stopped. */
+    private fun closeFinished(work: Work) {
+        if (work.control != Control.NONE) OrbitBrowserControl.handBack(ownerId(work.executorChatId), work.executorChatId, null)
+        change(work.executorChatId) { it.copy(stopping = true, control = Control.NONE) }
+        if (_watching.value == work.executorChatId) unwatch()
+        scope.launch {
+            // Same end as stop(): wait out any call in flight, then close on the UI thread.
+            while (!OrbitBrowserControl.idle(work.executorChatId)) delay(150)
+            withContext(Dispatchers.Main) {
+                if (_watching.value == null) runCatching { StandardBrowserSessionTools(app).setExpandedOnMain(false) }
                 closePages(work.executorChatId)
                 change(work.executorChatId) { null }
             }

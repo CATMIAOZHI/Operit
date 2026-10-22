@@ -77,8 +77,13 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
     // Drawn on the main thread, small, and only while the card is on screen and the app in front.
     // The last picture stays while paused, so the card does not blink when the chat shows again.
     var preview by remember(work.sessionId) { mutableStateOf<ImageBitmap?>(null) }
-    LaunchedEffect(work.sessionId, lifecycle, visible) {
+    LaunchedEffect(work.sessionId, lifecycle, visible, work.finished) {
         if (!visible) return@LaunchedEffect
+        // A stopped page no longer changes: one picture is enough, so it is not redrawn every 2 seconds.
+        if (work.finished) {
+            if (preview == null) OrbitBrowserWatch.preview(work.sessionId)?.let { preview = it.asImageBitmap() }
+            return@LaunchedEffect
+        }
         lifecycle.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
                 OrbitBrowserWatch.preview(work.sessionId)?.let { preview = it.asImageBitmap() }
@@ -89,7 +94,8 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
     val status = if (work.stopping) stringResource(R.string.orbit_browser_task_stopping) else when (work.control) {
         OrbitBrowserWatch.Control.USER -> stringResource(R.string.orbit_browser_watch_yours)
         OrbitBrowserWatch.Control.WAITING -> stringResource(R.string.orbit_browser_watch_waiting, work.orbitName.ifBlank { orbitNameFallback() })
-        OrbitBrowserWatch.Control.NONE -> stringResource(R.string.orbit_browser_watch_working)
+        OrbitBrowserWatch.Control.NONE -> stringResource(
+            if (work.finished) R.string.orbit_browser_watch_finished else R.string.orbit_browser_watch_working)
     }
     val host = runCatching { android.net.Uri.parse(work.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
     val title = work.title.ifBlank { host }.ifBlank { work.orbitName }.take(160)
@@ -133,7 +139,7 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
                     Text(
                         if (host.isNotBlank()) "$status · $host" else status,
                         style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
             }

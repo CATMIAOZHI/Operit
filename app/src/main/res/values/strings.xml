@@ -9756,8 +9756,10 @@
     <string name="orbit_vault_env_label">终端变量</string>
     <string name="orbit_vault_env_badge">可在终端直接用</string>
     <string name="orbit_vault_env_required">这把密钥只能在终端里用，打开上面的开关才能保存。</string>
-    <string name="orbit_chat_image_desc">图片 %1$s，轻点保存到相册</string>
+    <string name="orbit_chat_image_desc">图片 %1$s，轻点放大查看</string>
     <string name="orbit_chat_image_saved">已保存到相册</string>
+    <string name="orbit_chat_image_save">保存到相册</string>
+    <string name="orbit_chat_image_saving">正在保存…</string>
     <string name="orbit_chat_image_save_failed">没能保存到相册</string>
     <string name="orbit_chat_file_desc">文件 %1$s，轻点用其他应用打开</string>
     <string name="orbit_chat_file_open">轻点打开</string>

@@ -6,20 +6,26 @@ import android.os.Build
 import android.os.Environment
 import android.provider.MediaStore
 import android.widget.Toast
+import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -35,6 +41,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -57,7 +65,7 @@ import java.io.File
 
 /**
  * A card one of Orbit's tools put in the chat ([OrbitChatCards]): a secure entry card that opens
- * the entry sheet, a picture that saves to the gallery on a tap, or a file that opens in another app.
+ * the entry sheet, a picture that opens full screen on a tap (with a save button under it), or a file that opens in another app.
  */
 @Composable
 fun OrbitChatCard(source: String) {
@@ -202,43 +210,52 @@ private fun AttachmentCard(card: JSONObject) {
     }
     if (isImage && current != null) {
         var saving by remember { mutableStateOf(false) }
+        var viewing by remember { mutableStateOf(false) }
         val label = stringResource(R.string.orbit_chat_image_desc, name)
-        Surface(
-            shape = RoundedCornerShape(18.dp),
-            color = MaterialTheme.colorScheme.surface,
-            modifier = Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp))
-                .orbitCardGestures(onClick = {
-                    if (!saving) {
-                        saving = true
-                        scope.launch {
-                            val ok = saveToGallery(context, current)
-                            saving = false
-                            Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
-                                Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                })
-                .semantics(mergeDescendants = true) { contentDescription = label },
-        ) {
-            Box {
+        Column(Modifier.padding(vertical = 4.dp)) {
+            Surface(
+                shape = RoundedCornerShape(18.dp),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.clip(RoundedCornerShape(18.dp))
+                    .orbitCardGestures(onClick = { viewing = true })
+                    .semantics(mergeDescendants = true) { contentDescription = label },
+            ) {
                 AsyncImage(
                     model = current,
                     contentDescription = null,
                     contentScale = ContentScale.Crop,
                     modifier = imageSize(ratio).clip(RoundedCornerShape(18.dp)),
                 )
-                // A small download mark says a tap saves it.
-                Surface(
-                    shape = androidx.compose.foundation.shape.CircleShape,
-                    color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.45f),
-                    modifier = Modifier.align(Alignment.BottomEnd).padding(8.dp).size(30.dp),
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(orbitIcon("download"), null, Modifier.size(16.dp), tint = androidx.compose.ui.graphics.Color.White)
+            }
+            Spacer(Modifier.height(6.dp))
+            Surface(
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        val ok = saveToGallery(context, current)
+                        saving = false
+                        Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
+                            Toast.LENGTH_SHORT).show()
                     }
+                },
+                enabled = !saving,
+                shape = RoundedCornerShape(50),
+                color = MaterialTheme.colorScheme.surface,
+                modifier = Modifier.heightIn(min = 36.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (saving) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(orbitIcon("download"), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(stringResource(if (saving) R.string.orbit_chat_image_saving else R.string.orbit_chat_image_save),
+                        style = MaterialTheme.typography.labelLarge)
                 }
             }
         }
+        if (viewing) OrbitImageViewer(current, label) { viewing = false }
         return
     }
     val ext = name.substringAfterLast('.', "").uppercase().take(5)
@@ -271,6 +288,52 @@ private fun AttachmentCard(card: JSONObject) {
 }
 
 private class Found(val done: Boolean, val file: File?)
+
+/** The picture full screen: pinch to zoom, drag when zoomed, tap or back to close. */
+@Composable
+private fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
+    var scale by remember { mutableStateOf(1f) }
+    var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    androidx.compose.ui.window.Dialog(
+        onDismissRequest = onDismiss,
+        properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
+    ) {
+        Box(
+            Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)
+                .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+        ) {
+            AsyncImage(
+                model = file,
+                contentDescription = label,
+                contentScale = ContentScale.Fit,
+                modifier = Modifier.fillMaxSize()
+                    .graphicsLayer(scaleX = scale, scaleY = scale, translationX = offset.x, translationY = offset.y)
+                    .pointerInput(Unit) {
+                        detectTransformGestures { _, pan, zoom, _ ->
+                            scale = (scale * zoom).coerceIn(1f, 4f)
+                            val maxX = size.width * (scale - 1) / 2
+                            val maxY = size.height * (scale - 1) / 2
+                            offset = androidx.compose.ui.geometry.Offset(
+                                (offset.x + pan.x).coerceIn(-maxX, maxX),
+                                (offset.y + pan.y).coerceIn(-maxY, maxY),
+                            )
+                        }
+                    },
+            )
+            Surface(
+                onClick = onDismiss,
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp).size(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(androidx.compose.material.icons.Icons.Default.Close, stringResource(R.string.common_close),
+                        Modifier.size(22.dp), tint = androidx.compose.ui.graphics.Color.White)
+                }
+            }
+        }
+    }
+}
 
 /** At most 260 x 340dp, in the picture's own shape; a very tall or wide one is cropped a little. */
 private fun imageSize(ratio: Float?): Modifier {
