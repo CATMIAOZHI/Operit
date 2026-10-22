@@ -53,19 +53,117 @@ import kotlinx.coroutines.launch
 private const val PREVIEW_MS = 2_000L
 
 /**
- * "Browser · working" at the end of an Orbit chat while Orbit, or a subagent it sent, uses the
- * browser. It shows a small live picture of the page; the button opens the browser to watch it.
+ * "Browser · working" in an Orbit chat while Orbit, or a subagent it sent, uses the browser. It
+ * shows a small live picture of the page; the button opens the browser to watch it. Each card stays
+ * after the message it first showed after; once its page is gone, or the same task shows a newer
+ * card, it stays there marked as expired.
  */
 @Composable
-internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boolean = true) {
-    val works by OrbitBrowserWatch.works.collectAsState()
-    Column {
-        works.values.filter { it.talkChatId == chatId }.sortedBy { it.createdAt }.forEach { work ->
-            androidx.compose.runtime.key(work.executorChatId, work.createdAt) {
-                BrowserTaskCard(work, bubbleColor, visible)
+internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boolean, slot: OrbitCardSlot) {
+    remember { OrbitBrowserWatch.loadCards() }
+    val cards by OrbitBrowserWatch.cards.collectAsState()
+    val mine = remember(cards, chatId, slot) {
+        cards.filter { card ->
+            if (card.talkChatId != chatId) return@filter false
+            val placed = card.anchorAt
+            // A card stays after the message it first showed after, while that message is shown.
+            if (placed != null && (placed == Long.MIN_VALUE || placed in slot.shown)) placed == slot.anchor
+            // That message is on a page not loaded now: the card shows with it there.
+            else if (placed != null && (placed < slot.loadedFrom || placed > slot.loadedUntil)) false
+            else card.createdAt >= slot.from && (slot.until == null || card.createdAt < slot.until)
+        }
+    }
+    if (mine.isEmpty()) return
+    // The first place a card shows in becomes its place, so a reply that shows up later around it
+    // (written after Orbit opened the browser) does not move it.
+    LaunchedEffect(mine, slot.anchor) {
+        mine.filter { it.anchorAt == null }.forEach { OrbitBrowserWatch.place(it, slot.anchor) }
+    }
+    // Cards above the first message keep the usual gap before it.
+    Column(if (slot.anchor == Long.MIN_VALUE && slot.until != null) Modifier.padding(bottom = 8.dp) else Modifier) {
+        mine.forEach { card ->
+            androidx.compose.runtime.key(card.executorChatId, card.createdAt) {
+                BrowserCardSlot(card, bubbleColor, visible)
             }
         }
     }
+}
+
+@Composable
+private fun BrowserCardSlot(card: OrbitBrowserWatch.Card, bubbleColor: Color, visible: Boolean) {
+    val works by OrbitBrowserWatch.works.collectAsState()
+    val work = works[card.executorChatId]?.takeIf { it.createdAt == card.createdAt && it.talkChatId == card.talkChatId }
+    if (work != null) BrowserTaskCard(work, bubbleColor, visible) else ExpiredBrowserCard(card, bubbleColor)
+}
+
+/** A card whose page is gone or replaced by a newer card: what it showed, no picture, no button. */
+@Composable
+private fun ExpiredBrowserCard(card: OrbitBrowserWatch.Card, bubbleColor: Color) {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val host = runCatching { android.net.Uri.parse(card.url).host }.getOrNull()?.removePrefix("www.").orEmpty()
+    val title = card.title.ifBlank { host }.ifBlank { card.orbitName }.take(160)
+        .replace(Regex("[\\r\\n\\[\\]<>]"), " ").trim()
+    val summary = stringResource(R.string.orbit_browser_task_card_summary, title)
+    val piece = OrbitPiece(summary, "browser:${card.createdAt}:${card.executorChatId}", summary, true)
+    val reactions = LocalOrbitUserReactions.current
+    val reply = LocalOrbitLiveCardReply.current
+    var menu by remember { mutableStateOf(false) }
+    var picker by remember { mutableStateOf(false) }
+    fun react(emoji: String) {
+        if (reactions?.byMessage?.get(piece.key) != emoji) OrbitEmojiUsage.record(context, emoji)
+        reactions?.toggle?.invoke(piece.key, emoji, summary)
+        menu = false
+    }
+    val status = stringResource(R.string.orbit_browser_card_expired)
+    androidx.compose.runtime.CompositionLocalProvider(LocalOrbitPieceActions provides OrbitPieceActions(
+        like = { if (reactions?.byMessage?.get(piece.key) != OrbitQuickLike) react(OrbitQuickLike) },
+        menu = { menu = true },
+        reply = reply?.let { action -> { action(summary, card.createdAt) } },
+    )) {
+    OrbitPieceFrame(piece) {
+    Box {
+    Surface(
+        shape = RoundedCornerShape(20.dp),
+        color = bubbleColor,
+        modifier = Modifier.padding(top = 4.dp).widthIn(max = 320.dp),
+    ) {
+        Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
+            Surface(shape = RoundedCornerShape(14.dp), color = colors.surface, modifier = Modifier.size(52.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(Icons.Outlined.Language, null, Modifier.size(26.dp), tint = colors.onSurfaceVariant)
+                }
+            }
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    title.ifBlank { stringResource(R.string.orbit_browser_card_title) },
+                    style = MaterialTheme.typography.titleMedium, color = colors.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    if (host.isNotBlank()) "$status · $host" else status,
+                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+    androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+        OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
+        if (reply != null) androidx.compose.material3.DropdownMenuItem(
+            text = { Text(stringResource(R.string.reply_message)) },
+            onClick = { menu = false; reply(summary, card.createdAt) },
+        )
+    }
+    }
+    }
+    }
+    if (picker) OrbitEmojiPickerSheet(
+        selected = reactions?.byMessage?.get(piece.key),
+        onPick = { react(it); picker = false },
+        onDismiss = { picker = false },
+    )
 }
 
 @Composable

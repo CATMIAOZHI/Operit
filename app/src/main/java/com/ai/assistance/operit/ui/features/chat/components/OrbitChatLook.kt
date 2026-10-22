@@ -53,10 +53,27 @@ import com.ai.assistance.operit.util.stream.asFlow
 val LocalOrbitChatLook = compositionLocalOf { false }
 
 /**
- * Live content an Orbit chat shows after its last message, such as the browser Orbit is working in.
- * It gets the color of Orbit's bubbles.
+ * Cards an Orbit chat shows between its messages, such as the browser Orbit works in. Each sits
+ * where it first showed. They get Orbit's bubble color.
  */
-val LocalOrbitChatFooter = compositionLocalOf<(@Composable (bubbleColor: androidx.compose.ui.graphics.Color) -> Unit)?> { null }
+val LocalOrbitChatFooter = compositionLocalOf<(@Composable (bubbleColor: androidx.compose.ui.graphics.Color, slot: OrbitCardSlot) -> Unit)?> { null }
+
+/**
+ * One place between messages where cards can sit: after the shown message at [anchor] (the time of
+ * that message, or [Long.MIN_VALUE] above the first one). A card remembers the place it first showed
+ * in; until then, or when that message is no longer shown, it goes by its own time: made between
+ * [from] and [until] (null after the last message). [shown] holds the times of all shown messages;
+ * a place outside [loadedFrom]..[loadedUntil] is on a page not loaded now, so its cards wait there.
+ */
+@androidx.compose.runtime.Immutable
+data class OrbitCardSlot(
+    val anchor: Long,
+    val from: Long,
+    val until: Long?,
+    val shown: Set<Long>,
+    val loadedFrom: Long = Long.MIN_VALUE,
+    val loadedUntil: Long = Long.MAX_VALUE,
+)
 /** Reply to one live browser card using the same composer as ordinary messages. */
 val LocalOrbitLiveCardReply = compositionLocalOf<((String, Long) -> Unit)?> { null }
 

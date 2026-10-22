@@ -592,13 +592,15 @@ private fun OrbitChatPage(
                     com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows provides devView,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitReactions provides reactions,
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitUserReactions provides userReactions,
-                    // While Orbit works in the browser, its chat ends with a live card to watch it.
+                    // Orbit's browser cards, each where it first showed in the chat.
                     com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatFooter provides
                         if (devView) null else {
                             // Covered chats stop redrawing the page picture.
                             val cardVisible = chatOnScreen && stack.isEmpty() && editingFile == null
                             remember(currentChatId, cardVisible) {
-                                { color: androidx.compose.ui.graphics.Color -> OrbitBrowserCard(currentChatId, color, cardVisible) }
+                                { color: androidx.compose.ui.graphics.Color, slot: com.ai.assistance.operit.ui.features.chat.components.OrbitCardSlot ->
+                                    OrbitBrowserCard(currentChatId, color, cardVisible, slot)
+                                }
                             }
                         },
                     // In the developer view a subagent row opens that subagent's chat right here.
