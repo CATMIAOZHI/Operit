@@ -152,6 +152,8 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
 
     private val isExpandedState = mutableStateOf(false)
     private val isExpandedByUserState = mutableStateOf(false)
+    /** The running visit works for an Orbit chat, so no floating button shows for it. */
+    @Volatile private var quietVisit = false
 
     override fun invoke(tool: AITool): ToolResult {
         val url = tool.parameters.find { it.name == "url" }?.value
@@ -243,7 +245,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
         val resolvedUserAgent = resolveUserAgent(userAgentPresetParam, userAgentParam)
 
         return try {
-            val pageContent = visitWebPage(targetUrl, headers, resolvedUserAgent, includeImageLinks)
+            // An Orbit's visit runs without the floating button: Orbit puts nothing on the screen.
+            val quiet = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.caller(
+                com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserProfiles.callerChatId(tool)
+            ) != null
+            val pageContent = visitWebPage(targetUrl, headers, resolvedUserAgent, includeImageLinks, quiet)
             ToolResult(toolName = tool.name, success = true, result = pageContent, error = null)
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error visiting web page", e)
@@ -395,14 +401,16 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
     }
 
     /** Visit web page and extract content */
-    private fun visitWebPage(url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean): VisitWebResultData {
+    private fun visitWebPage(
+        url: String, headers: Map<String, String>, userAgent: String, includeImageLinks: Boolean, quiet: Boolean = false,
+    ): VisitWebResultData {
         // Use WebView to visit the page and extract content. The visit ends itself well before this;
         // the outer limit only catches a main thread that never ran it, so the tool can never hang.
         val extractedJson = runBlocking {
             val waitSeconds = DisplayPreferencesManager.getInstance(context).visitWebWaitSeconds.first()
                 .coerceIn(0, MAX_LAZY_WAIT_SECONDS)
             withTimeoutOrNull(totalBudgetMs(waitSeconds) + OUTER_SLACK_MS) {
-                loadWebPageAndExtractContent(url, headers, userAgent, includeImageLinks, waitSeconds)
+                loadWebPageAndExtractContent(url, headers, userAgent, includeImageLinks, waitSeconds, quiet)
             } ?: errorJson("The page did not respond in time. Try again later or use another source.")
         }
         webVisitFailure(extractedJson)?.let { throw IOException(it) }
@@ -579,6 +587,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
             userAgent: String,
             includeImageLinks: Boolean,
             waitSeconds: Int,
+            quiet: Boolean = false,
     ): String {
         return suspendCancellableCoroutine { continuation ->
             AppLogger.d(TAG, "Starting to load web page: $url")
@@ -604,6 +613,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                     overlayLifecycleOwner = lifecycleOwner
                     isExpandedState.value = false
                     isExpandedByUserState.value = false
+                    quietVisit = quiet
 
                     if (indicatorLayoutParams == null) {
                         indicatorLayoutParams = createIndicatorLayoutParams()
@@ -709,7 +719,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                         windowManager.addView(composeView, params)
                         AppLogger.d(TAG, "Web browser window added")
 
-                        showIndicatorWindow()
+                        if (!quiet) showIndicatorWindow()
                         visit.start()
 
                         // 添加取消回调以处理协程取消
@@ -943,7 +953,7 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or
                             WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
 
-            if (indicatorComposeView == null) {
+            if (indicatorComposeView == null && !quietVisit) {
                 showIndicatorWindow()
             }
 

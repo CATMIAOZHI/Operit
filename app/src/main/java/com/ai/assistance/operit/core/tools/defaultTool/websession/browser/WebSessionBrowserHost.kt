@@ -285,7 +285,21 @@ internal class WebSessionBrowserHost(
                         browserState.currentUrl
                     }
             )
+        syncIndicatorWithPages()
         updateIndicatorLayoutForCurrentState()
+    }
+
+    /**
+     * Orbit puts nothing on the screen: its pages open from the card in its chat. The floating
+     * button is only for the main app's own tabs (those without an Orbit task).
+     */
+    private fun wantsIndicator(): Boolean =
+        com.ai.assistance.operit.core.tools.defaultTool.standard.StandardBrowserSessionTools.sessions.values
+            .any { it.browserTaskId == null }
+
+    private fun syncIndicatorWithPages() {
+        if (isExpanded || rootView == null) return
+        if (wantsIndicator()) showIndicator() else hideIndicator()
     }
 
     fun attachActiveWebView(webView: WebView?, viewportWidth: Int? = null, viewportHeight: Int? = null) {
@@ -443,9 +457,7 @@ internal class WebSessionBrowserHost(
             applyExpandedLayoutParams(params)
             hideIndicator()
         } else {
-            if (indicatorView == null) {
-                showIndicator()
-            }
+            if (wantsIndicator()) showIndicator() else hideIndicator()
 
             root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             val displayMetrics = appContext.resources.displayMetrics

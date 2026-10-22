@@ -177,15 +177,16 @@ fun getJsToolsDefinition(): String {
                     return toolCall("http_request", params);
                 },
                 visit: (params) => {
+                    // The host chat lets an Orbit's search run without putting anything on screen.
                     if (typeof params === 'string') {
                         // 向后兼容，如果只传入一个字符串，则假定为URL
-                        return toolCall("visit_web", { url: params });
+                        return toolCall("visit_web", Tools.Memory._withHostChat({ url: params }));
                     }
                     // 否则，假定为参数对象
                     if (params && typeof params === 'object' && params.headers !== undefined && typeof params.headers === 'object') {
                         params = { ...params, headers: JSON.stringify(params.headers) };
                     }
-                    return toolCall("visit_web", params);
+                    return toolCall("visit_web", Tools.Memory._withHostChat({ ...(params || {}) }));
                 },
                 browserNavigate: (urlOrOptions) => {
                     const params = typeof urlOrOptions === 'string' ? { url: urlOrOptions } : { ...(urlOrOptions || {}) };

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
@@ -65,7 +66,8 @@ import java.io.File
 
 /**
  * A card one of Orbit's tools put in the chat ([OrbitChatCards]): a secure entry card that opens
- * the entry sheet, a picture that opens full screen on a tap (with a save button under it), or a file that opens in another app.
+ * the entry sheet, a picture that opens full screen on a tap (with a save button there), a text file shown
+ * right here, or any other file, which opens in another app.
  */
 @Composable
 fun OrbitChatCard(source: String) {
@@ -209,63 +211,37 @@ private fun AttachmentCard(card: JSONObject) {
         return
     }
     if (isImage && current != null) {
-        var saving by remember { mutableStateOf(false) }
         var viewing by remember { mutableStateOf(false) }
         val label = stringResource(R.string.orbit_chat_image_desc, name)
-        Column(Modifier.padding(vertical = 4.dp)) {
-            Surface(
-                shape = RoundedCornerShape(18.dp),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.clip(RoundedCornerShape(18.dp))
-                    .orbitCardGestures(onClick = { viewing = true })
-                    .semantics(mergeDescendants = true) { contentDescription = label },
-            ) {
-                AsyncImage(
-                    model = current,
-                    contentDescription = null,
-                    contentScale = ContentScale.Crop,
-                    modifier = imageSize(ratio).clip(RoundedCornerShape(18.dp)),
-                )
-            }
-            Spacer(Modifier.height(6.dp))
-            Surface(
-                onClick = {
-                    saving = true
-                    scope.launch {
-                        val ok = saveToGallery(context, current)
-                        saving = false
-                        Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
-                            Toast.LENGTH_SHORT).show()
-                    }
-                },
-                enabled = !saving,
-                shape = RoundedCornerShape(50),
-                color = MaterialTheme.colorScheme.surface,
-                modifier = Modifier.heightIn(min = 36.dp),
-            ) {
-                Row(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-                    if (saving) {
-                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(orbitIcon("download"), null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurface)
-                    }
-                    Spacer(Modifier.width(6.dp))
-                    Text(stringResource(if (saving) R.string.orbit_chat_image_saving else R.string.orbit_chat_image_save),
-                        style = MaterialTheme.typography.labelLarge)
-                }
-            }
+        Surface(
+            shape = RoundedCornerShape(18.dp),
+            color = MaterialTheme.colorScheme.surface,
+            modifier = Modifier.padding(vertical = 4.dp).clip(RoundedCornerShape(18.dp))
+                .orbitCardGestures(onClick = { viewing = true })
+                .semantics(mergeDescendants = true) { contentDescription = label },
+        ) {
+            AsyncImage(
+                model = current,
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = imageSize(ratio).clip(RoundedCornerShape(18.dp)),
+            )
         }
         if (viewing) OrbitImageViewer(current, label) { viewing = false }
         return
     }
+    var previewing by remember { mutableStateOf(false) }
+    val previewable = current != null && OrbitTextPreview.canShow(name)
     val ext = name.substringAfterLast('.', "").uppercase().take(5)
     val size = card.optLong("size", -1L)
-    val label = stringResource(R.string.orbit_chat_file_desc, name)
+    val label = stringResource(if (previewable) R.string.orbit_chat_text_desc else R.string.orbit_chat_file_desc, name)
     Surface(
         shape = RoundedCornerShape(16.dp),
         color = androidx.compose.ui.graphics.Color.Transparent,
         modifier = Modifier.widthIn(max = 300.dp).padding(vertical = 4.dp).clip(RoundedCornerShape(16.dp))
-            .orbitCardGestures(onClick = { current?.let { f -> openOrbitFile(context) { f } } }, enabled = current != null)
+            .orbitCardGestures(onClick = {
+                if (previewable) previewing = true else current?.let { f -> openOrbitFile(context) { f } }
+            }, enabled = current != null)
             .semantics(mergeDescendants = true) { contentDescription = label },
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
@@ -285,13 +261,20 @@ private fun AttachmentCard(card: JSONObject) {
             }
         }
     }
+    if (previewing && current != null) OrbitTextPreview.Screen(current) { previewing = false }
 }
 
 private class Found(val done: Boolean, val file: File?)
 
-/** The picture full screen: pinch to zoom, drag when zoomed, tap or back to close. */
+/**
+ * The picture full screen, like a chat app's photo viewer: pinch to zoom, drag when zoomed, tap or
+ * back to close, and a save button at the bottom.
+ */
 @Composable
 private fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var saving by remember { mutableStateOf(false) }
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
     androidx.compose.ui.window.Dialog(
@@ -329,6 +312,33 @@ private fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(androidx.compose.material.icons.Icons.Default.Close, stringResource(R.string.common_close),
                         Modifier.size(22.dp), tint = androidx.compose.ui.graphics.Color.White)
+                }
+            }
+            Surface(
+                onClick = {
+                    saving = true
+                    scope.launch {
+                        val ok = saveToGallery(context, file)
+                        saving = false
+                        Toast.makeText(context, if (ok) R.string.orbit_chat_image_saved else R.string.orbit_chat_image_save_failed,
+                            Toast.LENGTH_SHORT).show()
+                    }
+                },
+                enabled = !saving,
+                shape = RoundedCornerShape(50),
+                color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
+                modifier = Modifier.align(Alignment.BottomEnd).navigationBarsPadding().padding(20.dp).heightIn(min = 44.dp),
+            ) {
+                Row(Modifier.padding(horizontal = 16.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
+                    if (saving) {
+                        androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp,
+                            color = androidx.compose.ui.graphics.Color.White)
+                    } else {
+                        Icon(orbitIcon("download"), null, Modifier.size(18.dp), tint = androidx.compose.ui.graphics.Color.White)
+                    }
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(if (saving) R.string.orbit_chat_image_saving else R.string.orbit_chat_image_save_short),
+                        style = MaterialTheme.typography.labelLarge, color = androidx.compose.ui.graphics.Color.White)
                 }
             }
         }
