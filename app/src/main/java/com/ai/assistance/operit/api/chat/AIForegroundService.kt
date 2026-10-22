@@ -140,6 +140,11 @@ class AIForegroundService : Service() {
             "com.ai.assistance.operit.action.START_OR_REFRESH_EXTERNAL_HTTP"
         private const val ACTION_STOP_EXTERNAL_HTTP =
             "com.ai.assistance.operit.action.STOP_EXTERNAL_HTTP"
+        private const val ACTION_ORBIT_TASKS =
+            "com.ai.assistance.operit.action.ORBIT_TASKS"
+
+        /** True while Orbit runs background tasks in this service; it keeps the service up. */
+        private val orbitTasksBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
         @Volatile
         private var lastRequestedImeVisible: Boolean = false
@@ -446,6 +451,49 @@ class AIForegroundService : Service() {
 
         fun ensureRunningForExternalHttp(context: Context) {
             startServiceForAction(context, ACTION_START_OR_REFRESH_EXTERNAL_HTTP)
+        }
+
+        /**
+         * Keeps this service in the foreground while Orbit runs its background tasks, so they are
+         * not bound by the background worker limit. False when Android does not let the app start
+         * a foreground service now (in the background without keep-alive or a battery exemption).
+         */
+        fun holdForOrbitTasks(context: Context): Boolean {
+            val appContext = context.applicationContext
+            orbitTasksBusy.set(true)
+            val intent = Intent(appContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_TASKS }
+            if (isRunning.get()) {
+                // A running foreground service makes the app count as foreground here; a service
+                // stopped a moment ago falls through to a foreground start.
+                try {
+                    appContext.startService(intent)
+                    return true
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Orbit tasks: running service not reachable, starting it again", e)
+                }
+            }
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    appContext.startForegroundService(intent)
+                } else {
+                    appContext.startService(intent)
+                }
+                true
+            } catch (e: Exception) {
+                orbitTasksBusy.set(false)
+                AppLogger.w(TAG, "Orbit tasks: foreground service start refused: ${e.message}")
+                false
+            }
+        }
+
+        /** Orbit's tasks are done; the service stops unless something else still needs it. */
+        fun releaseForOrbitTasks(context: Context) {
+            if (!orbitTasksBusy.getAndSet(false) || !isRunning.get()) return
+            runCatching {
+                context.applicationContext.startService(
+                    Intent(context.applicationContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_TASKS }
+                )
+            }.onFailure { AppLogger.w(TAG, "Orbit tasks: release not delivered", it) }
         }
 
         fun refreshBackgroundKeepAlive(context: Context) {
@@ -913,7 +961,7 @@ class AIForegroundService : Service() {
         if (!backgroundKeepAliveLoaded) return
         val alwaysListeningEnabled = wakeListeningEnabled || isAlwaysListeningEnabledNow()
         val externalHttpEnabled = externalHttpStateFlow.value.isRunning || isExternalHttpEnabledNow()
-        if (isAiBusy || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
+        if (isAiBusy || orbitTasksBusy.get() || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
             return
         }
         if (!ignoreAppForeground && ActivityLifecycleManager.getCurrentActivity() != null) {
@@ -1220,6 +1268,11 @@ class AIForegroundService : Service() {
             }
             stopSelfIfIdle(ignoreAppForeground = true)
             return START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_ORBIT_TASKS) {
+            if (!orbitTasksBusy.get()) stopSelfIfIdle(ignoreAppForeground = true)
+            return if (isExternalHttpEnabledNow()) START_STICKY else START_NOT_STICKY
         }
 
         if (intent?.action == ACTION_START_OR_REFRESH_EXTERNAL_HTTP || intent == null) {

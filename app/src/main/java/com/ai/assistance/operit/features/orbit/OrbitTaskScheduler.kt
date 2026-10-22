@@ -3,23 +3,26 @@ package com.ai.assistance.operit.features.orbit
 import android.content.Context
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
-import androidx.work.ListenableWorker
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
-import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.ensureActive
-import kotlinx.coroutines.isActive
 import java.util.concurrent.TimeUnit
 
+/**
+ * Decides when Orbit's tasks are next due and sets one WorkManager wake-up for then. The wake-up
+ * only hands over to [OrbitTaskHost], which runs the tasks in Operit's keep-alive service.
+ */
 object OrbitTaskScheduler {
+    /** Runner workers of older versions; cancelled so a queued one never runs a task. */
     private const val WORK = "orbit_durable_tasks"
     private const val LONG_WORK = "orbit_durable_long_tasks"
     private const val WAKE = "orbit_durable_task_wakeup"
+    /** While lanes run; separate from [WAKE] so the two never replace each other. */
+    private const val SAFETY = "orbit_durable_task_safety"
     private const val BUSY_LANE_SAFETY_WAKE_MS = 30 * 60_000L
 
+    /** [fromWorker]: called when a lane ends, so a due task waits a little before the next wake-up. */
     suspend fun reschedule(context: Context, fromWorker: Boolean = false, restore: Boolean = false) {
         val settings = OrbitPreferences.getInstance(context).current()
         val active = settings.active?.takeUnless { it.deleting }
@@ -27,10 +30,6 @@ object OrbitTaskScheduler {
         val manager = WorkManager.getInstance(context)
         if (active == null) {
             manager.cancelUniqueWork(WAKE)
-            if (!fromWorker) {
-                manager.cancelUniqueWork(WORK)
-                manager.cancelUniqueWork(LONG_WORK)
-            }
             return
         }
         val repo = OrbitTaskRepository(context)
@@ -50,7 +49,7 @@ object OrbitTaskScheduler {
                 else -> minOf(run.leaseUntilWall, now + 120_000)
             }
             // A run in progress here, or a due task waiting for its busy lane, is rescheduled by
-            // that lane's worker when it ends; waking every few seconds for hours would only burn
+            // that lane when it ends; waking every few seconds for hours would only burn
             // battery. A slow safety wake-up still covers a process that dies mid-run.
             if ((run != null && OrbitTaskRunner.isRunningHere(run.id)) ||
                 (run == null && retryAt <= now && OrbitTaskRunner.laneBusyHere(OrbitTaskRepository.isLongRun(task)))) {
@@ -77,17 +76,35 @@ object OrbitTaskScheduler {
 
     fun wake(context: Context) {
         // Scheduling changes replace the small wake-up, never a running model turn.
-        val manager = WorkManager.getInstance(context)
-        manager.enqueueUniqueWork(WORK, ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<OrbitTaskWorker>().build())
-        manager.enqueueUniqueWork(LONG_WORK, ExistingWorkPolicy.KEEP,
-            OneTimeWorkRequestBuilder<OrbitLongTaskWorker>().build())
+        OrbitTaskHost.wake(context)
+    }
+
+    /** A wake-up after [delayMs], for a lane that could not run now (service refused, a failure). */
+    fun wakeAfter(context: Context, delayMs: Long) {
+        WorkManager.getInstance(context).enqueueUniqueWork(WAKE, ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<OrbitTaskWakeWorker>().setInitialDelay(delayMs, TimeUnit.MILLISECONDS).build())
+    }
+
+    /**
+     * A wake-up in 30 minutes, set while tasks run: the process may die before a lane ends and
+     * schedules the next one. Each wake-up that finds the lanes still running sets it again.
+     */
+    fun armSafetyWake(context: Context) {
+        WorkManager.getInstance(context).enqueueUniqueWork(SAFETY, ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<OrbitTaskWakeWorker>()
+                .setInitialDelay(BUSY_LANE_SAFETY_WAKE_MS, TimeUnit.MILLISECONDS).build())
+    }
+
+    fun cancelSafetyWake(context: Context) {
+        WorkManager.getInstance(context).cancelUniqueWork(SAFETY)
     }
 
     suspend fun migrateAndSchedule(context: Context, restore: Boolean = false) {
         val manager = WorkManager.getInstance(context)
         manager.cancelUniqueWork("orbit_daily_check_in")
         manager.cancelUniqueWork("orbit_manual_check_in")
+        manager.cancelUniqueWork(WORK)
+        manager.cancelUniqueWork(LONG_WORK)
         OrbitTaskRepository(context).syncDaily()
         reschedule(context, restore = restore)
     }
@@ -118,53 +135,5 @@ class OrbitTaskWakeWorker(context: Context, parameters: WorkerParameters) : Coro
     override suspend fun doWork(): Result {
         OrbitTaskScheduler.wake(applicationContext)
         return Result.success()
-    }
-}
-
-/** Runs tasks that fit a normal background worker (up to about ten minutes). */
-class OrbitTaskWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result = runOrbitLane(applicationContext, longLane = false) { false }
-}
-
-/**
- * Runs tasks whose time limit is longer than a background worker allows. The worker moves to the
- * foreground with a notification first, which lifts the ten minute limit.
- */
-class OrbitLongTaskWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
-    override suspend fun doWork(): Result = runOrbitLane(applicationContext, longLane = true) { task ->
-        if (!OrbitLongRunNotification.mayStartFromBackground(applicationContext)) return@runOrbitLane false
-        val orbitName = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(applicationContext).current()
-            .orbits.firstOrNull { it.id == task.orbitId }?.name.orEmpty()
-        setForeground(OrbitLongRunNotification.foregroundInfo(applicationContext, orbitName, task.title))
-        OrbitLongRunNotification.isShowing(applicationContext)
-    }
-}
-
-private suspend fun runOrbitLane(
-    applicationContext: Context,
-    longLane: Boolean,
-    promote: suspend (com.ai.assistance.operit.data.model.OrbitTaskEntity) -> Boolean,
-): ListenableWorker.Result {
-    when (OperitApplication.initializeMainApplication(applicationContext)) {
-        OperitApplication.MainApplicationInitResult.Initialized -> Unit
-        OperitApplication.MainApplicationInitResult.MigrationInProgress -> return ListenableWorker.Result.retry()
-        else -> return ListenableWorker.Result.failure()
-    }
-    try {
-        OrbitTaskRunner.runNext(applicationContext, longLane, promote)
-        // A replacement worker owns the next wake-up after cancellation.
-        kotlinx.coroutines.currentCoroutineContext().ensureActive()
-        OrbitTaskScheduler.reschedule(applicationContext, fromWorker = true)
-        return ListenableWorker.Result.success()
-    } catch (e: CancellationException) {
-        if (kotlinx.coroutines.currentCoroutineContext().isActive) {
-            // Cancelling this task leaves the other tasks eligible for their next wake-up.
-            OrbitTaskScheduler.reschedule(applicationContext, fromWorker = true)
-            return ListenableWorker.Result.success()
-        }
-        throw e
-    } catch (e: Exception) {
-        com.ai.assistance.operit.util.AppLogger.e("OrbitTasks", "Task worker failed", e)
-        return ListenableWorker.Result.retry()
     }
 }

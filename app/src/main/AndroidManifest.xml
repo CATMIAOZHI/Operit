@@ -350,12 +350,6 @@
         </service>
 
         <!-- AI 前台服务 - 保持网络连接稳定 -->
-        <!-- WorkManager 前台服务：Orbit 长任务（超过约 10 分钟）运行时切到前台 -->
-        <service
-            android:name="androidx.work.impl.foreground.SystemForegroundService"
-            android:foregroundServiceType="dataSync"
-            tools:node="merge" />
-
         <service
             android:name=".api.chat.AIForegroundService"
             android:enabled="true"
