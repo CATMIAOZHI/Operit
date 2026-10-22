@@ -18,6 +18,7 @@ import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -38,6 +39,9 @@ object OrbitTaskRunner {
     private const val DELIVERY_BUDGET_MS = 4 * 60_000L
     private val runningState = MutableStateFlow(false)
     val running = runningState.asStateFlow()
+    private val runningChatsState = MutableStateFlow<Map<String, String>>(emptyMap())
+    /** Task chats running now, each with its Orbit's id. */
+    val runningChats = runningChatsState.asStateFlow()
     private data class ActiveRun(
         val orbitId: String, val task: OrbitTaskEntity, val token: OrbitRunEntity,
         val job: Job, val boot: String,
@@ -129,6 +133,7 @@ object OrbitTaskRunner {
         val state = ActiveRun(orbit.id, task, token, job, boot)
         active[chatId] = state
         runningState.value = true
+        runningChatsState.update { it + (chatId to orbit.id) }
         val heartbeat = launch {
             while (isActive) {
                 delay(20_000)
@@ -278,6 +283,7 @@ object OrbitTaskRunner {
                 dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
                 active.remove(chatId, state)
                 runningState.value = active.isNotEmpty()
+                runningChatsState.update { all -> if (active.containsKey(chatId)) all else all - chatId }
             }
         }
         // Put off for a busy chat: end now so the retry is scheduled on time; reports wait for it.

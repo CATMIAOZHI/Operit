@@ -1,5 +1,6 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import androidx.compose.animation.animateContentSize
 import android.Manifest
 import android.net.Uri
 import android.os.Build
@@ -627,6 +628,7 @@ private fun OrbitChatPage(
                             Column {
                                 OrbitHeader(
                                     orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
+                                    activity = orbitActivity(orbit, currentChatId),
                                     onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                                 )
                                 currentSide?.forkOrigin?.let { origin ->
@@ -648,6 +650,7 @@ private fun OrbitChatPage(
                         {
                             OrbitHeader(
                                 orbit = orbit, sideTitle = null, hasUnread = hasUnreadState.value,
+                                activity = orbitActivity(orbit, null),
                                 onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                             )
                         }
@@ -941,6 +944,8 @@ internal fun OrbitHeader(
     hasUnread: Boolean,
     onOpenProfile: () -> Unit,
     onOpenMenu: () -> Unit,
+    /** What Orbit is doing now ([orbitActivity]); null while it rests. */
+    activity: String? = null,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     Box(
@@ -1000,7 +1005,8 @@ internal fun OrbitHeader(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 6.dp),
+                    modifier = Modifier.animateContentSize(androidx.compose.animation.core.tween(180))
+                        .padding(horizontal = 16.dp, vertical = 6.dp),
                 ) {
                     Text(
                         text = orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
@@ -1009,10 +1015,12 @@ internal fun OrbitHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    // In a side chat, its topic sits under the name so the user knows where they are.
-                    if (sideTitle != null) {
+                    // While Orbit works, what it does sits under the name, like Muse; otherwise in a
+                    // side chat its topic does, so the user knows where they are.
+                    val subtitle = activity ?: sideTitle
+                    if (subtitle != null) {
                         Text(
-                            text = sideTitle,
+                            text = subtitle,
                             style = MaterialTheme.typography.labelSmall,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,

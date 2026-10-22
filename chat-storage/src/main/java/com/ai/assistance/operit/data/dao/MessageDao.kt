@@ -187,6 +187,12 @@ interface MessageDao {
     )
     suspend fun existsUserMessage(chatId: String): Boolean
 
+    /** True when the user wrote a visible message in [chatId] after [afterTimestamp]. */
+    @Query(
+        "SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND sender = 'user' AND displayMode = 'NORMAL' AND timestamp > :afterTimestamp LIMIT 1)"
+    )
+    suspend fun existsUserMessageAfter(chatId: String, afterTimestamp: Long): Boolean
+
     @Query("SELECT chatId AS chatId, COUNT(*) AS count FROM messages GROUP BY chatId")
     suspend fun getMessageCountsByChatId(): List<ChatMessageCount>
 

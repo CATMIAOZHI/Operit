@@ -95,4 +95,14 @@
     <string name="orbit_review_read_tool">读复盘的聊天</string>
     <string name="orbit_decision_review_continues">这次没读完（已读并记下 %1$s 条），下次复盘时接着读</string>
     <string name="orbit_review_continues_observation">对齐复盘读到一半，已读并记下 %1$s 条，接着读</string>
+    <string name="orbit_activity_working">努力工作中</string>
+    <string name="orbit_activity_browsing">正在浏览网页</string>
+    <string name="orbit_activity_searching">正在搜索</string>
+    <string name="orbit_activity_files">正在看文件</string>
+    <string name="orbit_activity_tool">正在用工具</string>
+    <string name="orbit_profile_tab_browser">浏览器</string>
+    <string name="orbit_profile_browser_count">%1$d 项浏览器任务</string>
+    <string name="orbit_profile_browser_empty">现在没有浏览器任务</string>
+    <string name="orbit_profile_browser_gone">这个网页已经关了</string>
+    <string name="orbit_profile_browser_empty_desc">%1$s 用浏览器时，网页会出现在这里，点开就能看，也能接手。</string>
 </resources>

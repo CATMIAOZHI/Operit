@@ -95,4 +95,14 @@
     <string name="orbit_review_read_tool">Read the review\'s chats</string>
     <string name="orbit_decision_review_continues">Not finished this time (%1$s read and written down); it goes on at the next review</string>
     <string name="orbit_review_continues_observation">The alignment review is partway through: %1$s read and written down; it goes on next run</string>
+    <string name="orbit_activity_working">Working hard</string>
+    <string name="orbit_activity_browsing">Browsing the web</string>
+    <string name="orbit_activity_searching">Searching</string>
+    <string name="orbit_activity_files">Looking at files</string>
+    <string name="orbit_activity_tool">Using a tool</string>
+    <string name="orbit_profile_tab_browser">Browser</string>
+    <string name="orbit_profile_browser_count">%1$d browser tasks</string>
+    <string name="orbit_profile_browser_empty">No browser tasks right now</string>
+    <string name="orbit_profile_browser_gone">This page is closed</string>
+    <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
 </resources>
