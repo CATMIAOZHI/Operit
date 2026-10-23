@@ -177,7 +177,8 @@ internal fun rememberResponseProcessState(
     val preferences = remember(context) { DisplayPreferencesManager.getInstance(context) }
     val collapsePreference by remember(preferences) {
         preferences.collapseCompletedProcess.map { it as Boolean? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = lastCollapsePreference)
+    collapsePreference?.let { lastCollapsePreference = it }
     val collapse = collapsePreference ?: true
     val snapshot = messages.toList()
     val allGroups = remember(snapshot, metadata) {
@@ -221,6 +222,9 @@ internal fun rememberResponseProcessState(
 }
 
 private fun processSectionId(key: Long): String = "process-section-$key"
+
+/** Last value read, so a transcript opened again is ready at once instead of after a frame or two. */
+@Volatile private var lastCollapsePreference: Boolean? = null
 
 @Composable
 internal fun ResponseProcessMessage(

@@ -178,7 +178,8 @@ fun OrbitScreen(
 ) {
     val context = LocalContext.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
-    val settings by preferences.settingsFlow.collectAsState(initial = null)
+    // Settings already read open the page at once; only the very first visit waits for them.
+    val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
     val loadedSettings = settings ?: return
     val activeOrbitId = loadedSettings.activeOrbitId
 
@@ -192,8 +193,9 @@ fun OrbitScreen(
     }
 
     // Make sure the running Orbit still has its chat (the user may have deleted it) before showing it.
+    // A chat this Orbit already had ready shows at once while that check runs again.
     val readyChatId by
-        produceState<String?>(initialValue = null, activeOrbitId) {
+        produceState(initialValue = OrbitReadyChats.get(activeOrbitId), activeOrbitId) {
             value =
                 try {
                     OrbitCompanion.ensureActiveChat(context)?.chatId
@@ -204,6 +206,7 @@ fun OrbitScreen(
                     AppLogger.e(TAG, "Could not prepare the Orbit chat", e)
                     null
                 }
+            OrbitReadyChats.put(activeOrbitId, value)
             if (value == null) {
                 // The chat could not be made: show the list instead.
                 toast(context, R.string.orbit_open_chat_failed)
@@ -293,9 +296,11 @@ private fun OrbitChatPage(
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
     // In the developer view: a subagent's chat shown instead of Orbit's own. Never an Orbit chat,
-    // so it stays out of the talk chats; leaving the developer view drops it.
+    // so it stays out of the talk chats; leaving the developer view drops it. A back swipe hides the
+    // view for a moment while it records it, so the chat is only dropped once leaving is certain
+    // (see leaveDevView), or when the developer option is turned off.
     var devSubChatId by remember(orbit.id) { mutableStateOf<String?>(null) }
-    LaunchedEffect(devView) { if (!devView) devSubChatId = null }
+    LaunchedEffect(settings.developerMode) { if (!settings.developerMode) devSubChatId = null }
     // The developer view is opened from the profile and goes back to it, like a page pushed over it:
     // the profile stays where it was, kept but hidden, while the developer view shows. Leaving slides
     // it off to the right: 0 is in place, 1 is off screen. As the back starts, what the developer view
@@ -347,6 +352,7 @@ private fun OrbitChatPage(
                     devLeave.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
                 }
                 devChatView = false
+                devSubChatId = null
             } finally {
                 devPicture = null
                 devLeaving = false
@@ -1803,4 +1809,13 @@ private fun FocusNotesField(initialNotes: String, onSave: suspend (String) -> Un
         shape = RoundedCornerShape(14.dp),
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/** The chat each Orbit last had ready, so opening it again need not wait on a spinner. */
+private object OrbitReadyChats {
+    private val chats = java.util.concurrent.ConcurrentHashMap<String, String>()
+    fun get(orbitId: String): String? = chats[orbitId]
+    fun put(orbitId: String, chatId: String?) {
+        if (chatId == null) chats.remove(orbitId) else chats[orbitId] = chatId
+    }
 }

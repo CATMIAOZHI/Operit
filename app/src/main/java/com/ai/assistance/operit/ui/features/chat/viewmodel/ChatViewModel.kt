@@ -258,6 +258,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     private fun setupComposerPredictions() {
         viewModelScope.launch {
+            // The subagent store is read from disk the first time; never on the main thread.
+            val coordinator = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
+            }
             // All invalidating state is observed; draft typing intentionally is not.
             combine(
                 currentChatId.map { Unit }, displayedChatId.map { Unit }, chatHistory.map { Unit },
@@ -265,8 +269,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 effectiveChatConfigTarget.map { Unit },
                 activeStreamingChatIds.map { Unit }, composerPredictionsEnabled.map { Unit },
                 messageProcessingDelegate.composerPredictionSnapshots.map { Unit },
-                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context)
-                    .composerPredictionRevision.map { Unit },
+                coordinator.composerPredictionRevision.map { Unit },
             ) { }.collect {
                 val key = currentPredictionContext()
                 composerPredictionContext = key
