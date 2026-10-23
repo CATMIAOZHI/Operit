@@ -1,7 +1,7 @@
 package com.ai.assistance.operit.ui.features.orbit
 
 import android.content.Context
-import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -67,7 +67,7 @@ internal suspend fun loadOrbitIdentityDates(context: Context, orbitId: String): 
         OrbitIdentityDates(soulTime, File(folder, "memory/memory.md").lastModified(), File(folder, "user.md").lastModified())
     }
 
-/** Slow drifting color clouds; their motion invalidates drawing only, not the page or text. */
+/** Pastel color clouds; their motion and color blending invalidate drawing only. */
 @Composable
 internal fun OrbitIdentityCard(
     title: String,
@@ -84,7 +84,7 @@ internal fun OrbitIdentityCard(
     val drift = if (animated) {
         rememberInfiniteTransition(label = "identity-clouds").animateFloat(
             initialValue = 0f, targetValue = 1f,
-            animationSpec = infiniteRepeatable(tween(18_000, easing = LinearEasing), RepeatMode.Reverse),
+            animationSpec = infiniteRepeatable(tween(7_000, easing = FastOutSlowInEasing), RepeatMode.Reverse),
             label = "drift",
         )
     } else still
@@ -94,50 +94,56 @@ internal fun OrbitIdentityCard(
     }
     val dateLabel = date ?: if (modifiedAt == null) "—" else stringResource(R.string.orbit_identity_no_date)
     val dateDescription = stringResource(R.string.orbit_identity_modified, dateLabel)
+    // The palette is always light, including in dark mode; keep labels consistently readable.
+    val ink = Color(0xFF303846)
     Box(
         modifier.clip(RoundedCornerShape(28.dp))
             .drawWithCache {
                 val base = Brush.linearGradient(listOf(
-                    Color.hsl(hue.toFloat(), 0.45f, 0.23f),
-                    Color.hsl(((hue + 35) % 360).toFloat(), 0.6f, 0.29f),
+                    Color.hsl(hue.toFloat(), 0.60f, 0.91f),
+                    Color.hsl(((hue + 35) % 360).toFloat(), 0.65f, 0.87f),
+                ))
+                val next = Brush.linearGradient(listOf(
+                    Color.hsl(((hue + 80) % 360).toFloat(), 0.60f, 0.91f),
+                    Color.hsl(((hue + 140) % 360).toFloat(), 0.65f, 0.87f),
                 ))
                 val radius = size.maxDimension * 0.95f
                 val first = Brush.radialGradient(
-                    listOf(Color.hsl(((hue + 65) % 360).toFloat(), 0.64f, 0.48f), Color.Transparent),
+                    listOf(Color.hsl(((hue + 65) % 360).toFloat(), 0.70f, 0.84f), Color.Transparent),
                     center = Offset.Zero, radius = radius,
                 )
                 val second = Brush.radialGradient(
-                    listOf(Color.hsl(((hue + 315) % 360).toFloat(), 0.5f, 0.43f), Color.Transparent),
+                    listOf(Color.hsl(((hue + 315) % 360).toFloat(), 0.60f, 0.88f), Color.Transparent),
                     center = Offset.Zero, radius = radius,
                 )
                 onDrawBehind {
                     val p = drift.value
                     drawRect(base)
+                    drawRect(next, alpha = p)
                     translate(size.width * (0.1f + 0.8f * p), size.height * (0.2f + 0.5f * p)) {
                         drawRect(first, Offset(-radius, -radius), Size(radius * 2, radius * 2))
                     }
                     translate(size.width * (0.95f - 0.6f * p), size.height * (0.9f - 0.75f * p)) {
                         drawRect(second, Offset(-radius, -radius), Size(radius * 2, radius * 2))
                     }
-                    // Bound even yellow cloud peaks so small white labels retain 4.5:1 contrast.
-                    drawRect(Color.Black.copy(alpha = 0.44f))
                 }
             }
             .clickable(role = Role.Button, onClick = onClick),
     ) {
         // Minimum height, rather than a fixed aspect ratio: large fonts can grow without overlap.
         Column(
-            Modifier.fillMaxWidth().defaultMinSize(minHeight = if (compact) 150.dp else 180.dp).padding(18.dp),
+            Modifier.fillMaxWidth().defaultMinSize(minHeight = if (compact) 150.dp else 148.dp)
+                .padding(if (compact) 18.dp else 16.dp),
             verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = Color.White)
+            Text(title, style = MaterialTheme.typography.titleLarge, color = ink)
             Text(stringResource(R.string.orbit_profile_card_caution),
-                style = MaterialTheme.typography.bodyMedium, color = Color.White)
-            Spacer(Modifier.heightIn(min = if (compact) 28.dp else 56.dp))
+                style = MaterialTheme.typography.bodyMedium, color = ink)
+            Spacer(Modifier.heightIn(min = if (compact) 28.dp else 24.dp))
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Bottom) {
-                Text(dateLabel, style = MaterialTheme.typography.labelMedium, color = Color.White,
+                Text(dateLabel, style = MaterialTheme.typography.labelMedium, color = ink,
                     modifier = Modifier.weight(1f).padding(end = 6.dp).semantics { contentDescription = dateDescription })
-                Icon(icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(26.dp))
+                Icon(icon, contentDescription = null, tint = ink, modifier = Modifier.size(26.dp))
             }
         }
     }

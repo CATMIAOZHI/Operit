@@ -64,6 +64,8 @@ data class OrbitProfile(
      * while sharing, so turning this off brings them back.
      */
     val browserSharesMainLogin: Boolean = false,
+    /** Live pet avatar; avatarUri remains its still fallback if the pet is removed. */
+    val avatarPetId: String? = null,
 ) {
     /** The main chat and every side chat: the chats where the user talks to this Orbit. */
     val talkChatIds: List<String> get() = listOf(chatId) + sideChats.map { it.chatId }
@@ -415,13 +417,13 @@ class OrbitPreferences private constructor(context: Context) {
         }
     }
 
-    suspend fun setAvatar(orbitId: String, avatarUri: String?) {
+    suspend fun setAvatar(orbitId: String, avatarUri: String?, petId: String? = null) {
         var previous: String? = null
         updateOrbits { orbits ->
             orbits.map {
                 if (it.id == orbitId) {
                     previous = it.avatarUri
-                    it.copy(avatarUri = avatarUri)
+                    it.copy(avatarUri = avatarUri, avatarPetId = petId)
                 } else {
                     it
                 }
@@ -542,6 +544,7 @@ class OrbitPreferences private constructor(context: Context) {
                         chatId = chatId,
                         name = item.optString("name"),
                         avatarUri = item.optString("avatarUri").takeIf { it.isNotBlank() },
+                        avatarPetId = item.optString("avatarPetId").takeIf { it.isNotBlank() },
                         createdAt = item.optLong("createdAt"),
                         memorySpaceId = item.optString("memorySpaceId").takeIf { it.isNotBlank() },
                         ownedChatIds = item.optJSONArray("ownedChatIds")?.let { ids ->
@@ -582,6 +585,7 @@ class OrbitPreferences private constructor(context: Context) {
                             put("chatId", orbit.chatId)
                             put("name", orbit.name)
                             orbit.avatarUri?.let { put("avatarUri", it) }
+                            orbit.avatarPetId?.let { put("avatarPetId", it) }
                             put("createdAt", orbit.createdAt)
                             orbit.memorySpaceId?.let { put("memorySpaceId", it) }
                             put("ownedChatIds", JSONArray(orbit.ownedChatIds.toList()))

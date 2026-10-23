@@ -131,12 +131,29 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
     var fileActions by remember { mutableStateOf<OrbitFiles.Entry?>(null) }
     var previewFile by remember { mutableStateOf<java.io.File?>(null) }
     val list = result?.getOrNull()
+    val days = remember(list) { list.orEmpty().filter { DAILY.matches(it.path) }.sortedByDescending { it.path } }
 
-    openPath?.let { path ->
-        if (path.startsWith("files/")) {
-            OrbitMadeFilePage(files, path, who, onBack = { openPath = null; reload++ }, interceptBack = true)
-            return
-        }
+    val closeFile: () -> Unit = { openPath = null; editPath = null; showTrash = false; reload++ }
+    val detail: @Composable (String) -> Unit = { path ->
+        if (path == "daily") {
+            OrbitListPage(stringResource(R.string.orbit_files_daily), onBack = { showAllDays = false }) {
+                when {
+                    result == null -> item(key = "loading") {
+                        LinearProgressIndicator(Modifier.fillMaxWidth().padding(vertical = 24.dp))
+                    }
+                    list == null -> item(key = "failed") { LoadFailed { reload++ } }
+                    days.isEmpty() -> item(key = "empty") { SectionEmpty(stringResource(R.string.orbit_files_daily_empty)) }
+                    else -> items(days, key = { it.path }) { entry ->
+                        OrbitListRow(orbitIcon("calendar-days"), entry.path.substringAfterLast('/').removeSuffix(".md"),
+                            null, null, onClick = { openPath = entry.path }, showChevron = true)
+                    }
+                }
+            }
+        } else if (path == "trash") {
+            OrbitTrashPage(files, onBack = closeFile)
+        } else if (path.startsWith("files/")) {
+            OrbitMadeFilePage(files, path, who, onBack = closeFile)
+        } else {
         val notebook = notebooks.firstOrNull { it.path == path }
         val note = when {
             notebook != null -> stringResource(notebook.note, who)
@@ -151,7 +168,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             note = note,
             load = { files.read(path) },
             save = { files.write(path, it) },
-            onBack = { openPath = null; editPath = null; reload++ },
+            onBack = closeFile,
             actions = if (!exists) emptyList() else listOf(OrbitFileAction(stringResource(R.string.orbit_file_delete), "trash-2") {
                 files.delete(path)
                 movedToTrashToast(context)
@@ -161,16 +178,13 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             }),
             maxChars = if (path == OrbitFiles.ALIGNMENT) OrbitFiles.MAX_ALIGNMENT_PROMPT else OrbitFiles.MAX_TEXT,
             startEditing = editPath == path,
-            // Back from a file returns to the files list, not past it.
-            interceptBack = true,
         )
-        return
+        }
     }
-    if (showTrash) {
-        OrbitTrashPage(files, onBack = { showTrash = false; reload++ })
-        return
-    }
-
+    OrbitPushHost(
+        entries = listOfNotNull(if (showAllDays) "daily" else null, if (showTrash) "trash" else openPath),
+        onPop = { if (openPath != null || showTrash) closeFile() else showAllDays = false },
+        base = {
     OrbitListPage(stringResource(R.string.orbit_files_title), onBack) {
         item(key = "help") {
             Text(stringResource(R.string.orbit_files_help, who), style = MaterialTheme.typography.bodyMedium,
@@ -213,13 +227,12 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             }
         }
         item(key = "daily-title") { SectionTitle(stringResource(R.string.orbit_files_daily)) }
-        val days = list.filter { DAILY.matches(it.path) }.sortedByDescending { it.path }
         if (days.isEmpty()) item(key = "daily-empty") { SectionEmpty(stringResource(R.string.orbit_files_daily_empty)) }
-        items(if (showAllDays) days else days.take(7), key = { it.path }) { entry ->
+        items(days.take(3), key = { it.path }) { entry ->
             OrbitListRow(orbitIcon("calendar-days"), entry.path.substringAfterLast('/').removeSuffix(".md"), null, null,
                 onClick = { openPath = entry.path }, showChevron = true)
         }
-        if (!showAllDays && days.size > 7) item(key = "daily-more") {
+        if (days.size > 3) item(key = "daily-more") {
             TextButton(onClick = { showAllDays = true }) { Text(stringResource(R.string.orbit_files_show_all)) }
         }
         item(key = "made-title") { SectionTitle(stringResource(R.string.orbit_files_made, who)) }
@@ -243,6 +256,9 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
             onPreview = { previewFile = it })
     }
     previewFile?.let { file -> OrbitMediaPreview.Screen(file) { previewFile = null } }
+        },
+        page = detail,
+    )
 }
 
 /** One file Orbit made for the user, as a list row. */

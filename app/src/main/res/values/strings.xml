@@ -9263,7 +9263,6 @@
     <string name="orbit_profile_soul_card">SOUL</string>
     <string name="orbit_profile_memory_card">记忆</string>
     <string name="orbit_profile_card_caution">请谨慎访问</string>
-    <string name="orbit_identity_change_colors">换配色</string>
     <string name="orbit_identity_modified">最近修改：%1$s</string>
     <string name="orbit_identity_no_date">暂无记录</string>
     <string name="orbit_profile_user_card">USER</string>
@@ -9389,7 +9388,7 @@
     <string name="orbit_files_daily">每日流水</string>
     <string name="orbit_files_daily_empty">还没有流水。后台任务运行后会自动记在这里。</string>
     <string name="orbit_file_daily_note">这一天 %1$s 的观察和后台运行记录。流水不是长期记忆。这段说明不是文件内容。</string>
-    <string name="orbit_files_show_all">显示全部</string>
+    <string name="orbit_files_show_all">查看全部</string>
     <string name="orbit_files_trash">回收站</string>
     <string name="orbit_files_trash_desc">删掉的文件保留 %1$d 天，可以恢复</string>
     <string name="orbit_files_trash_empty">回收站是空的。</string>

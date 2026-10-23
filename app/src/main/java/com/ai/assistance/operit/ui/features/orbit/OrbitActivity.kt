@@ -2,7 +2,8 @@ package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.State
-import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -13,23 +14,34 @@ import com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinato
 import com.ai.assistance.operit.data.model.InputProcessingState
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitTaskRunner
+import com.ai.assistance.operit.pet.PetActivity
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flowOn
 
-/**
- * What the Orbit is doing right now, for the line under its name, like Muse's "working": a tool in
- * use in plain words, or just "working" while it, one of its helpers or one of its background tasks
- * runs, in the main window or the floating one. Null while it rests. [currentChatId]'s own tool
- * comes first when that chat is the one running.
- */
+internal data class OrbitLiveActivity(
+    val label: Int? = null,
+    val pet: PetActivity = PetActivity.IDLE,
+)
+
+/** The header, profile and pet avatar share one observer for this Orbit's runs. */
+internal val LocalOrbitActivity = compositionLocalOf<State<OrbitLiveActivity>> {
+    mutableStateOf(OrbitLiveActivity())
+}
+
 @Composable
-internal fun orbitActivity(orbit: OrbitProfile, currentChatId: String?): String? {
+internal fun orbitActivity(): String? =
+    LocalOrbitActivity.current.value.label?.let { stringResource(it) }
+
+/** Only active runs belonging to this Orbit can drive its avatar and status. */
+@Composable
+internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?): State<OrbitLiveActivity> {
     val context = LocalContext.current.applicationContext
     val talkIds = orbit.talkChatIds
     val orbitId = orbit.id
-    val label: State<Int?> = remember(talkIds, orbitId, currentChatId) {
+    return remember(talkIds, orbitId, currentChatId) {
         val holder = ChatRuntimeHolder.getInstance(context)
         val main = holder.getCore(ChatRuntimeSlot.MAIN)
         val floating = holder.getCore(ChatRuntimeSlot.FLOATING)
@@ -46,12 +58,21 @@ internal fun orbitActivity(orbit: OrbitProfile, currentChatId: String?): String?
             val states = floatingStates.filterKeys { it in floatingStreaming } + mainStates.filterKeys { it in mainStreaming }
             val mine = (mainStreaming + floatingStreaming).distinct()
                 .filter { it in roots || coordinator.rootChatOf(it) in roots }
-            if (mine.isEmpty() && tasks.isEmpty()) return@combine null
             val ordered = listOfNotNull(currentChatId?.takeIf { it in mine }) + mine
-            ordered.firstNotNullOfOrNull { toolLabel(states[it]) } ?: R.string.orbit_activity_working
+            orbitLiveActivity(ordered.map { states[it] }, tasks.isNotEmpty())
         }.distinctUntilChanged().flowOn(Dispatchers.Default)
-    }.collectAsState(initial = null)
-    return label.value?.let { stringResource(it) }
+    }.collectAsStateWithLifecycle(initialValue = OrbitLiveActivity())
+}
+
+internal fun orbitLiveActivity(states: List<InputProcessingState?>, hasBackgroundTask: Boolean): OrbitLiveActivity {
+    if (states.isEmpty() && !hasBackgroundTask) return OrbitLiveActivity()
+    val tool = states.firstNotNullOfOrNull(::toolLabel)
+    return when {
+        tool != null -> OrbitLiveActivity(tool, PetActivity.TOOL)
+        states.any { it is InputProcessingState.Summarizing } ->
+            OrbitLiveActivity(R.string.orbit_activity_working, PetActivity.SUMMARIZING)
+        else -> OrbitLiveActivity(R.string.orbit_activity_working, PetActivity.THINKING)
+    }
 }
 
 private fun toolLabel(state: InputProcessingState?): Int? {
