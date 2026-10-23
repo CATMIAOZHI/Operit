@@ -552,7 +552,8 @@ object SystemToolPrompts {
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
-        includeSubagentTools: Boolean = true
+        includeSubagentTools: Boolean = true,
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -593,7 +594,7 @@ object SystemToolPrompts {
             add(basicTools)
             if (includeSubagentTools) {
                 add(subagentTools)
-                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(false, AgentProfileRepository.instance.listAvailableSubagents()))
+                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(false, AgentProfileRepository.instance.listAvailableSubagents(), collaborationLimits))
             }
             add(adjustedFileSystemTools)
             add(httpTools)
@@ -610,7 +611,8 @@ object SystemToolPrompts {
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
-        includeSubagentTools: Boolean = true
+        includeSubagentTools: Boolean = true,
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
         return getAIAllCategoriesEn(
             hasBackendImageRecognition = hasBackendImageRecognition,
@@ -620,7 +622,8 @@ object SystemToolPrompts {
             chatModelHasDirectAudio = chatModelHasDirectAudio,
             chatModelHasDirectVideo = chatModelHasDirectVideo,
             safBookmarkNames = safBookmarkNames,
-            includeSubagentTools = includeSubagentTools
+            includeSubagentTools = includeSubagentTools,
+            collaborationLimits = collaborationLimits
         ) + internalToolCategoriesEn.map { category ->
             category.copy(tools = category.tools.filterNot {
                 it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
@@ -642,7 +645,8 @@ object SystemToolPrompts {
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
-        includeSubagentTools: Boolean = true
+        includeSubagentTools: Boolean = true,
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
         val shouldExposeIntent =
             (hasBackendImageRecognition && !chatModelHasDirectImage) ||
@@ -683,7 +687,7 @@ object SystemToolPrompts {
             add(basicToolsCn)
             if (includeSubagentTools) {
                 add(subagentToolsCn)
-                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(true, AgentProfileRepository.instance.listAvailableSubagents()))
+                add(com.ai.assistance.operit.core.agent.collaboration.CollaborationTools.category(true, AgentProfileRepository.instance.listAvailableSubagents(), collaborationLimits))
             }
             add(adjustedFileSystemTools)
             add(httpToolsCn)
@@ -700,7 +704,8 @@ object SystemToolPrompts {
         chatModelHasDirectAudio: Boolean = false,
         chatModelHasDirectVideo: Boolean = false,
         safBookmarkNames: List<String> = emptyList(),
-        includeSubagentTools: Boolean = true
+        includeSubagentTools: Boolean = true,
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null
     ): List<SystemToolPromptCategory> {
         return getAIAllCategoriesCn(
             hasBackendImageRecognition = hasBackendImageRecognition,
@@ -710,7 +715,8 @@ object SystemToolPrompts {
             chatModelHasDirectAudio = chatModelHasDirectAudio,
             chatModelHasDirectVideo = chatModelHasDirectVideo,
             safBookmarkNames = safBookmarkNames,
-            includeSubagentTools = includeSubagentTools
+            includeSubagentTools = includeSubagentTools,
+            collaborationLimits = collaborationLimits
         ) + internalToolCategoriesCn.map { category ->
             category.copy(tools = category.tools.filterNot {
                 it.name in com.ai.assistance.operit.core.tools.phone.PhoneControlTools.retiredNames ||
@@ -919,6 +925,7 @@ object SystemToolPrompts {
         toolVisibility: Map<String, Boolean> = emptyMap(),
         toolOrder: List<String> = emptyList(),
         hookMetadata: Map<String, Any?> = emptyMap(),
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null,
         dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
     ): String {
         val categories = if (includeMemoryTools) {
@@ -929,7 +936,8 @@ object SystemToolPrompts {
                 hasBackendVideoRecognition = hasBackendVideoRecognition,
                 chatModelHasDirectAudio = chatModelHasDirectAudio,
                 chatModelHasDirectVideo = chatModelHasDirectVideo,
-                safBookmarkNames = safBookmarkNames
+                safBookmarkNames = safBookmarkNames,
+                collaborationLimits = collaborationLimits
             )
         } else {
             getAIAllCategoriesEn(
@@ -939,7 +947,8 @@ object SystemToolPrompts {
                 hasBackendVideoRecognition = hasBackendVideoRecognition,
                 chatModelHasDirectAudio = chatModelHasDirectAudio,
                 chatModelHasDirectVideo = chatModelHasDirectVideo,
-                safBookmarkNames = safBookmarkNames
+                safBookmarkNames = safBookmarkNames,
+                collaborationLimits = collaborationLimits
             )
                 .filter { it.categoryName != "Memory and Memory Library Tools" }
         }
@@ -1010,6 +1019,7 @@ object SystemToolPrompts {
         toolVisibility: Map<String, Boolean> = emptyMap(),
         toolOrder: List<String> = emptyList(),
         hookMetadata: Map<String, Any?> = emptyMap(),
+        collaborationLimits: com.ai.assistance.operit.core.agent.collaboration.CollaborationLimits? = null,
         dispatchToolPromptComposeHooks: (PromptHookContext) -> PromptHookContext = PromptHookRegistry::dispatchToolPromptComposeHooks
     ): String {
         val categories = if (includeMemoryTools) {
@@ -1020,7 +1030,8 @@ object SystemToolPrompts {
                 hasBackendVideoRecognition = hasBackendVideoRecognition,
                 chatModelHasDirectAudio = chatModelHasDirectAudio,
                 chatModelHasDirectVideo = chatModelHasDirectVideo,
-                safBookmarkNames = safBookmarkNames
+                safBookmarkNames = safBookmarkNames,
+                collaborationLimits = collaborationLimits
             )
         } else {
             getAIAllCategoriesCn(
@@ -1030,7 +1041,8 @@ object SystemToolPrompts {
                 hasBackendVideoRecognition = hasBackendVideoRecognition,
                 chatModelHasDirectAudio = chatModelHasDirectAudio,
                 chatModelHasDirectVideo = chatModelHasDirectVideo,
-                safBookmarkNames = safBookmarkNames
+                safBookmarkNames = safBookmarkNames,
+                collaborationLimits = collaborationLimits
             )
                 .filter { it.categoryName != "记忆与记忆库工具" }
         }

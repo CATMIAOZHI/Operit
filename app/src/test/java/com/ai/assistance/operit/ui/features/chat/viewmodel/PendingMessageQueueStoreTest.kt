@@ -13,7 +13,7 @@ class PendingMessageQueueStoreTest {
         val attachment = com.ai.assistance.operit.data.model.AttachmentInfo(
             "/tmp/picture.png", "picture.png", "image/png", 123L)
         val source = mutableListOf(attachment)
-        assertTrue(store.enqueue("chat-a", "", true, source))
+        assertTrue(store.enqueue("chat-a", "", true, source) != null)
         source.clear()
         store.enqueue("chat-b", "other chat", true)
         val original = store.states.value.getValue("chat-a").messages.single()

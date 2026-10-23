@@ -3484,7 +3484,8 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
-                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
+                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId),
+                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId)
                     )
                 } else {
                     SystemToolPrompts.getAIAllCategoriesCn(
@@ -3495,7 +3496,8 @@ class EnhancedAIService private constructor(
                         chatModelHasDirectAudio = chatModelHasDirectAudio,
                         chatModelHasDirectVideo = chatModelHasDirectVideo,
                         safBookmarkNames = safBookmarkNames,
-                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId)
+                        includeSubagentTools = !isSubTask || com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).isAgent(chatId),
+                        collaborationLimits = com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(context).limitsFor(chatId)
                     )
                 }
 

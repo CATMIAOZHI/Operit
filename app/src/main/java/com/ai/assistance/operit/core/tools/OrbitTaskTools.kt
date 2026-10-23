@@ -122,7 +122,7 @@ internal object OrbitTaskTools {
                 suspend fun after(applied: Boolean, force: Boolean = false, extra: JSONObject.() -> Unit = {}): JSONObject {
                     val now = repository.dao.task(id) ?: task
                     val fields = changedFields(task, now)
-                    return json(now).put("applied", applied).put("changed", force || fields.isNotEmpty())
+                    return json(now).put("instruction", OrbitRoutines.runningInstruction(context, now)).put("applied", applied).put("changed", force || fields.isNotEmpty())
                         .put("changed_fields", JSONArray(fields)).put("timezone", zone())
                         .apply { if (!applied) put("note", "Nothing was saved because the task changed meanwhile; call detail and try again.") }
                         .apply { if (applied && !force && fields.isEmpty()) put("note", "The task was already like this; nothing changed.") }
@@ -174,7 +174,8 @@ internal object OrbitTaskTools {
                         parseFlag(arguments["use_subagent"]) ?: task.useSubagent,
                         scheduleMode = mode))
                     }
-                    "detail" -> json(task).put("timezone", zone()).put("execution_record", repository.executionRecord(id))
+                    "detail" -> json(task).put("instruction", OrbitRoutines.runningInstruction(context, task))
+                        .put("timezone", zone()).put("execution_record", repository.executionRecord(id))
                         .apply { if (OrbitHookChecks.needed(task)) put("dry_run_passed", OrbitHookChecks.passed(context, task)) }
                         .put("last_run", repository.dao.latestRun(id)?.let {
                         JSONObject().put("state", it.state).put("observation", it.observation)
@@ -240,9 +241,10 @@ internal object OrbitTaskTools {
     /** One task in a list: how to find it and what it is doing, with long texts cut. */
     private fun summary(task: OrbitTaskEntity, context: Context) = json(task).apply {
         locationStatus(this, context, task)
-        put("instruction", excerpt(task.instruction))
+        val instruction = OrbitRoutines.runningInstruction(context, task)
+        put("instruction", excerpt(instruction))
         put("last_observation", excerpt(task.lastObservation))
-        if (task.instruction.length > EXCERPT || task.lastObservation.length > EXCERPT) put("cut", true)
+        if (instruction.length > EXCERPT || task.lastObservation.length > EXCERPT) put("cut", true)
     }
 
     private fun locationStatus(json: JSONObject, context: Context, task: OrbitTaskEntity) {

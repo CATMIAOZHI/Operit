@@ -40,7 +40,7 @@ Automatic interaction in that task pauses during user takeover; do not compete w
 
 ## Tasks and tabs
 
-Browser tasks and tabs have capacity limits: at most 3 active subagent browser tasks, with 2 tabs per task, including popups.
+Browser tasks have a capacity limit: at most 3 active subagent browser tasks.
 At capacity, inspect and reuse existing pages or end work that is no longer needed.
 Repeated creation attempts do not remove the limit; do not close a login the user is handling just to free capacity.
 

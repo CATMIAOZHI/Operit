@@ -28,7 +28,8 @@ class OrbitTaskRepository(private val context: Context) {
         val perChat = (20_000 / bindings.size - 150).coerceAtLeast(200)
         return bindings.map { binding ->
             val body = dao.executionSource(binding.chatId).reversed().joinToString("\n\n") {
-                "${it.sender}: ${com.ai.assistance.operit.util.ChatUtils.removeThinkingContent(it.content)}"
+                // A record from before the alignment steps were reworded may still carry old wording.
+                "${it.sender}: ${OrbitRoutines.withoutRetiredWording(com.ai.assistance.operit.util.ChatUtils.removeThinkingContent(it.content))}"
             }
             "[${if (binding.chatId == binding.rootChatId) "root" else "child"} ${binding.chatId}]\n" +
                 (if (body.length > perChat) "[Earlier content omitted]\n" else "") + body.takeLast(perChat)

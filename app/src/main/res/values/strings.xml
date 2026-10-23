@@ -9769,7 +9769,6 @@
     <string name="orbit_chat_file_open">轻点打开</string>
     <string name="orbit_chat_file_missing">文件已经不在了</string>
     <string name="orbit_browser_task_card_summary">[浏览器任务：%1$s]</string>
-    <string name="orbit_browser_task_tab_limit">这个任务已有 2 个标签页，先关闭不用的页面。</string>
     <string name="orbit_browser_task_stopping">正在停止</string>
     <string name="orbit_import_paste_label">别的 AI 的回答</string>
     <string name="orbit_import_too_long">%1$d / %2$d 字，太长了，请分几次导入</string>

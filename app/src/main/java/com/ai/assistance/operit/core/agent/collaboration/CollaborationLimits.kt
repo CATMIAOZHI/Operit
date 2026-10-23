@@ -17,4 +17,9 @@ data class CollaborationLimits(
         require(minWaitMs >= 0 && minWaitMs <= defaultWaitMs &&
             defaultWaitMs <= maxWaitMs && maxWaitMs <= 3_600_000) { "Invalid wait time limits" }
     }
+
+    companion object {
+        /** Orbit's own subagent setup, apart from the main app's settings: 20 at once, two levels deep. */
+        val ORBIT = CollaborationLimits(maxActive = 20, maxDepth = 2)
+    }
 }

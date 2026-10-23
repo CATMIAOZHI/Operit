@@ -27,8 +27,9 @@ object CollaborationTools {
         "Do not use a different model unless the user prefers or agrees to it."
     }
 
-    fun category(chinese: Boolean, profiles: List<AgentProfile>): SystemToolPromptCategory {
-        val limits = com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
+    fun category(chinese: Boolean, profiles: List<AgentProfile>, limitsOverride: CollaborationLimits? = null): SystemToolPromptCategory {
+        val limits = limitsOverride
+            ?: com.ai.assistance.operit.core.agent.AgentProfileRepository.instance.collaborationLimits.value
         fun text(cn: String, en: String) = if (chinese) cn else en
         fun parameter(name: String, cn: String, en: String, required: Boolean = false) =
             ToolParameterSchema(name = name, type = "string", description = text(cn, en), required = required)

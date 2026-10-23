@@ -49,9 +49,6 @@ internal fun StandardBrowserSessionTools.createSessionOnMain(
     profileName: String = BrowserProfiles.currentScope() ?: BrowserProfiles.MAIN,
     browserTaskId: String? = BrowserTaskScope.current(),
 ): BrowserToolSession {
-    if (browserTaskId != null) check(
-        StandardBrowserSessionTools.sessions.values.count { it.browserTaskId == browserTaskId } < BrowserTaskScope.MAX_TABS_PER_TASK
-    ) { "This browser task already has 2 tabs. Close an unused tab with browser_tabs before opening another." }
     BrowserCdp.enableDebuggingOnMain()
     val webView = WebView(resolveWebViewContext(appContext))
     try {
@@ -572,10 +569,6 @@ internal fun StandardBrowserSessionTools.createBrowserHostCallbacks(
                 val work = watched?.let { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.works.value[it] }
                 val profile = work?.let { BrowserProfiles.forOrbit(appContext, it.orbitId) }
                     ?: getActiveSessionOnMain()?.profileName
-                if (watched != null && StandardBrowserSessionTools.sessions.values.count { it.browserTaskId == watched } >= BrowserTaskScope.MAX_TABS_PER_TASK) {
-                    showToast(appContext.getString(R.string.orbit_browser_task_tab_limit))
-                    return@runOnMainSync
-                }
                 BrowserProfiles.withScope(profile) { BrowserTaskScope.withScope(watched) {
                     createSessionTabOnMain(appContext, initialUrl = "about:blank")
                 } }

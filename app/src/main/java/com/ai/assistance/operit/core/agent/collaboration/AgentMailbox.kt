@@ -51,6 +51,11 @@ data class CollaborationAgent(
     val historyCutoff: Long? = null,
     val roleCardId: String? = null,
     val finalAnswer: String? = null,
+    /**
+     * Archived after it fell out of the most recent agents of its tree: it is no longer listed,
+     * addressed or counted for names, so its name can be used again; its chat stays known.
+     */
+    val archived: Boolean = false,
 )
 
 /**
@@ -62,13 +67,30 @@ data class CollaborationState(
     val version: Int = 1,
     val agents: List<CollaborationAgent> = emptyList(),
 ) {
+    /** The live agent at [path]; archived ones no longer hold their names. */
     fun find(rootChatId: String, path: String): CollaborationAgent? =
-        agents.firstOrNull { it.rootChatId == rootChatId && it.path == path }
+        agents.firstOrNull { it.rootChatId == rootChatId && it.path == path && !it.archived }
 
-    fun update(agent: CollaborationAgent): CollaborationState =
-        copy(agents = agents.filterNot {
-            it.rootChatId == agent.rootChatId && it.path == agent.path
+    /** Replaces the live agent at the same path and moves it last, so the order runs from least to most recently active. */
+    fun update(agent: CollaborationAgent): CollaborationState {
+        require(!agent.archived) { "Archived agents cannot change" }
+        return copy(agents = agents.filterNot {
+            it.rootChatId == agent.rootChatId && it.path == agent.path && !it.archived
         } + agent)
+    }
+
+    /**
+     * Archives the live agents with these chats. An archived agent keeps only who it was (its tree,
+     * path and chat); its prompt, inherited history, mail and answer are dropped, since nothing can
+     * run or address it again and its own chat already holds what it did.
+     */
+    fun archive(chatIds: Set<String>): CollaborationState =
+        copy(agents = agents.map {
+            if (it.chatId in chatIds && !it.archived) it.copy(
+                archived = true, messages = emptyList(), systemPrompt = "", inheritedHistory = emptyList(),
+                finalAnswer = null, lastError = null,
+            ) else it
+        })
 
     fun enqueue(rootChatId: String, message: AgentMessage): CollaborationState {
         val receiver = requireNotNull(find(rootChatId, message.recipient)) {

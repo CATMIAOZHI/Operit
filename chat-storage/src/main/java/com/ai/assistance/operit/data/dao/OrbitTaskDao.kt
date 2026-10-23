@@ -493,6 +493,20 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_tasks SET chatId = :to WHERE orbitId = :orbitId AND chatId = :from")
     suspend fun moveTaskChat(orbitId: String, from: String, to: String)
 
+    /**
+     * Swaps a built-in routine's stored steps for the current ones. The version stays, so a run in
+     * progress is not cancelled; it already runs the current steps.
+     */
+    @Query("UPDATE orbit_tasks SET instruction = :instruction WHERE id = :id AND instruction = :old")
+    suspend fun refreshInstruction(id: String, old: String, instruction: String): Int
+
+    /** Drops a retired phrase of a built-in routine's steps from the chats its past runs used. */
+    @Query(
+        "UPDATE messages SET content = REPLACE(content, :phrase, '') WHERE content LIKE '%' || :phrase || '%' AND " +
+            "chatId IN (SELECT chatId FROM orbit_task_chats WHERE runId IN (SELECT id FROM orbit_runs WHERE taskId = :taskId))"
+    )
+    suspend fun dropRunPhrase(taskId: String, phrase: String): Int
+
     @Query("UPDATE orbit_deliveries SET chatId = :to WHERE orbitId = :orbitId AND chatId = :from AND state = 'PENDING'")
     suspend fun movePendingDeliveries(orbitId: String, from: String, to: String)
 

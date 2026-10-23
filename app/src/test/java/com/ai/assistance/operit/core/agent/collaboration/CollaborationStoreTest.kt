@@ -39,6 +39,29 @@ class CollaborationStoreTest {
         assertEquals("finished", CollaborationStore(temp.root, files).load().find("a", "/root")!!.finalAnswer)
     }
 
+    @Test fun `archived agents live in their own file and are not rewritten by live work`() {
+        val files = Files()
+        val store = CollaborationStore(temp.root, files)
+        val root = agent("a")
+        val old = CollaborationAgent("a", "/root/old", "old-chat", inheritedHistory =
+            listOf(CollaborationTurn("USER", "long history")), systemPrompt = "prompt")
+        val worker = CollaborationAgent("a", "/root/worker", "worker-chat")
+        val archived = CollaborationState(agents = listOf(root, old, worker)).archive(setOf("old-chat"))
+        val slim = archived.agents.single { it.archived }
+        assertTrue(slim.inheritedHistory.isEmpty() && slim.systemPrompt.isEmpty())
+        store.save(archived)
+        files.writes.clear()
+        val busy = archived.update(worker.copy(status = CollaborationStatus.RUNNING))
+        store.save(busy)
+        assertEquals(2, files.writes.size) // the live tree and the manifest; the archive stays
+        val loaded = CollaborationStore(temp.root, files).load()
+        assertEquals(busy.agents.toSet(), loaded.agents.toSet())
+        assertNull(loaded.find("a", "/root/old"))
+        val backup = temp.newFolder("backup")
+        store.copyForBackup(backup)
+        assertEquals(busy.agents.toSet(), CollaborationStore(backup, files).load().agents.toSet())
+    }
+
     @Test fun `failed multi tree commit leaves old generation readable and can retry`() {
         val files = Files()
         val store = CollaborationStore(temp.root, files)

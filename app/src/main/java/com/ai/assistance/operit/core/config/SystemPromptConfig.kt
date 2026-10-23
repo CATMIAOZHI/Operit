@@ -138,6 +138,9 @@ PACKAGE SYSTEM
             toolVisibility = toolVisibility,
             toolOrder = toolOrder,
             hookMetadata = hookMetadata,
+            collaborationLimits = context?.let {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(it).limitsFor(chatId)
+            },
             dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
         )
     }
@@ -178,6 +181,9 @@ PACKAGE SYSTEM
             toolVisibility = toolVisibility,
             toolOrder = toolOrder,
             hookMetadata = hookMetadata,
+            collaborationLimits = context?.let {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(it).limitsFor(chatId)
+            },
             dispatchToolPromptComposeHooks = dispatchToolPromptComposeHooks
         )
     }

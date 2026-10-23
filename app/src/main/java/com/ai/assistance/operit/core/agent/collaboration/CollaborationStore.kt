@@ -62,8 +62,22 @@ internal class CollaborationStore(
         }
     }
 
+    /**
+     * [trees] holds each tree's live agents, rewritten as they work. [archives] holds each tree's
+     * archived agents in a file of their own, written only when that set changes, so a tree with a
+     * long past does not rewrite it on every message.
+     */
     @Serializable
-    private data class Manifest(val version: Int = 1, val trees: Map<String, String> = emptyMap())
+    private data class Manifest(
+        val version: Int = 1,
+        val trees: Map<String, String> = emptyMap(),
+        val archives: Map<String, String> = emptyMap(),
+    ) {
+        val files: Set<String> get() = trees.values.toSet() + archives.values
+    }
+
+    /** Version 2 has archives; an older app that only knows version 1 refuses it instead of dropping them. */
+    private fun versionFor(archives: Map<String, String>) = if (archives.isEmpty()) 1 else 2
 
     private val directory = File(filesDir, DIRECTORY)
     private val manifestFile = File(directory, "manifest.json")
@@ -71,6 +85,7 @@ internal class CollaborationStore(
     private val lock = locks.computeIfAbsent(directory.absolutePath) { Any() }
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
     private var committed = emptyMap<String, List<CollaborationAgent>>()
+    private var committedArchives = emptyMap<String, List<CollaborationAgent>>()
     private var manifest = Manifest()
     private var loaded = false
 
@@ -82,20 +97,30 @@ internal class CollaborationStore(
     fun load(): CollaborationState = synchronized(lock) {
         val state = if (access.exists(manifestFile)) {
             manifest = json.decodeFromString<Manifest>(access.read(manifestFile))
-            require(manifest.version == 1) { "Unsupported collaboration manifest version" }
-            val agents = manifest.trees.flatMap { (root, name) ->
+            require(manifest.version in 1..2 && (manifest.version == 2 || manifest.archives.isEmpty())) {
+                "Unsupported collaboration manifest version"
+            }
+            val live = manifest.trees.flatMap { (root, name) ->
                 val tree = json.decodeFromString<CollaborationState>(access.read(treeFile(name)))
                 require(tree.version == 1 && tree.agents.isNotEmpty() &&
                     tree.agents.all { it.rootChatId == root }) { "Invalid collaboration tree" }
                 tree.agents
             }
-            CollaborationState(agents = agents)
+            val archived = manifest.archives.flatMap { (root, name) ->
+                val tree = json.decodeFromString<CollaborationState>(access.read(treeFile(name)))
+                require(tree.version == 1 && tree.agents.all { it.rootChatId == root && it.archived }) {
+                    "Invalid collaboration archive"
+                }
+                tree.agents
+            }
+            CollaborationState(agents = live + archived)
         } else if (access.exists(legacy)) {
             json.decodeFromString<CollaborationState>(access.read(legacy)).also {
                 require(it.version == 1) { "Unsupported subagent v2 storage version" }
             }
         } else CollaborationState()
-        committed = state.agents.groupBy { it.rootChatId }
+        committed = state.agents.filterNot { it.archived }.groupBy { it.rootChatId }
+        committedArchives = state.agents.filter { it.archived }.groupBy { it.rootChatId }
         loaded = true
         state
     }
@@ -103,24 +128,34 @@ internal class CollaborationStore(
     fun save(state: CollaborationState) = synchronized(lock) {
         require(state.version == 1)
         if (!loaded) load()
-        val trees = state.agents.groupBy { it.rootChatId }
-        val nextFiles = trees.mapValues { (root, agents) ->
-            val previous = manifest.trees[root]
-            if (previous != null && agents == committed[root]) previous else {
+        val trees = state.agents.filterNot { it.archived }.groupBy { it.rootChatId }
+        val archives = state.agents.filter { it.archived }.groupBy { it.rootChatId }
+        fun files(
+            groups: Map<String, List<CollaborationAgent>>, previousFiles: Map<String, String>,
+            previousAgents: Map<String, List<CollaborationAgent>>,
+        ) = groups.mapValues { (root, agents) ->
+            val previous = previousFiles[root]
+            if (previous != null && agents == previousAgents[root]) previous else {
                 val name = "${UUID.randomUUID()}.json"
                 access.write(treeFile(name), json.encodeToString(CollaborationState(agents = agents)))
                 name
             }
         }
-        val next = Manifest(trees = nextFiles)
+        val nextArchives = files(archives, manifest.archives, committedArchives)
+        val next = Manifest(
+            version = versionFor(nextArchives),
+            trees = files(trees, manifest.trees, committed),
+            archives = nextArchives,
+        )
         if (next != manifest || !access.exists(manifestFile)) {
             access.write(manifestFile, json.encodeToString(next))
         }
         // Nothing after the commit may turn a successful durable save into a reported failure.
         manifest = next
         committed = trees
+        committedArchives = archives
         runCatching {
-            val retained = nextFiles.values.toSet() + "manifest.json"
+            val retained = next.files + "manifest.json"
             directory.listFiles()?.filter { it.name !in retained }?.forEach { it.delete() }
             legacy.delete()
             File(legacy.path + ".bak").delete()
@@ -133,9 +168,9 @@ internal class CollaborationStore(
         if (access.exists(manifestFile)) {
             val text = access.read(manifestFile)
             val current = json.decodeFromString<Manifest>(text)
-            require(current.version == 1)
+            require(current.version in 1..2)
             val target = File(destinationFiles, DIRECTORY).apply { mkdirs() }
-            current.trees.values.forEach { name ->
+            current.files.forEach { name ->
                 File(target, name).writeText(access.read(treeFile(name)))
             }
             File(target, "manifest.json").writeText(text)

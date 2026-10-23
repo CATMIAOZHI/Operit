@@ -3,7 +3,6 @@ package com.ai.assistance.operit.core.tools.defaultTool.websession.browser
 /** A browser task owns its tabs independently of the login profile they share. */
 internal object BrowserTaskScope {
     const val MAX_TASKS = 3
-    const val MAX_TABS_PER_TASK = 2
     private val scope = ThreadLocal<String?>()
     fun current(): String? = scope.get()
 

@@ -70,6 +70,7 @@ import com.ai.assistance.operit.ui.features.chat.components.SubagentAgentCard
 import com.ai.assistance.operit.ui.features.chat.components.SubagentCardStatus
 import com.ai.assistance.operit.ui.features.chat.components.TranscriptJumpHost
 import com.ai.assistance.operit.ui.features.chat.components.agentBadgeSeed
+import com.ai.assistance.operit.ui.features.chat.components.collaborationRunAt
 import com.ai.assistance.operit.ui.features.chat.components.subagentAgentIdentity
 import com.ai.assistance.operit.ui.features.chat.components.subagentInterruptionHintRes
 import com.ai.assistance.operit.ui.permissions.PermissionReviewEventRepository
@@ -340,6 +341,8 @@ internal fun ToolExecutionStatusDisplay(
         SubagentCallStatusDisplay(
             callKind = callKind,
             callId = liveExecution?.callId ?: persistedExecution?.callId,
+            // The assistant message's time: the agent the call addressed already existed then.
+            rowTime = timingScopeId?.toLongOrNull(),
             fallbackState = state,
             executionSuccess = success,
             executionResultText =
@@ -1076,6 +1079,8 @@ internal fun findCallRun(
     runs: List<SubagentRunEntity>,
     callId: String?,
     target: String?,
+    agentId: String? = null,
+    at: Long? = null,
 ): SubagentRunEntity? {
     val candidates =
         runs.filter {
@@ -1087,13 +1092,25 @@ internal fun findCallRun(
     if (call != null) {
         candidates.lastOrNull { it.parentToolCallId == call }?.let { return it }
     }
+    // The call says which chat it reached; a name can belong to several agents over time, so a
+    // chat that is gone links nowhere rather than to another agent of the same name.
+    agentId?.takeIf { it.isNotBlank() }?.let { id ->
+        return candidates.lastOrNull { it.childChatId == id }
+    }
     val name = target?.takeIf { it.isNotBlank() } ?: return null
     val seed = agentBadgeSeed(name)
-    return candidates.lastOrNull {
+    val named = candidates.filter {
         val owner = it.externalOwnerId
         !owner.isNullOrBlank() && agentBadgeSeed(owner) == seed
     }
+    // Older calls do not say which chat they reached; they keep the agent that wore the name when
+    // their message began, and link nowhere when none did.
+    return if (at == null) named.lastOrNull() else collaborationRunAt(named, at)
 }
+
+/** The chat a send or follow-up call reports it reached, read from its result. */
+internal fun collaborationCallAgentId(resultText: String?): String? =
+    resultText?.let { Regex("\"agent_id\"\\s*:\\s*\"([^\"]+)\"").find(it)?.groupValues?.get(1) }
 
 /**
  * The call side of a v2 collaboration: the row keeps the addressed agent's badge and says what the
@@ -1104,6 +1121,7 @@ internal fun findCallRun(
 private fun SubagentCallStatusDisplay(
     callKind: SubagentCallKind,
     callId: String?,
+    rowTime: Long?,
     fallbackState: ToolExecutionState,
     executionSuccess: Boolean,
     executionResultText: String,
@@ -1131,8 +1149,11 @@ private fun SubagentCallStatusDisplay(
         sharedRuns?.runs
             ?: (runsFlow ?: flowOf(emptyList())).collectAsState(initial = emptyList()).value
     val run =
-        remember(runs, callId, requestedAgentName) {
-            findCallRun(runs, callId, requestedAgentName)
+        remember(runs, callId, requestedAgentName, executionResultText, rowTime) {
+            findCallRun(
+                runs, callId, requestedAgentName,
+                agentId = collaborationCallAgentId(executionResultText), at = rowTime,
+            )
         }
     val childChatId = run?.childChatId
     val agentPath =
