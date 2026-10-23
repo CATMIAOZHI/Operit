@@ -89,6 +89,14 @@ class ChatRecallRepository internal constructor(
 
     /** Same bounded operations for UI, foreground tools and isolated learning runs. */
     suspend fun execute(args: Map<String,String>, filterAssistantThinking: Boolean = false, includeThinking: Boolean = false): JSONObject {
+        // The access scope is worked out once per call: filtering reads a long message chunk by chunk,
+        // and each chunk must not rebuild it from every chat again.
+        val fixed = scope()
+        return ChatRecallRepository(dao, minimumMessageId, minimumTimestamp) { fixed }
+            .run(args, filterAssistantThinking, includeThinking)
+    }
+
+    private suspend fun run(args: Map<String,String>, filterAssistantThinking: Boolean, includeThinking: Boolean): JSONObject {
         val offset = args["offset"]?.toIntOrNull()?.coerceAtLeast(0) ?: 0
         val after = parseRecallTime(args["after"].orEmpty(), false)
         val before = parseRecallTime(args["before"].orEmpty(), true)

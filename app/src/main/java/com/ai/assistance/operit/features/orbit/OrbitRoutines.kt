@@ -69,10 +69,11 @@ internal object OrbitRoutines {
     private const val TIMEOUT_MINUTES = 8
     /** Enough for the nightly alignment review to read the whole window in one run. */
     const val REVIEW_TIMEOUT_MINUTES = 120
-    /** The proactive check looks for gaps every 2 hours by default, only in the daytime. */
+    /**
+     * The proactive check looks for gaps every 2 hours by default, day and night: users keep
+     * different hours, so when to tell is left to Orbit.
+     */
     const val PROACTIVE_INTERVAL_MINUTES = 2 * 60
-    private const val PROACTIVE_DAY_START = 8 * 60
-    private const val PROACTIVE_DAY_END = 22 * 60
     /** It may look up tasks, goals and older messages before drafting. */
     private const val PROACTIVE_TIMEOUT_MINUTES = 15
     /** The first check, or one after a long pause, looks back at most a day. */
@@ -95,24 +96,6 @@ internal object OrbitRoutines {
     fun ideasId(orbitId: String) = taskId(orbitId, IDEAS)
     fun alignmentId(orbitId: String) = taskId(orbitId, ALIGNMENT)
     fun proactiveScanId(orbitId: String) = taskId(orbitId, PROACTIVE_SCAN)
-
-    private fun minuteOfDay(at: Long): Int = java.util.Calendar.getInstance().apply { timeInMillis = at }.let {
-        it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE)
-    }
-
-    /** When a proactive check due at [at] really runs: as due in the daytime, else the next 08:00. */
-    fun proactiveDue(at: Long): Long {
-        val minute = minuteOfDay(at)
-        if (minute in PROACTIVE_DAY_START until PROACTIVE_DAY_END) return at
-        return java.util.Calendar.getInstance().apply {
-            timeInMillis = at
-            if (minute >= PROACTIVE_DAY_END) add(java.util.Calendar.DAY_OF_MONTH, 1)
-            set(java.util.Calendar.HOUR_OF_DAY, PROACTIVE_DAY_START / 60)
-            set(java.util.Calendar.MINUTE, PROACTIVE_DAY_START % 60)
-            set(java.util.Calendar.SECOND, 0)
-            set(java.util.Calendar.MILLISECOND, 0)
-        }.timeInMillis
-    }
 
     suspend fun ensureSelfReview(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, SELF_REVIEW, R.string.orbit_routine_self_review, CHAT_SOURCE, "DAILY", SELF_REVIEW_MINUTE,
@@ -197,16 +180,20 @@ internal object OrbitRoutines {
     }
 
     /**
-     * The proactive check, like Muse's hourly research worker: every 2 hours in the daytime a
+     * The proactive check, like Muse's hourly research worker: every 2 hours, day and night, a
      * background subagent reads the chats with new talk, looks for what was decided but is not covered
      * (a missing reminder, a deadline nobody watches, a decision waiting on the user) and drafts a
-     * prepared brief. The chat decides whether it is told. Skipped at night and with nothing new said.
+     * prepared brief. The chat decides whether and when it is told. Skipped only with nothing new said.
      */
     suspend fun ensureProactiveScan(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, PROACTIVE_SCAN, R.string.orbit_routine_proactive, PROACTIVE_SOURCE, "INTERVAL", 0,
             interval = PROACTIVE_INTERVAL_MINUTES, background = true, refreshInstruction = true,
             timeoutMinutes = PROACTIVE_TIMEOUT_MINUTES) {
             if (it) PROACTIVE_EN else PROACTIVE_ZH
+        }
+        // Older versions moved a night turn to the next 08:00; such a wait is cut back to one interval.
+        if (OrbitTaskRepository(context).dao.capIntervalWait(proactiveScanId(orbit.id), System.currentTimeMillis()) > 0) {
+            OrbitTaskScheduler.reschedule(context)
         }
     }
 
@@ -371,16 +358,14 @@ internal object OrbitRoutines {
      * What the proactive check reads: every message since the last check in the Orbit chats where
      * the user said something, oldest first, main chat first. What does not fit is named with the
      * exact call that reads it, so the run reads the whole window before it finishes; the window
-     * moves on only after a finished run. Empty at night, and when nothing new was said.
+     * moves on only after a finished run. Empty when nothing new was said.
      */
     private suspend fun proactiveSource(context: Context, task: OrbitTaskEntity): String {
         val now = System.currentTimeMillis()
-        val minute = minuteOfDay(now)
-        if (minute < PROACTIVE_DAY_START || minute >= PROACTIVE_DAY_END) return ""
         val orbit = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == task.orbitId && !it.deleting }
             ?: return ""
         val dao = OrbitTaskRepository(context).dao
-        // Runs skipped at night or for no talk do not count: the morning check reads the night's talk too.
+        // Runs skipped for no talk do not count: the next real check reads from the last finished one.
         val since = (dao.lastCompletedRun(task.id)?.startedAt ?: 0L).coerceAtLeast(now - PROACTIVE_LOOKBACK_MS)
         val labels = linkedMapOf(orbit.chatId to "main")
         orbit.sideChats.forEach { labels[it.chatId] = "side: ${it.title.replace(Regex("\\s+"), " ").take(40)}" }

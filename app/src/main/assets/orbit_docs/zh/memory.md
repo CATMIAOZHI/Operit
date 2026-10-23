@@ -37,6 +37,7 @@ Orbit 使用自己的资料与笔记，不使用记忆图谱；不要调用图�
 
 记忆不是聊天逐字稿。
 原始请求、约定、纠正可用 `search_chat_history`、`memory_review history` 或 `orbit_chat` 找回。
+这些默认不返回你当时的思考，需要时传 `include_thinking=true`。
 预览截断时读取全文，历史还有页时继续翻。
 
 用户问“你怎么知道”时，用 `orbit_memory_origin` 查询。

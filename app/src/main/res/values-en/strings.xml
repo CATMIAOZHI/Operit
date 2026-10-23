@@ -9231,7 +9231,7 @@
     <string name="orbit_routine_alignment">Nightly alignment review</string>
     <string name="orbit_routine_alignment_desc">Made by %1$s. Each night it looks back over the day\'s chats in the background, thinks about how working with you went and where you corrected it, then updates the alignment synthesis. It does not message you. You can pause it or change its time, but not delete it.</string>
     <string name="orbit_routine_proactive">Proactive check</string>
-    <string name="orbit_routine_proactive_desc">Made by %1$s. Every 2 hours in the daytime it looks over recent chats in the background for things that were decided but nobody followed up (like a missing reminder), and prepares them for %1$s to decide whether to tell you. Skipped at night and when there is no new chat. You can pause it or change how often it runs, but not delete it.</string>
+    <string name="orbit_routine_proactive_desc">Made by %1$s. Every 2 hours, day and night, it looks over recent chats in the background for things that were decided but nobody followed up (like a missing reminder), and prepares them for %1$s to decide whether and when to tell you. Skipped when there is no new chat. You can pause it or change how often it runs, but not delete it.</string>
     <string name="orbit_routine_ideas">Daily ideas</string>
     <string name="orbit_routine_feed_desc">Made by %1$s. Writes posts for your Feed in the background from your Feed instructions, without messaging you. You can pause it or change its time, but not delete it.</string>
     <string name="orbit_routine_ideas_desc">Made by %1$s. Thinks of things it could do for you in the background and puts them on the Ideas tab, without messaging you. You can pause it or change its time, but not delete it.</string>
@@ -9542,7 +9542,7 @@
     <string name="orbit_export_confirm">Export</string>
     <string name="orbit_decision_no_active_goals">No active goals, so nothing to align this time</string>
     <string name="orbit_decision_no_new_talk">No new chats since the last review, so nothing to review</string>
-    <string name="orbit_decision_proactive_skipped">Night time, or no new chats since the last check, so nothing to check</string>
+    <string name="orbit_decision_proactive_skipped">No new chats since the last check, so nothing to check</string>
     <string name="orbit_item_told">%1$s told you: %2$s</string>
     <string name="orbit_item_skipped">%1$s didn\'t interrupt you: %2$s</string>
     <string name="orbit_item_reason_time_sensitive">it has a deadline</string>

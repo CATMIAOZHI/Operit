@@ -37,6 +37,7 @@ Never store passwords, verification codes, or payment-card numbers in memory.
 
 Memory is not a verbatim transcript.
 Use `search_chat_history`, `memory_review history`, or `orbit_chat` to find original requests, agreements, and corrections.
+They leave out your thinking at the time by default; pass `include_thinking=true` when you need it.
 Read beyond truncated previews and follow additional history pages when needed.
 
 When asked “How do you know?”, use `orbit_memory_origin`.
