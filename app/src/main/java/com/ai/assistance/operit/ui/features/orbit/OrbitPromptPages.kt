@@ -84,6 +84,8 @@ internal fun OrbitFilePage(
     startEditing: Boolean = false,
     /** For a page inside another page (a file in the files list): back returns to that page. */
     interceptBack: Boolean = false,
+    /** Captures the revision behind a newly opened draft; not called when restoring that draft. */
+    onEditStart: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -101,7 +103,7 @@ internal fun OrbitFilePage(
         failed = false
         content = try { load() } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
         if (startEditing && !autoEdited) {
-            content?.let { draft = it; editing = true; autoEdited = true }
+            content?.let { onEditStart(); draft = it; editing = true; autoEdited = true }
         }
     }
     fun toast(id: Int) = android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
@@ -159,6 +161,7 @@ internal fun OrbitFilePage(
                         }) { Icon(orbitIcon("check"), stringResource(R.string.orbit_file_save)) }
                     } else if (save != null) {
                         IconButton(enabled = content != null, onClick = {
+                            onEditStart()
                             draft = content.orEmpty()
                             editing = true
                         }) { Icon(orbitIcon("square-pen"), stringResource(R.string.orbit_file_edit)) }
@@ -363,19 +366,22 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
 }
 
 @Composable
-internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit, onOpenHistory: () -> Unit) {
+internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val repository = remember(orbitId) { OrbitSoulRepository(context, orbitId) }
+    var loaded by remember(orbitId) { mutableStateOf<OrbitSoulRepository.Version?>(null) }
+    var editVersion by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }
     val reason = stringResource(R.string.orbit_soul_user_edit)
     OrbitFilePage(
         title = "SOUL.md",
         note = stringResource(R.string.orbit_soul_note, rememberOrbitName(orbitId)),
-        load = { repository.snapshot().current.body },
+        load = { repository.snapshot().current.also { loaded = it }.body },
         save = { body ->
-            val current = repository.snapshot().current
-            if (body != current.body) repository.update(body, reason, current.id)
+            // The version the editor opened: a background update must not be overwritten by an
+            // old draft. Save it alongside the draft through configuration changes as well.
+            repository.update(body, reason, checkNotNull(editVersion))
         },
+        onEditStart = { editVersion = checkNotNull(loaded).id },
         onBack = onBack,
-        actions = listOf(OrbitFileAction(stringResource(R.string.orbit_file_history), "history") { onOpenHistory() }),
     )
 }

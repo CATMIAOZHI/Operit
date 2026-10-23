@@ -14,7 +14,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** One atomic journal owns the current persona and reviewable changes; Soul.md is its readable copy. */
+/** One atomic record owns the current persona; Soul.md is its readable copy. No history is retained. */
 internal class OrbitSoulRepository(private val directory: File, private val available: suspend () -> Boolean = { true }) {
     constructor(context: Context, orbitId: String) : this(OrbitPreferences.getInstance(context).orbitDir(orbitId), {
         OrbitPreferences.getInstance(context).current().orbits.any { it.id == orbitId && !it.deleting }
@@ -22,7 +22,7 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
 
     data class Version(val id: String, val body: String, val reason: String, val base: String,
         val state: String, val createdAt: Long, val restoredFrom: String = "", val source: String = "proposal")
-    data class Snapshot(val current: Version, val history: List<Version>)
+    data class Snapshot(val current: Version)
     companion object {
         const val MAX_CHARS = 24_000
         private val locks = ConcurrentHashMap<String, Mutex>()
@@ -48,15 +48,13 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
             Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
         } finally { temp.delete() }
     }
-    private fun store(current: String, versions: List<Version>): Snapshot {
-        val selected = versions.single { it.id == current }
-        val pending = versions.filter { it.state == "pending" }
-        val retained = (listOf(selected) + pending +
-            versions.filter { it.id != current && it.state != "pending" }.sortedBy { it.createdAt }.takeLast(19)).distinctBy { it.id }
-        atomic(journal, JSONObject().put("current", current)
-            .put("versions", JSONArray(retained.map(::json))).toString())
+    private fun store(selected: Version): Snapshot {
+        // Keep the existing format so older installations retain the exact current version and
+        // interrupted mirror writes remain recoverable, but never carry forward previous bodies.
+        atomic(journal, JSONObject().put("current", selected.id)
+            .put("versions", JSONArray(listOf(json(selected)))).toString())
         atomic(document, selected.body)
-        return Snapshot(selected, retained)
+        return Snapshot(selected)
     }
     private suspend fun read(): Snapshot {
         check(available()) { "This Orbit is being removed or no longer exists" }
@@ -66,21 +64,23 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
                 "You are the user's long-term personal companion."
             }, "", "",
                 "approved", System.currentTimeMillis(), source = "import")
-            return store(initial.id, listOf(initial))
+            return store(initial)
         }
         val data = JSONObject(journal.readText())
         val array = data.getJSONArray("versions")
         val versions = (0 until array.length()).map { version(array.getJSONObject(it)) }
         val selected = versions.single { it.id == data.getString("current") }
+        // Drop the retired history (including old pending proposals), preserving current identity.
+        if (versions.size > 1) return store(selected)
         // Repair an interrupted mirror write. Only the atomic journal decides which version applies.
         if (!document.isFile || document.readText() != selected.body) atomic(document, selected.body)
-        return Snapshot(selected, versions)
+        return Snapshot(selected)
     }
     suspend fun seed(body: String) = withContext(Dispatchers.IO) { mutex.withLock {
         check(!journal.exists() && !document.exists()) { "An existing Orbit persona cannot be reseeded" }
         val initial = Version(UUID.randomUUID().toString(), body.ifBlank { "You are the user's long-term personal companion." },
             "", "", "approved", System.currentTimeMillis(), source = "seed")
-        store(initial.id, listOf(initial))
+        store(initial)
     } }
     suspend fun snapshot(): Snapshot = withContext(Dispatchers.IO) { mutex.withLock { read() } }
     suspend fun update(body: String, reason: String, expected: String): Version = withContext(Dispatchers.IO) { mutex.withLock {
@@ -92,17 +92,10 @@ internal class OrbitSoulRepository(private val directory: File, private val avai
         check(old.current.id == expected) {
             if (expected.isBlank()) "version is required: call read and pass its version" else "Soul changed since version $expected; call read again and update from the current version"
         }
+        if (body == old.current.body) return@withLock old.current
         val version = Version(UUID.randomUUID().toString(), body, reason, expected, "approved", System.currentTimeMillis(),
             source = "update")
-        store(version.id, old.history.filter { it.state == "approved" } + version)
+        store(version)
         version
-    } }
-    suspend fun restore(id: String, expected: String): Snapshot = withContext(Dispatchers.IO) { mutex.withLock {
-        val old = read()
-        check(old.current.id == expected) { "Soul changed; reopen history before restoring" }
-        val source = old.history.single { it.id == id && it.state == "approved" }
-        val restored = Version(UUID.randomUUID().toString(), source.body, "",
-            expected, "approved", System.currentTimeMillis(), source.id, source = "restore")
-        store(restored.id, old.history + restored)
     } }
 }
