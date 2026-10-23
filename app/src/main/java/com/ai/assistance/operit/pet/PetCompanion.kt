@@ -326,9 +326,11 @@ internal fun PetCompanion(
 }
 
 @Composable
-private fun PetSprite(
+internal fun PetSprite(
     activity: PetActivity, settings: PetSettings, interaction: Int, modifier: Modifier,
     dizzy: Boolean = false, animationOverride: PetAnimation? = null,
+    playbackEnabled: Boolean = true,
+    placeholder: (@Composable () -> Unit)? = null,
 ) {
     val context = LocalContext.current.applicationContext
     val owner = LocalLifecycleOwner.current
@@ -342,7 +344,7 @@ private fun PetSprite(
         owner.lifecycle.addObserver(observer)
         onDispose { owner.lifecycle.removeObserver(observer) }
     }
-    val animate = settings.animated && resumed
+    val animate = settings.animated && resumed && playbackEnabled
     if (!settings.isReady) {
         Icon(Icons.Default.Pets, stringResource(R.string.pet_idle_required), modifier)
         return
@@ -369,11 +371,11 @@ private fun PetSprite(
     val animation = animationOverride ?: if (transientGreeting) PetAnimation.GREETING else activity.animation()
     val assetId = settings.artwork(if (settings.mediaType == PetMediaType.ATLAS) PetAnimation.IDLE else animation)?.id.orEmpty()
     if (settings.mediaType == PetMediaType.GIF) {
-        PetGif(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier)
+        PetGif(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier, placeholder)
         return
     }
     if (settings.mediaType == PetMediaType.VIDEO) {
-        PetVideo(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier)
+        PetVideo(assetId, animate, !transientGreeting, if (transientGreeting) interaction else 0, { greeting = false }, modifier, placeholder)
         return
     }
     val loaded by produceState<Result<PetImage>?>(null, assetId, settings.mediaType) {
@@ -422,6 +424,7 @@ private fun PetSprite(
         Icon(Icons.Default.BrokenImage, stringResource(R.string.pet_asset_unavailable), modifier)
         return
     }
+    if (image == null && placeholder != null) Box(modifier) { placeholder() }
     Canvas(modifier) {
         image?.let { source ->
             val atlas = source.bitmap

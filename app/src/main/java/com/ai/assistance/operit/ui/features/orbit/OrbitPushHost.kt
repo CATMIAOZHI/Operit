@@ -206,9 +206,15 @@ internal fun <T : Any> OrbitPushHost(
     Box(modifier.fillMaxSize()) {
         // Bottom to top: the page under the moving one, then the moving one. -1 is the base.
         val under = if (out != null) top else top - 1
-        val layers = listOf(under to false, (if (out != null) out.first else top) to true)
+        val movingLevel = if (out != null) out.first else top
         val underShown = if (under >= 0) drawn.getOrNull(under) != null else under == -1 && base != null
-        for ((level, isMoving) in layers) {
+        // One pass per level, from the base up, so each page keeps the same place here as it goes
+        // from the top to under a new page and back. A page that changed place would be built again
+        // and lose what it saved (how far it was scrolled), since the old one is saved only after
+        // the new one has read it. Levels that are not shown pass without drawing anything.
+        for (level in -1..maxOf(movingLevel, under)) {
+            val isMoving = level == movingLevel
+            if (!isMoving && level != under) continue
             val entry: T? = when {
                 isMoving && out != null -> out.second
                 level >= 0 -> drawn.getOrNull(level)

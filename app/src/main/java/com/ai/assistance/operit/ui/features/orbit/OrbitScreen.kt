@@ -533,6 +533,7 @@ private fun OrbitChatPage(
 
     // The chat always stays underneath, so closing the profile never reloads it. The profile
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
+    CompositionLocalProvider(LocalOrbitActivity provides rememberOrbitActivity(orbit, currentChatId)) {
     Box(Modifier.fillMaxSize()) {
         BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) { tab = OrbitTab.CHAT }
         // The back swipe slides the developer view to the right under the finger, like leaving a page.
@@ -644,7 +645,8 @@ private fun OrbitChatPage(
                             Column {
                                 OrbitHeader(
                                     orbit = orbit, sideTitle = currentSide?.title, hasUnread = hasUnread,
-                                    activity = orbitActivity(orbit, currentChatId),
+                                    activity = orbitActivity(),
+                                    avatarAnimated = chatOnScreen,
                                     onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                                 )
                                 currentSide?.forkOrigin?.let { origin ->
@@ -666,7 +668,9 @@ private fun OrbitChatPage(
                         {
                             OrbitHeader(
                                 orbit = orbit, sideTitle = null, hasUnread = hasUnreadState.value,
-                                activity = orbitActivity(orbit, null),
+                                activity = orbitActivity(),
+                                avatarAnimated = tab != OrbitTab.CHAT && !showProfile && !showChats &&
+                                    stackNames.isEmpty() && editingFile == null && !showImport,
                                 onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
                             )
                         }
@@ -918,6 +922,8 @@ private fun OrbitChatPage(
         }
     }
 
+    }
+
     if (showImport) {
         OrbitImportMemorySheet(
             orbit = orbit,
@@ -960,6 +966,7 @@ internal fun OrbitHeader(
     onOpenMenu: () -> Unit,
     /** What Orbit is doing now ([orbitActivity]); null while it rests. */
     activity: String? = null,
+    avatarAnimated: Boolean = true,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     Box(
@@ -1003,6 +1010,8 @@ internal fun OrbitHeader(
             OrbitAvatar(
                 orbit = orbit,
                 size = 76,
+                animatePet = true,
+                petVisible = avatarAnimated,
                 onClickLabel = stringResource(R.string.orbit_profile_open, orbitName(orbit)),
                 onClick = onOpenProfile,
             )
@@ -1158,6 +1167,8 @@ internal fun OrbitAvatar(
     card: CharacterCard? = null,
     onClickLabel: String? = null,
     onClick: (() -> Unit)? = null,
+    animatePet: Boolean = false,
+    petVisible: Boolean = true,
 ) {
     val context = LocalContext.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
@@ -1179,6 +1190,14 @@ internal fun OrbitAvatar(
     val interaction = remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val pressScale by animateFloatAsState(if (pressed) 0.93f else 1f, tween(140), label = "orbitAvatarPress")
+    val petId = orbit?.avatarPetId
+    val pet = if (petId != null) {
+        val pets by remember(context) { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
+        pets.firstOrNull { it.id == petId }
+    } else null
+    var lastPetActivity by remember(orbit?.id, petId) { mutableStateOf(com.ai.assistance.operit.pet.PetActivity.IDLE) }
+    val petActivity = if (petVisible) LocalOrbitActivity.current.value.pet else lastPetActivity
+    androidx.compose.runtime.SideEffect { if (petVisible) lastPetActivity = petActivity }
     Box(
         modifier =
             modifier.size(size.dp)
@@ -1199,20 +1218,37 @@ internal fun OrbitAvatar(
         contentAlignment = Alignment.Center,
     ) {
         val uri = avatarUri
-        if (!uri.isNullOrBlank()) {
-            Image(
-                painter = rememberAsyncImagePainter(model = Uri.parse(uri)),
-                contentDescription = null,
-                modifier = Modifier.fillMaxSize(),
-                contentScale = ContentScale.Crop,
+        val still: @Composable () -> Unit = {
+            if (!uri.isNullOrBlank()) {
+                Image(
+                    painter = rememberAsyncImagePainter(model = Uri.parse(uri)),
+                    contentDescription = null,
+                    modifier = Modifier.fillMaxSize(),
+                    contentScale = if (petId != null) ContentScale.Fit else ContentScale.Crop,
+                )
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.Person,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    modifier = Modifier.size((size / 2).dp),
+                )
+            }
+        }
+        if (pet != null && animatePet) {
+            // Reuse the pet's own atlas rows / state artwork, with no floating-pet controls.
+            com.ai.assistance.operit.pet.PetSprite(
+                activity = petActivity,
+                settings = pet.settings,
+                interaction = 0,
+                modifier = Modifier.fillMaxSize().padding(4.dp),
+                playbackEnabled = petVisible,
+                placeholder = still,
             )
         } else {
-            Icon(
-                imageVector = Icons.Rounded.Person,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.size((size / 2).dp),
-            )
+            Box(Modifier.fillMaxSize().padding(if (petId != null) 4.dp else 0.dp), contentAlignment = Alignment.Center) {
+                still()
+            }
         }
     }
 }

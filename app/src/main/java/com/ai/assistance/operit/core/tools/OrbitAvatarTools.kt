@@ -62,7 +62,7 @@ internal object OrbitAvatarTools {
                     val file = checkNotNull(
                         com.ai.assistance.operit.pet.PetAvatar.export(context, pet, OrbitPreferences.AVATAR_FILE_PREFIX)
                     ) { "Could not make a picture of this pet" }
-                    preferences.setAvatar(orbit.id, Uri.fromFile(file).toString())
+                    preferences.setAvatar(orbit.id, Uri.fromFile(file).toString(), petId = pet.id)
                 }
                 "default" -> OrbitCompanion.resetAvatar(context, orbit.id)
                 else -> error("source must be image, pet or default")

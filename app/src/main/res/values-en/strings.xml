@@ -9286,7 +9286,6 @@
     <string name="orbit_profile_soul_card">SOUL</string>
     <string name="orbit_profile_memory_card">Memory</string>
     <string name="orbit_profile_card_caution">Handle with care</string>
-    <string name="orbit_identity_change_colors">Shuffle colors</string>
     <string name="orbit_identity_modified">Last modified: %1$s</string>
     <string name="orbit_identity_no_date">No record yet</string>
     <string name="orbit_profile_user_card">USER</string>
@@ -9412,7 +9411,7 @@
     <string name="orbit_files_daily">Daily log</string>
     <string name="orbit_files_daily_empty">Nothing logged yet. Background runs are logged here on their own.</string>
     <string name="orbit_file_daily_note">What %1$s noticed and what its background runs did that day. The log is not long-term memory. This note is not part of the file.</string>
-    <string name="orbit_files_show_all">Show all</string>
+    <string name="orbit_files_show_all">View all</string>
     <string name="orbit_files_trash">Trash</string>
     <string name="orbit_files_trash_desc">Deleted files are kept for %1$d days and can be restored</string>
     <string name="orbit_files_trash_empty">The trash is empty.</string>

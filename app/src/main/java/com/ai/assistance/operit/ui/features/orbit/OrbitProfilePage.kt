@@ -124,7 +124,7 @@ internal fun OrbitProfilePage(
     val who = orbitName(orbit)
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val running by OrbitCompanion.running.collectAsState()
-    val doing = orbitActivity(orbit, null)
+    val doing = orbitActivity()
     val scope = rememberCoroutineScope()
     val browserWorks by OrbitBrowserWatch.works.collectAsState()
     val pages = remember(browserWorks, orbit.id) {
@@ -277,6 +277,8 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
         OrbitAvatar(
             orbit = orbit,
             size = 96,
+            animatePet = true,
+            petVisible = LocalProfileVisible.current && !showSheet,
             onClickLabel = stringResource(R.string.orbit_change_avatar),
             onClick = { showSheet = true },
         )
@@ -1020,7 +1022,7 @@ private fun IdentitySection(
     val context = LocalContext.current
     val lifecycle by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = LocalProfileVisible.current && lifecycle.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
-    var hue by rememberSaveable(orbit.id) { mutableIntStateOf(kotlin.random.Random.nextInt(360)) }
+    val hue by rememberSaveable(orbit.id) { mutableIntStateOf(kotlin.random.Random.nextInt(360)) }
     val dates by produceState<OrbitIdentityDates?>(null, orbit.id, visible) {
         while (visible) {
             value = loadOrbitIdentityDates(context, orbit.id)
@@ -1028,18 +1030,11 @@ private fun IdentitySection(
         }
     }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.weight(1f),
-            )
-            TextButton(onClick = { hue = (hue + kotlin.random.Random.nextInt(40, 321)) % 360 }) {
-                Icon(orbitIcon("palette"), contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.orbit_identity_change_colors))
-            }
-        }
+        Text(
+            orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
+            style = MaterialTheme.typography.titleMedium,
+            modifier = Modifier.padding(bottom = 6.dp),
+        )
         Text(
             stringResource(R.string.orbit_profile_identity_help, orbitName(orbit)),
             style = MaterialTheme.typography.bodySmall,
