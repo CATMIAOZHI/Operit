@@ -12,10 +12,15 @@ data class AgentMessage(
     val recipient: String,
     val kind: AgentMessageKind,
     val text: String,
+    /**
+     * The sender's agent ID (its chat). A name can pass to a new agent once its holder is archived;
+     * the ID cannot, so a reply sent to it reaches the agent that wrote, or fails if it is gone.
+     */
+    val senderId: String? = null,
 ) {
     fun render(): String =
         "Message ID: $id\nMessage Type: $kind\nTask name: $recipient\n" +
-            "Sender: $sender\nPayload:\n$text"
+            "Sender: $sender\n" + (senderId?.let { "Sender ID: $it\n" } ?: "") + "Payload:\n$text"
 }
 
 @Serializable

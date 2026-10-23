@@ -34,8 +34,10 @@ object CollaborationTools {
         fun parameter(name: String, cn: String, en: String, required: Boolean = false) =
             ToolParameterSchema(name = name, type = "string", description = text(cn, en), required = required)
         val target = parameter(
-            "target", "目标代理 ID、当前代理下的相对任务名或 /root 开始的完整路径。",
-            "Agent ID, task name relative to the caller, or canonical path beginning with /root.", true,
+            "target",
+            "目标代理 ID、当前代理下的相对任务名或 /root 开始的完整路径。回复某条消息时用它的 Sender ID：旧代理被归档后名字可能给了新代理，ID 只指原来那个。",
+            "Agent ID, task name relative to the caller, or canonical path beginning with /root. To reply to a message, use its Sender ID: once an old agent is archived its name can belong to a new one, while the ID only ever means the original.",
+            true,
         )
         val message = parameter("message", "发送给代理的非空消息。", "Non-empty message for the agent.", true)
         return SystemToolPromptCategory(
@@ -67,8 +69,8 @@ object CollaborationTools {
                 ToolPrompt(
                     name = "send_message",
                     description = text(
-                        "向已有代理交流关键信息、纠正、阻塞或具体问题。需要回复代理的消息时，用此工具投递给其 Sender，不要只在自己的对话里作答。同级代理不会收到你自动回报父代理的终稿。普通文本或手写信封都不会投递，必须实际调用工具并确认 accepted。完整路径可用 list_agents 查询。遵守独立审计等隔离要求，避免无内容的状态消息和向父代理重复发送自动终稿。运行中在下一消息边界接收；空闲时只入队，需要其继续工作请用 followup_task（不能唤醒根代理）。",
-                        "Share actionable findings, corrections, blockers or concrete questions with an existing agent. To reply to an agent message, deliver your answer to its Sender with this tool rather than answering only in your own conversation. Peers do not receive your automatic final report to your parent. Ordinary prose or a handwritten envelope does not deliver anything: call the tool and confirm accepted. Discover canonical paths with list_agents. Respect required independence; avoid empty updates or duplicating your automatic final report to your parent. Active agents receive input at the next boundary; idle agents only queue it. Use followup_task when an idle non-root agent needs to work.",
+                        "向已有代理交流关键信息、纠正、阻塞或具体问题。需要回复代理的消息时，用此工具投递给其 Sender ID（没有 ID 时用 Sender），不要只在自己的对话里作答。同级代理不会收到你自动回报父代理的终稿。普通文本或手写信封都不会投递，必须实际调用工具并确认 accepted。完整路径可用 list_agents 查询。遵守独立审计等隔离要求，避免无内容的状态消息和向父代理重复发送自动终稿。运行中在下一消息边界接收；空闲时只入队，需要其继续工作请用 followup_task（不能唤醒根代理）。",
+                        "Share actionable findings, corrections, blockers or concrete questions with an existing agent. To reply to an agent message, deliver your answer to its Sender ID (or its Sender when no ID is given) with this tool rather than answering only in your own conversation. Peers do not receive your automatic final report to your parent. Ordinary prose or a handwritten envelope does not deliver anything: call the tool and confirm accepted. Discover canonical paths with list_agents. Respect required independence; avoid empty updates or duplicating your automatic final report to your parent. Active agents receive input at the next boundary; idle agents only queue it. Use followup_task when an idle non-root agent needs to work.",
                     ),
                     parametersStructured = listOf(target, message),
                 ),

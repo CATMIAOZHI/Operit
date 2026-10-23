@@ -1082,12 +1082,24 @@ internal fun findCallRun(
     agentId: String? = null,
     at: Long? = null,
 ): SubagentRunEntity? {
+    // The call's own generation is found among every run first (archived ones too), and only then
+    // checked for being open: filtering archived runs first would hand the row of an archived agent
+    // to an older agent that wore the same name.
     val candidates =
         runs.filter {
             it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
-                it.archivedAt == null &&
                 it.agentProfileId != AgentProfileRepository.PERMISSION_REVIEWER_ID
         }
+    return findCallGeneration(candidates, callId, target, agentId, at)?.takeIf { it.archivedAt == null }
+}
+
+private fun findCallGeneration(
+    candidates: List<SubagentRunEntity>,
+    callId: String?,
+    target: String?,
+    agentId: String?,
+    at: Long?,
+): SubagentRunEntity? {
     val call = callId?.takeIf { it.isNotBlank() }
     if (call != null) {
         candidates.lastOrNull { it.parentToolCallId == call }?.let { return it }
@@ -1105,7 +1117,7 @@ internal fun findCallRun(
     }
     // Older calls do not say which chat they reached; they keep the agent that wore the name when
     // their message began, and link nowhere when none did.
-    return if (at == null) named.lastOrNull() else collaborationRunAt(named, at)
+    return if (at == null) named.lastOrNull { it.archivedAt == null } else collaborationRunAt(named, at)
 }
 
 /** The chat a send or follow-up call reports it reached, read from its result. */
