@@ -350,10 +350,13 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         }
         onNavigateBack()
     }
+    // A chat shown on a host's behalf (Orbit's developer view) is left through the host's own
+    // back, which also clears what it asked to show; going to the parent here would only be
+    // switched back to the shown chat again.
     BackHandler(
         enabled =
-            isHiddenReadingAuditChat ||
-                (isSubagentChat && currentChatView?.parentChatId != null),
+            chatIdOverride == null && (isHiddenReadingAuditChat ||
+                (isSubagentChat && currentChatView?.parentChatId != null)),
     ) {
         if (isHiddenReadingAuditChat) {
             exitHiddenReadingAuditRun()
@@ -999,6 +1002,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                     ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
+                                expectedChatId = chatIdOverride,
                                 headerContent = headerContent,
                                 configurationNotice = {
                                     if (!isFloatingMode && !isReadOnlyTranscript && !embedded) {

@@ -535,6 +535,14 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit check-in schedule", it) }
         }
 
+        // The subagent store is read from disk when first used; read it here, off the main thread,
+        // so the first chat screen does not wait on it.
+        applicationScope.launch {
+            runCatching {
+                com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.getInstance(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to load the subagent store early", it) }
+        }
+
         applicationScope.launch {
             try {
                 val prefs = RoomDatabaseBackupPreferences.getInstance(applicationContext)

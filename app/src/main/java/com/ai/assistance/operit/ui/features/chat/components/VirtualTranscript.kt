@@ -30,6 +30,7 @@ import com.ai.assistance.operit.data.model.ChatMessageLocatorPreview
 import com.ai.assistance.operit.ui.common.markdown.LocalResponseProcessExpanded
 import com.ai.assistance.operit.ui.common.markdown.ResponseActivityHeader
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -100,19 +101,22 @@ internal fun VirtualTranscript(
     val runSnapshot = remember(chatId, runs) { TranscriptRunSnapshot(chatId, runs) }
     val toolModeValue by remember(displayPreferences) {
         displayPreferences.toolCollapseMode.map { it as ToolCollapseMode? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.toolMode)
     val showThinkingValue by remember(userPreferences) {
         userPreferences.showThinkingProcess.map { it as Boolean? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.showThinking)
     val collapseValue by remember(displayPreferences) {
         displayPreferences.collapseCompletedProcess.map { it as Boolean? }
-    }.collectAsState(initial = null)
+    }.collectAsState(initial = TranscriptDisplayCache.collapse)
     val bubbleSettings = rememberBubbleAiRenderSettings()
     val toolLabelTextMeasurer = rememberTextMeasurer(cacheSize = 256)
     if (toolModeValue == null || showThinkingValue == null || collapseValue == null || bubbleSettings == null) {
         Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
         return
     }
+    TranscriptDisplayCache.toolMode = toolModeValue
+    TranscriptDisplayCache.showThinking = showThinkingValue
+    TranscriptDisplayCache.collapse = collapseValue
     val toolMode = toolModeValue!!
     // Orbit's developer view shows all of Orbit's thinking, whatever the display setting.
     val showThinking = showThinkingValue!! || LocalShowHiddenChatRows.current
@@ -281,18 +285,31 @@ internal fun VirtualTranscript(
             restoring = false
         }
     }
-    val connection = remember(chatId, listState) {
+    // Following stops only once the reader has really left the newest message, not on a nudge at it.
+    val followTolerancePx = with(androidx.compose.ui.platform.LocalDensity.current) { 32.dp.toPx() }
+    fun distanceFromEnd(): Float {
+        if (!listState.canScrollForward) return 0f
+        val layout = listState.layoutInfo
+        val last = layout.visibleItemsInfo.lastOrNull() ?: return 0f
+        // The footer after the last row is often empty, so it leaves the screen on the first pixels
+        // back; measuring from the last row then is close enough.
+        if (last.index < layout.totalItemsCount - 2) return Float.MAX_VALUE
+        return (last.offset + last.size - (layout.viewportEndOffset - layout.afterContentPadding))
+            .coerceAtLeast(0).toFloat()
+    }
+    val connection = remember(chatId, listState, followTolerancePx) {
         object : NestedScrollConnection {
             private var before = 0 to 0
             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
                 before = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
-                if (source == NestedScrollSource.UserInput && available.y > 0) {
-                    currentFollowingChange?.invoke(false)
-                }
                 return Offset.Zero
             }
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 val after = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                // A drag or its fling that moved the list back past the tolerance ends following.
+                if (consumed.y > 0f && followingForLook && distanceFromEnd() > followTolerancePx) {
+                    currentFollowingChange?.invoke(false)
+                }
                 if (source == NestedScrollSource.UserInput &&
                     (before != after || available.y != 0f)
                 ) {
@@ -383,14 +400,38 @@ internal fun VirtualTranscript(
     LaunchedEffect(following, hasNewer, loadingPage, restoring) {
         if (following && hasNewer && !loadingPage && !restoring) onLatest?.invoke()
     }
-    LaunchedEffect(chatId, following, hasNewer, loadingPage, dragging, restoring) {
-        if (following && !hasNewer && !loadingPage && !dragging && !restoring) {
+    LaunchedEffect(chatId, following, hasNewer, loadingPage, restoring) {
+        if (following && !hasNewer && !loadingPage && !restoring) {
+            // Never take the list from the reader: a drag or its fling finishes first. Then the list
+            // goes to the end only when something changed (new rows, a row on screen growing, such as
+            // a reply or a loaded picture, a resized view): letting go just short of the end leaves it
+            // there. Rows that only came into view are measured, not taken as growth.
+            var lastShape: List<Int>? = null
+            val knownSizes = HashMap<Any, Int>()
             snapshotFlow {
                 val layout = listState.layoutInfo
-                Triple(layout.totalItemsCount, layout.visibleItemsInfo.lastOrNull()?.let { it.offset + it.size },
-                    listState.canScrollForward)
-            }.distinctUntilChanged().collect {
-                if (currentRows.isNotEmpty()) listState.scrollToItem(currentRows.size)
+                val count = layout.totalItemsCount
+                val shape = listOf(count, layout.viewportSize.width, layout.viewportSize.height,
+                    layout.afterContentPadding)
+                val sizes = layout.visibleItemsInfo.associate { it.key to it.size }
+                Triple(shape, sizes, listState.isScrollInProgress)
+            }.distinctUntilChanged().collect { (shape, sizes, scrolling) ->
+                if (scrolling || currentRows.isEmpty()) return@collect
+                val changed = shape != lastShape || sizes.any { (key, size) ->
+                    knownSizes[key].let { it != null && it != size }
+                }
+                if (shape != lastShape) knownSizes.clear()
+                lastShape = shape
+                // Only rows on screen are kept, so the record stays as small as the screen.
+                knownSizes.keys.retainAll(sizes.keys)
+                knownSizes.putAll(sizes)
+                if (!changed || !listState.canScrollForward) return@collect
+                try {
+                    listState.scrollToItem(currentRows.size)
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    // A scroll that won the list cancels only this jump; keep following afterwards.
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                }
             }
         }
     }
@@ -639,4 +680,14 @@ internal fun VirtualTranscript(
             }
         }
     }
+}
+
+/**
+ * Display settings last read, so a transcript opened again draws at once with them instead of
+ * showing a spinner for the frame or two the live values take; they replace these as they arrive.
+ */
+private object TranscriptDisplayCache {
+    @Volatile var toolMode: ToolCollapseMode? = null
+    @Volatile var showThinking: Boolean? = null
+    @Volatile var collapse: Boolean? = null
 }

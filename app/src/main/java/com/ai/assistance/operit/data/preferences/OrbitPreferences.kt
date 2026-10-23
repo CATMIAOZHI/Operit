@@ -180,6 +180,9 @@ class OrbitPreferences private constructor(context: Context) {
     @Volatile
     private var snapshotLoaded = false
 
+    /** The settings already read, or null before the first read; lets a page open with them at once. */
+    fun loadedSnapshot(): OrbitSettings? = if (snapshotLoaded) snapshot else null
+
     init {
         settingsFlow.onEach { keepSnapshot(it) }
             .launchIn(CoroutineScope(SupervisorJob() + Dispatchers.IO))

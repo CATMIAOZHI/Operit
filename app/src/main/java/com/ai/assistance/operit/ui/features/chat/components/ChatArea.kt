@@ -250,7 +250,11 @@ fun ChatArea(
     showChatFloatingDotsAnimation: Boolean = true,
 ) {
     if (!transcriptReady) {
-        Box(modifier) { CircularProgressIndicator(Modifier.align(Alignment.Center)) }
+        // A chat switch usually finishes within a few frames; a spinner only for a slow one, so a
+        // quick switch does not flash it.
+        var slow by remember { mutableStateOf(false) }
+        LaunchedEffect(Unit) { kotlinx.coroutines.delay(400); slow = true }
+        Box(modifier) { if (slow) CircularProgressIndicator(Modifier.align(Alignment.Center)) }
         return
     }
     val context = LocalContext.current

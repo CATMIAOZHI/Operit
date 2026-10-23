@@ -95,6 +95,9 @@ fun ChatScreenContent(
          readOnlyTranscript: Boolean = false,
          // Read the chat with its tool details, but offer nothing that rewrites it.
          lockTranscript: Boolean = false,
+         // The chat this screen was asked to show (a host such as Orbit sets it); until the shared chat
+         // has switched to it, the previous chat is not drawn under the host's look.
+         expectedChatId: String? = null,
          enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
          showChatHistorySelector: Boolean,
         chatHistory: List<ChatMessage>,
@@ -320,7 +323,7 @@ fun ChatScreenContent(
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
                         processMetadata = processMetadata,
                         onLoadProcess = actualViewModel::loadTranscriptProcess,
-                        transcriptReady = displayedChatId == currentChatId,
+                        transcriptReady = displayedChatId == currentChatId && (expectedChatId == null || currentChatId == expectedChatId),
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {
@@ -457,7 +460,7 @@ fun ChatScreenContent(
                         hasOlderDisplayHistory = hasOlderDisplayHistory,
                         processMetadata = processMetadata,
                         onLoadProcess = actualViewModel::loadTranscriptProcess,
-                        transcriptReady = displayedChatId == currentChatId,
+                        transcriptReady = displayedChatId == currentChatId && (expectedChatId == null || currentChatId == expectedChatId),
                         hasNewerDisplayHistory = hasNewerDisplayHistory,
                         isLoadingDisplayWindow = isLoadingDisplayWindow,
                         onLoadOlderDisplayWindow = {

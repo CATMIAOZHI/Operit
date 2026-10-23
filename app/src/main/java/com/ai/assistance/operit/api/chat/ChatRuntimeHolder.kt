@@ -17,6 +17,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 class ChatRuntimeHolder private constructor(context: Context) {
@@ -223,14 +224,37 @@ class ChatRuntimeHolder private constructor(context: Context) {
         }
     }
 
+    /**
+     * Per target slot, a sync still on its way: the chat it asked for and the chat the target showed
+     * then. A main chat switch is synced both directly and by watching the main chat; while the first
+     * request is on its way the target shows its old chat, and the second must not load it again.
+     * It is forgotten as soon as the target moves, or after a while if the switch never lands.
+     */
+    private class PendingSync(val chatId: String, val shown: String?)
+    private val pendingSync = ConcurrentHashMap<ChatRuntimeSlot, PendingSync>()
+
     private fun syncChatSelection(
         sourceSlot: ChatRuntimeSlot,
         targetSlot: ChatRuntimeSlot,
         chatId: String
     ) {
         val targetCore = getCore(targetSlot)
-        if (targetCore.currentChatId.value == chatId) {
+        val shown = targetCore.currentChatId.value
+        if (shown == chatId) {
             return
+        }
+        // Asked already and the target has not moved since: that request is still on its way.
+        val pending = pendingSync[targetSlot]
+        if (pending != null && pending.chatId == chatId && pending.shown == shown) {
+            return
+        }
+        val token = PendingSync(chatId, shown)
+        pendingSync[targetSlot] = token
+        runtimeScope.launch {
+            kotlinx.coroutines.withTimeoutOrNull(PENDING_SYNC_TIMEOUT_MS) {
+                targetCore.currentChatId.first { it != shown }
+            }
+            pendingSync.remove(targetSlot, token)
         }
 
         try {
@@ -240,6 +264,7 @@ class ChatRuntimeHolder private constructor(context: Context) {
                 "跨 Session 当前聊天同步: $sourceSlot -> $targetSlot, chatId=$chatId"
             )
         } catch (e: Exception) {
+            pendingSync.remove(targetSlot, token)
             AppLogger.e(
                 TAG,
                 "跨 Session 当前聊天同步失败: $sourceSlot -> $targetSlot, chatId=$chatId",
@@ -250,6 +275,7 @@ class ChatRuntimeHolder private constructor(context: Context) {
 
     companion object {
         private const val TAG = "ChatRuntimeHolder"
+        private const val PENDING_SYNC_TIMEOUT_MS = 10_000L
         private const val DEFAULT_CHAT_KEY = "__DEFAULT_CHAT__"
 
         @Volatile

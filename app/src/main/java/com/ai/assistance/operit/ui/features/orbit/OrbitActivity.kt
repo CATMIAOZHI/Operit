@@ -33,7 +33,8 @@ internal fun orbitActivity(orbit: OrbitProfile, currentChatId: String?): String?
         val holder = ChatRuntimeHolder.getInstance(context)
         val main = holder.getCore(ChatRuntimeSlot.MAIN)
         val floating = holder.getCore(ChatRuntimeSlot.FLOATING)
-        val coordinator = CollaborationCoordinator.getInstance(context)
+        // Taken on the flow's own thread below: the first use reads the subagent store from disk.
+        val coordinator by lazy { CollaborationCoordinator.getInstance(context) }
         combine(
             main.activeStreamingChatIds, main.inputProcessingStateByChatId,
             floating.activeStreamingChatIds, floating.inputProcessingStateByChatId,
