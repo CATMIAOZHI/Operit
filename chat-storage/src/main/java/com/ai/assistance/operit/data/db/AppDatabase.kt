@@ -66,7 +66,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
         com.ai.assistance.operit.data.model.OrbitArtifactVersionEntity::class,
         com.ai.assistance.operit.data.model.OrbitNotificationEntity::class,
     ],
-    version = 43,
+    version = 44,
     exportSchema = true
 )
 abstract class AppDatabase : RoomDatabase() {
@@ -92,6 +92,17 @@ abstract class AppDatabase : RoomDatabase() {
     abstract fun tokenStatsDao(): TokenStatsDao
 
     companion object {
+        /** Proactive items: how a sent one was put to the user, and what the user did with it. */
+        val MIGRATION_43_44 = object : Migration(43, 44) {
+            private val statements = listOf(
+                "ALTER TABLE orbit_deliveries ADD COLUMN presentation TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN userResponse TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN userResponseNote TEXT NOT NULL DEFAULT ''",
+                "ALTER TABLE orbit_deliveries ADD COLUMN respondedAt INTEGER NOT NULL DEFAULT 0",
+            )
+            override fun migrate(db: SupportSQLiteDatabase) = statements.forEach { db.execSQL(it) }
+            override fun migrate(connection: SQLiteConnection) = statements.forEach { connection.execSQL(it) }
+        }
         /** Proactive items (Muse's two-step delivery): a draft's key, expiry, evidence, and Orbit's call. */
         val MIGRATION_42_43 = object : Migration(42, 43) {
             private val statements = listOf(
@@ -1229,6 +1240,7 @@ abstract class AppDatabase : RoomDatabase() {
                                 MIGRATION_40_41,
                                 MIGRATION_41_42,
                                 MIGRATION_42_43,
+                                MIGRATION_43_44,
                             ) // 添加新的迁移
                             // personal/dev briefly shipped experimental schemas 21-23. Only those
                             // development inputs are intentionally rebuilt; stable v20 is migrated.

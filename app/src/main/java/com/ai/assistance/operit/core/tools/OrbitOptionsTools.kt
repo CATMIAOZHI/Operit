@@ -28,7 +28,9 @@ internal object OrbitOptionsTools {
   - The buttons only appear if you put the returned embed_token in your reply text, exactly as given. Saying you sent options without the token shows nothing.
   - Make a new set each time; a token works once and only in this chat. Usually one set per reply, placed after the words it answers.
   - A tap sends that option as the user's next message, the same as if they typed it. After one tap the set is used up.
+  - For a suggestion you bring up yourself, offer accepting, declining and "already done" side by side (e.g. "Add the reminder" / "No, I'll remember" / "I already did it"), so they can close it in one tap.
   - 用户大概率会从几句短回复里选一句时用（选择、是否、下一步）。每个选项就是用户点了会原样发出的话。必须把返回的 embed_token 原样写进回复正文，按钮才会出现；令牌只能用一次、只在本聊天有效。
+  - 你主动提的建议，把接受、不要、“已经办好了”平等地摆出来，让用户点一下就能把这件事关掉。
 """,
     )
 

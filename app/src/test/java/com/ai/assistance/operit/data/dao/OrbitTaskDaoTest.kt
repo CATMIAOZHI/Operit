@@ -34,7 +34,7 @@ class OrbitTaskDaoTest {
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
             .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37,
-                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43)
+                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {

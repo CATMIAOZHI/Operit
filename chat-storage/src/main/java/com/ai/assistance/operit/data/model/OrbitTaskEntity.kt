@@ -126,6 +126,13 @@ data class OrbitDeliveryEntity(
     /** Why, in Orbit's words: what it checked. Answers "why did you send me this?". */
     @ColumnInfo(defaultValue = "''") val verdictNote: String = "",
     @ColumnInfo(defaultValue = "0") val decidedAt: Long = 0,
+    /** How a sent item was put to the user: [TEXT] or [OPTIONS]; empty for skips and older items. */
+    @ColumnInfo(defaultValue = "''") val presentation: String = "",
+    /** What the user did with a sent item: one of [RESPONSES], or empty while nothing is known. */
+    @ColumnInfo(defaultValue = "''") val userResponse: String = "",
+    /** The user's answer in Orbit's words, for the item's record. */
+    @ColumnInfo(defaultValue = "''") val userResponseNote: String = "",
+    @ColumnInfo(defaultValue = "0") val respondedAt: Long = 0,
 ) {
     companion object {
         const val SEND = "send"
@@ -134,5 +141,9 @@ data class OrbitDeliveryEntity(
         const val UNREGISTERED = "unregistered"
         /** The item ran out before it was handed to Orbit. */
         const val EXPIRED = "expired"
+        const val TEXT = "text"
+        const val OPTIONS = "options"
+        /** Took it up / turned it down / had already handled it themselves / something else. */
+        val RESPONSES = setOf("accepted", "declined", "already_done", "other")
     }
 }

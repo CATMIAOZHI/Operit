@@ -37,11 +37,17 @@ internal object OrbitRoutines {
     const val IDEAS_SOURCE = "orbit:ideas"
     /** Every Orbit chat since the last alignment review; the run is skipped when the user said nothing. */
     const val ALIGNMENT_SOURCE = "orbit:alignment"
+    /**
+     * The Orbit chats with new user messages since the last proactive check; the run is skipped at
+     * night and when the user said nothing new.
+     */
+    const val PROACTIVE_SOURCE = "orbit:proactive"
     private const val SELF_REVIEW = "routine-self-review"
     private const val GOAL_BRIEFING = "routine-goal-briefing"
     private const val FEED = "routine-feed"
     private const val IDEAS = "routine-ideas"
     private const val ALIGNMENT = "routine-alignment"
+    private const val PROACTIVE_SCAN = "routine-proactive-scan"
     private const val SELF_REVIEW_MINUTE = 3 * 60 + 30
     private const val GOAL_BRIEFING_MINUTE = 7 * 60
     /** Late at night, when the day's talk is over. */
@@ -63,9 +69,21 @@ internal object OrbitRoutines {
     private const val TIMEOUT_MINUTES = 8
     /** Enough for the nightly alignment review to read the whole window in one run. */
     const val REVIEW_TIMEOUT_MINUTES = 120
+    /** The proactive check looks for gaps every 2 hours by default, only in the daytime. */
+    const val PROACTIVE_INTERVAL_MINUTES = 2 * 60
+    private const val PROACTIVE_DAY_START = 8 * 60
+    private const val PROACTIVE_DAY_END = 22 * 60
+    /** It may look up tasks, goals and older messages before drafting. */
+    private const val PROACTIVE_TIMEOUT_MINUTES = 15
+    /** The first check, or one after a long pause, looks back at most a day. */
+    private const val PROACTIVE_LOOKBACK_MS = 24L * 60 * 60_000
+    private const val PROACTIVE_SOURCE_CHARS = 18_000
+    /** One message's share in the source; the user's words matter most, Orbit's replies give context. */
+    private const val PROACTIVE_USER_CHARS = 1_500
+    private const val PROACTIVE_AI_CHARS = 600
 
     fun isRoutineSource(source: String) =
-        source in setOf(CHAT_SOURCE, GOALS_SOURCE, FEED_SOURCE, IDEAS_SOURCE, ALIGNMENT_SOURCE)
+        source in setOf(CHAT_SOURCE, GOALS_SOURCE, FEED_SOURCE, IDEAS_SOURCE, ALIGNMENT_SOURCE, PROACTIVE_SOURCE)
 
     /** The same id OrbitTaskRepository.create gives a request, so making a routine again finds the old one. */
     fun taskId(orbitId: String, request: String): String =
@@ -76,6 +94,25 @@ internal object OrbitRoutines {
     fun feedId(orbitId: String) = taskId(orbitId, FEED)
     fun ideasId(orbitId: String) = taskId(orbitId, IDEAS)
     fun alignmentId(orbitId: String) = taskId(orbitId, ALIGNMENT)
+    fun proactiveScanId(orbitId: String) = taskId(orbitId, PROACTIVE_SCAN)
+
+    private fun minuteOfDay(at: Long): Int = java.util.Calendar.getInstance().apply { timeInMillis = at }.let {
+        it.get(java.util.Calendar.HOUR_OF_DAY) * 60 + it.get(java.util.Calendar.MINUTE)
+    }
+
+    /** When a proactive check due at [at] really runs: as due in the daytime, else the next 08:00. */
+    fun proactiveDue(at: Long): Long {
+        val minute = minuteOfDay(at)
+        if (minute in PROACTIVE_DAY_START until PROACTIVE_DAY_END) return at
+        return java.util.Calendar.getInstance().apply {
+            timeInMillis = at
+            if (minute >= PROACTIVE_DAY_END) add(java.util.Calendar.DAY_OF_MONTH, 1)
+            set(java.util.Calendar.HOUR_OF_DAY, PROACTIVE_DAY_START / 60)
+            set(java.util.Calendar.MINUTE, PROACTIVE_DAY_START % 60)
+            set(java.util.Calendar.SECOND, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }.timeInMillis
+    }
 
     suspend fun ensureSelfReview(context: Context, orbit: OrbitProfile) {
         ensure(context, orbit, SELF_REVIEW, R.string.orbit_routine_self_review, CHAT_SOURCE, "DAILY", SELF_REVIEW_MINUTE,
@@ -88,6 +125,16 @@ internal object OrbitRoutines {
         ensure(context, orbit, GOAL_BRIEFING, R.string.orbit_routine_goal_briefing, GOALS_SOURCE, "DAILY", GOAL_BRIEFING_MINUTE,
             background = true, upgrade = ::upgradeGoalBriefing) {
             if (it) GOAL_ALIGN_EN else GOAL_ALIGN_ZH
+        }
+        // An untouched alignment from before drafts were prepared briefs gets the current steps.
+        val dao = OrbitTaskRepository(context).dao
+        dao.task(goalBriefingId(orbit.id))?.takeIf { it.state != "CANCELLED" }?.let { task ->
+            val current = when (task.instruction.trim()) {
+                GOAL_ALIGN_ZH_V1 -> GOAL_ALIGN_ZH
+                GOAL_ALIGN_EN_V1 -> GOAL_ALIGN_EN
+                else -> null
+            }
+            if (current != null) dao.refreshInstruction(task.id, task.instruction, current)
         }
     }
 
@@ -150,6 +197,20 @@ internal object OrbitRoutines {
     }
 
     /**
+     * The proactive check, like Muse's hourly research worker: every 2 hours in the daytime a
+     * background subagent reads the chats with new talk, looks for what was decided but is not covered
+     * (a missing reminder, a deadline nobody watches, a decision waiting on the user) and drafts a
+     * prepared brief. The chat decides whether it is told. Skipped at night and with nothing new said.
+     */
+    suspend fun ensureProactiveScan(context: Context, orbit: OrbitProfile) {
+        ensure(context, orbit, PROACTIVE_SCAN, R.string.orbit_routine_proactive, PROACTIVE_SOURCE, "INTERVAL", 0,
+            interval = PROACTIVE_INTERVAL_MINUTES, background = true, refreshInstruction = true,
+            timeoutMinutes = PROACTIVE_TIMEOUT_MINUTES) {
+            if (it) PROACTIVE_EN else PROACTIVE_ZH
+        }
+    }
+
+    /**
      * Runs the Feed or Ideas routine now (the "write one" and "think of some" buttons). Makes the
      * routine first if it is missing. False when it is paused or could not be made.
      */
@@ -174,7 +235,8 @@ internal object OrbitRoutines {
     suspend fun ensureGoalBriefingIfGoals(context: Context, orbit: OrbitProfile) {
         val dao = OrbitTaskRepository(context).dao
         dao.task(goalBriefingId(orbit.id))?.let { old ->
-            if (old.state != "CANCELLED" && !old.useSubagent) ensureGoalBriefing(context, orbit)
+            // Also upgrades an untouched older alignment instruction; a background one stays where it is.
+            if (old.state != "CANCELLED") ensureGoalBriefing(context, orbit)
             return
         }
         if (dao.goals(orbit.id).any { it.state != "CANCELLED" }) ensureGoalBriefing(context, orbit)
@@ -190,13 +252,14 @@ internal object OrbitRoutines {
      * instruction, lane) stays as Orbit made it.
      */
     fun isProtected(task: OrbitTaskEntity) = task.id == feedId(task.orbitId) || task.id == ideasId(task.orbitId) ||
-        task.id == alignmentId(task.orbitId)
+        task.id == alignmentId(task.orbitId) || task.id == proactiveScanId(task.orbitId)
 
     /** Why a skipped run was skipped: the goal briefing and the alignment review skip for their own reasons. */
     fun skippedReason(context: Context, task: OrbitTaskEntity): String = context.getString(
         when (task.source) {
             GOALS_SOURCE -> R.string.orbit_decision_no_active_goals
             ALIGNMENT_SOURCE -> R.string.orbit_decision_no_new_talk
+            PROACTIVE_SOURCE -> R.string.orbit_decision_proactive_skipped
             else -> R.string.orbit_watch_notifications_starting
         }
     )
@@ -206,6 +269,7 @@ internal object OrbitRoutines {
         minute: Int, interval: Int = 1440, background: Boolean,
         upgrade: (Context, OrbitTaskEntity) -> OrbitTaskEntity = { _, it -> it },
         refreshInstruction: Boolean = false,
+        timeoutMinutes: Int = TIMEOUT_MINUTES,
         instruction: (english: Boolean) -> String,
     ) {
         val repository = OrbitTaskRepository(context)
@@ -242,7 +306,7 @@ internal object OrbitRoutines {
         try {
             val english = LocaleUtils.usesEnglishPrompt(context)
             repository.create(orbit, context.getString(title), instruction(english), source, interval, "CHANGES", request,
-                kind = "ASSIST", scheduleMode = scheduleMode, dailyMinute = minute, timeoutMinutes = TIMEOUT_MINUTES,
+                kind = "ASSIST", scheduleMode = scheduleMode, dailyMinute = minute, timeoutMinutes = timeoutMinutes,
                 useSubagent = background)
         } catch (e: CancellationException) {
             throw e
@@ -267,6 +331,7 @@ internal object OrbitRoutines {
             val legacy = OrbitTaskRepository(context).dao.lastCompletedRun(task.id)?.startedAt
             return OrbitReviewReader.of(context, task.orbitId).open(now, legacy)?.header ?: ""
         }
+        if (task.kind == "ASSIST" && task.source == PROACTIVE_SOURCE) return proactiveSource(context, task)
         if (task.kind != "ASSIST" || task.source != GOALS_SOURCE) return null
         val dao = OrbitTaskRepository(context).dao
         val goals = dao.goals(task.orbitId).filter { it.state == "ACTIVE" }
@@ -299,6 +364,86 @@ internal object OrbitRoutines {
             else left += goals[i].id
         }
         if (left.isNotEmpty()) out.append("\nNot shown for length (${left.size} goals): ${left.joinToString()}. Read each with orbit_goal action=detail.\n")
+        return out.toString()
+    }
+
+    /**
+     * What the proactive check reads: every message since the last check in the Orbit chats where
+     * the user said something, oldest first, main chat first. What does not fit is named with the
+     * exact call that reads it, so the run reads the whole window before it finishes; the window
+     * moves on only after a finished run. Empty at night, and when nothing new was said.
+     */
+    private suspend fun proactiveSource(context: Context, task: OrbitTaskEntity): String {
+        val now = System.currentTimeMillis()
+        val minute = minuteOfDay(now)
+        if (minute < PROACTIVE_DAY_START || minute >= PROACTIVE_DAY_END) return ""
+        val orbit = OrbitPreferences.getInstance(context).current().orbits.firstOrNull { it.id == task.orbitId && !it.deleting }
+            ?: return ""
+        val dao = OrbitTaskRepository(context).dao
+        // Runs skipped at night or for no talk do not count: the morning check reads the night's talk too.
+        val since = (dao.lastCompletedRun(task.id)?.startedAt ?: 0L).coerceAtLeast(now - PROACTIVE_LOOKBACK_MS)
+        val labels = linkedMapOf(orbit.chatId to "main")
+        orbit.sideChats.forEach { labels[it.chatId] = "side: ${it.title.replace(Regex("\\s+"), " ").take(40)}" }
+        val counts = labels.keys.associateWith { dao.reviewCount(listOf(it), since, now, listOf("user")) }
+        val total = counts.values.sum()
+        if (total == 0) return ""
+        val time = SimpleDateFormat("yyyy-MM-dd HH:mm:ss", Locale.US)
+        val out = StringBuilder()
+        out.append("PROACTIVE CHECK\n")
+        out.append("now: ${time.format(Date(now))} (local time)\n")
+        out.append("window: ${time.format(Date(since))} -> ${time.format(Date(now))}; new user messages: $total\n")
+        out.append("Below are the window's messages of each chat with new ones, oldest first, main first. ")
+        out.append("[cut] marks a shortened message: read it whole with search_chat_history message_id=<id> mode=message. ")
+        out.append("For talk before the window use search_chat_history; for reminders orbit_task action=list; for goals orbit_goal.\n")
+        val chats = labels.filterKeys { (counts[it] ?: 0) > 0 }
+        // Room is kept for the NOT YET READ list, one compact id per chat, so the source never runs
+        // past its limit and the reading hints at its end are never cut off.
+        val budget = PROACTIVE_SOURCE_CHARS - 600 - chats.keys.sumOf { it.length + 2 }
+        var partial: String? = null
+        val unreadIds = mutableListOf<String>()
+        var full = false
+        chats.forEach { (chatId, label) ->
+            val header = "\n=== $label, chat id $chatId (${counts[chatId]} new user messages) ===\n"
+            if (full || out.length + header.length > budget) {
+                full = true
+                unreadIds += chatId
+                return@forEach
+            }
+            out.append(header)
+            // Pages through the window and stops once the budget is spent; the rest is read with tools.
+            var afterTs = since
+            var afterId = 0L
+            while (!full) {
+                val page = dao.reviewMessages(listOf(chatId), since, now, afterTs, afterId, 20)
+                for (m in page) {
+                    val text = if (m.sender == "ai") ChatUtils.removeThinkingContent(m.content).trim() else m.content.trim()
+                    val limit = if (m.sender == "ai") PROACTIVE_AI_CHARS else PROACTIVE_USER_CHARS
+                    val cut = m.truncated || text.length > limit
+                    val shown = if (m.sender == "ai" && text.length > limit) text.takeLast(limit) else text.take(limit)
+                    val who = if (m.sender == "user") "user" else "you"
+                    val line = "[#${m.messageId} ${time.format(Date(m.timestamp))}] $who: $shown${if (cut) " [cut]" else ""}\n"
+                    if (out.length + line.length > budget) {
+                        full = true
+                        partial = "chat $chatId from ${time.format(Date(m.timestamp))} on: search_chat_history " +
+                            "session_id=$chatId after=${m.timestamp - 1} before=$now"
+                        break
+                    }
+                    out.append(line)
+                    afterTs = m.timestamp
+                    afterId = m.messageId
+                }
+                if (page.size < 20) break
+            }
+        }
+        if (partial != null || unreadIds.isNotEmpty()) {
+            out.append("\nNOT YET READ (new messages that did not fit). Read all of them before you finish:\n")
+            partial?.let { out.append("- $it\n") }
+            if (unreadIds.isNotEmpty()) {
+                out.append("- the whole window of these chats: search_chat_history session_id=<id> after=$since before=$now, ")
+                out.append("one chat at a time. Ids: ${unreadIds.joinToString(", ")}\n")
+            }
+            out.append("Page each with next_offset until it is null.\n")
+        }
         return out.toString()
     }
 
@@ -514,7 +659,7 @@ internal object OrbitRoutines {
         which briefings you wrote.
     """.trimIndent()
 
-    private val GOAL_ALIGN_ZH = """
+    private val GOAL_ALIGN_ZH_V1 = """
         目标对齐（后台）。SOURCE 里是今天的日期、用户进行中的目标、计划、步骤（任务）的状态和最近结果，以及以前的简报。在后台安静地对一遍：
         1. 对账：逐个目标看步骤的真实状态，找出计划和实际对不上的地方：做完了但计划里还挂着、步骤失败或卡住、在等用户、很久没动。拿不准用户最近有没有改主意，用 search_chat_history 搜他说过的话，或用 memory_review 工具包的 notes 读 memory.md，不要猜。SOURCE 里标了 [cut] 或“not shown”的地方，按旁边的提示读全再下结论。
         2. 需要新信息时先查（搜网页、读页面），只引用你真的打开过的链接。
@@ -523,7 +668,7 @@ internal object OrbitRoutines {
         decision 写一句这次对齐的结论。
     """.trimIndent()
 
-    private val GOAL_ALIGN_EN = """
+    private val GOAL_ALIGN_EN_V1 = """
         Goal alignment (background). SOURCE holds today's date, the user's active goals, their plans, the state and
         latest results of their steps (tasks), and earlier briefings. Check them quietly in the background:
         1. Reconcile: for each goal, compare the plan with what really happened. Point out steps done but still open in
@@ -539,5 +684,70 @@ internal object OrbitRoutines {
            a block only they can clear): a sentence or two in your usual voice as userMessage, with opportunityKey
            goal:<goal id>:<matter>. The chat decides whether it is sent. Otherwise leave userMessage empty.
         Say the conclusion of this alignment in decision in one sentence.
+    """.trimIndent()
+
+    private val GOAL_ALIGN_ZH = """
+        目标对齐（后台）。SOURCE 里是今天的日期、用户进行中的目标、计划、步骤（任务）的状态和最近结果，以及以前的简报。在后台安静地对一遍：
+        1. 对账：逐个目标看步骤的真实状态，找出计划和实际对不上的地方：做完了但计划里还挂着、步骤失败或卡住、在等用户、很久没动。拿不准用户最近有没有改主意，用 search_chat_history 搜他说过的话，或用 memory_review 工具包的 notes 读 memory.md，不要猜。SOURCE 里标了 [cut] 或“not shown”的地方，按旁边的提示读全再下结论。
+        2. 需要新信息时先查（搜网页、读页面），只引用你真的打开过的链接。
+        3. 简报：和上一封比有新东西的目标，用 orbit_goal_note action=brief 写一封（goal_id 填 SOURCE 里的编号，title 一句话，text 写进展、卡在哪、下一步最值得做什么、你能帮上什么）。没变化的目标跳过。
+        4. 只有真需要用户本人的事（快到期的、等他拍板的、卡住只有他能解决的）才备一条：userMessage 是给 Orbit 看的准备稿，不是直接发给用户的话，按五段写——背景与时机、已核实（怎么查的）、缺什么（需要他点头的动作，定义完整到一次同意就能办）、不确定的地方和措辞怎么留余地、投递方式（一句话还是选项，选项把接受/不要/已经办好了并列）和优先级。opportunityKey 用 goal:<目标编号>:<事由>。发不发由主聊天再判断。其他情况 userMessage 留空。
+        decision 写一句这次对齐的结论。
+    """.trimIndent()
+
+    private val GOAL_ALIGN_EN = """
+        Goal alignment (background). SOURCE holds today's date, the user's active goals, their plans, the state and
+        latest results of their steps (tasks), and earlier briefings. Check them quietly in the background:
+        1. Reconcile: for each goal, compare the plan with what really happened. Point out steps done but still open in
+           the plan, steps that failed or are stuck, steps waiting on the user, and goals that have not moved for a long
+           time. When unsure whether the user changed their mind, search what they said with search_chat_history or
+           read memory.md with notes in the memory_review package instead of guessing. Where SOURCE says [cut] or
+           "not shown", read the full item as the hint says before concluding.
+        2. Research first when you need fresh facts (search the web, read pages); cite only links you actually opened.
+        3. Briefing: for a goal with something new since its last briefing, save one with orbit_goal_note action=brief
+           (goal_id from SOURCE, title one line, text: what moved, where it is stuck, the most useful next step, where
+           you can help). Skip goals with nothing new.
+        4. Draft an item only for what truly needs the user (a deadline coming up, a decision waiting on them, a block
+           only they can clear). userMessage is a prepared brief for Orbit, not the message itself, in five parts:
+           background and timing; what you verified and how; what is missing (the action needing their yes, defined so
+           one yes carries it out); what is uncertain and how the wording allows for it; delivery (one line or options,
+           with accepting, declining and "already done" side by side) and priority. Use opportunityKey
+           goal:<goal id>:<matter>. The chat decides whether it is sent. Otherwise leave userMessage empty.
+        Say the conclusion of this alignment in decision in one sentence.
+    """.trimIndent()
+
+    private val PROACTIVE_ZH = """
+        主动巡检（后台）。SOURCE 里是现在的时间，以及上次巡检后用户说过话的聊天里这段时间的消息（从旧到新）。找出聊天里定下了、但还没人跟进的事：
+        1. 读：这段时间的新消息要全部读完再下结论。SOURCE 末尾有“NOT YET READ”的，按给出的 search_chat_history 调用读完（用 next_offset 翻页）；标了 [cut] 的消息，要紧的用 message_id 加 mode=message 读全文。需要更早的上下文也用 search_chat_history 查。
+        2. 对账：每件定下的事（要买的、要去的、要回复的、有截止的、说好要提醒的），用 orbit_task action=list 查现有提醒和任务，用 orbit_goal 查目标，逐条确认有没有已经覆盖。已经有提醒、用户已经办了、或者用户说过不要的，都跳过。读 PROACTIVE_PREFERENCES.md（如果有），里面不要的类型也跳过。
+        3. 只为真需要用户本人点头的缺口备稿，一次只备最要紧的一条：userMessage 是给 Orbit 看的准备稿，按五段写——背景与时机（谁什么时候定的、硬约束、已经覆盖了什么、缺口在哪、离要紧还有多久）、已核实（查了什么，消息编号、任务编号）、缺什么（需要他点头的动作，定义完整到一次同意就能办，比如提醒要写清标题、时间和时区、发到哪个聊天、提醒内容要点）、不确定的地方（比如他可能已经办了）和措辞怎么留余地、投递方式（一句话还是选项，选项把接受/不要/已经办好了并列）和优先级。opportunityKey 用 <类别>:<事由>，同一件事每次都用同一个；给出 expiresAt 和 evidence。
+        4. 不要自己创建提醒、发消息或替用户做决定，只备稿；说不说由主聊天判断。紧急程度要和真实截止相符，不承诺没核实过的价格和优惠。
+        5. 没有真缺口就把 userMessage 留空，宁可不提也不要凑数。
+        decision 写一句看了哪些聊天、结论是什么。
+    """.trimIndent()
+
+    private val PROACTIVE_EN = """
+        Proactive check (background). SOURCE holds the current time and, oldest first, the messages since the last check
+        of each chat where the user said something. Find what was decided in the chats but is not followed up:
+        1. Read every new message of the window before concluding. Where SOURCE ends with "NOT YET READ", make the
+           search_chat_history calls it gives (page with next_offset); read a [cut] message that matters whole with its
+           message_id and mode=message. Use search_chat_history for older context too.
+        2. Reconcile: for every decided matter (something to buy, a place to go, a reply to send, a deadline, a reminder
+           they wanted), list the current reminders and tasks with orbit_task action=list and the goals with orbit_goal,
+           and check one by one whether it is already covered. Skip what already has a reminder, what the user already
+           did, and what they said they do not want. Read PROACTIVE_PREFERENCES.md if it exists and skip the kinds it
+           rules out.
+        3. Draft only for a gap that truly needs the user's own yes, and only the most important one per run. userMessage
+           is a prepared brief for Orbit, not the message itself, in five parts: background and timing (who decided what
+           and when, firm constraints, what already covers it, the gap, how long until it matters); verified (what you
+           checked: message ids, task ids); missing (the action needing their yes, defined so one yes carries it out, e.g.
+           a reminder's title, time and time zone, chat and points of its text); uncertain (e.g. they may have done it
+           already) and how the wording allows for it; delivery (one line or options, with accepting, declining and
+           "already done" side by side) and priority. Use opportunityKey <kind>:<matter>, the same every time the matter
+           comes up, and give expiresAt and evidence.
+        4. Do not create reminders, send messages or decide for the user yourself; only draft. The chat decides whether
+           it is told. Urgency must match the real deadline; promise no prices or offers you have not checked.
+        5. With no real gap, leave userMessage empty. Propose nothing rather than something weak.
+        Say in one sentence in decision which chats you read and what you concluded.
     """.trimIndent()
 }

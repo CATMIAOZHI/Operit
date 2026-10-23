@@ -25,18 +25,22 @@ internal object OrbitProactivityTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "后台备好的条目交给你时，先用它给每一条登记发（send）还是不发（skip）和理由，再开口；history 查以前每条发没发、为什么。",
+        description = "后台备好的条目交给你时，先用它给每一条登记发（send）还是不发（skip）和理由，再开口；用户回应了你发过的提议，用 respond 记下来；history 查以前每条发没发、为什么、用户怎么回的。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", "string", "select（默认）或 history；task 为当前到点任务登记开口的理由", false),
+            ToolParameterSchema("action", "string", "select（默认）、respond 或 history；task 为当前到点任务登记开口的理由", false),
             ToolParameterSchema("reason", "string", "task：这次为什么值得告诉用户，最多300字；安静结束直接用 orbit_nothing_to_do 的 reason", false),
             ToolParameterSchema("offset", "integer", "history 可选：从第几条开始（从0开始，最新的在前），用上次返回的 next_offset；每次20条", false),
             ToolParameterSchema("decisions", "string",
-                "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"note\":\"查了什么，最多300字\"}", false),
+                "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"format\":\"text|options（只有 send 填，默认 text）\",\"note\":\"查了什么，最多300字\"}", false),
+            ToolParameterSchema("item", "string", "respond：用户回应的那条条目 id（history 里的 item）", false),
+            ToolParameterSchema("response", "string", "respond：accepted（接受）、declined（不要）、already_done（自己已经办了）或 other", false),
+            ToolParameterSchema("note", "string", "respond 可选：用户怎么说的、你接着做了什么，最多300字", false),
         ),
         details = """
   - send 的理由：time_sensitive（有截止且没到）、changed（用户在意的事变了）、requested（用户要过这类更新）、ready_for_decision（备好的东西等他拍板）、new_opportunity（没问过但确实相关）。
   - skip 的理由：moot（前提没了）、already_handled（办完了或说过了）、unconfirmed（核实不了）、preferences（偏好里不要）、not_useful_now（此刻不值得打扰）。
-  - 一次把这批条目都登记完；没登记的条目算作不发。只说 send 的条目。
+  - 一次把这批条目都登记完；没登记的条目算作不发。只说 send 的条目。format：有两个以上真正可选的回复时用 options（配 orbit_create_options），否则 text。
+  - 用户回应了你发过的提议（点了选项、回了话、说已经自己办了），用 respond 记下。declined 只是这一次不要，不等于以后这类都别提；用户明确说以后别提，才写进 PROACTIVE_PREFERENCES.md。
   - 用户问“为什么给我发这个”“你怎么没告诉我”时，用 history 查。
   - history 里 selected_for_send=true 只说明当时决定要发，用户有没有真的看到要看你当时在聊天里说了没有。
 """,
@@ -78,8 +82,33 @@ internal object OrbitProactivityTools {
                                 .put("decision", it.verdict).put("selected_for_send", it.verdict == OrbitDeliveryEntity.SEND)
                                 .put("reason", it.verdictReason)
                                 .put("note", it.verdictNote).put("decided_at", it.decidedAt)
+                                .apply {
+                                    if (it.presentation.isNotEmpty()) put("format", it.presentation)
+                                    if (it.userResponse.isNotEmpty()) put("user_response", it.userResponse)
+                                        .put("user_response_note", it.userResponseNote).put("responded_at", it.respondedAt)
+                                }
                                 .put("draft", draft.take(200)).apply { if (draft.length > 200) put("draft_cut", true) }
                         })).toString()
+                }
+                "respond" -> {
+                    val item = args["item"]?.trim().orEmpty()
+                    val response = args["response"]?.trim()?.lowercase().orEmpty()
+                    val note = args["note"]?.trim().orEmpty()
+                    require(item.isNotEmpty()) { "respond needs item: the id of an item you told the user (see history)" }
+                    require(response in OrbitDeliveryEntity.RESPONSES) {
+                        "response must be one of ${OrbitDeliveryEntity.RESPONSES.joinToString()}"
+                    }
+                    require(note.length <= MAX_NOTE) { "note is longer than $MAX_NOTE characters" }
+                    check(dao.respond(item, orbit.id, response, note, System.currentTimeMillis()) > 0) {
+                        "No item \"$item\" was told to the user; only items registered as send can get a response"
+                    }
+                    JSONObject().put("item", item).put("user_response", response).put("recorded", true)
+                        .put("next", when (response) {
+                            "accepted" -> "Carry out what they accepted now, as prepared."
+                            "declined" -> "Leave it: no explaining, no asking again. Only a new fact may bring it back."
+                            "already_done" -> "Close the loop: note it on the goal or tracking item if there is one, and adjust related reminders."
+                            else -> "Act on what they said."
+                        }).toString()
                 }
                 "select" -> {
                     val raw = args["decisions"]?.trim().orEmpty()
@@ -95,6 +124,7 @@ internal object OrbitProactivityTools {
                         val decision = o.optString("decision").trim().lowercase()
                         val reason = o.optString("reason").trim().lowercase()
                         val note = o.optString("note").trim()
+                        val format = o.optString("format").trim().lowercase()
                         require(item.isNotEmpty()) { "Entry ${i + 1}: missing item" }
                         require(decision == OrbitDeliveryEntity.SEND || decision == OrbitDeliveryEntity.SKIP) {
                             "Entry ${i + 1}: decision must be send or skip"
@@ -102,13 +132,20 @@ internal object OrbitProactivityTools {
                         val allowed = if (decision == OrbitDeliveryEntity.SEND) SEND_REASONS else SKIP_REASONS
                         require(reason in allowed) { "Entry ${i + 1}: reason for $decision must be one of ${allowed.joinToString()}" }
                         require(note.length <= MAX_NOTE) { "Entry ${i + 1}: note is longer than $MAX_NOTE characters" }
-                        listOf(item, decision, reason, note)
+                        require(format.isEmpty() || format == OrbitDeliveryEntity.TEXT || format == OrbitDeliveryEntity.OPTIONS) {
+                            "Entry ${i + 1}: format must be text or options"
+                        }
+                        require(format.isEmpty() || decision == OrbitDeliveryEntity.SEND) {
+                            "Entry ${i + 1}: format is only for send"
+                        }
+                        val presentation = if (decision == OrbitDeliveryEntity.SEND) format.ifEmpty { OrbitDeliveryEntity.TEXT } else ""
+                        listOf(item, decision, reason, note, presentation)
                     }
                     val repeated = calls.groupBy { it[0] }.filterValues { it.size > 1 }.keys
                     require(repeated.isEmpty()) { "Each item may appear only once; repeated: ${repeated.joinToString()}" }
                     val now = System.currentTimeMillis()
-                    val missed = calls.filter { (item, decision, reason, note) ->
-                        dao.decide(item, orbit.id, chatId, decision, reason, note, now) == 0
+                    val missed = calls.filter { (item, decision, reason, note, presentation) ->
+                        dao.decide(item, orbit.id, chatId, decision, reason, note, presentation, now) == 0
                     }.map { it[0] }
                     val saved = calls.filter { it[0] !in missed }
                     val toSend = saved.filter { it[1] == OrbitDeliveryEntity.SEND }.map { it[0] }
@@ -122,7 +159,7 @@ internal object OrbitProactivityTools {
                             else "Nothing has reached the user yet. Now tell only the selected_for_send items in your reply.")
                         .toString()
                 }
-                else -> error("Unknown action \"${args["action"]}\". Use select, history or task.")
+                else -> error("Unknown action \"${args["action"]}\". Use select, respond, history or task.")
             }
             ToolResult(NAME, true, StringResultData(text))
         } catch (e: kotlinx.coroutines.CancellationException) {
