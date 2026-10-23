@@ -21,7 +21,7 @@ status: in-progress
 
 | 功能 | Orbit 里的实现 |
 | - | - |
-| 人格和身份文件 | SOUL.md、IDENTITY.md，`orbit_soul` 读写，`orbit_set_name` 改名 |
+| 人格和身份文件 | SOUL.md、IDENTITY.md，`orbit_soul` 读写，`orbit_set_name` 改名；Soul 只保留当前内容，已移除历史版本与恢复入口 [DONE] |
 | 工作手册 | PROMPT.md，可在 Orbit 设置里查看和编辑 |
 | 用户资料和长期笔记 | user.md、memory.md，`memory_review` 工具包 |
 | user.md 查看编辑入口 | Orbit 详情页「身份」里的 USER 卡片，或提示词分层页点 user.md；用户保存走 saveUserEdit 并留审核记录 [DONE b541e2e25] |

@@ -271,7 +271,10 @@ private fun OrbitChatPage(
         }
     // Pages pushed over the profile, as names so the stack survives recreation.
     var stackNames by rememberSaveable(orbit.id) { mutableStateOf("") }
-    val stack = remember(stackNames) { stackNames.split(',').filter { it.isNotEmpty() }.map(OrbitSubPage::valueOf) }
+    val stack = remember(stackNames) {
+        // A saved stack from before history was removed returns to the Soul file.
+        stackNames.split(',').filter { it.isNotEmpty() && it != "SOUL_HISTORY" }.map(OrbitSubPage::valueOf)
+    }
     val subPage = stack.lastOrNull()
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
@@ -298,10 +301,9 @@ private fun OrbitChatPage(
     // the full long-press menu) instead of Orbit's messaging look. Turning the option off leaves it.
     var devChatView by rememberSaveable(orbit.id) { mutableStateOf(false) }
     val devView = devChatView && settings.developerMode
-    // In the developer view: a subagent's chat shown instead of Orbit's own. Never an Orbit chat,
-    // so it stays out of the talk chats; leaving the developer view drops it. A back swipe hides the
-    // view for a moment while it records it, so the chat is only dropped once leaving is certain
-    // (see leaveDevView), or when the developer option is turned off.
+    // In the developer view: a subagent's chat shown instead of Orbit's own. A back preview only
+    // changes what is drawn: keep the chat and its presentation selected until leaving is certain
+    // (see leaveDevView), or the developer option is turned off.
     var devSubChatId by remember(orbit.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(settings.developerMode) { if (!settings.developerMode) devSubChatId = null }
     // The developer view is opened from the profile and goes back to it, like a page pushed over it:
@@ -309,7 +311,7 @@ private fun OrbitChatPage(
     // it off to the right: 0 is in place, 1 is off screen. As the back starts, what the developer view
     // shows is recorded and the page it goes back to (the profile, or the Orbit chat if the profile
     // was closed meanwhile) shows underneath, so the recording slides away over it. Let go early and
-    // it slides back and the developer view returns.
+    // it slides back and the same developer view is revealed, without switching chats.
     val devLeave = remember(orbit.id) { androidx.compose.animation.core.Animatable(0f) }
     var devLeaving by remember(orbit.id) { mutableStateOf(false) }
     var devGesture by remember(orbit.id) { mutableStateOf(false) }
@@ -333,7 +335,6 @@ private fun OrbitChatPage(
             val picture = devRecorded[0]
             if (picture != null && devChatView) {
                 devPicture = picture
-                devChatView = false
             }
         } finally {
             // Cancelled or done, nothing recorded is kept past this point.
@@ -363,7 +364,7 @@ private fun OrbitChatPage(
             }
         }
     }
-    // A back swipe let go early: the recording slides back, then the developer view returns under it.
+    // A cancelled back only removes the recording; the live chat has stayed selected and composed.
     fun settleDevView() {
         devSettling = true
         devScope.launch {
@@ -378,9 +379,6 @@ private fun OrbitChatPage(
                 } else {
                     swap?.join()
                     devLeave.animateTo(0f, tween(220, easing = OrbitMotion.Easing))
-                    devChatView = true
-                    androidx.compose.runtime.withFrameNanos { }
-                    androidx.compose.runtime.withFrameNanos { }
                 }
             } finally {
                 devPicture = null
@@ -453,6 +451,12 @@ private fun OrbitChatPage(
     LaunchedEffect(openRequest, orbit.talkChatIds) {
         val id = openRequest ?: return@LaunchedEffect
         if (id in orbit.talkChatIds) {
+            // An explicit chat navigation leaves the inspector too. Otherwise it would keep a
+            // subagent selected after closing the profile that its back preview needs underneath.
+            devSwap?.cancel()
+            devPicture = null
+            devChatView = false
+            devSubChatId = null
             talkChatId = id
             tab = OrbitTab.CHAT
             showProfile = false
@@ -464,8 +468,8 @@ private fun OrbitChatPage(
     // A report counts as seen only while its chat is really on screen: chat tab, app in front.
     val lifecycleState by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     // Covered by the menu, the profile or a full page over it, the chat is not being read.
-    // The profile kept under the developer view does not cover it.
-    val profileShown = showProfile && !devView
+    // The profile is revealed under the back preview without changing the selected chat.
+    val profileShown = showProfile && (!devView || devPicture != null)
     val chatOnScreen = tab == OrbitTab.CHAT && !showChats && !profileShown &&
         subPage == null && !showImport &&
         lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
@@ -581,8 +585,11 @@ private fun OrbitChatPage(
                         devRecorded[0] = picture
                     }
                     drawIntoCanvas { it.nativeCanvas.drawPicture(picture) }
-                } else {
+                } else if (devPicture == null) {
                     drawContent()
+                } else {
+                    // Keep the live chat laid out, but only draw its recording during the gesture.
+                    drawRect(pageColor)
                 }
             }.then(
                 // Pages on the stack cover the chat; screen readers only see the top one.
@@ -728,7 +735,7 @@ private fun OrbitChatPage(
             Modifier.fillMaxSize()
                 .then(
                     // Closed while hidden, it stays out of sight until the developer view is fully gone.
-                    if (devView || (!showProfile && devOwnsBack)) Modifier.layout { _, constraints ->
+                    if ((devView && devPicture == null) || (!showProfile && devOwnsBack)) Modifier.layout { _, constraints ->
                         layout(constraints.maxWidth, constraints.maxHeight) {}
                     } else Modifier
                 )
@@ -814,9 +821,7 @@ private fun OrbitChatPage(
                     onOpenImport = { showImport = true },
                     onPause = back,
                 )
-                OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back,
-                    onOpenHistory = { push(OrbitSubPage.SOUL_HISTORY) })
-                OrbitSubPage.SOUL_HISTORY -> OrbitSoulPage(orbit.id, onBack = back)
+                OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
                 OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
                 OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
                 OrbitSubPage.MEMORY -> OrbitMemoryFilePage(orbit, onBack = back)
@@ -931,7 +936,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, SOUL_HISTORY, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

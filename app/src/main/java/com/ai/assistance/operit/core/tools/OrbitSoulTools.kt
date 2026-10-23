@@ -4,15 +4,14 @@ import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.features.orbit.*
-import org.json.JSONArray
 import org.json.JSONObject
 
 internal object OrbitSoulTools {
     const val NAME = "orbit_soul"
     val prompt = ToolPrompt(name = NAME,
-        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份。更新直接生效；Soul 保留历史供用户恢复；不改变工具权限。",
+        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份。更新直接生效，只保留当前内容；不改变工具权限。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "read/history/update", required = true),
+            ToolParameterSchema("action", description = "read/update", required = true),
             ToolParameterSchema("file", description = "soul（默认）或 identity", required = false),
             ToolParameterSchema("body", description = "update：完整文件内容，最多24000字符", required = false),
             ToolParameterSchema("reason", description = "soul update：解释为什么修改，最多2000字符", required = false),
@@ -42,7 +41,7 @@ internal object OrbitSoulTools {
                         .put("chars_before", before.length).put("chars", body.length)
                         .put("note", "The whole file was replaced with body; it takes effect in the next turn.")
                 }
-                else -> error("IDENTITY.md supports action read or update (history is only kept for SOUL.md)")
+                else -> error("IDENTITY.md supports action read or update.")
             }
             return@runBlockingIoPreservingToolRuntimeContext ToolResult(tool.name, true, StringResultData(identity.toString()))
         }
@@ -51,23 +50,16 @@ internal object OrbitSoulTools {
                 JSONObject().put("file", "SOUL.md").put("version", it.id).put("chars", it.body.length)
                     .put("max_chars", OrbitSoulRepository.MAX_CHARS).put("body", it.body)
             }
-            "history" -> repository.snapshot().let { snap ->
-                JSONObject().put("file", "SOUL.md").put("current_version", snap.current.id)
-                    .put("versions", JSONArray(snap.history.reversed().map {
-                        JSONObject().put("version", it.id).put("state", it.state).put("source", it.source)
-                            .put("reason", it.reason).put("created_at", it.createdAt).put("chars", it.body.length)
-                    }))
-            }
             "update" -> {
                 val before = repository.snapshot().current
                 repository.update(args["body"].orEmpty(), args["reason"].orEmpty(), args["version"].orEmpty().trim()).let {
                     JSONObject().put("file", "SOUL.md").put("state", "applied").put("version", it.id)
                         .put("previous_version", before.id).put("changed", before.body != it.body)
                         .put("chars_before", before.body.length).put("chars", it.body.length)
-                        .put("note", "The whole file was replaced with body; the old version stays in history for the user to restore.")
+                        .put("note", "The whole file was replaced with body; it takes effect in the next turn. Only the current content is retained.")
                 }
             }
-            else -> error("Unknown action \"$action\". Use read, history or update.")
+            else -> error("Unknown action \"$action\". Use read or update; SOUL.md history is no longer available.")
         }
         ToolResult(tool.name, true, StringResultData(result.toString()))
     }

@@ -14,7 +14,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -59,7 +58,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
@@ -1019,12 +1017,29 @@ private fun IdentitySection(
     onOpenUser: () -> Unit,
     onOpenFiles: () -> Unit,
 ) {
+    val context = LocalContext.current
+    val lifecycle by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
+    val visible = LocalProfileVisible.current && lifecycle.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
+    var hue by rememberSaveable(orbit.id) { mutableIntStateOf(kotlin.random.Random.nextInt(360)) }
+    val dates by produceState<OrbitIdentityDates?>(null, orbit.id, visible) {
+        while (visible) {
+            value = loadOrbitIdentityDates(context, orbit.id)
+            kotlinx.coroutines.delay(15_000)
+        }
+    }
     Column(Modifier.fillMaxWidth().padding(top = 8.dp)) {
-        Text(
-            orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
-            style = MaterialTheme.typography.titleMedium,
-            modifier = Modifier.padding(bottom = 6.dp),
-        )
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.weight(1f),
+            )
+            TextButton(onClick = { hue = (hue + kotlin.random.Random.nextInt(40, 321)) % 360 }) {
+                Icon(orbitIcon("palette"), contentDescription = null, modifier = Modifier.size(18.dp))
+                Spacer(Modifier.width(6.dp))
+                Text(stringResource(R.string.orbit_identity_change_colors))
+            }
+        }
         Text(
             stringResource(R.string.orbit_profile_identity_help, orbitName(orbit)),
             style = MaterialTheme.typography.bodySmall,
@@ -1049,28 +1064,34 @@ private fun IdentitySection(
             }
         }
         Row(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
-            IdentityCard(
+            OrbitIdentityCard(
                 title = stringResource(R.string.orbit_profile_soul_card),
                 icon = orbitIcon("heart"),
-                colors = listOf(Color(0xFF8E7A6B), Color(0xFFA77E86), Color(0xFF9A6070)),
+                hue = hue,
+                modifiedAt = dates?.soul,
+                animated = visible,
                 onClick = onOpenSoul,
                 modifier = Modifier.weight(1f),
             )
-            IdentityCard(
+            OrbitIdentityCard(
                 title = stringResource(R.string.orbit_profile_memory_card),
                 icon = orbitIcon("brain"),
-                colors = listOf(Color(0xFF5DAA45), Color(0xFF3F7F3A), Color(0xFF2E6A2B)),
+                hue = (hue + 115) % 360,
+                modifiedAt = dates?.memory,
+                animated = visible,
                 onClick = onOpenMemory,
                 modifier = Modifier.weight(1f),
             )
         }
         // user.md: what Orbit knows about the user. A wide card under the two square ones.
-        IdentityCard(
+        OrbitIdentityCard(
             title = stringResource(R.string.orbit_profile_user_card),
             icon = orbitIcon("user-round"),
-            colors = listOf(Color(0xFF6B8FC7), Color(0xFF4F6FA8), Color(0xFF3B5590)),
+            hue = (hue + 230) % 360,
+            modifiedAt = dates?.user,
+            animated = visible,
             onClick = onOpenUser,
-            aspectRatio = 2.4f,
+            compact = true,
             modifier = Modifier.fillMaxWidth().padding(top = 14.dp),
         )
         // The full memory library (profile, notes, skills, review history) sits below the cards;
@@ -1157,39 +1178,5 @@ private fun IdentityNavRow(icon: String, title: String, description: String, onC
             Icon(orbitIcon("chevron-right"), contentDescription = null, modifier = Modifier.size(20.dp),
                 tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
-    }
-}
-
-@Composable
-private fun IdentityCard(
-    title: String,
-    icon: ImageVector,
-    colors: List<Color>,
-    onClick: () -> Unit,
-    modifier: Modifier = Modifier,
-    aspectRatio: Float = 1.12f,
-) {
-    Box(
-        modifier =
-            modifier.aspectRatio(aspectRatio)
-                .clip(RoundedCornerShape(28.dp))
-                .background(Brush.linearGradient(colors))
-                .clickable(onClick = onClick)
-                .padding(18.dp),
-    ) {
-        Column(Modifier.align(Alignment.TopStart)) {
-            Text(title, style = MaterialTheme.typography.titleLarge, color = Color.White)
-            Text(
-                stringResource(R.string.orbit_profile_card_caution),
-                style = MaterialTheme.typography.bodyMedium,
-                color = Color.White.copy(alpha = 0.85f),
-            )
-        }
-        Icon(
-            icon,
-            contentDescription = null,
-            tint = Color.White,
-            modifier = Modifier.align(Alignment.BottomEnd).size(26.dp),
-        )
     }
 }
