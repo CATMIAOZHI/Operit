@@ -9571,6 +9571,8 @@
     <string name="orbit_process_running">还在进行中，会自动更新</string>
     <string name="orbit_turn_untitled">%1$s 主动做的事</string>
     <string name="orbit_turn_no_reply">已处理完</string>
+    <string name="orbit_activity_talk_title">闲聊 %1$d 轮</string>
+    <string name="orbit_chat_time_yesterday">昨天 %1$s</string>
     <string name="orbit_process_open_task">打开任务</string>
     <string name="orbit_process_empty">这次没有留下过程记录</string>
     <string name="orbit_user_sent_attachment">发送了附件</string>

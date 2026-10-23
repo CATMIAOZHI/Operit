@@ -4397,6 +4397,12 @@ class ChatHistoryManager private constructor(private val context: Context) {
     suspend fun loadWorkReplyTimestamps(chatId: String): List<Long> =
         withContext(Dispatchers.IO) { messageDao.getWorkReplyTimestamps(chatId) }
 
+    /** Of [timestamps], the assistant rows whose shown version may hold a tool call. */
+    suspend fun loadToolReplyTimestamps(chatId: String, timestamps: List<Long>): List<Long> =
+        withContext(Dispatchers.IO) {
+            timestamps.distinct().chunked(400).flatMap { messageDao.getToolReplyTimestamps(chatId, it) }
+        }
+
     suspend fun loadChatMessagesByTimestamps(chatId: String, timestamps: List<Long>): List<ChatMessage> =
         withContext(Dispatchers.IO) {
             timestamps.distinct().chunked(400).flatMap { chunk ->

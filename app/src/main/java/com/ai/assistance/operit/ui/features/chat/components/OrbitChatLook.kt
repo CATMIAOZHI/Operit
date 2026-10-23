@@ -101,6 +101,67 @@ val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
  */
 val LocalShowHiddenChatRows = compositionLocalOf { false }
 
+/** Like a messenger: a time line shows above a message that comes this long after the one before. */
+const val ORBIT_CHAT_TIME_GAP_MS = 5 * 60 * 1000L
+
+/**
+ * The rows that start a message coming [ORBIT_CHAT_TIME_GAP_MS] or more after the message shown
+ * before it (or the first one), with that message's time. Rows are in order; rows of one message
+ * sit together, so the first row of each message is where its time would go.
+ */
+fun orbitChatTimeRows(rowMessages: List<Pair<String, Long?>>): Map<String, Long> {
+    val out = HashMap<String, Long>()
+    var previous: Long? = null
+    var lastMessageTime: Long? = null
+    rowMessages.forEach { (key, time) ->
+        if (time == null || time == lastMessageTime) return@forEach
+        if (previous == null || time - previous!! >= ORBIT_CHAT_TIME_GAP_MS) out[key] = time
+        previous = time
+        lastMessageTime = time
+    }
+    return out
+}
+
+/** A message time the way a messenger writes it: "21:03", "昨天 21:03", "星期三 21:03", "10月20日 21:03". */
+fun orbitChatTimeText(context: android.content.Context, time: Long, now: Long = System.currentTimeMillis()): String {
+    val locale = java.util.Locale.getDefault()
+    val clock = android.text.format.DateFormat.getTimeFormat(context).format(java.util.Date(time))
+    fun day(at: Long) = java.util.Calendar.getInstance().apply {
+        timeInMillis = at
+        set(java.util.Calendar.HOUR_OF_DAY, 0); set(java.util.Calendar.MINUTE, 0)
+        set(java.util.Calendar.SECOND, 0); set(java.util.Calendar.MILLISECOND, 0)
+    }
+    val then = day(time)
+    val today = day(now)
+    val days = Math.round((today.timeInMillis - then.timeInMillis) / 86_400_000.0)
+    fun pattern(skeleton: String) = java.text.SimpleDateFormat(
+        android.text.format.DateFormat.getBestDateTimePattern(locale, skeleton), locale,
+    ).format(java.util.Date(time))
+    return when {
+        days <= 0L -> clock
+        days == 1L -> context.getString(R.string.orbit_chat_time_yesterday, clock)
+        days < 7L -> "${pattern("EEEE")} $clock"
+        then.get(java.util.Calendar.YEAR) == today.get(java.util.Calendar.YEAR) -> "${pattern("MMMd")} $clock"
+        else -> "${pattern("yMMMd")} $clock"
+    }
+}
+
+/** The small grey time line between messages in Orbit's chat. */
+@Composable
+fun OrbitChatTimeLine(time: Long) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    androidx.compose.foundation.layout.Box(
+        Modifier.fillMaxWidth().padding(top = 10.dp, bottom = 6.dp),
+        contentAlignment = Alignment.Center,
+    ) {
+        androidx.compose.material3.Text(
+            text = orbitChatTimeText(context, time),
+            style = androidx.compose.material3.MaterialTheme.typography.labelSmall,
+            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+    }
+}
+
 /** The small "hidden in chat" label used in the developer view. */
 @Composable
 fun OrbitHiddenInChatBadge(modifier: Modifier = Modifier) {

@@ -53,6 +53,20 @@ interface MessageDao {
     """)
     suspend fun getWorkReplyTimestamps(chatId: String): List<Long>
 
+    /**
+     * Of [timestamps], the assistant rows (final or intermediate) whose shown version may hold a
+     * tool call: the selected variant when there is one, the row itself otherwise. Only the given
+     * rows are searched. A text search also finds quoted markup, so callers check the body.
+     */
+    @Query("""
+        SELECT m.timestamp FROM messages m LEFT JOIN message_variants v
+          ON m.selectedVariantIndex > 0 AND v.chatId = m.chatId
+          AND v.messageTimestamp = m.timestamp AND v.variantIndex = m.selectedVariantIndex
+        WHERE m.chatId = :chatId AND m.timestamp IN (:timestamps) AND m.sender = 'ai'
+          AND instr(COALESCE(v.content, m.content), '<tool') > 0
+    """)
+    suspend fun getToolReplyTimestamps(chatId: String, timestamps: List<Long>): List<Long>
+
     /** Repair repeated persistence of sealed AI segments; differing content or metadata survives. */
     @Query("""
         DELETE FROM messages

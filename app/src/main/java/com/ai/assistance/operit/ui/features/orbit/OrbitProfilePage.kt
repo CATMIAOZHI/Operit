@@ -656,6 +656,43 @@ private sealed interface OrbitWorkRow {
         override val key get() = "turn-${turn.process.chatId}-${turn.process.timestamps.lastOrNull()}"
         override val time get() = turn.process.time
     }
+    /** Several turns of talk in a row, newest first, with no tool used in any of them. */
+    data class Talk(val turns: List<OrbitChatTurn>) : OrbitWorkRow {
+        // Named by its oldest turn, which stays put while newer talk joins the group.
+        override val key get() = "talk-" + Turn(turns.last()).key
+        override val time get() = turns.first().process.time
+    }
+}
+
+/**
+ * Neighbouring turns of plain talk (no tool used) in one chat on one day become one row; a turn
+ * that used a tool, or a background run, stays a row of its own and ends the group.
+ */
+private fun groupTalk(rows: List<OrbitWorkRow>): List<OrbitWorkRow> {
+    val out = mutableListOf<OrbitWorkRow>()
+    val talk = mutableListOf<OrbitChatTurn>()
+    fun flush() {
+        when (talk.size) {
+            0 -> Unit
+            1 -> out += OrbitWorkRow.Turn(talk.single())
+            else -> out += OrbitWorkRow.Talk(talk.toList())
+        }
+        talk.clear()
+    }
+    rows.forEach { row ->
+        val turn = (row as? OrbitWorkRow.Turn)?.turn?.takeIf { !it.usedTools }
+        if (turn == null) {
+            flush()
+            out += row
+            return@forEach
+        }
+        val last = talk.lastOrNull()
+        if (last != null && (last.process.chatId != turn.process.chatId ||
+                startOfDay(last.process.time) != startOfDay(turn.process.time))) flush()
+        talk += turn
+    }
+    flush()
+    return out
 }
 
 private fun LazyListScope.activitySection(
@@ -679,7 +716,7 @@ private fun LazyListScope.activitySection(
         item(key = "empty") { EmptyHint(stringResource(R.string.orbit_profile_activity_empty)) }
         return
     }
-    rows.groupBy { startOfDay(it.time) }.forEach { (day, dayRows) ->
+    groupTalk(rows).groupBy { startOfDay(it.time) }.forEach { (day, dayRows) ->
         item(key = "day-$day") { SectionTitle(dayLabel(day)) }
         items(dayRows, key = { it.key }) { row ->
             when (row) {
@@ -717,6 +754,29 @@ private fun LazyListScope.activitySection(
                         meta = clockTime(turn.process.time),
                         showChevron = true,
                         onClick = { onOpenProcess(turn.process) },
+                    )
+                }
+                is OrbitWorkRow.Talk -> {
+                    val newest = row.turns.first()
+                    val title = stringResource(R.string.orbit_activity_talk_title, row.turns.size)
+                    OrbitListRow(
+                        icon = orbitIcon("messages-square"),
+                        title = title,
+                        detail = newest.process.title.ifBlank { newest.reply }
+                            .ifBlank { stringResource(R.string.orbit_turn_no_reply) },
+                        meta = clockTime(newest.process.time),
+                        showChevron = true,
+                        onClick = {
+                            val oldest = row.turns.last()
+                            onOpenProcess(
+                                OrbitProcess.ChatTurn(
+                                    chatId = oldest.process.chatId,
+                                    timestamps = row.turns.flatMap { it.process.timestamps }.distinct().sorted(),
+                                    title = title,
+                                    time = oldest.process.time,
+                                )
+                            )
+                        },
                     )
                 }
             }

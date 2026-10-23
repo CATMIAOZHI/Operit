@@ -65,17 +65,16 @@ internal object OrbitTools {
                 ),
         )
 
-    /** Hides Orbit tools everywhere except in a chat that belongs to an Orbit. */
-    fun visibility(context: Context, chatId: String?): Map<String, Boolean> {
-        val isOrbitChat =
-            OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) != null
-        val hasOrbitSkills = runBlockingIoPreservingToolRuntimeContext {
-            com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
-        }
-        val isTaskRoot = runBlockingIoPreservingToolRuntimeContext {
-            chatId?.let { com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it) }
-                ?.let { it.chatId == it.rootChatId } == true
-        }
+    /**
+     * Hides Orbit tools everywhere except in a chat that belongs to an Orbit. Suspends: it reads
+     * settings and the database, and is reached from the main thread when a chat is opened.
+     */
+    suspend fun visibility(context: Context, chatId: String?): Map<String, Boolean> {
+        val isOrbitChat = OrbitPreferences.getInstance(context).current().orbitForChat(chatId) != null
+        val hasOrbitSkills = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) != null
+        val isTaskRoot = chatId?.let {
+            com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().binding(it)
+        }?.let { it.chatId == it.rootChatId } == true
         return mapOf(SET_NAME to isOrbitChat, OrbitSkillTools.NAME to hasOrbitSkills,
             OrbitTaskTools.NAME to (isOrbitChat || isTaskRoot), OrbitSoulTools.NAME to (isOrbitChat || isTaskRoot),
             // A background routine (goal alignment) reads goals in full; the tool keeps it read-only there.
