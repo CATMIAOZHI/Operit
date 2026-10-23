@@ -231,7 +231,7 @@ private fun AttachmentCard(card: JSONObject) {
         return
     }
     var previewing by remember { mutableStateOf(false) }
-    val previewable = current != null && OrbitTextPreview.canShow(name)
+    val previewable = current != null && OrbitMediaPreview.canPreview(name)
     val ext = name.substringAfterLast('.', "").uppercase().take(5)
     val size = card.optLong("size", -1L)
     val label = stringResource(if (previewable) R.string.orbit_chat_text_desc else R.string.orbit_chat_file_desc, name)
@@ -261,7 +261,7 @@ private fun AttachmentCard(card: JSONObject) {
             }
         }
     }
-    if (previewing && current != null) OrbitTextPreview.Screen(current) { previewing = false }
+    if (previewing && current != null) OrbitMediaPreview.Screen(current) { previewing = false }
 }
 
 private class Found(val done: Boolean, val file: File?)
@@ -271,7 +271,7 @@ private class Found(val done: Boolean, val file: File?)
  * back to close, and a save button at the bottom.
  */
 @Composable
-private fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
+internal fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     var saving by remember { mutableStateOf(false) }
@@ -312,6 +312,13 @@ private fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(androidx.compose.material.icons.Icons.Default.Close, stringResource(R.string.common_close),
                         Modifier.size(22.dp), tint = androidx.compose.ui.graphics.Color.White)
+                }
+            }
+            Row(Modifier.align(Alignment.TopEnd).statusBarsPadding().padding(16.dp)) {
+                OrbitViewerButton(orbitIcon("share-2"), stringResource(R.string.orbit_file_share)) { shareOrbitFile(context) { file } }
+                Spacer(Modifier.width(10.dp))
+                OrbitViewerButton(orbitIcon("external-link"), stringResource(R.string.orbit_chat_text_open_other)) {
+                    openOrbitFile(context) { file }
                 }
             }
             Surface(

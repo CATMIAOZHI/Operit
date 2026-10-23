@@ -14,7 +14,10 @@ internal data class PendingMessageQueueState(
 )
 
 /** Keeps transient queues per chat for the lifetime of the ViewModel, across UI navigation. */
-internal class PendingMessageQueueStore {
+internal class PendingMessageQueueStore(
+    /** Called when a message goes back into the queue (restored or returned from steering). */
+    private val onBackInQueue: (chatId: String, messageId: Long) -> Unit = { _, _ -> },
+) {
     private val lock = Any()
     private val nextMessageId = AtomicLong(1L)
     private val chatGenerations = mutableMapOf<String, Long>()
@@ -59,6 +62,7 @@ internal class PendingMessageQueueStore {
     }
 
     fun restore(chatId: String, message: PendingQueueMessageItem) {
+        onBackInQueue(chatId, message.id)
         synchronized(lock) {
             if (chatId in inactiveChatIds) return
             if (message.chatGeneration != (chatGenerations[chatId] ?: 0L)) return
@@ -74,6 +78,7 @@ internal class PendingMessageQueueStore {
     }
 
     fun returnSteer(chatId: String, message: PendingQueueMessageItem) {
+        onBackInQueue(chatId, message.id)
         synchronized(lock) {
             if (!isCurrentGeneration(chatId, message.chatGeneration)) return
             updateState(chatId) { state ->

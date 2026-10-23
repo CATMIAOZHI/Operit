@@ -105,4 +105,6 @@
     <string name="orbit_profile_browser_empty">No browser tasks right now</string>
     <string name="orbit_profile_browser_gone">This page is closed</string>
     <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
+    <string name="orbit_options_send_failed">Not sent. Tap again to retry</string>
+    <string name="orbit_options_chosen">Chosen</string>
 </resources>

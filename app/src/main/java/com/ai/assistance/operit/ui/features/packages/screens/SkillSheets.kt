@@ -171,10 +171,14 @@ internal fun SkillDetailSheet(
     var confirmDelete by remember(skill.name) { mutableStateOf(false) }
     // A stable check reading the latest value, so the sheet is not rebuilt when deleting starts.
     val busy by rememberUpdatedState(deleting)
+    // Keeps the sheet's own back gesture working when it opens from Orbit's pages.
+    val sheetBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitSheetBack()
+    sheetBack.Provide {
     ModalBottomSheet(
         onDismissRequest = { if (!deleting) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = remember { { _: SheetValue -> !busy } }),
     ) {
+        sheetBack.forward()
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
                 .padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -264,6 +268,7 @@ internal fun SkillDetailSheet(
                 }
             }
         }
+    }
     }
 }
 

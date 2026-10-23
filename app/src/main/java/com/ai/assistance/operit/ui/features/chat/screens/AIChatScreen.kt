@@ -1814,6 +1814,11 @@ private fun ChatInputBottomBar(
         return actualViewModel.removePendingQueueMessage(chatId, id)
     }
 
+    fun cancelPendingQueueMessageById(id: Long): PendingQueueMessageItem? {
+        val chatId = currentChatId ?: return null
+        return actualViewModel.cancelPendingQueueMessage(chatId, id)
+    }
+
     val sendQueuedItemNow: (String, PendingQueueMessageItem) -> Unit =
         { queueChatId, item ->
             coroutineScope.launch(start = CoroutineStart.UNDISPATCHED) {
@@ -1861,6 +1866,7 @@ private fun ChatInputBottomBar(
                             chatGeneration = item.chatGeneration,
                             attachments = item.attachments,
                             replyToMessage = item.replyToMessage,
+                            queueItemId = item.id,
                         )
                     ) {
                         restorePendingQueueItem(queueChatId, item)
@@ -1986,6 +1992,9 @@ private fun ChatInputBottomBar(
         actualViewModel.updateUserMessage(TextFieldValue(""))
         steerPendingQueueMessage(id)
     }
+    // In Orbit a message going into the current turn is already in the chat; the queue bar only
+    // shows what still waits, so it does not flash up while the message is handed over.
+    val shownQueueMessages = if (steerWhileBusy) pendingQueueMessages.filterNot { it.isSteering } else pendingQueueMessages
     val queueOrSteerDraft: () -> Unit = {
         if (steerWhileBusy) steerDraftIntoCurrentTurn() else enqueueDraftToPendingQueue()
     }
@@ -2146,16 +2155,16 @@ private fun ChatInputBottomBar(
                 characterCardBoundChatModelConfigId = characterCardBoundChatModelConfigId,
                 characterCardBoundChatModelIndex = characterCardBoundChatModelIndex,
                 characterCardBoundMemoryProfileId = characterCardBoundMemoryProfileId,
-                pendingQueueMessages = pendingQueueMessages,
+                pendingQueueMessages = shownQueueMessages,
                 isPendingQueueExpanded = isPendingQueueExpanded,
                 onPendingQueueExpandedChange = { expanded ->
                     currentChatId?.let { actualViewModel.setPendingQueueExpanded(it, expanded) }
                 },
                 onDeletePendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)
+                    cancelPendingQueueMessageById(id)
                 },
                 onEditPendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)?.let { queueItem ->
+                    cancelPendingQueueMessageById(id)?.let { queueItem ->
                         val text = queueItem.text
                         actualViewModel.restoreQueuedAttachments(queueItem)
                         actualViewModel.updateUserMessage(
@@ -2211,16 +2220,16 @@ private fun ChatInputBottomBar(
                 onThinkingQualityLevelChange = actualViewModel::updateThinkingQualityLevel,
                 onClearReply = actualViewModel::clearReplyToMessage,
                 isWorkspaceOpen = isWorkspaceOpen,
-                pendingQueueMessages = pendingQueueMessages,
+                pendingQueueMessages = shownQueueMessages,
                 isPendingQueueExpanded = isPendingQueueExpanded,
                 onPendingQueueExpandedChange = { expanded ->
                     currentChatId?.let { actualViewModel.setPendingQueueExpanded(it, expanded) }
                 },
                 onDeletePendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)
+                    cancelPendingQueueMessageById(id)
                 },
                 onEditPendingQueueMessage = { id ->
-                    removePendingQueueMessageById(id)?.let { queueItem ->
+                    cancelPendingQueueMessageById(id)?.let { queueItem ->
                         val text = queueItem.text
                         actualViewModel.restoreQueuedAttachments(queueItem)
                         actualViewModel.updateUserMessage(

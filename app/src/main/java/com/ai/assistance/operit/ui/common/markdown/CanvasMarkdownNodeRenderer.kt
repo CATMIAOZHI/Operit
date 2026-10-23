@@ -724,6 +724,11 @@ private fun renderNodeContent(
                 // A card one of Orbit's tools put in the chat: a secure entry card, a picture or a file.
                 // Only the exact opening the app writes counts, so a look-alike Orbit typed never draws one.
                 com.ai.assistance.operit.ui.features.orbit.OrbitChatCard(codeContent)
+            } else if (firstLine == "```" + com.ai.assistance.operit.ui.features.chat.components.ORBIT_OPTIONS_FENCE &&
+                com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+            ) {
+                // Reply options Orbit offered with its tool; they draw only from a set it made in this chat.
+                com.ai.assistance.operit.ui.features.orbit.OrbitOptionsCard(codeContent.trim())
             } else if (language == "a2ui-ref") {
                 // The reference did not resolve in its turn; keep the raw text for the model, show a notice.
                 androidx.compose.material3.Text(

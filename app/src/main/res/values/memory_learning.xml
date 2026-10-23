@@ -155,6 +155,7 @@
     <string name="skill_folder_builtin_desc">Operit 预装的专项技能</string>
     <string name="skill_folder_total">共 %1$d 个技能</string>
     <string name="orbit_learning_skills_group">技能</string>
+    <string name="orbit_learning_recall_group">聊天检索</string>
     <string name="orbit_learning_all_skills_desc">按来源分成文件夹查看</string>
     <string name="orbit_learning_user_desc">它对你的了解，可以直接修改</string>
     <string name="skill_folder_expanded">已展开</string>

@@ -1719,6 +1719,13 @@ private fun OrbitBuildsPage(
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
     }
     var deletingUpload by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload?>(null) }
+    // Pictures, videos, sounds and plain text open in Orbit's own viewer; anything else goes to another app.
+    var previewFile by remember { mutableStateOf<java.io.File?>(null) }
+    fun viewFile(fileOf: () -> java.io.File) {
+        val file = runCatching(fileOf).getOrNull()
+        if (file != null && file.isFile && OrbitMediaPreview.canPreview(file.name)) previewFile = file
+        else openOrbitFile(context, fileOf)
+    }
     val action = rememberAction()
     // Pinned files first, in pin order; then works and files together, newest first.
     val entries = remember(versions, madeFiles, pins) {
@@ -1789,7 +1796,7 @@ private fun OrbitBuildsPage(
                                 pinned = pinned,
                                 onClick = {
                                     if (com.ai.assistance.operit.features.orbit.OrbitFiles.isText(file.path)) onOpenFile(file.path)
-                                    else openOrbitFile(context) { orbitFiles.fileFor(file.path) }
+                                    else viewFile { orbitFiles.fileFor(file.path) }
                                 },
                             ) { close ->
                                 DropdownMenuItem(
@@ -1840,10 +1847,10 @@ private fun OrbitBuildsPage(
                             subtitle = typeLabel(upload.name) + " · " +
                                 android.text.format.Formatter.formatShortFileSize(context, upload.size) +
                                 " · " + shortDate(upload.addedAt),
-                            onClick = { openOrbitFile(context) { upload.file } },
+                            onClick = { viewFile { upload.file } },
                         ) { close ->
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_open)) },
-                                onClick = { close(); openOrbitFile(context) { upload.file } })
+                                onClick = { close(); viewFile { upload.file } })
                             DropdownMenuItem(text = { Text(stringResource(R.string.orbit_file_share)) },
                                 onClick = { close(); shareOrbitFile(context) { upload.file } })
                             DropdownMenuItem(
@@ -1887,6 +1894,7 @@ private fun OrbitBuildsPage(
             }
         }
     }
+    previewFile?.let { file -> OrbitMediaPreview.Screen(file) { previewFile = null } }
 }
 
 /** The switch at the top of the Builds tab: what Orbit made, or the Library of what the user sent. */

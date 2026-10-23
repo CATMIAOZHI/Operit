@@ -129,6 +129,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
     var showTrash by rememberSaveable(orbitId) { mutableStateOf(false) }
     var showAllDays by rememberSaveable(orbitId) { mutableStateOf(false) }
     var fileActions by remember { mutableStateOf<OrbitFiles.Entry?>(null) }
+    var previewFile by remember { mutableStateOf<java.io.File?>(null) }
     val list = result?.getOrNull()
 
     openPath?.let { path ->
@@ -238,8 +239,10 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
     }
 
     fileActions?.let { entry ->
-        OrbitMadeFileActions(files, entry, onDismiss = { fileActions = null }, onDeleted = { reload++ })
+        OrbitMadeFileActions(files, entry, onDismiss = { fileActions = null }, onDeleted = { reload++ },
+            onPreview = { previewFile = it })
     }
+    previewFile?.let { file -> OrbitMediaPreview.Screen(file) { previewFile = null } }
 }
 
 /** One file Orbit made for the user, as a list row. */
@@ -297,6 +300,7 @@ internal fun OrbitMadeFileActions(
     onDeleted: () -> Unit,
     pinned: Boolean? = null,
     onTogglePin: () -> Unit = {},
+    onPreview: ((java.io.File) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -310,7 +314,12 @@ internal fun OrbitMadeFileActions(
                         Text(stringResource(if (pinned) R.string.orbit_library_unpin else R.string.orbit_library_pin), Modifier.fillMaxWidth())
                     }
                 }
-                TextButton(onClick = { onDismiss(); openOrbitFile(context) { files.fileFor(entry.path) } }, modifier = Modifier.fillMaxWidth()) {
+                TextButton(onClick = {
+                    onDismiss()
+                    val file = runCatching { files.fileFor(entry.path) }.getOrNull()
+                    if (onPreview != null && file != null && file.isFile && OrbitMediaPreview.canPreview(file.name)) onPreview(file)
+                    else openOrbitFile(context) { files.fileFor(entry.path) }
+                }, modifier = Modifier.fillMaxWidth()) {
                     Text(stringResource(R.string.orbit_file_open), Modifier.fillMaxWidth())
                 }
                 TextButton(onClick = { onDismiss(); shareOrbitFile(context) { files.fileFor(entry.path) } }, modifier = Modifier.fillMaxWidth()) {

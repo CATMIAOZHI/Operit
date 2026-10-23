@@ -60,7 +60,7 @@ object OrbitPromptFiles {
     }
 
     fun defaultPrompt(context: Context): String =
-        if (useEnglish(context)) OrbitPromptDefaults.PROMPT_EN else OrbitPromptDefaults.PROMPT_ZH
+        OrbitPromptDefaults.prompt(context, useEnglish(context))
 
     /**
      * PROMPT.md as Orbit reads it: always the built-in handbook. A PROMPT.md that Orbit or anyone
@@ -70,7 +70,7 @@ object OrbitPromptFiles {
     fun prompt(context: Context, orbitId: String): String = defaultPrompt(context)
 
     fun identityTemplate(context: Context, name: String): String =
-        (if (useEnglish(context)) OrbitPromptDefaults.IDENTITY_EN else OrbitPromptDefaults.IDENTITY_ZH)
+        OrbitPromptDefaults.identity(context, useEnglish(context))
             .replace("{name}", name.ifBlank { "Orbit" })
 
     /** IDENTITY.md, made from the template the first time it is read. */

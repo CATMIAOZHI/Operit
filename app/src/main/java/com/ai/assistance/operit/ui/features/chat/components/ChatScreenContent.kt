@@ -259,6 +259,8 @@ fun ChatScreenContent(
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
+        com.ai.assistance.operit.ui.features.orbit.LocalOrbitOptionSend provides
+            if (transcriptLocked) null else actualViewModel::sendOrbitOption,
     ) {
     Box(modifier = modifier.fillMaxSize().padding(paddingValues)) {
         // A page's own header (Orbit's) always floats over the chat: messages slide softly under

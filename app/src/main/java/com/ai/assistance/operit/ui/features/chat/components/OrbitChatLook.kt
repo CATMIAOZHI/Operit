@@ -8,9 +8,11 @@ import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
@@ -86,6 +88,9 @@ fun currentOrbitName(): String = LocalOrbitName.current.ifBlank { androidx.compo
 
 /** The fence an Orbit chat draws as a card from a tool: "```orbit-card" and one line of JSON. */
 const val ORBIT_CARD_FENCE = "orbit-card"
+
+/** The fence reply options are drawn from: "```orbit-options" and the set's id (see OrbitOptions). */
+const val ORBIT_OPTIONS_FENCE = "orbit-options"
 
 /** Emoji reactions Orbit put on the user's messages in this chat, by message time. */
 val LocalOrbitReactions = compositionLocalOf<Map<String, String>> { emptyMap() }
@@ -240,7 +245,7 @@ val LocalOrbitMessageGestures = compositionLocalOf<OrbitMessageGestures?> { null
 /** What Orbit said in a message, without its thinking, tool calls, tool results or status lines. */
 object OrbitSpeech {
     private val blank = Regex("\n{3,}")
-    private val cardFence = Regex("```(?:a2ui(?:-ref)?|${ORBIT_CARD_FENCE})[^\\n]*\\n[\\s\\S]*?(?:```|$)")
+    private val cardFence = Regex("```(?:a2ui(?:-ref)?|${ORBIT_CARD_FENCE}|${ORBIT_OPTIONS_FENCE})[^\\n]*\\n[\\s\\S]*?(?:```|$)")
     private val shownCard = Regex("```(?:a2ui(?:[ \\t]+card-\\d{1,2})?|${ORBIT_CARD_FENCE})[ \\t]*\\n")
     // Orbit's own words can never draw an Orbit card; only a tool's result can (see [cards]).
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
@@ -250,6 +255,8 @@ object OrbitSpeech {
         RegexOption.IGNORE_CASE,
     )
     private val placeholder = Regex("\uE000(\\d+)\uE001")
+    // The start of an options token at the very end of a reply still streaming in.
+    private val partialOptionsToken = Regex("\\[\\[orbit-options(?::[a-z0-9]{0,10}]?)?$")
     // The chat is re-shown as a reply streams in; each stored text is cleaned only once.
     private val cleaned = java.util.Collections.synchronizedMap(java.util.WeakHashMap<String, String>())
     // Stored instead of a text that needed no cleaning: a value pointing at its own key would keep
@@ -384,6 +391,14 @@ object OrbitSpeech {
         ).forEach { text = text.replace(it, "") }
         // A card Orbit wrote itself never shows; checked last, so removing a tag cannot put one together.
         if (text.contains(ORBIT_CARD_FENCE)) text = text.replace(writtenOrbitCard, "")
+        // Reply options: the token Orbit wrote becomes buttons (see OrbitOptions); a fence it typed
+        // itself does nothing, since the buttons only come from a set its tool made. A token still
+        // being written does not show as text.
+        if (text.contains("[[orbit-options", ignoreCase = true)) {
+            text = text.replace(com.ai.assistance.operit.features.orbit.OrbitOptions.token) { m ->
+                "\n\n```$ORBIT_OPTIONS_FENCE\n${m.groupValues[1]}\n```\n\n"
+            }.replace(partialOptionsToken, "")
+        }
         if (cards.isNotEmpty()) {
             text = text.replace(placeholder) { m ->
                 val card = m.groupValues[1].toIntOrNull()?.let(cards::getOrNull) ?: return@replace ""
@@ -588,6 +603,50 @@ fun OrbitReactedUserMessage(timestamp: Long, content: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth()) {
         content()
         ReactionBadge(reaction, stringResource(R.string.orbit_reaction_label, currentOrbitName(), reaction), Alignment.CenterEnd, end = 8.dp)
+    }
+}
+
+/**
+ * The long-press menu of a card Orbit sent, drawn like the one on its messages: the tapbacks on
+ * top, a line, then "Reply" with its icon.
+ */
+@Composable
+fun OrbitPieceMenu(
+    expanded: Boolean,
+    onDismiss: () -> Unit,
+    selected: String?,
+    onPick: (String) -> Unit,
+    onMore: () -> Unit,
+    onReply: (() -> Unit)?,
+) {
+    androidx.compose.material3.DropdownMenu(
+        expanded = expanded,
+        onDismissRequest = onDismiss,
+        modifier = Modifier.widthIn(min = 200.dp),
+        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
+        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh,
+        properties = androidx.compose.ui.window.PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
+    ) {
+        OrbitTapbackRow(selected, onPick, onMore)
+        if (onReply != null) {
+            androidx.compose.material3.HorizontalDivider(
+                modifier = Modifier.padding(vertical = 4.dp),
+                color = androidx.compose.material3.MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            androidx.compose.material3.DropdownMenuItem(
+                text = { androidx.compose.material3.Text(stringResource(R.string.reply_message), style = androidx.compose.material3.MaterialTheme.typography.bodyMedium) },
+                onClick = onReply,
+                leadingIcon = {
+                    androidx.compose.material3.Icon(
+                        androidx.compose.material.icons.Icons.AutoMirrored.Filled.Reply,
+                        contentDescription = null,
+                        tint = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(20.dp),
+                    )
+                },
+                modifier = Modifier.heightIn(min = 44.dp),
+            )
+        }
     }
 }
 
