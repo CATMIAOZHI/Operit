@@ -48,6 +48,9 @@ internal object OrbitRoutines {
     private const val ALIGNMENT_MINUTE = 3 * 60 + 30
     /** Wording older alignment steps carried that the current ones no longer use. */
     val RETIRED_PHRASES = listOf("（像 Muse 的 dream）", " (like Muse's dream)")
+    private const val CLEANUP_PREFS = "orbit_routine_cleanup"
+    /** Bump when [RETIRED_PHRASES] gains wording, so past records are cleaned once more. */
+    private const val RETIRED_PHRASES_KEY = "retired_phrases_v1"
 
     /** [text] without the retired wording, for records read before their chats were cleaned. */
     fun withoutRetiredWording(text: String): String =
@@ -221,8 +224,19 @@ internal object OrbitRoutines {
                 repository.dao.replaceDefinitionIfIdle(upgraded.copy(useSubagent = background), old.version)
             } else if (current != null) repository.dao.refreshInstruction(old.id, old.instruction, current)
             // Past runs started from the old steps; their records drop the retired wording too.
-            // Repeated every time, so an interrupted pass is finished on the next one.
-            if (refreshInstruction) RETIRED_PHRASES.forEach { repository.dao.dropRunPhrase(old.id, it) }
+            // The pass scans long chat text, so it is remembered once it has finished; an
+            // interrupted pass is not remembered and is finished on the next visit.
+            if (refreshInstruction) {
+                val prefs = context.getSharedPreferences(CLEANUP_PREFS, Context.MODE_PRIVATE)
+                val key = "$RETIRED_PHRASES_KEY:${old.id}"
+                if (!prefs.getBoolean(key, false)) {
+                    RETIRED_PHRASES.forEach { repository.dao.dropRunPhrase(old.id, it) }
+                    // Only once the stored steps are free of it too: steps still waiting for a run to
+                    // end can start another run with the old wording.
+                    val stored = repository.dao.task(old.id)?.instruction.orEmpty()
+                    if (RETIRED_PHRASES.none { stored.contains(it) }) prefs.edit().putBoolean(key, true).apply()
+                }
+            }
             return
         }
         try {

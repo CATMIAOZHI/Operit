@@ -25,12 +25,18 @@ import com.ai.assistance.operit.ui.features.chat.components.part.resolveSubagent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 
-internal data class CollaborationDisplayMessage(val sender: String, val kind: String, val body: String)
+internal data class CollaborationDisplayMessage(
+    val sender: String,
+    val kind: String,
+    val body: String,
+    /** The sending agent's chat, when the envelope names it (rows written before it never do). */
+    val senderId: String? = null,
+)
 
 /** The envelope a collaboration row carries, anchored so quoted text cannot pose as one. */
 private val collaborationEnvelopeHeader = Regex(
     "^Message ID: [0-9a-f-]{36}\\nMessage Type: (MESSAGE|NEW_TASK|FINAL_ANSWER|STATUS)\\n" +
-        "Task name: [^\\n]+\\nSender: ([^\\n]+)\\nPayload:\\n",
+        "Task name: [^\\n]+\\nSender: ([^\\n]+)\\n(?:Sender ID: ([^\\n]+)\\n)?Payload:\\n",
 )
 
 /** The label [CollaborationCoordinator.finish] puts in front of a status line's reason. */
@@ -76,6 +82,7 @@ internal fun collaborationDisplayMessages(content: String, sender: String): List
         CollaborationDisplayMessage(
             sender, match.groupValues[1],
             content.substring(match.range.last + 1).trimEnd(),
+            senderId = match.groupValues[3].takeIf { it.isNotBlank() },
         )
     )
 }
@@ -137,21 +144,31 @@ internal fun collaborationRowCarriesReturnedReply(kind: String): Boolean =
     collaborationResultLabelRes(kind) != null
 
 /**
- * Resolves the live run a collaboration row belongs to. Archived runs, v1 tasks and runs owned by
- * another feature (the reading companion shares this table) never shadow the agent's own run.
+ * Resolves the run a collaboration row belongs to, or null when that run can no longer be opened.
+ *
+ * A name can pass to a new agent, so the row's own generation is found first among every run that
+ * wore the name (archived ones included), and only then is it checked for being open. Picking among
+ * open runs first would hand a row of an archived agent to an older agent of the same name.
+ * v1 tasks and runs owned by another feature (the reading companion shares this table) never count.
  */
 internal fun findCollaborationRun(
     runs: List<SubagentRunEntity>,
     sender: String?,
     at: Long? = null,
+    senderId: String? = null,
 ): SubagentRunEntity? {
     val owner = sender?.takeIf { it.isNotBlank() } ?: return null
     val owned = runs.filter {
-        it.externalOwnerId == owner &&
-            it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
-            it.archivedAt == null
+        it.externalOwnerId == owner && it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE
     }
-    return if (at == null) owned.firstOrNull() else collaborationRunAt(owned, at)
+    // The envelope names the chat that wrote it; a deleted run then links nowhere.
+    val run = senderId?.takeIf { it.isNotBlank() }?.let { id -> owned.lastOrNull { it.childChatId == id } }
+        ?: if (senderId.isNullOrBlank()) {
+            if (at == null) owned.firstOrNull { it.archivedAt == null } else collaborationRunAt(owned, at)
+        } else {
+            null
+        }
+    return run?.takeIf { it.archivedAt == null }
 }
 
 /**
@@ -249,7 +266,7 @@ fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.c
     ) {
             events.forEach { event ->
                 // A message comes from the run that wore the sender's name when it arrived.
-                val run = findCollaborationRun(runs, event.sender, message.timestamp)
+                val run = findCollaborationRun(runs, event.sender, message.timestamp, event.senderId)
                 if (run != null) {
                     SubagentRunEventCard(
                         run = run,

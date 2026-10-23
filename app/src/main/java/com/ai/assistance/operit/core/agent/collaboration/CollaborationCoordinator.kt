@@ -30,7 +30,14 @@ class CollaborationCoordinator private constructor(context: Context) {
     private val core get() = ChatRuntimeHolder.getInstance(appContext).getCore(ChatRuntimeSlot.MAIN)
     private val runner get() = SubagentCoordinator.getInstance(appContext)
     private var state = store.load().let { loaded ->
-        loaded.copy(agents = loaded.agents.map {
+        // Mail saved before envelopes carried a sender ID gets it now. Unread mail keeps its sender
+        // from being archived, so the live agent at that path is the one that wrote it.
+        val liveChat = loaded.agents.filterNot { it.archived }.associate { (it.rootChatId to it.path) to it.chatId }
+        loaded.copy(agents = loaded.agents.map { agent ->
+            if (agent.messages.none { it.senderId == null }) agent else agent.copy(messages = agent.messages.map {
+                if (it.senderId != null) it else it.copy(senderId = liveChat[agent.rootChatId to it.sender])
+            })
+        }.map {
             if (it.status == CollaborationStatus.RUNNING) it.copy(
                 status = CollaborationStatus.INTERRUPTED,
                 lastError = "Application stopped during the agent turn",
@@ -145,6 +152,12 @@ class CollaborationCoordinator private constructor(context: Context) {
     private fun target(caller: CollaborationAgent, value: String): CollaborationAgent {
         val byId = state.agents.firstOrNull {
             it.rootChatId == caller.rootChatId && !it.archived && (it.chatId == value || it.runId == value)
+        }
+        if (byId == null) {
+            // An ID never passes to another agent: an archived one fails instead of reaching a namesake.
+            state.agents.firstOrNull {
+                it.rootChatId == caller.rootChatId && it.archived && (it.chatId == value || it.runId == value)
+            }?.let { error("Agent ${it.path} ($value) was archived and can no longer be reached; its name may now belong to a different agent") }
         }
         return byId ?: requireNotNull(state.find(caller.rootChatId, AgentPath.resolve(caller.path, value))) {
             "Unknown agent: $value"
@@ -282,8 +295,9 @@ class CollaborationCoordinator private constructor(context: Context) {
             requested next step. A prose mention is not a delivered message; the tool creates
             the envelope. Do not send empty progress updates or duplicate your automatic
             final report. When replying to an incoming agent message, route the answer with
-            send_message to its stated Sender if that sender is not your parent or the answer
-            is needed before you finish. An ordinary final answer only goes to your parent;
+            send_message to its stated Sender ID (or its Sender when no ID is given) if that
+            sender is not your parent or the answer is needed before you finish. An ordinary
+            final answer only goes to your parent;
             it does not reply to a peer who contacted you. Treat delivery as successful only
             after the tool accepts it; never claim to have sent a message based on prose alone.
             If an idle non-root recipient must do more work, use followup_task;
@@ -307,6 +321,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             )
             val assignment = AgentMessage(
                 UUID.randomUUID().toString(), parent.path, path, AgentMessageKind.NEW_TASK, message,
+                senderId = parent.chatId,
             )
             val job = scope.launch(start = CoroutineStart.LAZY) {
                 try {
@@ -421,6 +436,7 @@ class CollaborationCoordinator private constructor(context: Context) {
             val message = AgentMessage(
                 UUID.randomUUID().toString(), caller.path, receiver.path,
                 if (followup) AgentMessageKind.NEW_TASK else AgentMessageKind.MESSAGE, text,
+                senderId = caller.chatId,
             )
             write(state.enqueue(caller.rootChatId, message))
             if (wake) startExisting(requireNotNull(state.find(receiver.rootChatId, receiver.path)))
@@ -524,6 +540,7 @@ class CollaborationCoordinator private constructor(context: Context) {
                 UUID.randomUUID().toString(), path, agent.parentPath,
                 if (status == CollaborationStatus.COMPLETED) AgentMessageKind.FINAL_ANSWER else AgentMessageKind.STATUS,
                 text.ifBlank { "$path completed with an empty response" },
+                senderId = agent.chatId,
             )))
             archiveOverflow(root, LIVE_LIMIT)
         }
