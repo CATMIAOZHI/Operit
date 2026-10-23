@@ -9792,7 +9792,6 @@
     <string name="orbit_chat_file_open">Tap to open</string>
     <string name="orbit_chat_file_missing">This file is gone</string>
     <string name="orbit_browser_task_card_summary">[Browser task: %1$s]</string>
-    <string name="orbit_browser_task_tab_limit">This task already has 2 tabs. Close an unused page first.</string>
     <string name="orbit_browser_task_stopping">Stopping</string>
     <string name="orbit_import_paste_label">The other AI\'s answer</string>
     <string name="orbit_import_too_long">%1$d / %2$d characters. Too long; import it in parts.</string>

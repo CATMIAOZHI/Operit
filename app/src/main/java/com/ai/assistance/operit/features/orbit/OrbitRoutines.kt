@@ -46,6 +46,12 @@ internal object OrbitRoutines {
     private const val GOAL_BRIEFING_MINUTE = 7 * 60
     /** Late at night, when the day's talk is over. */
     private const val ALIGNMENT_MINUTE = 3 * 60 + 30
+    /** Wording older alignment steps carried that the current ones no longer use. */
+    val RETIRED_PHRASES = listOf("（像 Muse 的 dream）", " (like Muse's dream)")
+
+    /** [text] without the retired wording, for records read before their chats were cleaned. */
+    fun withoutRetiredWording(text: String): String =
+        RETIRED_PHRASES.fold(text) { out, phrase -> out.replace(phrase, "") }
     /** A new feed post every 12 hours by default. */
     const val FEED_INTERVAL_MINUTES = 12 * 60
     /** New ideas every morning at 9 by default. */
@@ -137,7 +143,7 @@ internal object OrbitRoutines {
             }
         }
         ensure(context, orbit, ALIGNMENT, R.string.orbit_routine_alignment, ALIGNMENT_SOURCE, "DAILY", ALIGNMENT_MINUTE,
-            background = true) { if (it) ALIGNMENT_EN else ALIGNMENT_ZH }
+            background = true, refreshInstruction = true) { if (it) ALIGNMENT_EN else ALIGNMENT_ZH }
     }
 
     /**
@@ -196,17 +202,27 @@ internal object OrbitRoutines {
         context: Context, orbit: OrbitProfile, request: String, title: Int, source: String, scheduleMode: String,
         minute: Int, interval: Int = 1440, background: Boolean,
         upgrade: (Context, OrbitTaskEntity) -> OrbitTaskEntity = { _, it -> it },
+        refreshInstruction: Boolean = false,
         instruction: (english: Boolean) -> String,
     ) {
         val repository = OrbitTaskRepository(context)
         // Every routine works quietly: a background subagent does it, so Orbit's chat is never woken.
         // What it drafts for the user goes through the proactive handoff, where the chat decides.
         repository.dao.task(taskId(orbit.id, request))?.let { old ->
+            // A routine whose steps always run as written now keeps them stored that way too, so
+            // what its task shows, returns and exports matches what it runs.
+            val current = if (refreshInstruction && old.state != "CANCELLED") {
+                instruction(LocaleUtils.usesEnglishPrompt(context)).takeIf { it != old.instruction }
+            } else null
             // Switching lanes replaces the definition, which would cancel a run in progress; it
             // waits for the run to end, checked in the same transaction as the switch.
             if (old.useSubagent != background && old.state != "CANCELLED") OrbitExecutionGate.serialized {
-                repository.dao.replaceDefinitionIfIdle(upgrade(context, old).copy(useSubagent = background), old.version)
-            }
+                val upgraded = upgrade(context, old).let { if (current != null) it.copy(instruction = current) else it }
+                repository.dao.replaceDefinitionIfIdle(upgraded.copy(useSubagent = background), old.version)
+            } else if (current != null) repository.dao.refreshInstruction(old.id, old.instruction, current)
+            // Past runs started from the old steps; their records drop the retired wording too.
+            // Repeated every time, so an interrupted pass is finished on the next one.
+            if (refreshInstruction) RETIRED_PHRASES.forEach { repository.dao.dropRunPhrase(old.id, it) }
             return
         }
         try {
@@ -275,6 +291,12 @@ internal object OrbitRoutines {
     /** The alignment review's steps; always the current ones, whatever an older routine stored. */
     fun alignmentInstruction(english: Boolean) = if (english) ALIGNMENT_EN else ALIGNMENT_ZH
 
+    /** A task's instruction as it actually runs: the alignment review always runs its current steps. */
+    fun runningInstruction(context: Context, task: OrbitTaskEntity): String =
+        if (task.source == ALIGNMENT_SOURCE) {
+            alignmentInstruction(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context))
+        } else task.instruction
+
     /**
      * A chat keeps the system prompt it started with until it is summarized, so a new synthesis
      * would wait for that. After a night's review, like Muse's next day, every chat of the Orbit
@@ -295,7 +317,7 @@ internal object OrbitRoutines {
     }
 
     private val ALIGNMENT_ZH = """
-        夜间对齐复盘（像 Muse 的 dream）。SOURCE 只写了这次的窗口（上次复盘以来的全部主聊天和侧聊）、消息数和今天的日期，聊天内容要你自己读，一条都不能漏。
+        夜间对齐复盘。SOURCE 只写了这次的窗口（上次复盘以来的全部主聊天和侧聊）、消息数和今天的日期，聊天内容要你自己读，一条都不能漏。
         这次只管「你和这位用户怎么相处」，事实记忆不归这里管。全部在后台安静完成：
         1. 用 orbit_file 读 ALIGNMENT_SYNTHESIS.md、alignment/ALIGNMENT_STATE.yaml、alignment/PROGRESSION_HISTORY.yaml、alignment/REPAIR_THREADS.yaml，再 read SOURCE 里 latest_dream 那篇（是 none 就跳过）。SOURCE 说 resumed 时，先读 alignment/REVIEW_NOTES.md，那是之前记下的笔记，接着往下读就行。
         2. 边读边记：orbit_review_read action=next 读一页，读完马上 action=commit 记下这一页说明了什么：摩擦和纠正（带 message id）、新定的规矩、哪里配合得好、还悬着的事。ruptures 填这一页里出现摩擦或纠正的用户消息 id：说「不对」「不是这个意思」、要求重做同一件事、定下新规矩（「以后都……」）、表达不满、给你的消息点了 👎 之类，拿不准就算上。一件事跨页时可以连读几页再记，但最多 3 页就必须 commit，不要全部读完再记。没什么可记就写「没有新内容」。想回看前面的消息用 action=look，不会挪动阅读位置；不确定读到哪就 action=status，应用会告诉你。一直读到 status 的 done 是 true。
@@ -330,7 +352,7 @@ internal object OrbitRoutines {
     """.trimIndent()
 
     private val ALIGNMENT_EN = """
-        Nightly alignment review (like Muse's dream). SOURCE only gives this review's window (every main and side chat
+        Nightly alignment review. SOURCE only gives this review's window (every main and side chat
         since the last review), how many messages it holds and today's date. Read the messages yourself; skip none.
         This review is only about how to be with this user, not factual memory. Do it all quietly in the background:
         1. With orbit_file, read ALIGNMENT_SYNTHESIS.md and alignment/ALIGNMENT_STATE.yaml, PROGRESSION_HISTORY.yaml

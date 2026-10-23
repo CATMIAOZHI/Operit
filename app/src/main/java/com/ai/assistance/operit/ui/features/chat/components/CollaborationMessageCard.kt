@@ -143,14 +143,24 @@ internal fun collaborationRowCarriesReturnedReply(kind: String): Boolean =
 internal fun findCollaborationRun(
     runs: List<SubagentRunEntity>,
     sender: String?,
+    at: Long? = null,
 ): SubagentRunEntity? {
     val owner = sender?.takeIf { it.isNotBlank() } ?: return null
-    return runs.firstOrNull {
+    val owned = runs.filter {
         it.externalOwnerId == owner &&
             it.externalOwnerType == CollaborationCoordinator.OWNER_TYPE &&
             it.archivedAt == null
     }
+    return if (at == null) owned.firstOrNull() else collaborationRunAt(owned, at)
 }
+
+/**
+ * Of the runs that wore one name over time (an archived agent's name can be used again), the one
+ * a row written at [at] belongs to: the latest started by then. A run started later belongs to a
+ * later row, so a row older than every run links to none.
+ */
+internal fun collaborationRunAt(runs: List<SubagentRunEntity>, at: Long): SubagentRunEntity? =
+    runs.filter { it.createdAt <= at }.maxByOrNull { it.createdAt }
 
 /**
  * A collaboration row that belongs to a real Subagent run: the row keeps the agent's badge, its
@@ -238,7 +248,8 @@ fun CollaborationMessageCard(message: ChatMessage, horizontalPadding: androidx.c
         verticalArrangement = Arrangement.spacedBy(1.dp),
     ) {
             events.forEach { event ->
-                val run = findCollaborationRun(runs, event.sender)
+                // A message comes from the run that wore the sender's name when it arrived.
+                val run = findCollaborationRun(runs, event.sender, message.timestamp)
                 if (run != null) {
                     SubagentRunEventCard(
                         run = run,

@@ -70,7 +70,7 @@ internal object OrbitDataExport {
                         out.closeEntry()
                     }
             }
-            put("records/tasks.json", JSONArray(tasks.map(::taskJson)).toString(2))
+            put("records/tasks.json", JSONArray(tasks.map { taskJson(context, it) }).toString(2))
             put("records/goals.json", JSONArray(goals.map(::goalJson)).toString(2))
             put("records/activity.json", JSONArray(activity.map {
                 JSONObject().put("task", it.title).put("kind", it.kind).put("state", it.state)
@@ -107,8 +107,8 @@ internal object OrbitDataExport {
         side-chats/ Orbit's side chats, one file each
     """.trimIndent() + "\n"
 
-    private fun taskJson(task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
-        .put("instruction", task.instruction).put("kind", task.kind).put("source", task.source)
+    private fun taskJson(context: Context, task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
+        .put("instruction", OrbitRoutines.runningInstruction(context, task)).put("kind", task.kind).put("source", task.source)
         .put("schedule", task.scheduleMode).put("state", task.state).put("notify", task.notifyPolicy)
         .put("lastObservation", task.lastObservation).put("goalId", task.goalId)
         .put("createdAt", time(task.createdAt)).put("updatedAt", time(task.updatedAt))
