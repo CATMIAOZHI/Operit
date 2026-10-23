@@ -9594,6 +9594,8 @@
     <string name="orbit_process_running">Still working. This updates automatically.</string>
     <string name="orbit_turn_untitled">Something %1$s did on its own</string>
     <string name="orbit_turn_no_reply">Done</string>
+    <string name="orbit_activity_talk_title">%1$d turns of chat</string>
+    <string name="orbit_chat_time_yesterday">Yesterday %1$s</string>
     <string name="orbit_process_open_task">Open task</string>
     <string name="orbit_process_empty">No record was kept for this one</string>
     <string name="orbit_user_sent_attachment">Sent an attachment</string>

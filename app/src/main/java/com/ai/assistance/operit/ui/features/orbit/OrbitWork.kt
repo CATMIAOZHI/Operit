@@ -67,6 +67,8 @@ internal data class OrbitChatTurn(
     val process: OrbitProcess.ChatTurn,
     /** What Orbit finally said, first line; empty when it said nothing. */
     val reply: String,
+    /** Orbit called a tool in this turn; a turn of talk alone is listed together with its neighbours. */
+    val usedTools: Boolean = false,
 )
 
 /** Chat turns with work behind them; [failed] when some chat could not be read. */
@@ -183,8 +185,15 @@ internal object OrbitWork {
             }
             turn.key to asked
         }
-        val wanted = turns.map { it.finalTimestamp } + askedBy.values.filterNotNull() + hiddenBefore.values
+        // Rows that may hold a tool call; only those inside a listed turn are read to make sure.
+        val toolRows = manager.loadToolReplyTimestamps(chatId, turns.flatMap { it.members })
+        val wanted = turns.map { it.finalTimestamp } + askedBy.values.filterNotNull() + hiddenBefore.values + toolRows
         val bodies = manager.loadChatMessagesByTimestamps(chatId, wanted).associateBy { it.timestamp }
+        val usedTools = toolRows.filterTo(hashSetOf()) { timestamp ->
+            bodies[timestamp]?.let {
+                com.ai.assistance.operit.ui.features.chat.viewmodel.messageHasExecutableToolCall("ai", it.content)
+            } == true
+        }
         // The text search also matches a reply that only quotes markup; keep real work only.
         return turns.filter { turn ->
             !turn.byMarkup || bodies[turn.finalTimestamp]?.let { hasWork(it.content) } == true
@@ -236,6 +245,7 @@ internal object OrbitWork {
                 reply = bodies[turn.finalTimestamp]?.let {
                     firstLine(plain(OrbitSpeech.words(it.content, cardOnly)))
                 }.orEmpty(),
+                usedTools = turn.members.any { it in usedTools },
             )
         }
     }

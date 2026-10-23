@@ -503,6 +503,10 @@ internal fun VirtualTranscript(
         finally { locatorLoading = false }
     }
     com.ai.assistance.operit.ui.theme.ProvideAiMarkdownTextLayoutSettings {
+    // Orbit's chat reads like a messenger: a time line above a message that comes after a pause.
+    val timeRows = if (look) remember(rows, messages) {
+        orbitChatTimeRows(rows.map { row -> row.key to messages.getOrNull(row.messageIndex)?.timestamp })
+    } else emptyMap()
     Box(modifier) {
         LazyColumn(
             state = listState,
@@ -516,6 +520,7 @@ internal fun VirtualTranscript(
                 // Keep each chronological block together for accessibility traversal,
                 // instead of geometrically sorting all of its descendants with other rows.
                 Column(Modifier.semantics { isTraversalGroup = true }) {
+                    timeRows[row.key]?.let { OrbitChatTimeLine(it) }
                     // Keep the paging sentinel key without cutting a transparent hole in the reply.
                     CompositionLocalProvider(
                         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOwner provides
