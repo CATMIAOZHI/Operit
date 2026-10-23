@@ -187,6 +187,13 @@ class MessageProcessingDelegate(
     val activeStreamingChatIds: StateFlow<Set<String>> = _activeStreamingChatIds.asStateFlow()
     private val _activeRunStartedAt = MutableStateFlow<Map<String, Long>>(emptyMap())
     val activeRunStartedAt: StateFlow<Map<String, Long>> = _activeRunStartedAt.asStateFlow()
+    /**
+     * The running chats answering what the user said themselves: a turn they sent, or one they
+     * steered into. Known when loading starts, before the user row is saved. Hidden turns (a
+     * reaction, an approval, a background task) and subagent reports do not count.
+     */
+    private val _userWaitingChatIds = MutableStateFlow<Set<String>>(emptySet())
+    val userWaitingChatIds: StateFlow<Set<String>> = _userWaitingChatIds.asStateFlow()
 
     private val _inputProcessingStateByChatId =
         MutableStateFlow<Map<String, EnhancedInputProcessingState>>(emptyMap())
@@ -257,6 +264,7 @@ class MessageProcessingDelegate(
         var requestSentAt: Long = 0L,
         var requestStartElapsed: Long = 0L,
         @Volatile var runStartedElapsed: Long = 0L,
+        @Volatile var userWaiting: Boolean = false,
         var firstResponseElapsed: Long? = null,
         val isLoading: MutableStateFlow<Boolean> = MutableStateFlow(false)
     )
@@ -286,8 +294,14 @@ class MessageProcessingDelegate(
     fun trySteerMessage(chatId: String, expectedTurnId: String, input: TurnInputInbox.Input): Boolean {
         val runtime = chatRuntimes[chatId] ?: return false
         val inbox = runtime.inputInbox ?: return false
-        return inbox.turnId == expectedTurnId && runtime.canSteer && runtime.isLoading.value &&
+        val accepted = inbox.turnId == expectedTurnId && runtime.canSteer && runtime.isLoading.value &&
             inbox.offer(input)
+        // The user spoke into the running turn, so it now answers them too.
+        if (accepted && input.agentPath == null && !runtime.userWaiting) {
+            runtime.userWaiting = true
+            updateGlobalLoadingState()
+        }
+        return accepted
     }
 
     private suspend fun persistAssistantMessage(chatId: String, message: ChatMessage) {
@@ -351,6 +365,7 @@ class MessageProcessingDelegate(
         _activeRunStartedAt.value = activeChatIds.associateWith {
             chatRuntimes.getValue(it).runStartedElapsed
         }
+        _userWaitingChatIds.value = activeChatIds.filterTo(HashSet()) { chatRuntimes.getValue(it).userWaiting }
         _activeStreamingChatIds.value = activeChatIds
         _isLoading.value = anyLoading
     }
@@ -891,6 +906,11 @@ class MessageProcessingDelegate(
         // 压缩后的自动续写是同一个任务的后半段：重启计时会让用户看到长任务被清零。
         if (!isAutoContinuation || chatRuntime.runStartedElapsed <= 0L) {
             chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
+        }
+        // A continuation after compaction is the same turn and keeps who it answers.
+        if (!isAutoContinuation) {
+            chatRuntime.userWaiting = turnOptions.persistTurn && !turnOptions.hideUserMessage &&
+                !turnOptions.deliveredByTool && !turnOptions.isSubTask
         }
         chatRuntime.isLoading.value = true
         chatRuntime.currentTurnOptions = turnOptions
@@ -2013,6 +2033,8 @@ class MessageProcessingDelegate(
         resetCurrentTurnToolInvocationCount(chatId)
         com.ai.assistance.operit.features.orbit.OrbitChatDecision.onTurnStarted(chatId, null)
         chatRuntime.runStartedElapsed = android.os.SystemClock.elapsedRealtime()
+        // Regenerating is the user asking again.
+        chatRuntime.userWaiting = true
         chatRuntime.isLoading.value = true
         updateGlobalLoadingState()
         setChatInputProcessingState(

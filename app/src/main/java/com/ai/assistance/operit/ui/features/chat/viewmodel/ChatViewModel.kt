@@ -423,6 +423,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     // 会话隔离：仅当“当前聊天ID == 正在流式的聊天ID”时，才显示处理中/停止按钮
     val activeStreamingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.activeStreamingChatIds }
     val activeRunStartedAt: StateFlow<Map<String, Long>> by lazy { messageProcessingDelegate.activeRunStartedAt }
+    val userWaitingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.userWaitingChatIds }
     val currentChatIsLoading: StateFlow<Boolean> by lazy {
         kotlinx.coroutines.flow.combine(
             chatHistoryDelegate.currentChatId,

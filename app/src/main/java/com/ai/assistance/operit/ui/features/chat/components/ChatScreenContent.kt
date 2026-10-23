@@ -259,6 +259,7 @@ fun ChatScreenContent(
     }
 
     val activeRunStartedAt by actualViewModel.activeRunStartedAt.collectAsState()
+    val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
     androidx.compose.runtime.CompositionLocalProvider(
         com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiSubmit provides
             if (transcriptLocked) null else actualViewModel::submitDynamicUi,
@@ -276,6 +277,7 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
+                        orbitUserWaiting = currentChatId in userWaitingChatIds,
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,
@@ -413,6 +415,7 @@ fun ChatScreenContent(
                         currentChatId = currentChatId,
                         isLoading = isLoading,
                         activeRunStartedAt = activeRunStartedAt[currentChatId],
+                        orbitUserWaiting = currentChatId in userWaitingChatIds,
                         enableDialogs = enableMessageDialogs && !readOnlyTranscript,
                         allowTranscriptMutation = !transcriptLocked,
                         enableToolDetailDialogs = enableToolDetailDialogs ?: enableMessageDialogs,

@@ -187,6 +187,8 @@ fun ChatArea(
     onLoadProcess: (suspend (Long) -> Unit)? = null,
     transcriptReady: Boolean = true,
     activeRunStartedAt: Long? = null,
+    /** The running turn answers what the user said themselves (Orbit shows its typing dots only then). */
+    orbitUserWaiting: Boolean = false,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
@@ -463,8 +465,10 @@ fun ChatArea(
                         LocalOrbitChatFooter.current?.invoke(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, null, emptySet()))
                     }
                 }
-                // Orbit is typing for as long as it works on a reply, like a person would be.
-                if (isLoading && !hasNewerDisplayHistory) {
+                // Orbit is typing for as long as it works on a reply to the user, like a person would be.
+                // A reply started by a reaction, an approval, a background task or a subagent result
+                // shows no dots; the status under Orbit's name still says what it is doing.
+                if (isLoading && orbitUserWaiting && !hasNewerDisplayHistory) {
                     val typing = stringResource(R.string.orbit_typing, currentOrbitName())
                     Surface(
                         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),

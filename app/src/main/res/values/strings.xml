@@ -9207,6 +9207,8 @@
     <string name="orbit_routine_feed">动态更新</string>
     <string name="orbit_routine_alignment">夜间对齐复盘</string>
     <string name="orbit_routine_alignment_desc">%1$s 自动创建。每晚在后台回看当天的聊天，想想和你相处得怎么样、哪里被你纠正过，再更新对齐总结。不会打扰你。可以暂停或改时间，但不能删除。</string>
+    <string name="orbit_routine_proactive">主动巡检</string>
+    <string name="orbit_routine_proactive_desc">%1$s 自动创建。白天每 2 小时在后台看看最近的聊天，找出说定了但还没人跟进的事（比如漏掉的提醒），准备好再由 %1$s 判断要不要告诉你。夜里和没有新聊天时跳过。可以暂停或改频率，但不能删除。</string>
     <string name="orbit_routine_ideas">每日点子</string>
     <string name="orbit_routine_feed_desc">%1$s 自动创建。在后台按动态说明写动态，放进动态页，不会打扰你。可以暂停或改时间，但不能删除。</string>
     <string name="orbit_routine_ideas_desc">%1$s 自动创建。在后台想几个能为你做的点子，放进点子页，不会打扰你。可以暂停或改时间，但不能删除。</string>
@@ -9517,6 +9519,7 @@
     <string name="orbit_export_confirm">导出</string>
     <string name="orbit_decision_no_active_goals">没有进行中的目标，这次不用对齐</string>
     <string name="orbit_decision_no_new_talk">上次复盘后没有新的聊天，这次不用复盘</string>
+    <string name="orbit_decision_proactive_skipped">夜里或上次巡检后没有新聊天，这次不用巡检</string>
     <string name="orbit_item_told">%1$s 告诉了你：%2$s</string>
     <string name="orbit_item_skipped">%1$s 没有打扰你：%2$s</string>
     <string name="orbit_item_reason_time_sensitive">有截止时间</string>

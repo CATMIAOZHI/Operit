@@ -533,10 +533,17 @@ interface OrbitTaskDao {
     suspend fun decidedItems(orbitId: String, limit: Int): List<OrbitDeliveryEntity>
 
     /** Orbit's call on one handed item; it can still replace a default "not registered" skip. */
-    @Query("UPDATE orbit_deliveries SET verdict=:verdict, verdictReason=:reason, verdictNote=:note, decidedAt=:now " +
+    @Query("UPDATE orbit_deliveries SET verdict=:verdict, verdictReason=:reason, verdictNote=:note, " +
+        "presentation=:presentation, decidedAt=:now " +
         "WHERE id=:id AND orbitId=:orbitId AND chatId=:chatId AND state='SENT' " +
         "AND (verdict='' OR verdictReason='" + OrbitDeliveryEntity.UNREGISTERED + "')")
-    suspend fun decide(id: String, orbitId: String, chatId: String, verdict: String, reason: String, note: String, now: Long): Int
+    suspend fun decide(id: String, orbitId: String, chatId: String, verdict: String, reason: String, note: String,
+        presentation: String, now: Long): Int
+
+    /** What the user did with an item Orbit told them; a later answer replaces an earlier one. */
+    @Query("UPDATE orbit_deliveries SET userResponse=:response, userResponseNote=:note, respondedAt=:now " +
+        "WHERE id=:id AND orbitId=:orbitId AND verdict='" + OrbitDeliveryEntity.SEND + "'")
+    suspend fun respond(id: String, orbitId: String, response: String, note: String, now: Long): Int
 
     /** Items Orbit spoke about without a call count as not sent. */
     @Query("UPDATE orbit_deliveries SET verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='" +

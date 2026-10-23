@@ -56,7 +56,7 @@ object OrbitTaskRunner {
         description = "Save this Orbit turn's result and finish. A non-empty userMessage is a draft item: Orbit checks it in the chat and decides whether and how to tell the user; tool activity stays in the execution record.",
         parametersStructured = listOf(
             ToolParameterSchema("observation", "string", "A concise durable checkpoint, at most 4000 characters", true),
-            ToolParameterSchema("userMessage", "string", "The draft of what Orbit could tell the user (results, a question, a problem), or empty to stay quiet; at most 8000 characters", true),
+            ToolParameterSchema("userMessage", "string", "The draft of what Orbit could tell the user (results, a question, a problem, a proposal), or empty to stay quiet. A proposal is a prepared brief in five parts (see the task prompt). At most 8000 characters", true),
             ToolParameterSchema("decision", "string", "One or two sentences on why you drafted something for the user or stayed quiet; the user can read it in the task details. At most 500 characters", true),
             ToolParameterSchema("opportunityKey", "string", "Required with a userMessage: a short stable key for the matter, the same every time it comes up (e.g. parcel:SF1234, reply:bbb-complaint). New wording of the same matter keeps its key. At most 80 characters", false),
             ToolParameterSchema("expiresAt", "string", "When the item stops mattering, local time yyyy-MM-dd HH:mm (or yyyy-MM-dd for the end of that day); empty if it does not run out", false),
@@ -210,9 +210,11 @@ object OrbitTaskRunner {
                             context.getString(com.ai.assistance.operit.R.string.orbit_decision_watch_failed))
                         return@withTimeout
                     }
-                    // A goal briefing with no active goal, or an alignment review with no new talk, has nothing to do.
+                    // A goal briefing with no active goal, or an alignment review or proactive check with no new
+                    // talk (or at night), has nothing to do.
                     if (task.kind == "ASSIST" && source.isBlank() &&
-                        task.source in setOf(OrbitRoutines.GOALS_SOURCE, OrbitRoutines.ALIGNMENT_SOURCE)) {
+                        task.source in setOf(OrbitRoutines.GOALS_SOURCE, OrbitRoutines.ALIGNMENT_SOURCE,
+                            OrbitRoutines.PROACTIVE_SOURCE)) {
                         // SKIPPED keeps the activity list free of a daily empty row; the detail page says why.
                         complete(context, state, task.lastObservation, "", "", OrbitRunEntity.SKIPPED)
                         return@withTimeout
@@ -501,6 +503,16 @@ object OrbitTaskRunner {
                 or finished work waiting for their decision. Be concrete (what, where, by when) and give the next step;
                 a vague flag or general advice is not worth a message. An unanswered earlier offer does not mean the matter
                 is still open, so do not turn it into a reminder. Respect the reporting policy and the preferences.
+                A plain result or update stays short. When the draft proposes something the user must approve (a reminder,
+                a message to send, a booking), write it as a prepared brief for Orbit, not as the message itself, in five parts:
+                1. Background and timing: what was decided, by whom and when, the firm constraints, what already covers it,
+                   the gap, and how long until it matters.
+                2. Verified: what you checked and how (message ids, task ids, what you looked up).
+                3. Missing: the action that needs their approval, fully defined so one yes can carry it out (for a reminder:
+                   title, goal, time and time zone, chat, the points of its text). Never leave details for after the yes.
+                4. Uncertain: what you could not confirm (for example whether they already did it) and how the wording allows for it.
+                5. Delivery: one line or options; options put accepting, declining and "already done" side by side; the
+                   priority and why. Urgency must match the real deadline; promise no prices or offers you have not checked.
                 With a userMessage give opportunityKey (the same key every time this matter comes up), evidence Orbit can
                 check, expiresAt when it stops mattering, and priority high only when it is truly time-sensitive.
                 Say why in decision, whether you draft or stay quiet.
@@ -609,6 +621,8 @@ object OrbitTaskRunner {
         task.source == OrbitRoutines.FEED_SOURCE -> "the feed brief"
         task.source == OrbitRoutines.ALIGNMENT_SOURCE ->
             "the window of this alignment review; read its messages with ${OrbitReviewReader.TOOL}"
+        task.source == OrbitRoutines.PROACTIVE_SOURCE ->
+            "the recent messages of the Orbit chats with new talk since the last proactive check"
         task.source.isBlank() || task.source == OrbitRoutines.CHAT_SOURCE || task.source == OrbitRoutines.IDEAS_SOURCE ->
             "the recent Orbit conversation"
         else -> "page named by the task; the excerpt below is the recent Orbit conversation"
