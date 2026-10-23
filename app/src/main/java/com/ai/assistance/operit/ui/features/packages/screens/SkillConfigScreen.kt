@@ -632,7 +632,10 @@ fun SkillConfigScreen(
             } != true,
             loadError = skillDetailError,
             deleting = deletingSkill,
-            onHistory = if (skillRepository.memorySpaceId != null) ({
+            // An Orbit keeps no change review or rollback for its skills, so it has no history button.
+            onHistory = if (skillRepository.memorySpaceId?.let {
+                    !com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
+                } == true) ({
                 if (onOpenSkillHistory != null) onOpenSkillHistory(skill.name) else historySkill = skill.name
                 selectedSkill = null
             }) else null,

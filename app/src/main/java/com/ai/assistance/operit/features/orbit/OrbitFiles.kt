@@ -110,7 +110,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     suspend fun read(path: String): String = io {
         val p = normalize(path)
-        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        require(allowed(p) || DOCS.matches(p)) { "Not one of Orbit's files: $path" }
         val f = inside(File(root, p))
         if (!f.isFile) return@io template(p) ?: error("No such file: $p")
         require(isText(p)) { "Not a text file: $p" }
@@ -408,6 +408,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         /** One alignment review a night: dreams/YYYY-MM-DD.md. */
         private val DREAM = Regex("dreams/\\d{4}-\\d{2}-\\d{2}\\.md")
         private val FILES = Regex("files/(?:[^/]{1,80}/){0,3}[^/]{1,120}")
+        /** The built-in product docs: readable, never written through these tools (see OrbitDocs). */
+        private val DOCS = Regex("docs/[^/]{1,80}\\.md")
         private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
         private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
         private val locks = ConcurrentHashMap<String, Mutex>()

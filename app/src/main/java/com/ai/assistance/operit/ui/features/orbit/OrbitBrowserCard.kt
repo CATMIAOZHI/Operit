@@ -207,13 +207,11 @@ private fun OrbitCardPiece(summary: String, key: String, time: Long, content: @C
         OrbitPieceFrame(piece) {
             Box {
                 content()
-                androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                    OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
-                    if (reply != null) androidx.compose.material3.DropdownMenuItem(
-                        text = { Text(stringResource(R.string.reply_message)) },
-                        onClick = { menu = false; reply(summary, time) },
-                    )
-                }
+                com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+        expanded = menu, onDismiss = { menu = false },
+        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        onReply = reply?.let { r -> { menu = false; r(summary, time) } },
+    )
             }
         }
     }
@@ -277,13 +275,11 @@ private fun ExpiredBrowserCard(card: OrbitBrowserWatch.Card, bubbleColor: Color)
             }
         }
     }
-    androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-        OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
-        if (reply != null) androidx.compose.material3.DropdownMenuItem(
-            text = { Text(stringResource(R.string.reply_message)) },
-            onClick = { menu = false; reply(summary, card.createdAt) },
-        )
-    }
+    com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+        expanded = menu, onDismiss = { menu = false },
+        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        onReply = reply?.let { r -> { menu = false; r(summary, card.createdAt) } },
+    )
     }
     }
     }
@@ -394,13 +390,11 @@ private fun BrowserTaskCard(work: OrbitBrowserWatch.Work, bubbleColor: Color, vi
             }
         }
     }
-    androidx.compose.material3.DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-        OrbitTapbackRow(reactions?.byMessage?.get(piece.key), ::react, { menu = false; picker = true })
-        if (reply != null) androidx.compose.material3.DropdownMenuItem(
-            text = { Text(stringResource(R.string.reply_message)) },
-            onClick = { menu = false; reply(summary, work.createdAt) },
-        )
-    }
+    com.ai.assistance.operit.ui.features.chat.components.OrbitPieceMenu(
+        expanded = menu, onDismiss = { menu = false },
+        selected = reactions?.byMessage?.get(piece.key), onPick = ::react, onMore = { menu = false; picker = true },
+        onReply = reply?.let { r -> { menu = false; r(summary, work.createdAt) } },
+    )
     }
     }
     }

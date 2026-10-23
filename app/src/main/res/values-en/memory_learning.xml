@@ -155,6 +155,7 @@
     <string name="skill_folder_builtin_desc">Skills that ship with Operit</string>
     <string name="skill_folder_total">Skills: %1$d</string>
     <string name="orbit_learning_skills_group">Skills</string>
+    <string name="orbit_learning_recall_group">Chat search</string>
     <string name="orbit_learning_all_skills_desc">Browse them in folders by origin</string>
     <string name="orbit_learning_user_desc">What it knows about you; you can edit it</string>
     <string name="skill_folder_expanded">Expanded</string>

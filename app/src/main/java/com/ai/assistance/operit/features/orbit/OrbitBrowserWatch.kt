@@ -341,6 +341,25 @@ internal object OrbitBrowserWatch {
     fun pageAlive(work: Work): Boolean =
         work.sessionId?.let(StandardBrowserSessionTools.sessions::get)?.browserTaskId == work.executorChatId
 
+    /**
+     * A tab of [executorChatId] closed, by the AI, the user or a cleanup. Another tab of the task
+     * takes its place; with none left the page is gone, and its card reads as expired for good.
+     */
+    fun tabClosed(executorChatId: String, closedId: String) {
+        val left = StandardBrowserSessionTools.sessions.values.firstOrNull { it.browserTaskId == executorChatId }
+        change(executorChatId) { work ->
+            when {
+                left != null && work.sessionId != closedId -> work
+                left != null -> work.copy(
+                    sessionId = left.id,
+                    url = left.currentUrl ?: work.url,
+                    title = left.pageTitle ?: work.title,
+                )
+                else -> work.copy(sessionId = null, createdAt = System.currentTimeMillis())
+            }
+        }
+    }
+
     /** An AI browser call for [caller] ended; the card follows the tab it left in front. */
     fun end(caller: Caller?) {
         caller ?: return
@@ -351,7 +370,8 @@ internal object OrbitBrowserWatch {
                 acting = (work.acting - 1).coerceAtLeast(0),
                 lastActionAt = System.currentTimeMillis(),
                 // With its last tab closed the page is gone; the work no longer points at it.
-                sessionId = session?.id ?: work.sessionId?.takeIf { pageAlive(work) },
+                sessionId = session?.id ?: work.sessionId?.takeIf { pageAlive(work) }
+                    ?: StandardBrowserSessionTools.sessions.values.firstOrNull { it.browserTaskId == caller.executorChatId }?.id,
                 url = session?.currentUrl ?: work.url,
                 title = session?.pageTitle ?: work.title,
             ))

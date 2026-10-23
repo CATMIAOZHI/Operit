@@ -64,8 +64,8 @@ private val learningGroups = listOf(
         LearningRow("learned", R.string.memory_learned_skills, R.string.memory_nav_learned, "wand-sparkles"),
         LearningRow("logs", R.string.memory_extraction_logs, R.string.memory_nav_logs, "scroll-text"),
     ),
-    R.string.memory_group_review to listOf(
-        LearningRow("review", R.string.memory_review_title, R.string.memory_nav_review, "list-checks"),
+    // An Orbit applies what it learns straight away, so there is no change review or rollback here.
+    R.string.orbit_learning_recall_group to listOf(
         LearningRow("history", R.string.chat_recall_title, R.string.memory_nav_history, "message-square-text"),
     ),
     R.string.memory_group_settings to listOf(

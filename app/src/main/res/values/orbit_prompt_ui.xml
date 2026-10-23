@@ -105,4 +105,6 @@
     <string name="orbit_profile_browser_empty">现在没有浏览器任务</string>
     <string name="orbit_profile_browser_gone">这个网页已经关了</string>
     <string name="orbit_profile_browser_empty_desc">%1$s 用浏览器时，网页会出现在这里，点开就能看，也能接手。</string>
+    <string name="orbit_options_send_failed">没发出去，再点一次试试</string>
+    <string name="orbit_options_chosen">已选择</string>
 </resources>

@@ -132,6 +132,8 @@ internal object OrbitTools {
             }
         val controls = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.additionalPrompts(context, chatId)
         val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
+        // The handbook tells Orbit to read docs/ in its folder; put the built-in copy there first.
+        com.ai.assistance.operit.features.orbit.OrbitDocs.ensure(context, orbit.id, useEnglish)
         // File text is data inside our tags, so escape it the way memory notes are escaped.
         fun escape(text: String) = text.trim().replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
         val handbook = "<orbit_handbook source=\"PROMPT.md\">\n${escape(files.prompt(context, orbit.id))}\n</orbit_handbook>"

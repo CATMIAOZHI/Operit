@@ -29,6 +29,7 @@ internal object OrbitExtraTools {
             Spec(OrbitPermissionTools.prompt, false, OrbitPermissionTools::execute),
             Spec(OrbitBrowserHandoffTools.prompt, false, OrbitBrowserHandoffTools::execute),
             Spec(OrbitBrowserShowTools.prompt, false, OrbitBrowserShowTools::execute),
+            Spec(OrbitOptionsTools.prompt, false, OrbitOptionsTools::execute),
             Spec(OrbitPrivacyTools.forgetPrompt, false, OrbitPrivacyTools::executeForget),
             Spec(OrbitPrivacyTools.originPrompt, true, OrbitPrivacyTools::executeOrigin),
             Spec(OrbitPrivacyTools.presendPrompt, true, OrbitPrivacyTools::executePresend),

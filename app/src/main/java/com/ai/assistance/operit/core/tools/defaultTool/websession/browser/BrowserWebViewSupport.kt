@@ -1506,6 +1506,7 @@ internal fun StandardBrowserSessionTools.closeSession(sessionId: String): Boolea
     } == true
     removeSessionOrder(sessionId)
     BrowserCdp.forget(sessionId)
+    session.browserTaskId?.let { com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.tabClosed(it, sessionId) }
 
     val watched = com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value
     if (watched != null && session.browserTaskId == watched &&

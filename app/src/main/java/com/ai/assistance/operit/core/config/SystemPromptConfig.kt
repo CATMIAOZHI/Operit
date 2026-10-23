@@ -503,8 +503,15 @@ AVAILABLE_TOOLS_SECTION""".trimIndent()
                 .replace("PACKAGE_SYSTEM_GUIDELINES_SECTION", if (packageSystemVisible) packageGuidelines else "")
                 .replace("AVAILABLE_TOOLS_SECTION", "")
         } else {
+            // Orbit reports results when the work is done, not after every tool, so its chats drop
+            // the "explain each result" line.
+            val xmlUsage = (if (useEnglish) TOOL_USAGE_GUIDELINES_EN else TOOL_USAGE_GUIDELINES_CN).let {
+                if (!orbitSkills) it
+                else it.replace(" After using each tool, clearly explain the execution results and suggest the next steps.", "")
+                    .replace("使用每个工具后，清楚地解释执行结果并建议下一步。", "")
+            }
             prompt = prompt
-                .replace("TOOL_USAGE_GUIDELINES_SECTION", executionGuidelines + "\n" + if (useEnglish) TOOL_USAGE_GUIDELINES_EN else TOOL_USAGE_GUIDELINES_CN)
+                .replace("TOOL_USAGE_GUIDELINES_SECTION", executionGuidelines + "\n" + xmlUsage)
                 .replace(
                     "PACKAGE_SYSTEM_GUIDELINES_SECTION",
                     if (packageSystemVisible) {

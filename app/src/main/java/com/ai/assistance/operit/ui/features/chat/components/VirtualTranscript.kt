@@ -8,6 +8,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.lazy.layout.LazyLayoutCacheWindow
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -587,9 +588,33 @@ internal fun VirtualTranscript(
                 },
             )
             }
-            if (!following || hasNewer) {
+            if (!look && (!following || hasNewer)) {
                 IconButton(onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() }) {
                     Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.history_scroll_to_bottom))
+                }
+            }
+        }
+        // Orbit, like Muse: a round button just above the message box, in the middle.
+        if (look) androidx.compose.animation.AnimatedVisibility(
+            visible = !following || hasNewer,
+            modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp),
+            enter = androidx.compose.animation.fadeIn(androidx.compose.animation.core.tween(150)) +
+                androidx.compose.animation.scaleIn(androidx.compose.animation.core.tween(150), initialScale = 0.8f),
+            exit = androidx.compose.animation.fadeOut(androidx.compose.animation.core.tween(120)) +
+                androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(120), targetScale = 0.8f),
+        ) {
+            androidx.compose.material3.Surface(
+                onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() },
+                shape = androidx.compose.foundation.shape.CircleShape,
+                color = MaterialTheme.colorScheme.surfaceContainerHigh,
+                shadowElevation = 3.dp,
+                modifier = Modifier.size(44.dp),
+            ) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(
+                        Icons.Default.ArrowDownward, stringResource(R.string.history_scroll_to_bottom),
+                        tint = MaterialTheme.colorScheme.onSurface, modifier = Modifier.size(22.dp),
+                    )
                 }
             }
         }

@@ -158,7 +158,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
     private val _isSpeechPaused = MutableStateFlow(false)
     val isSpeechPaused: StateFlow<Boolean> = _isSpeechPaused.asStateFlow()
 
-    private val pendingMessageQueueStore = PendingMessageQueueStore()
+    // A reply option whose queued message comes back has to be sent again before it can count.
+    private val pendingMessageQueueStore = PendingMessageQueueStore { chatId, messageId ->
+        com.ai.assistance.operit.features.orbit.OrbitOptions.backInQueue(chatId, messageId)
+    }
     internal val pendingMessageQueueStates: StateFlow<Map<String, PendingMessageQueueState>> =
         pendingMessageQueueStore.states
 
@@ -1868,6 +1871,62 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun steeringTurnId(chatId: String): String? = messageProcessingDelegate.steeringTurnId(chatId)
 
+    /**
+     * Sends a reply option the user tapped in an Orbit chat as their next message. While Orbit is
+     * still replying it goes into the current turn, like a message typed then; if the turn cannot
+     * take it, it waits in the queue for the turn to end. False if it could not be sent at all.
+     */
+    /**
+     * Sends a tapped Orbit reply option as the user's message. Its arrival is seen where user
+     * messages are saved; while [waiting] stays true, [onLost] is called if the chat goes idle with
+     * the message neither saved nor queued, wherever the user is in the app by then.
+     */
+    fun sendOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit): Boolean {
+        val started = startOrbitOption(chatId, text)
+        if (started) watchOrbitOption(chatId, text, waiting, onLost)
+        return started
+    }
+
+    private fun startOrbitOption(chatId: String, text: String): Boolean {
+        if (currentChatId.value != chatId || isCurrentTranscriptReadOnly() || text.isBlank()) return false
+        if (!isChatBusy(chatId)) {
+            return messageCoordinationDelegate.trySendUserMessageToExistingChat(
+                promptFunctionType = PromptFunctionType.CHAT,
+                chatId = chatId,
+                messageText = text,
+                turnOptions = com.ai.assistance.operit.data.model.ChatTurnOptions(useComposerReply = false),
+            )
+        }
+        // The chat is busy now, so the queue is marked blocked and sends by itself once it is free.
+        val id = pendingMessageQueueStore.enqueue(chatId, text, true) ?: return false
+        com.ai.assistance.operit.features.orbit.OrbitOptions.queued(chatId, text, id) {
+            pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.id == id && !it.isSteering } == true
+        }
+        val turnId = steeringTurnId(chatId) ?: return true
+        val item = pendingMessageQueueStore.remove(chatId, id) ?: return true
+        viewModelScope.launch {
+            if (!trySteerQueuedMessage(chatId, turnId, item)) pendingMessageQueueStore.restore(chatId, item)
+        }
+        return true
+    }
+
+    /** Watches for an option that was dropped: the chat idle for a while, nothing queued, still not saved. */
+    private fun watchOrbitOption(chatId: String, text: String, waiting: () -> Boolean, onLost: () -> Unit) {
+        viewModelScope.launch {
+            withTimeoutOrNull(30 * 60_000L) {
+                var idleSince = 0L
+                while (waiting()) {
+                    val queued = pendingMessageQueueStore.states.value[chatId]?.messages?.any { it.text == text } == true
+                    val now = System.currentTimeMillis()
+                    if (queued || isChatBusy(chatId)) idleSince = 0L
+                    else if (idleSince == 0L) idleSince = now
+                    else if (now - idleSince >= 3_000) { onLost(); break }
+                    delay(500)
+                }
+            }
+        }
+    }
+
     suspend fun trySteerQueuedMessage(chatId: String, expectedTurnId: String, item: PendingQueueMessageItem): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
@@ -1884,6 +1943,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, item.chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         pendingMessageQueueStore.restore(chatId, item.copy(isSteering = true))
+        com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, item.id)
         val accepted = messageProcessingDelegate.trySteerMessage(
             chatId,
             expectedTurnId,
@@ -1904,8 +1964,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         if (currentChatId.value != owner.chatId || displayedChatId.value != owner.chatId ||
             isCurrentTranscriptReadOnly() || isChatBusy(owner.chatId) || text.length > 40_000) return false
         val message = chatHistory.value.firstOrNull { it.timestamp == owner.timestamp } ?: return false
-        if (message.sender != "ai" || message.isVariantPreview ||
-            message.selectedVariantIndex != owner.variant || message.content != owner.content) return false
+        if (message.sender != "ai" || message.isVariantPreview || message.selectedVariantIndex != owner.variant) return false
+        // An Orbit chat shows each reply cleaned (no thinking or tool steps, its tool cards after it);
+        // the card belongs to the message as shown now.
+        if (message.content != owner.content &&
+            com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(chatHistory.value)
+                .firstOrNull { it.timestamp == owner.timestamp }?.content != owner.content) return false
         return messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = PromptFunctionType.CHAT,
             chatId = owner.chatId,
@@ -1922,11 +1986,13 @@ class ChatViewModel(private val context: Context) : ViewModel() {
         attachments: List<AttachmentInfo> = emptyList(),
         promptFunctionType: PromptFunctionType = PromptFunctionType.CHAT,
         replyToMessage: ChatMessage? = null,
+        queueItemId: Long? = null,
     ): Boolean {
         if (!pendingMessageQueueStore.isCurrentGeneration(chatId, chatGeneration)) return false
         if (chatId == currentChatId.value && isCurrentTranscriptReadOnly()) return false
         if (isChatBusy(chatId)) return false
         hideMentionSuggestionPanel()
+        queueItemId?.let { com.ai.assistance.operit.features.orbit.OrbitOptions.dispatching(chatId, it) }
         return messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = promptFunctionType,
             chatId = chatId,
@@ -1970,6 +2036,12 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     fun removePendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =
         pendingMessageQueueStore.remove(chatId, messageId)
+
+    /** The user deleted or took back a queued message; a reply option it carried can be tapped again. */
+    fun cancelPendingQueueMessage(chatId: String, messageId: Long): PendingQueueMessageItem? =
+        pendingMessageQueueStore.remove(chatId, messageId)?.also {
+            com.ai.assistance.operit.features.orbit.OrbitOptions.queueCancelled(messageId)
+        }
 
     fun restorePendingQueueMessage(chatId: String, message: PendingQueueMessageItem) {
         pendingMessageQueueStore.restore(chatId, message)

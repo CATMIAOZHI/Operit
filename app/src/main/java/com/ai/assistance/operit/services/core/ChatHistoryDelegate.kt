@@ -1623,6 +1623,15 @@ class ChatHistoryDelegate(
 
             val isCurrentChat = (targetChatId == _currentChatId.value)
 
+            // A tapped Orbit reply option counts as sent once its user message is stored.
+            suspend fun persist() {
+                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                if (message.sender == "user") {
+                    com.ai.assistance.operit.features.orbit.OrbitOptions.onUserMessageSaved(
+                        targetChatId, message.content, message.timestamp)
+                }
+            }
+
             if (message.isVariantPreview) {
                 if (isCurrentChat) {
                     upsertCurrentChatMessageInMemory(message)
@@ -1636,13 +1645,13 @@ class ChatHistoryDelegate(
                     TAG,
                     "当前会话正在切换，跳过内存刷新但继续持久化消息: timestamp=${message.timestamp}"
                 )
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
                 return@withLock
             }
 
             if (!isCurrentChat) {
                     // 非当前会话：使用“更新或插入”语义，避免每个chunk都插入新消息
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
                 return@withLock
             }
 
@@ -1652,7 +1661,7 @@ class ChatHistoryDelegate(
                     _chatHistory.value.any { it.timestamp == message.timestamp }
 
             if (didUpdateVisibleMessage) {
-                chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                persist()
             } else {
                 AppLogger.d(
                     TAG,
@@ -1660,10 +1669,10 @@ class ChatHistoryDelegate(
                 )
                 if (isVisibleNewMessage) {
                     // Absence from the paged display window does not mean absence from storage.
-                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                    persist()
                     refreshCurrentChatDisplayFlags(targetChatId)
                 } else {
-                    chatHistoryManager.updateMessage(targetChatId, message, clearTodosAfterUpdate)
+                    persist()
                 }
             }
         }
