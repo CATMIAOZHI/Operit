@@ -771,7 +771,11 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
         return try {
             val repository = com.ai.assistance.operit.data.repository.ChatRecallRepository(
                 context, resolveCallerChatId(tool))
-            val json = repository.execute(tool.parameters.associate { it.name to it.value })
+            val args = tool.parameters.associate { it.name to it.value }
+            // The assistant's thinking is left out unless asked for: it is long, crowds out the reply
+            // within the per-message limit, and is not what anyone said.
+            val thinking = args["include_thinking"]?.trim()?.lowercase() == "true"
+            val json = repository.execute(args, filterAssistantThinking = true, includeThinking = thinking)
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e

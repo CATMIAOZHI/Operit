@@ -73,6 +73,20 @@ class OrbitTaskDaoTest {
         assertTrue(dao.enqueueGeofence("task", 1, "second", 2000))
     }
 
+    @Test fun `an interval wait longer than one interval is cut back and nothing else changes`() = runBlocking {
+        val hour = 60 * 60_000L
+        dao.insertTask(definition().copy(nextRunAt = 1000 + 10 * hour))
+        dao.insertTask(definition("daily").copy(scheduleMode = "DAILY", nextRunAt = 1000 + 10 * hour))
+        dao.insertTask(definition("paused").copy(state = "PAUSED", nextRunAt = 1000 + 10 * hour))
+        val version = dao.task("task")?.version
+        assertEquals(1, dao.capIntervalWait("task", 1000))
+        assertEquals(1000 + hour, dao.task("task")?.nextRunAt)
+        assertEquals(version, dao.task("task")?.version)
+        assertEquals(0, dao.capIntervalWait("task", 1000))
+        assertEquals(0, dao.capIntervalWait("daily", 1000))
+        assertEquals(0, dao.capIntervalWait("paused", 1000))
+    }
+
     @Test fun `repeating geofence retains crossings while an earlier event waits`() = runBlocking {
         dao.insertTask(definition(kind = "GEOFENCE").copy(nextRunAt = 0))
         assertTrue(dao.enqueueGeofence("task", 1, "first", 1000))

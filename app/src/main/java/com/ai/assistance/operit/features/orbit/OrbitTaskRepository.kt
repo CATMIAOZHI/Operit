@@ -339,9 +339,6 @@ class OrbitTaskRepository(private val context: Context) {
             else if (task.scheduleMode in OrbitCalendarSchedule.modes)
                 OrbitCalendarSchedule.next(task.scheduleMode, task.calendarRule, task.dailyMinute, now)
             else if (task.scheduleMode == "ONCE") maxOf(task.nextRunAt, now)
-            else (now + task.intervalMinutes.coerceAtLeast(15) * 60_000L).let {
-                // The proactive check sleeps at night: a turn due then moves to the morning.
-                if (task.kind == "ASSIST" && task.source == OrbitRoutines.PROACTIVE_SOURCE) OrbitRoutines.proactiveDue(it) else it
-            }
+            else now + task.intervalMinutes.coerceAtLeast(15) * 60_000L
     }
 }

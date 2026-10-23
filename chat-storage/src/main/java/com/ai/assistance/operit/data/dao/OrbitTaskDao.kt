@@ -500,6 +500,16 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_tasks SET instruction = :instruction WHERE id = :id AND instruction = :old")
     suspend fun refreshInstruction(id: String, old: String, instruction: String): Int
 
+    /**
+     * Pulls a waiting interval task's next turn back to at most one interval from [now]. The version
+     * stays, so a run in progress is not cancelled; other schedules are left alone.
+     */
+    @Query(
+        "UPDATE orbit_tasks SET nextRunAt = :now + MAX(intervalMinutes, 15) * 60000 WHERE id = :id AND " +
+            "state = 'ACTIVE' AND scheduleMode = 'INTERVAL' AND nextRunAt > :now + MAX(intervalMinutes, 15) * 60000"
+    )
+    suspend fun capIntervalWait(id: String, now: Long): Int
+
     /** Drops a retired phrase of a built-in routine's steps from the chats its past runs used. */
     @Query(
         "UPDATE messages SET content = REPLACE(content, :phrase, '') WHERE content LIKE '%' || :phrase || '%' AND " +

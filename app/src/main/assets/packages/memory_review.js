@@ -41,6 +41,7 @@
         {"name": "after", "type": "string", "required": false, "description": {"zh": "开始时间：ISO日期或7d/24h", "en": "Since: ISO date or 7d/24h"}},
         {"name": "before", "type": "string", "required": false, "description": {"zh": "结束时间：ISO日期或7d/24h", "en": "Until: ISO date or 7d/24h"}},
         {"name": "literal", "type": "boolean", "required": false, "description": {"zh": "true为字面包含；默认全文关键词检索", "en": "true for literal matching; default full-text keyword search"}},
+        {"name": "include_thinking", "type": "boolean", "required": false, "description": {"zh": "true 时连 AI 当时的思考一起返回；默认不返回，省上下文", "en": "true to include the assistant's thinking; left out by default to save context"}},
         {"name": "offset", "type": "number", "required": false, "description": {"zh": "结果分页偏移（不是消息内偏移；消息内偏移是 char_offset）", "en": "Paging offset across results (not an in-message offset; use char_offset for that)"}}
       ]
     },

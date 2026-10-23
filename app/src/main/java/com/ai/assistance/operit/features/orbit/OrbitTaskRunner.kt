@@ -211,7 +211,7 @@ object OrbitTaskRunner {
                         return@withTimeout
                     }
                     // A goal briefing with no active goal, or an alignment review or proactive check with no new
-                    // talk (or at night), has nothing to do.
+                    // talk, has nothing to do.
                     if (task.kind == "ASSIST" && source.isBlank() &&
                         task.source in setOf(OrbitRoutines.GOALS_SOURCE, OrbitRoutines.ALIGNMENT_SOURCE,
                             OrbitRoutines.PROACTIVE_SOURCE)) {

@@ -231,7 +231,7 @@ fun OrbitScreen(
         // The nightly alignment review keeps the synthesis every chat carries, like Muse's dream.
         runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureAlignment(context.applicationContext, orbit) }
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
-        // The daytime proactive check looks for what was decided but nobody follows up.
+        // The proactive check looks for what was decided but nobody follows up.
         runCatching { com.ai.assistance.operit.features.orbit.OrbitRoutines.ensureProactiveScan(context.applicationContext, orbit) }
             .exceptionOrNull()?.let { if (it is kotlinx.coroutines.CancellationException) throw it }
         // Goals made before the briefing existed get it too.
