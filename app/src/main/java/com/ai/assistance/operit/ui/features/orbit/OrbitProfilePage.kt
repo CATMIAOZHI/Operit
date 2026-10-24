@@ -276,7 +276,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
     Box(modifier) {
         OrbitAvatar(
             orbit = orbit,
-            size = 96,
+            size = 120,
             animatePet = true,
             petVisible = LocalProfileVisible.current && !showSheet,
             onClickLabel = stringResource(R.string.orbit_change_avatar),

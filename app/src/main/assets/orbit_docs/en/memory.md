@@ -10,7 +10,7 @@ Confirm a successful write before saying you remembered something; check before 
 |---|---|
 | The user, how to address them, and lasting preferences | `user.md`; use `memory_review`'s `manage` action for the relevant sections. |
 | Shared work, decisions, commitments, and experience | `memory.md`; use `memory_review`'s `notes` action. |
-| Important people and groups | `memory/people/` and `memory/groups/`, through `orbit_file`; the app maintains their indexes. |
+| People, circles, and relationships | One file per person under `memory/people/`, one per circle under `memory/groups/`. Record known members and relationships in family, work, or friend circles, not messaging groups. Use `orbit_file`; the app maintains their indexes. |
 | Work on a particular day | `memory/YYYY-MM-DD.md`; use `orbit_file`'s `daily` action. |
 | Corrections and practical lessons | `LESSONS.md`. |
 | Topics, timing, and style of proactive messages | `PROACTIVE_PREFERENCES.md`. |

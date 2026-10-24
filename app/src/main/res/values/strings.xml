@@ -9380,11 +9380,11 @@
     <string name="orbit_file_devices">设备</string>
     <string name="orbit_file_devices_note">%1$s 能连上的设备，比如 Tailscale 组网里的电脑、NAS。不要写密码。这段说明不是文件内容。</string>
     <string name="orbit_files_people">人物</string>
-    <string name="orbit_files_groups">群组</string>
+    <string name="orbit_files_groups">圈子与关系</string>
     <string name="orbit_files_people_empty">还没有人物笔记。%1$s 了解到你身边的人时，会记在这里。</string>
-    <string name="orbit_files_groups_empty">还没有群组笔记。</string>
+    <string name="orbit_files_groups_empty">还没有圈子笔记。可以记录家人、同事、朋友等圈子，以及其中的人际关系。</string>
     <string name="orbit_file_person_note">%1$s 对这个人的了解。这段说明不是文件内容。</string>
-    <string name="orbit_file_group_note">%1$s 对这个群组的了解。这段说明不是文件内容。</string>
+    <string name="orbit_file_group_note">%1$s 对这个圈子及其中人际关系的了解。这段说明不是文件内容。</string>
     <string name="orbit_files_daily">每日流水</string>
     <string name="orbit_files_daily_empty">还没有流水。后台任务运行后会自动记在这里。</string>
     <string name="orbit_file_daily_note">这一天 %1$s 的观察和后台运行记录。流水不是长期记忆。这段说明不是文件内容。</string>
@@ -9400,7 +9400,7 @@
     <string name="orbit_trash_delete_forever_text">删除后就找不回来了。</string>
     <string name="orbit_trash_failed">没能完成，请稍后再试</string>
     <string name="orbit_files_new_person">新建人物</string>
-    <string name="orbit_files_new_group">新建群组</string>
+    <string name="orbit_files_new_group">记录圈子与关系</string>
     <string name="orbit_files_new_name">名字</string>
     <string name="orbit_files_create">新建</string>
     <string name="orbit_files_exists">已经有同名的文件了</string>
@@ -9431,10 +9431,10 @@
     <string name="orbit_user_file_note">这是 %1$s 存下的文件，你可以直接修改。</string>
     <string name="orbit_file_share">分享</string>
     <string name="orbit_file_no_app">没有能打开这个文件的应用</string>
-    <string name="orbit_files_row_desc">人物、群组、每日流水、经验本、生成的文件和回收站</string>
+    <string name="orbit_files_row_desc">人物、圈子与关系、每日流水、经验本、生成的文件和回收站</string>
     <string name="orbit_file_moved_to_trash">已移到回收站，%1$d 天内可以恢复</string>
     <string name="orbit_file_kind_person">人物笔记 · %1$s</string>
-    <string name="orbit_file_kind_group">群组笔记 · %1$s</string>
+    <string name="orbit_file_kind_group">圈子与关系 · %1$s</string>
     <string name="orbit_file_kind_daily">每日流水 · %1$s</string>
     <string name="orbit_file_kind_file">文件 · %1$s</string>
     <string name="orbit_file_open">打开</string>
