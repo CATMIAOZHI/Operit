@@ -10,7 +10,7 @@
 |---|---|
 | 用户本人、称呼、长期偏好 | `user.md`，用 `memory_review` 的 `manage` 修改相关分区。 |
 | 一起做过的事、决定、承诺和经验 | `memory.md`，用 `memory_review` 的 `notes` 读写。 |
-| 重要人物与群组 | `memory/people/`、`memory/groups/`，用 `orbit_file`，索引由应用维护。 |
+| 人物、圈子与关系 | `memory/people/` 一人一份；`memory/groups/` 一圈一份，记录家人、同事、朋友等圈子的已知成员和人际关系，不是聊天群。用 `orbit_file`，索引由应用维护。 |
 | 某一天发生的工作 | `memory/YYYY-MM-DD.md`，用 `orbit_file` 的 `daily` 留记录。 |
 | 纠正和做事教训 | `LESSONS.md`。 |
 | 主动消息的主题、时间和方式 | `PROACTIVE_PREFERENCES.md`。 |

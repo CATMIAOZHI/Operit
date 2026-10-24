@@ -9403,11 +9403,11 @@
     <string name="orbit_file_devices">Devices</string>
     <string name="orbit_file_devices_note">Devices %1$s can reach, such as computers or a NAS on your Tailscale network. Never write passwords here. This note is not part of the file.</string>
     <string name="orbit_files_people">People</string>
-    <string name="orbit_files_groups">Groups</string>
+    <string name="orbit_files_groups">Circles &amp; relationships</string>
     <string name="orbit_files_people_empty">No notes on people yet. %1$s writes them here as it learns about the people around you.</string>
-    <string name="orbit_files_groups_empty">No notes on groups yet.</string>
+    <string name="orbit_files_groups_empty">No circle notes yet. Record family, coworkers, friends, and their relationships.</string>
     <string name="orbit_file_person_note">What %1$s knows about this person. This note is not part of the file.</string>
-    <string name="orbit_file_group_note">What %1$s knows about this group. This note is not part of the file.</string>
+    <string name="orbit_file_group_note">What %1$s knows about this circle and its relationships. This note is not part of the file.</string>
     <string name="orbit_files_daily">Daily log</string>
     <string name="orbit_files_daily_empty">Nothing logged yet. Background runs are logged here on their own.</string>
     <string name="orbit_file_daily_note">What %1$s noticed and what its background runs did that day. The log is not long-term memory. This note is not part of the file.</string>
@@ -9423,7 +9423,7 @@
     <string name="orbit_trash_delete_forever_text">You cannot get it back afterwards.</string>
     <string name="orbit_trash_failed">That did not work. Please try again.</string>
     <string name="orbit_files_new_person">New person</string>
-    <string name="orbit_files_new_group">New group</string>
+    <string name="orbit_files_new_group">Record a circle</string>
     <string name="orbit_files_new_name">Name</string>
     <string name="orbit_files_create">New</string>
     <string name="orbit_files_exists">A file with that name already exists</string>
@@ -9454,10 +9454,10 @@
     <string name="orbit_user_file_note">A file %1$s saved. You can edit it.</string>
     <string name="orbit_file_share">Share</string>
     <string name="orbit_file_no_app">No app can open this file</string>
-    <string name="orbit_files_row_desc">People, groups, daily log, lessons, files it made, and the trash</string>
+    <string name="orbit_files_row_desc">People, circles and relationships, daily log, lessons, created files, and trash</string>
     <string name="orbit_file_moved_to_trash">Moved to the trash. You can restore it within %1$d days</string>
     <string name="orbit_file_kind_person">Person note · %1$s</string>
-    <string name="orbit_file_kind_group">Group note · %1$s</string>
+    <string name="orbit_file_kind_group">Circle &amp; relationships · %1$s</string>
     <string name="orbit_file_kind_daily">Daily log · %1$s</string>
     <string name="orbit_file_kind_file">File · %1$s</string>
     <string name="orbit_file_open">Open</string>

@@ -207,11 +207,11 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val showChatFloatingDotsAnimation by
         preferencesManager.showChatFloatingDotsAnimation.collectAsState(initial = true)
     val hasBackgroundImageFromPrefs = useBackgroundImage && backgroundImageUri != null
-    val effectiveHasBackgroundImage = hasBackgroundImage || hasBackgroundImageFromPrefs
 
     val chatAppearance = rememberChatAppearance()
     // An Orbit chat always reads as message bubbles, whatever style regular chats use.
     val orbitLook = com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+    val effectiveHasBackgroundImage = !orbitLook && (hasBackgroundImage || hasBackgroundImageFromPrefs)
     // Orbit's developer view is for reading what happened: no input box, nothing that rewrites
     // the conversation.
     val orbitDevView = com.ai.assistance.operit.ui.features.chat.components.LocalShowHiddenChatRows.current
@@ -219,17 +219,18 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val showInputProcessingStatus = showInputProcessingStatusPreference && !orbitLook
     val chatStyle = if (orbitLook) ChatStyle.BUBBLE else chatAppearance.chatStyle
     val inputStyle = chatAppearance.inputStyle
-    val cursorUserBubbleLiquidGlass = chatAppearance.cursorUserBubbleLiquidGlass
-    val cursorUserBubbleWaterGlass = chatAppearance.cursorUserBubbleWaterGlass
-    val bubbleUserBubbleLiquidGlass = chatAppearance.bubbleUserBubbleLiquidGlass
-    val bubbleUserBubbleWaterGlass = chatAppearance.bubbleUserBubbleWaterGlass
+    val cursorUserBubbleLiquidGlass = !orbitLook && chatAppearance.cursorUserBubbleLiquidGlass
+    val cursorUserBubbleWaterGlass = !orbitLook && chatAppearance.cursorUserBubbleWaterGlass
+    val bubbleUserBubbleLiquidGlass = !orbitLook && chatAppearance.bubbleUserBubbleLiquidGlass
+    val bubbleUserBubbleWaterGlass = !orbitLook && chatAppearance.bubbleUserBubbleWaterGlass
     // Orbit replies are plain gray bubbles, like a messaging app; no glass effects.
     val bubbleAiBubbleLiquidGlass = !orbitLook && chatAppearance.bubbleAiBubbleLiquidGlass
     val bubbleAiBubbleWaterGlass = !orbitLook && chatAppearance.bubbleAiBubbleWaterGlass
     // Orbit's bubbles are always round, like a messaging app's.
     val bubbleUserRoundedCornersEnabled = orbitLook || chatAppearance.bubbleUserRoundedCornersEnabled
     val bubbleAiRoundedCornersEnabled = orbitLook || chatAppearance.bubbleAiRoundedCornersEnabled
-    val userMessageColor = chatAppearance.userMessageColor
+    val userMessageColor = if (orbitLook) com.ai.assistance.operit.ui.features.orbit.LocalOrbitBubbleColor.current
+        else chatAppearance.userMessageColor
     val orbitDarkBackground =
         androidx.compose.material3.MaterialTheme.colorScheme.background.luminance() < 0.5f
     val aiMessageColor =
@@ -238,7 +239,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
         } else {
             chatAppearance.aiMessageColor
         }
-    val userTextColor = chatAppearance.userTextColor
+    val userTextColor = if (orbitLook) {
+        if (userMessageColor.luminance() > 0.5f) Color(0xFF1C1C1E) else Color(0xFFF2F2F7)
+    } else chatAppearance.userTextColor
     val aiTextColor =
         if (orbitLook) {
             if (orbitDarkBackground) Color(0xFFF2F2F7) else Color(0xFF1C1C1E)
@@ -249,7 +252,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     val systemTextColor = chatAppearance.systemTextColor
     val thinkingBackgroundColor = chatAppearance.thinkingBackgroundColor
     val thinkingTextColor = chatAppearance.thinkingTextColor
-    val bubbleUserImageStyle = chatAppearance.bubbleUserImageStyle
+    val bubbleUserImageStyle = if (orbitLook) null else chatAppearance.bubbleUserImageStyle
     val bubbleAiImageStyle = if (orbitLook) null else chatAppearance.bubbleAiImageStyle
     val bubbleUserContentPaddingLeft = chatAppearance.bubbleUserContentPaddingLeft
     val bubbleUserContentPaddingRight = chatAppearance.bubbleUserContentPaddingRight

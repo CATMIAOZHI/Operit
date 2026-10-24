@@ -492,12 +492,13 @@ fun AgentChatInputSection(
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
     val showQueueAction = isProcessing && canSendMessage
-    val showCancelAction = isProcessing && !showQueueAction
     // Orbit has no voice conversation (it would open the floating window and show its tool calls).
     // With nothing to send, its round button slides away and only the microphone stays.
     val orbitPreferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
     val orbitSettings by orbitPreferences.settingsFlow.collectAsState(initial = orbitPreferences.snapshot)
     val isOrbitChat = orbitSettings.orbitForChat(currentChatId) != null
+    val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
+    val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatId in userWaitingChatIds)
     val hideVoiceEntry = isOrbitChat && !showCancelAction && !showQueueAction && !canSendMessage
     val actionSlot by androidx.compose.animation.core.animateFloatAsState(
         targetValue = if (hideVoiceEntry) 0f else 1f,

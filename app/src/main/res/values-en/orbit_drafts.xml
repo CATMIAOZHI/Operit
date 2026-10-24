@@ -5,7 +5,7 @@
     <string name="orbit_avatar_draft_reset">Please change your avatar back to the role card\'s picture.</string>
     <string name="orbit_avatar_sheet_note">Your choice goes into the chat box for %1$s, who changes it.</string>
     <string name="orbit_person_new_draft">Help me add a new person:</string>
-    <string name="orbit_group_new_draft">Help me add a new group:</string>
+    <string name="orbit_group_new_draft">Help me record a social circle and its relationships:</string>
     <string name="orbit_goal_note_draft">Please log progress on the goal "%1$s":</string>
     <string name="orbit_build_continue_draft">Please keep working on "%1$s":</string>
     <string name="orbit_skill_new_draft">Please create a skill for me:</string>

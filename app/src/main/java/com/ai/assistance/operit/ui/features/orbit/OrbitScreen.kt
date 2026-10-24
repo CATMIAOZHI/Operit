@@ -94,6 +94,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.drawWithContent
@@ -246,12 +247,16 @@ fun OrbitScreen(
     }
     // The name the user gave it, for words about the companion inside its chat and pages.
     CompositionLocalProvider(com.ai.assistance.operit.ui.features.chat.components.LocalOrbitName provides orbitName(orbit)) {
-        OrbitChatPage(
-            orbit = orbit,
-            settings = loadedSettings,
-            hasBackgroundImage = hasBackgroundImage,
-            chatContent = chatContent,
-        )
+        OrbitAppearanceTheme(orbit) {
+            Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
+                OrbitChatPage(
+                    orbit = orbit,
+                    settings = loadedSettings,
+                    hasBackgroundImage = false,
+                    chatContent = chatContent,
+                )
+            }
+        }
     }
 }
 
@@ -823,8 +828,14 @@ private fun OrbitChatPage(
                     onOpenToolAccess = { push(OrbitSubPage.TOOL_ACCESS) },
                     onOpenVault = { push(OrbitSubPage.VAULT) },
                     onOpenImport = { showImport = true },
+                    onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
+                    onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
+                    onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
                     onPause = back,
                 )
+                OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
+                OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
+                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
                 OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
                 OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
                 OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
@@ -942,7 +953,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, APPEARANCE, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -969,6 +980,7 @@ internal fun OrbitHeader(
     avatarAnimated: Boolean = true,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
+    val avatarSize = orbit.appearance.avatarSize.dp
     Box(
         modifier =
             Modifier.fillMaxWidth()
@@ -1006,22 +1018,28 @@ internal fun OrbitHeader(
                 )
             }
         }
-        Box(modifier = Modifier.align(Alignment.TopCenter), contentAlignment = Alignment.TopCenter) {
-            OrbitAvatar(
+        Box(
+            modifier = Modifier.align(Alignment.TopCenter).then(
+                if (avatarSize == 0) Modifier.fillMaxWidth().padding(horizontal = 60.dp) else Modifier
+            ),
+            contentAlignment = Alignment.TopCenter,
+        ) {
+            if (avatarSize > 0) OrbitAvatar(
                 orbit = orbit,
-                size = 76,
+                size = avatarSize,
+                modifier = Modifier.zIndex(1f),
                 animatePet = true,
                 petVisible = avatarAnimated,
                 onClickLabel = stringResource(R.string.orbit_profile_open, orbitName(orbit)),
                 onClick = onOpenProfile,
             )
-            // The name pill sits over the bottom edge of the picture, like Muse.
+            // The avatar stays above the pill's top edge; its overlap never covers the name.
             Surface(
                 shape = RoundedCornerShape(50),
                 color = MaterialTheme.colorScheme.surface,
                 shadowElevation = 2.dp,
                 modifier =
-                    Modifier.padding(top = 62.dp)
+                    Modifier.padding(top = (avatarSize - 6).coerceAtLeast(12).dp)
                         .widthIn(max = 240.dp)
                         .clip(RoundedCornerShape(50))
                         .clickable(onClick = onOpenProfile),
@@ -1029,7 +1047,7 @@ internal fun OrbitHeader(
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
                     modifier = Modifier.animateContentSize(androidx.compose.animation.core.tween(180))
-                        .padding(horizontal = 16.dp, vertical = 6.dp),
+                        .padding(start = 16.dp, end = 16.dp, top = if (avatarSize > 0) 10.dp else 6.dp, bottom = 6.dp),
                 ) {
                     Text(
                         text = orbit.name.ifBlank { stringResource(R.string.nav_orbit) },
@@ -1213,7 +1231,7 @@ internal fun OrbitAvatar(
                         )
                     } else Modifier
                 )
-                .background(MaterialTheme.colorScheme.secondaryContainer)
+                .background(Color.White)
                 .border(2.dp, MaterialTheme.colorScheme.surface, CircleShape),
         contentAlignment = Alignment.Center,
     ) {
@@ -1230,7 +1248,7 @@ internal fun OrbitAvatar(
                 Icon(
                     imageVector = Icons.Rounded.Person,
                     contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSecondaryContainer,
+                    tint = Color(0xFF47474B),
                     modifier = Modifier.size((size / 2).dp),
                 )
             }
@@ -1269,6 +1287,9 @@ private fun OrbitSettingsPage(
     onOpenToolAccess: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
+    onOpenAppearance: () -> Unit,
+    onOpenPhonePermissions: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     onPause: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
@@ -1290,6 +1311,32 @@ private fun OrbitSettingsPage(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
+
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_notification_settings),
+                    subtitle = stringResource(R.string.orbit_phone_notify_note),
+                    icon = lucide("bell"),
+                    searchable = false,
+                    onClick = onOpenNotificationSettings,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_appearance_title),
+                    subtitle = stringResource(R.string.orbit_appearance_note),
+                    icon = lucide("paintbrush"),
+                    searchable = false,
+                    onClick = onOpenAppearance,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_phone_permissions),
+                    subtitle = stringResource(R.string.orbit_phone_permissions_row),
+                    icon = lucide("hand"),
+                    searchable = false,
+                    onClick = onOpenPhonePermissions,
+                )
+            }
 
             Column {
                 SettingsSectionTitle(

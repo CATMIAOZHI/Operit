@@ -23,7 +23,7 @@ internal object OrbitFileTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "读写你自己文件夹里的文件：人物和群组笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
+        description = "读写你自己文件夹里的文件：人物、圈子与关系笔记、每日流水、经验本、主动消息偏好、时区、对齐总结、设备，以及 files/ 里给用户做的文件。" +
             "删除的文件进回收站，30 天内可以恢复。还能把应用里别处的文件（比如画好的图）收进 files/，把 Markdown 导出成网页、Word 或 PDF。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "list/read/write/append/delete/trash/restore/daily/prompt_copy/import/export/send", required = true),
@@ -39,7 +39,7 @@ internal object OrbitFileTools {
             ToolParameterSchema("format", description = "export：html、docx 或 pdf", required = false),
         ),
         details = """
-  - 人物：memory/people/<名字>.md，一人一份；群组：memory/groups/<名字>.md。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
+  - 人物：memory/people/<名字>.md，一人一份；圈子与关系：memory/groups/<圈子名>.md，一圈一份，记录家人、同事、朋友等圈子的成员、彼此关系、用户在其中的角色及共同经历，不是创建聊天群。只记录已知事实，不猜测关系。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
   - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察，最多 600 字，换行会变成空格。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事用记忆工具写进 memory.md（memory.md 不归这个工具管）。
   - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
   - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好，四节：想听的、别跟我说、什么时候、怎么说。只改相关的那一节；一次拒绝不写成长期禁令。
