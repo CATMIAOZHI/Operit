@@ -94,9 +94,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             File(root, "dreams").listFiles()?.filter { it.isFile && DREAM.matches("dreams/${it.name}") }
                 ?.forEach { found += entry("dreams/${it.name}", it) }
         }
-        listOf("memory/people", "memory/groups").forEach { dir ->
-            File(root, dir).listFiles()?.filter { it.isFile && it.name.endsWith(".md") }?.forEach { found += entry("$dir/${it.name}", it) }
-        }
+        found += peopleLocked()
         File(root, "memory").listFiles()?.filter { it.isFile && DAILY.matches("memory/${it.name}") }
             ?.forEach { found += entry("memory/${it.name}", it) }
         val filesRoot = File(root, "files")
@@ -108,6 +106,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         found.filter { it.size < 0 || runCatching { inside(File(root, it.path)) }.isSuccess }
     }
 
+    /** Only the person and circle notes (and their indexes), without walking the rest of the folder. */
+    suspend fun listPeople(): List<Entry> = io {
+        peopleLocked().filter { runCatching { inside(File(root, it.path)) }.isSuccess }
+    }
+
+    private fun peopleLocked(): List<Entry> = listOf("memory/people", "memory/groups").flatMap { dir ->
+        File(root, dir).listFiles()?.filter { it.isFile && it.name.endsWith(".md") }
+            ?.map { entry("$dir/${it.name}", it) }.orEmpty()
+    }
+
     suspend fun read(path: String): String = io {
         val p = normalize(path)
         require(allowed(p) || DOCS.matches(p)) { "Not one of Orbit's files: $path" }
@@ -115,6 +123,16 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         if (!f.isFile) return@io template(p) ?: error("No such file: $p")
         require(isText(p)) { "Not a text file: $p" }
         require(f.length() <= MAX_TEXT * 4L) { "File is too large to read" }
+        f.readText()
+    }
+
+    /** The text of one of Orbit's text files as stored, or null when it does not exist yet. */
+    suspend fun readStored(path: String): String? = io {
+        val p = normalize(path)
+        require(allowed(p) && isText(p)) { "Not one of Orbit's text files: $path" }
+        val f = File(root, p)
+        if (!f.isFile) return@io null
+        require(inside(f).length() <= MAX_TEXT * 4L) { "File is too large to read" }
         f.readText()
     }
 
@@ -174,6 +192,39 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     suspend fun append(path: String, text: String): Written = io {
         val p = writable(path)
         appendLocked(p, text)
+    }
+
+    /**
+     * Applies a reviewed rewrite only if the file still holds [before] (a missing file counts as its
+     * template or empty), so a background review never overwrites an edit made after it read the file.
+     * Already holding [after] counts as done, which lets an interrupted apply be retried.
+     */
+    suspend fun writeIfUnchanged(path: String, before: String, after: String): Written = io {
+        val p = writable(path)
+        require(after.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
+        val f = File(root, p)
+        val existed = f.isFile
+        val current = if (existed) inside(f).readText() else ""
+        // An apply interrupted after the write but before the index update finishes that here.
+        if (current == after) return@io Written(p, current, after, existed = existed).also { afterChange(p) }
+        check(current == before || (!existed && before == template(p).orEmpty())) {
+            "$p changed after it was read; read it again"
+        }
+        atomic(f, after)
+        afterChange(p)
+        Written(p, if (existed) current else null, after, existed = existed)
+    }
+
+    /** Appends [text] unless the file already holds it as whole lines, so a retried apply adds it once. */
+    suspend fun appendOnce(path: String, text: String): Written = io {
+        val p = writable(path)
+        val f = File(root, p)
+        val current = if (f.isFile) inside(f).readText() else template(p).orEmpty()
+        val lines = text.trim().lines().map { it.trim() }
+        val held = current.lines().map { it.trim() }
+        if (lines.isNotEmpty() && java.util.Collections.indexOfSubList(held, lines) >= 0)
+            Written(p, current, current, existed = f.isFile)
+        else appendLocked(p, text)
     }
 
     /** Adds one line to today's (or [time]'s) daily log, memory/YYYY-MM-DD.md. */
@@ -317,7 +368,8 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
             ?.sortedBy { it.name.lowercase() }.orEmpty()
         val index = File(folder, INDEX)
         if (files.isEmpty()) { index.delete(); return }
-        val heading = if (dir.endsWith("people")) (if (english) "People" else "人物") else (if (english) "Groups" else "群组")
+        val heading = if (dir.endsWith("people")) (if (english) "People" else "人物")
+            else (if (english) "Circles & relationships" else "圈子与关系")
         val lines = files.map { f ->
             val text = f.readText()
             val summary = text.lineSequence().map { it.trim() }

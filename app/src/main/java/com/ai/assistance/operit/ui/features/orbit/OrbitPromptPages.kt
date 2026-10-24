@@ -86,6 +86,11 @@ internal fun OrbitFilePage(
     interceptBack: Boolean = false,
     /** Captures the revision behind a newly opened draft; not called when restoring that draft. */
     onEditStart: () -> Unit = {},
+    /**
+     * The stored length of a draft, when saving changes it (memory.md adds its marker lines back).
+     * With it a long draft is kept whole and only its saving is refused, so nothing is cut off.
+     */
+    measure: ((String) -> Int)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -153,7 +158,8 @@ internal fun OrbitFilePage(
                     if (editing) {
                         IconButton(enabled = !busy, onClick = {
                             val body = draft
-                            run {
+                            if (measure != null && measure(body) > maxChars) toast(R.string.orbit_file_too_long)
+                            else run {
                                 checkNotNull(save)(body)
                                 content = load()
                                 leaveEditor()
@@ -219,11 +225,12 @@ internal fun OrbitFilePage(
             editing -> OutlinedTextField(
                 value = draft,
                 onValueChange = {
-                    if (it.length > maxChars && !warnedTooLong) {
+                    val length = measure?.invoke(it) ?: it.length
+                    if (length > maxChars && !warnedTooLong) {
                         warnedTooLong = true
                         toast(R.string.orbit_file_too_long)
                     }
-                    draft = it.take(maxChars)
+                    draft = if (measure != null) it else it.take(maxChars)
                 },
                 textStyle = MaterialTheme.typography.bodyLarge,
                 modifier = Modifier.fillMaxSize().imePadding().padding(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 20.dp),
@@ -245,8 +252,12 @@ internal fun OrbitFilePage(
                     }
                 }
                 item(key = "body") {
+                    // Section markers in memory.md and user.md are for the app; the reader sees the headings.
+                    val shown = remember(content) {
+                        com.ai.assistance.operit.data.preferences.MemoryNoteSections.withoutMarkers(content.orEmpty())
+                    }
                     StreamMarkdownRenderer(
-                        content = content.orEmpty(),
+                        content = shown,
                         backgroundColor = MaterialTheme.colorScheme.background,
                         fillMaxWidth = true,
                     )
@@ -340,21 +351,25 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
         mutableStateOf<com.ai.assistance.operit.data.preferences.MemoryNotesRepository.Snapshot?>(null)
     }
     suspend fun spaceId() = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
+    // The page shows and edits every section heading without the app's marker lines.
+    suspend fun notes() = com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, spaceId())
+    val english = remember { com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context.applicationContext) }
     OrbitFilePage(
         title = "memory.md",
         note = stringResource(R.string.orbit_memory_note, orbitName(orbit)),
         load = {
-            com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, spaceId()).load()
-                .also { loaded = it }.markdown
+            val repository = notes()
+            repository.editorText(repository.load().also { loaded = it }.markdown)
         },
         save = { body ->
             val opened = checkNotNull(loaded)
-            if (body != opened.markdown) {
+            val repository = notes()
+            if (body != repository.editorText(opened.markdown)) {
                 val space = spaceId()
-                val latest = com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, space).load()
+                val latest = repository.load()
                 check(latest.version == opened.version) { "memory.md changed while editing" }
                 val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, space)
-                val change = reviews.proposeNotes(latest, body)
+                val change = reviews.proposeNotes(latest, repository.fromEditor(body))
                 check(reviews.decide(context, change.id, true, "user", reason).status == "approved") {
                     "memory.md changed while editing"
                 }
@@ -362,6 +377,10 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
         },
         onBack = onBack,
         maxChars = com.ai.assistance.operit.data.preferences.MemoryNotesRepository.MAX_CHARS,
+        // The editor's text has no marker lines; the limit applies to the text saving stores.
+        measure = { text ->
+            com.ai.assistance.operit.data.preferences.MemoryNoteSections.parse(text).markdown(english).length
+        },
     )
 }
 

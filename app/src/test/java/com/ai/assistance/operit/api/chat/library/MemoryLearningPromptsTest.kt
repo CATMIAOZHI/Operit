@@ -5,6 +5,18 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class MemoryLearningPromptsTest {
+    @Test fun `an orbit review sorts memory and routes lessons and people elsewhere`() {
+        val orbit = buildMemoryLearningInstructions("chat", true, false, "finish", orbit = true)
+        val plain = buildMemoryLearningInstructions("chat", true, false, "finish")
+        assertTrue(orbit.contains("section=facts/preferences/decisions/commitments"))
+        assertTrue(orbit.contains("lesson_add") && orbit.contains("people_write"))
+        assertFalse(orbit.contains("Keep environment facts in memory.md"))
+        assertTrue(plain.contains("Keep environment facts in memory.md"))
+        assertTrue(memoryLearningActionDescription(true, false, orbit = true).contains("people_write"))
+        assertFalse(memoryLearningActionDescription(true, false).contains("people_write"))
+        assertFalse(memoryLearningActionDescription(false, true, orbit = true).contains("lesson_add"))
+    }
+
     @Test fun skillOnlyDoesNotRequireOrAdvertiseMemoryOperations() {
         val instructions = buildMemoryLearningInstructions("chat", false, true, "finish")
         val tools = memoryLearningActionDescription(false, true)

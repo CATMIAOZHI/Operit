@@ -358,7 +358,8 @@ object MemoryLearningCoordinator {
             if (paths.isEmpty()) return
             val first=paths.minBy { journal.cursor(it).messageId }
             val selected=paths.filter { journal.cursor(it)==journal.cursor(first) }
-            val instructions=buildMemoryLearningInstructions(chatId,"notes" in selected,"skills" in selected,FINISH)
+            val instructions=buildMemoryLearningInstructions(chatId,"notes" in selected,"skills" in selected,FINISH,
+                MemorySearchSettingsPreferences.isOrbitSpace(profileId))
             val generation=if (profileId.isNotBlank())
                 com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context,profileId).generation else 0L
             val fixedBytes=instructions.toByteArray().size +
@@ -535,7 +536,8 @@ object MemoryLearningCoordinator {
         try {
             withPageDeadline(deadline, onTimeout = { pageTimedOut = true }) {
                 session.job = currentCoroutineContext().job
-                val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH)
+                val instructions = buildMemoryLearningInstructions(chatId, notes, skills, FINISH,
+                    MemorySearchSettingsPreferences.isOrbitSpace(profileId))
                 val start = journal.cursor(paths.first()).messageId
                 val generation = com.ai.assistance.operit.features.orbit.OrbitLearningBoundary
                     .takeIf { profileId.isNotBlank() }?.guard(context, profileId)?.generation ?: 0L
@@ -549,7 +551,8 @@ object MemoryLearningCoordinator {
                     title=context.getString(R.string.memory_learning_run),prompt=prompt,
                     subagentType="memory-learning",functionType=FunctionType.MEMORY,
                     profileOverride=AgentProfile("memory-learning","Memory learning","",AgentMode.SUBAGENT,instructions,hidden=true),
-                    isolatedToolPrompts=prompts(notes, skills),terminalToolNames=setOf(FINISH),
+                    isolatedToolPrompts=prompts(notes, skills, MemorySearchSettingsPreferences.isOrbitSpace(profileId)),
+                    terminalToolNames=setOf(FINISH),
                     // Every review of one conversation asks under one identity so a provider that caches
                     // prompt prefixes reuses what an earlier review already warmed.
                     providerSessionId=providerSessionIdForScope("memory_learning:$chatId"),
@@ -696,8 +699,8 @@ object MemoryLearningCoordinator {
         }
         }
     }
-    fun prompts(notes: Boolean = true, skills: Boolean = true) = listOf(
-        ToolPrompt(name=ACTION,description=memoryLearningActionDescription(notes, skills),parametersStructured=listOf(
+    fun prompts(notes: Boolean = true, skills: Boolean = true, orbit: Boolean = false) = listOf(
+        ToolPrompt(name=ACTION,description=memoryLearningActionDescription(notes, skills, orbit),parametersStructured=listOf(
             ToolParameterSchema("action","string","Operation",true),
             ToolParameterSchema("arguments","string","JSON argument object",false)
         )),
@@ -710,7 +713,7 @@ object MemoryLearningCoordinator {
     private const val CARRY_LIMIT = 800
     /** Actions that stage a change; they need an open page. */
     private val PAGE_CHANGES = setOf("memory_change", "skill_create", "skill_write", "skill_patch",
-        "skill_remove_file", "skill_delete")
+        "skill_remove_file", "skill_delete", "people_write", "lesson_add")
 
     /** Where the review starts in the chat, and the notes an earlier review left for it. */
     private fun runHead(start: Long, carried: String): String = buildString {

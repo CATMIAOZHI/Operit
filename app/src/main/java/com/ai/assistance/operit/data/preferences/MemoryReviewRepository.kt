@@ -119,6 +119,10 @@ class MemoryReviewRepository internal constructor(
         private val skillInstallMutex = Mutex()
         /** How many undecided proposals may wait for review. */
         internal const val PENDING_LIMIT = 30
+        /** A sectioned memory.md add stores its section as `add:<section>` in [MemoryReviewChange.operation]. */
+        internal const val NOTES_ADD_PREFIX = "add:"
+        /** One of an Orbit's own note files (a person, a circle, the lessons book); the title is its path. */
+        const val ORBIT_FILE = "orbit_file"
         private fun hash(value: String) = MessageDigest.getInstance("SHA-256")
             .digest(value.toByteArray()).joinToString("") { "%02x".format(it) }
         /** A skill's directory entry and its files are one target, so a batch cannot stage both. */
@@ -291,6 +295,14 @@ class MemoryReviewRepository internal constructor(
                 else "This batch already staged a ${previous.kind} change for ${change.title}; resubmit it as " +
                     "${previous.kind} instead of ${change.kind}."
             }
+            // A lessons append carries only its lines, so a later one on the same page joins them; it
+            // is still applied as one append, never as a rewrite of the whole book.
+            if (change.kind == ORBIT_FILE && change.addition.isNotEmpty() && previous.addition.isNotEmpty()) {
+                val joined = previous.addition.trimEnd() + "\n" + change.addition.trim()
+                return@withContext change.copy(id = previous.id, before = previous.before, body = joined,
+                    baseVersion = previous.baseVersion, addition = joined, createdAt = previous.createdAt)
+                    .also { pending[index] = it }
+            }
             // The replacement carries the whole target text, so an accumulated notes addition must not
             // be appended on top of it.
             return@withContext change.copy(id = previous.id, before = previous.before,
@@ -397,7 +409,7 @@ class MemoryReviewRepository internal constructor(
 
     suspend fun proposeNotes(
         before: MemoryNotesRepository.Snapshot, after: String, addition: String = "", sourceChatId: String = "",
-        onCreated: () -> Unit = {}
+        onCreated: () -> Unit = {}, section: String = ""
     ): MemoryReviewChange {
         // Same reason as user.md: the proposal holds the text that will actually be stored, so an
         // interrupted apply can be retried and is recognised as already done.
@@ -405,8 +417,22 @@ class MemoryReviewRepository internal constructor(
         val added = stripInvisibleCharacters(addition)
         return propose(MemoryReviewChange(
             id = hash("notes:${before.version}:$text"), kind = "notes", title = "memory.md", body = text,
-            before = before.markdown, baseVersion = before.version, addition = added, sourceChatId = sourceChatId
+            before = before.markdown, baseVersion = before.version, addition = added, sourceChatId = sourceChatId,
+            operation = if (added.isNotEmpty() && section.isNotBlank()) NOTES_ADD_PREFIX + section else "write"
         ), onCreated)
+    }
+
+    /**
+     * A change to one of an Orbit's note files. [addition] is one line appended on apply (the
+     * lessons book), which survives a concurrent edit; otherwise [after] replaces [before] only if
+     * the file still reads [before].
+     */
+    suspend fun proposeOrbitFile(path: String, before: String, after: String, addition: String = "",
+        sourceChatId: String = "", onCreated: () -> Unit = {}): MemoryReviewChange {
+        val text = stripInvisibleCharacters(after)
+        return propose(MemoryReviewChange(id = "", kind = ORBIT_FILE, title = path, body = text, before = before,
+            baseVersion = LearnedSkillRepository.version(before), addition = stripInvisibleCharacters(addition),
+            sourceChatId = sourceChatId), onCreated)
     }
 
     suspend fun audit(id: String, note: String, reviewer: String): MemoryReviewChange = withContext(Dispatchers.IO) {
@@ -443,8 +469,12 @@ class MemoryReviewRepository internal constructor(
                 JSONObject().put("name", previous.title).put("description", description).put("body", body)
             ), previous.sourceChatId).isNotEmpty())
             if (previous.body == body && previous.description == description) return@withLock previous
+            // A lessons append holds only its lines; an edit of it stays an append of the edited lines.
+            val append = previous.kind == ORBIT_FILE && previous.addition.isNotEmpty()
+            if (append) require(body.isNotBlank()) { "A lesson cannot be empty; reject it instead" }
             val revised = previous.copy(id = java.util.UUID.randomUUID().toString(),
-                body = body, description = description, addition = "", audits = "",
+                body = body, description = description,
+                addition = if (append) stripInvisibleCharacters(body).trim() else "", audits = "",
                 createdAt = System.currentTimeMillis(), reason = "", origin = "foreground",
                 learningGeneration = boundary()?.snapshot()?.generation ?: 0)
             items[index] = previous.copy(status = "superseded", reviewer = "user",
@@ -494,7 +524,12 @@ class MemoryReviewRepository internal constructor(
                     suspend fun applyTarget() {
                     if (change.kind == "notes") {
                         val notes = MemoryNotesRepository(context, profileId)
-                        if (change.addition.isNotEmpty()) notes.mutate("add", change.addition)
+                        // A sectioned add names its section in the operation; an older one has none and
+                        // lands in the unsorted section rather than failing forever.
+                        if (change.addition.isNotEmpty()) notes.mutate("add", change.addition,
+                            section = change.operation.removePrefix(NOTES_ADD_PREFIX)
+                                .takeIf { change.operation.startsWith(NOTES_ADD_PREFIX) }
+                                ?: if (notes.sectioned) MemoryNoteSections.UNSORTED else "")
                         else if (notes.load().markdown != change.body) notes.save(change.body, change.baseVersion)
                         // The learner's own writes invalidate a frozen prefix too: memory.md is part of
                         // the prefix, so the library must offer the refresh instead of silently serving
@@ -502,6 +537,12 @@ class MemoryReviewRepository internal constructor(
                         LearningPromptSnapshotRepository.markChanged(context, "notes-content:$profileId")
                     } else if(change.kind=="user") {
                         UserProfileDocumentRepository.forMemorySpace(context, profileId).saveIfUnchanged(change.body,change.before)
+                    } else if (change.kind == ORBIT_FILE) {
+                        val owner = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.privateOwner(context, profileId)
+                            ?: error("This memory space has no Orbit files")
+                        val files = com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, owner)
+                        if (change.addition.isNotEmpty()) files.appendOnce(change.title, change.addition)
+                        else files.writeIfUnchanged(change.title, change.before, change.body)
                     } else if(change.kind=="skill_delete") {
                         LearnedSkillRepository(context, profileId).delete(change.title,change.baseVersion)
                     } else if (change.kind=="skill_file") {
@@ -548,7 +589,7 @@ class MemoryReviewRepository internal constructor(
                         write(items)
                         return@withLock outdated
                     }
-                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user", "notes")) {
+                    if (!skillInstalled && change.kind in setOf("skill", "skill_file", "skill_delete", "user", "notes", ORBIT_FILE)) {
                         // Import returned no success: keep the proposal editable/rejectable.
                         items[index] = change.copy(status = "pending", reason = e.javaClass.simpleName)
                         write(items)

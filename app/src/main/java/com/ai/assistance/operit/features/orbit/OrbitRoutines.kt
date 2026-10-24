@@ -553,9 +553,9 @@ internal object OrbitRoutines {
 
     private val SELF_REVIEW_ZH = """
         夜间自我整理（只在有新对话时运行）。SOURCE 里是最近的对话。用它做下面几件事，都在后台安静完成：
-        1. 记忆：把值得长期保留的新事实、偏好、决定和承诺整理进 memory.md 和 user.md（memory_review 工具包），新的说法替换旧的，不留互相矛盾的内容。没有值得保留的变化就不动。
-        2. 人物和群组：对话里提到的人和群组，用 orbit_file 更新 memory/people/、memory/groups/ 里对应的文件，只记用户亲口说的关系。
-        3. 反思：用户纠正过的做法、踩过的坑追加到 LESSONS.md。对齐总结由夜间对齐复盘负责，这里不改它。
+        1. 记忆：把值得长期保留的新事实、偏好、决定和承诺整理进 memory.md 和 user.md（memory_review 工具包）。memory.md 分四类，新增时用 section=facts/preferences/decisions/commitments 指定；新的说法替换旧的，不留互相矛盾的内容；「未分类（旧内容）」里的条目顺手归类。没有值得保留的变化就不动。
+        2. 人物和圈子：对话里提到的人和现实里的人际圈（家人、同事、朋友，不是聊天群），用 orbit_file 更新 memory/people/、memory/groups/ 里对应的文件，只记用户亲口说的关系。
+        3. 反思：用户纠正过的做法、踩过的坑、工具用法追加到 LESSONS.md，不写进 memory.md。对齐总结由夜间对齐复盘负责，这里不改它。
         4. 技能：用 orbit_skills 看已有技能。同一套做法出现了两次以上，就用 memory_review 的 manage（action=skill_create）整理成技能；已有技能和最近的实际做法不符时改好它。
         不要给用户发消息：userMessage 留空，decision 写一句这次整理了什么。
     """.trimIndent()
@@ -564,12 +564,14 @@ internal object OrbitRoutines {
         Nightly self-review (runs only after new conversation). SOURCE holds the recent conversation. Use it to do the
         following quietly in the background:
         1. Memory: fold new facts, preferences, decisions and commitments worth keeping into memory.md and user.md
-           (memory_review package). Newer claims replace older ones; leave nothing contradictory. If nothing is worth
-           keeping, change nothing.
-        2. People and groups: update the files under memory/people/ and memory/groups/ with orbit_file for people and
-           groups mentioned. Record only relationships the user stated.
-        3. Reflection: append corrected habits and mistakes to LESSONS.md. The nightly alignment review owns
-           ALIGNMENT_SYNTHESIS.md; leave it alone.
+           (memory_review package). memory.md has four sections; name one with section=facts/preferences/decisions/
+           commitments when adding. Newer claims replace older ones; leave nothing contradictory; sort entries from
+           "Unsorted (older notes)" as you go. If nothing is worth keeping, change nothing.
+        2. People and circles: update the files under memory/people/ and memory/groups/ with orbit_file for people and
+           real social circles (family, coworkers, friends; not chat groups) mentioned. Record only relationships the
+           user stated.
+        3. Reflection: append corrected habits, mistakes and tool usage to LESSONS.md, never to memory.md. The nightly
+           alignment review owns ALIGNMENT_SYNTHESIS.md; leave it alone.
         4. Skills: check existing skills with orbit_skills. When the same workflow came up twice or more, make it a skill
            with memory_review manage (action=skill_create); fix a skill that no longer matches how the work was done.
         Do not message the user: leave userMessage empty and say in decision what you tidied.

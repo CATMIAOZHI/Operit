@@ -145,6 +145,19 @@ class MemoryReviewRepositoryTest {
         assertTrue(history.audits.contains("Old audit"))
     }
 
+    @Test fun `lessons appended on one page accumulate, and an edited lesson is still an append`() = runBlocking {
+        val staged = mutableListOf<MemoryReviewChange>()
+        val repo = MemoryReviewRepository(folder.root, "lessons", staged = staged)
+        repo.proposeOrbitFile("LESSONS.md", "", "- A", addition = "- A")
+        repo.proposeOrbitFile("LESSONS.md", "", "- B", addition = "- B")
+        val page = staged.single()
+        assertEquals("- A\n- B", page.addition)
+        assertEquals("", page.before)
+        val stored = MemoryReviewRepository(folder.root, "lessons")
+        val pending = stored.proposeOrbitFile("LESSONS.md", "", "- C", addition = "- C")
+        assertEquals("- C2", stored.revise(pending.id, "- C2", "").addition)
+    }
+
     @Test fun `same content can be proposed again after a terminal decision`() = runBlocking {
         val context = context()
         val repo = MemoryReviewRepository(context, "a")

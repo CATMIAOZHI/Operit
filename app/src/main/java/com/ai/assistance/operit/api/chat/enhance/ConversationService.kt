@@ -638,7 +638,10 @@ class ConversationService(
                 }
                 suspend fun loadNotes() = if (allowPersonalContext &&
                     com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences(context, notesSpaceId).shouldInjectNotes())
-                    com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown else ""
+                    // Section markers only tell the app where a section starts; the headings carry the meaning.
+                    com.ai.assistance.operit.data.preferences.MemoryNoteSections.withoutMarkers(
+                        com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, notesSpaceId).load().markdown)
+                else ""
                 val memoryNotes = learningSnapshot?.getOrPut("notes:$notesSpaceId") { loadNotes() } ?: loadNotes()
 
                 // 获取工具启用状态
