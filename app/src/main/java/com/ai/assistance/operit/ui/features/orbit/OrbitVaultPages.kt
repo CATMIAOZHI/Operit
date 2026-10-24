@@ -137,7 +137,9 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     // Nothing can be typed until an update has its saved values in place, so none are overwritten.
     val editable = !saving && loaded && !gone
     // Orbit asked to load the key into the terminal; off until the user turns it on.
-    val asksEnv = request.envName.isNotEmpty() && (updating || !login)
+    // A package's key goes to that package only, so there is nothing to choose.
+    val forPackage = request.packageName.isNotEmpty()
+    val asksEnv = request.envName.isNotEmpty() && (updating || !login) && !forPackage
     var allowEnv by remember(request) { mutableStateOf(false) }
     LaunchedEffect(existing) {
         val e = existing ?: return@LaunchedEffect
@@ -156,7 +158,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     } == true
     // Tool output is masked by matching the value, which a very short one (a PIN) cannot be.
     val effectiveSecret = secret.ifEmpty { existing?.secret.orEmpty() }
-    val envTooShort = asksEnv && allowEnv && effectiveSecret.isNotEmpty() &&
+    val envTooShort = (forPackage || asksEnv && allowEnv) && effectiveSecret.isNotEmpty() &&
         effectiveSecret.length < OrbitVault.MIN_ENV_SECRET
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
@@ -215,6 +217,8 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         color = colors.onSurfaceVariant)
                     Text(
                         if (login) request.pageUrl.ifBlank { "https://${request.site}" }.substringBefore('?')
+                        else if (forPackage) stringResource(R.string.orbit_vault_sheet_for_package, request.site,
+                            request.packageName, "$" + request.envName)
                         else (listOf(request.site) + request.apiHosts.take(5).joinToString(", ").ifEmpty { null })
                             .filterNotNull().joinToString(" · "),
                         style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis,
@@ -319,10 +323,12 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                     when {
                         gone -> stringResource(R.string.orbit_vault_card_update_gone)
                         !loaded -> stringResource(R.string.orbit_vault_update_loading)
+                        envTooShort && forPackage -> stringResource(R.string.orbit_vault_package_too_short, OrbitVault.MIN_ENV_SECRET)
                         envTooShort -> stringResource(R.string.orbit_vault_env_too_short, OrbitVault.MIN_ENV_SECRET)
                         updating && !changed -> stringResource(R.string.orbit_vault_update_unchanged)
                         login && allowEnv -> stringResource(R.string.orbit_vault_entry_promise_env_login, orbit.name)
                         login -> stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
+                        forPackage -> stringResource(R.string.orbit_vault_entry_promise_package, request.packageName, orbit.name)
                         envOnly && !allowEnv -> stringResource(R.string.orbit_vault_env_required)
                         allowEnv -> stringResource(R.string.orbit_vault_entry_promise_env, orbit.name)
                         else -> stringResource(R.string.orbit_vault_entry_promise_key, orbit.name)

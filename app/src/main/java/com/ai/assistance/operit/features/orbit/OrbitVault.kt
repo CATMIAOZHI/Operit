@@ -52,6 +52,11 @@ internal object OrbitVault {
          */
         val slot: String = "",
         val oauth: OAuth? = null,
+        /**
+         * API key: the tool package that gets it as the environment variable [slot] when Orbit runs
+         * that package. Only that package sees it, and only in this Orbit's chats. Empty otherwise.
+         */
+        val packageName: String = "",
     )
 
     data class OAuth(
@@ -88,10 +93,14 @@ internal object OrbitVault {
         val scope: String = "",
         /** An update card: the saved entry it changes. Empty for a card that adds one. */
         val updateId: String = "",
+        /** API key: the tool package that gets it as [envName]; it stays out of the terminal. */
+        val packageName: String = "",
     )
 
     /** A shell variable name: letters, digits and underscores, not starting with a digit. */
     val ENV_NAME = Regex("[A-Z_][A-Z0-9_]{1,63}")
+    /** A tool package name, as the package manager writes it. */
+    val PACKAGE_NAME = Regex("[A-Za-z0-9_.-]{1,80}")
     /**
      * Shortest value that may go into the terminal: tool output is masked by matching the value, and
      * a shorter one (a PIN) would match ordinary text everywhere, so it could not be masked.
@@ -147,7 +156,7 @@ internal object OrbitVault {
                 o.optJSONObject("oauth")?.let { auth ->
                     OAuth(auth.getString("tokenUrl"), auth.getString("clientId"), auth.optString("scope"),
                         auth.optString("refreshToken"), auth.optLong("expiresAt"))
-                })
+                }, o.optString("packageName"))
         }
     }
 
@@ -157,6 +166,7 @@ internal object OrbitVault {
                 put(JSONObject().put("id", it.id).put("kind", it.kind).put("site", it.site).put("username", it.username)
                     .put("secret", it.secret).put("apiHosts", JSONArray(it.apiHosts)).put("placement", it.placement)
                     .put("savedAt", it.savedAt).put("card", it.card).put("envName", it.envName).put("slot", it.slot)
+                    .apply { if (it.packageName.isNotEmpty()) put("packageName", it.packageName) }
                     .apply { it.oauth?.let { auth ->
                         put("oauth", JSONObject().put("tokenUrl", auth.tokenUrl).put("clientId", auth.clientId)
                             .put("scope", auth.scope).put("refreshToken", auth.refreshToken).put("expiresAt", auth.expiresAt))
@@ -174,24 +184,31 @@ internal object OrbitVault {
         allowEnv: Boolean = false): String =
         withContext(Dispatchers.IO) {
             require(secret.isNotEmpty() && secret.length <= 4000) { "Empty value" }
+            // A package key is masked wherever it could turn up, which a very short one cannot be.
+            require(request.packageName.isEmpty() || secret.length >= MIN_ENV_SECRET) { "Too short for a package key" }
             lock(orbitId).withLock {
                 val current = read(context, orbitId)
                 val name = username.trim().take(200)
                 val same = if (request.newPassword) null else current.firstOrNull {
                     it.kind == request.kind && it.site == request.site &&
-                        (if (request.kind == API_KEY) it.slot == request.envName else it.username == name)
+                        (if (request.kind == API_KEY) it.slot == request.envName && it.packageName == request.packageName
+                            else it.username == name)
                 }
                 // A key card that asked for a variable decides it; any other card keeps what was allowed.
+                // A package's key goes to that package only, never into the terminal.
                 val envName = when {
+                    request.packageName.isNotEmpty() -> ""
                     request.kind == API_KEY && request.envName.isNotEmpty() ->
                         if (allowEnv && request.envName.matches(ENV_NAME) && secret.length >= MIN_ENV_SECRET) request.envName else ""
                     else -> same?.envName.orEmpty().takeIf { secret.length >= MIN_ENV_SECRET }.orEmpty()
                 }
                 val entry = Entry(same?.id ?: UUID.randomUUID().toString().take(8), request.kind, request.site,
-                    name, secret, request.apiHosts, request.placement, System.currentTimeMillis(),
+                    name, secret, if (request.packageName.isNotEmpty()) emptyList() else request.apiHosts,
+                    request.placement, System.currentTimeMillis(),
                     card = if (request.newPassword) request.requestedAt else 0,
                     envName = envName,
-                    slot = if (request.kind == API_KEY) request.envName else "")
+                    slot = if (request.kind == API_KEY) request.envName else "",
+                    packageName = if (request.kind == API_KEY) request.packageName else "")
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
                 write(context, orbitId, next)
@@ -213,7 +230,9 @@ internal object OrbitVault {
             val current = read(context, orbitId)
             val old = current.firstOrNull { it.id == id } ?: return@withLock null
             require(old.kind == LOGIN || old.kind == API_KEY) { "Only logins and API keys can be updated" }
+            require(envName.isEmpty() || old.packageName.isEmpty()) { "A package's key stays out of the terminal" }
             require(envName.isEmpty() || (secret ?: old.secret).length >= MIN_ENV_SECRET) { "Too short for the terminal" }
+            require(old.packageName.isEmpty() || (secret ?: old.secret).length >= MIN_ENV_SECRET) { "Too short for a package key" }
             val updated = old.copy(
                 username = if (old.kind == LOGIN && username != null) username.trim().take(200) else old.username,
                 secret = secret ?: old.secret,
@@ -306,8 +325,9 @@ internal object OrbitVault {
     }
 
     /** True when a login for [site], or that provider's key for [slot] (its variable name), is already saved. */
-    fun has(entries: List<Entry>, kind: String, site: String, slot: String = ""): Boolean =
-        entries.any { it.kind == kind && it.site.equals(site, true) && (kind != API_KEY || it.slot == slot) }
+    fun has(entries: List<Entry>, kind: String, site: String, slot: String = "", packageName: String = ""): Boolean =
+        entries.any { it.kind == kind && it.site.equals(site, true) &&
+            (kind != API_KEY || it.slot == slot && it.packageName == packageName) }
 
     /** True when this new-password card itself was filled in (and that password is still saved). */
     fun newPasswordSaved(entries: List<Entry>, request: Request): Boolean = request.requestedAt > 0 &&
@@ -332,6 +352,33 @@ internal object OrbitVault {
 
     private class EnvCache(val version: Int, val secrets: List<String>)
     private val envCache = ConcurrentHashMap<String, EnvCache>()
+    private class PackageEnvCache(val version: Int, val byPackage: Map<String, Map<String, String>>)
+    private val packageEnvCache = ConcurrentHashMap<String, PackageEnvCache>()
+
+    /** Drops what is held in memory for [orbitId], once its vault file is gone with the Orbit. */
+    fun forgetCached(orbitId: String) {
+        envCache.remove(orbitId)
+        packageEnvCache.remove(orbitId)
+        changes.value++
+    }
+
+    /**
+     * The keys saved for tool package [packageName], by variable name, which the package reads as
+     * its environment when this Orbit runs it. Kept in memory until the vault changes.
+     */
+    suspend fun packageEnv(context: Context, orbitId: String, packageName: String): Map<String, String> {
+        val now = changes.value
+        val all = packageEnvCache[orbitId]?.takeIf { it.version == now }?.byPackage
+            ?: entries(context, orbitId).filter { it.kind == API_KEY && it.packageName.isNotEmpty() && it.slot.isNotEmpty() }
+                .groupBy { it.packageName }
+                .mapValues { (_, list) -> list.sortedBy { it.savedAt }.associate { it.slot to it.secret } }
+                .also {
+                    // Values from before a change are never read again; do not keep them around.
+                    packageEnvCache.entries.removeIf { e -> e.value.version != now }
+                    packageEnvCache[orbitId] = PackageEnvCache(now, it)
+                }
+        return all[packageName].orEmpty()
+    }
 
     /**
      * The keys the user let into the terminal, which can turn up in a command's output; a tool's
@@ -340,7 +387,8 @@ internal object OrbitVault {
     suspend fun envKeys(context: Context, orbitId: String): List<String> {
         val now = changes.value
         return envCache[orbitId]?.takeIf { it.version == now }?.secrets
-            ?: entries(context, orbitId).filter { it.envName.isNotEmpty() }
+            // A package's key can show up in that package's output too.
+            ?: entries(context, orbitId).filter { it.envName.isNotEmpty() || it.packageName.isNotEmpty() }
                 // A login's user name goes into the terminal with it; it is masked too when long enough.
                 .flatMap { listOf(it.secret) + if (it.kind == LOGIN) listOf(it.username) else emptyList() }
                 .filter { it.length >= MIN_ENV_SECRET }.distinct()

@@ -48,6 +48,7 @@ internal object OrbitApprovals {
     const val MAX_TITLE = 80
     const val MAX_DETAIL = 1_500
     const val MAX_NOTE = 500
+    const val MAX_RESULT = 1_500
     private const val MAX_KEPT = 300
     /** At most this many open requests at once, so a looping Orbit cannot flood the list. */
     const val MAX_PENDING = 20
@@ -72,6 +73,13 @@ internal object OrbitApprovals {
         val decidedAt: Long,
         /** The answer reached Orbit. */
         val notified: Boolean,
+        /**
+         * Something the app carries out itself once the user approves ([OrbitApprovalActions]), as
+         * JSON; empty when Orbit does the thing after hearing the answer.
+         */
+        val action: String = "",
+        /** What the app did for [action], for the user and for Orbit. */
+        val result: String = "",
     ) {
         val pending get() = kind == REQUEST && state == PENDING
     }
@@ -81,6 +89,10 @@ internal object OrbitApprovals {
     val version: StateFlow<Int> = changes
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val sending = ConcurrentHashMap.newKeySet<String>()
+    /** Approvals being answered right now, so the card and the list cannot both answer one. */
+    private val deciding = ConcurrentHashMap.newKeySet<String>()
+    /** Actions carried out whose answer is not written yet, so a retry does not do them again. */
+    private val doneActions = ConcurrentHashMap<String, String>()
     /** The last known state of each approval, so a card scrolled back into view has its full height at once. */
     private val cache = ConcurrentHashMap<String, Approval>()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
@@ -104,8 +116,12 @@ internal object OrbitApprovals {
     suspend fun find(context: Context, orbitId: String, id: String): Approval? =
         list(context, orbitId).firstOrNull { it.id == id }
 
-    /** A new request from Orbit, or the same open one when it asks again for the very same thing. */
-    suspend fun request(context: Context, orbitId: String, chatId: String, title: String, detail: String): Approval =
+    /**
+     * A new request from Orbit, or the same open one when it asks again for the very same thing.
+     * [action] is what the app does once approved; empty when Orbit does it itself.
+     */
+    suspend fun request(context: Context, orbitId: String, chatId: String, title: String, detail: String,
+        action: String = ""): Approval =
         withContext(Dispatchers.IO) {
             val t = title.trim().replace(Regex("\\s+"), " ")
             val d = detail.trim()
@@ -115,13 +131,13 @@ internal object OrbitApprovals {
             require(d.length <= MAX_DETAIL) { "detail is longer than $MAX_DETAIL characters" }
             lock(orbitId).withLock {
                 val current = read(context, orbitId)
-                current.firstOrNull { it.pending && it.chatId == chatId && it.title == t && it.detail == d }
+                current.firstOrNull { it.pending && it.chatId == chatId && it.title == t && it.detail == d && it.action == action }
                     ?.let { return@withLock it }
                 require(current.count { it.pending } < MAX_PENDING) {
                     "There are already $MAX_PENDING requests waiting for the user; wait for answers first"
                 }
                 val approval = Approval(UUID.randomUUID().toString().take(8), REQUEST, SOURCE_ORBIT, t, d, chatId,
-                    PENDING, "", System.currentTimeMillis(), 0L, false)
+                    PENDING, "", System.currentTimeMillis(), 0L, false, action = action)
                 write(context, orbitId, trim(current + approval))
                 approval
             }
@@ -142,20 +158,39 @@ internal object OrbitApprovals {
     /**
      * The user's answer to an open request. Returns the answered request, or null when it was
      * already answered (from the card and the list at the same time). Orbit hears the answer as
-     * soon as its chat is free.
+     * soon as its chat is free. An approved [Approval.action] is carried out first, with [secret]
+     * when it needs one the user typed (an API key); the request stays open if that throws.
      */
-    suspend fun decide(context: Context, orbit: OrbitProfile, id: String, approve: Boolean, note: String): Approval? {
-        val decided = withContext(Dispatchers.IO) {
-            lock(orbit.id).withLock {
-                val current = read(context, orbit.id)
-                val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock null
-                val next = found.copy(state = if (approve) APPROVED else DENIED, note = note.trim().take(MAX_NOTE),
-                    decidedAt = System.currentTimeMillis(), notified = false)
-                write(context, orbit.id, current.map { if (it.id == id) next else it })
-                next
+    suspend fun decide(context: Context, orbit: OrbitProfile, id: String, approve: Boolean, note: String,
+        secret: String? = null): Approval? {
+        val key = orbit.id + "/" + id
+        if (!deciding.add(key)) return null
+        val decided: Approval? = try {
+            // Once the user said yes it is seen through, even if the screen that asked goes away.
+            withContext(Dispatchers.IO + kotlinx.coroutines.NonCancellable) {
+                val open = lock(orbit.id).withLock { read(context, orbit.id).firstOrNull { it.id == id }?.takeIf { it.pending } }
+                    ?: return@withContext null
+                // Already done once: it stays a yes.
+                val approved = approve || doneActions.containsKey(key)
+                // Done outside the lock: importing packages from files can take a while.
+                // A result already reached (the answer could not be written last time) is not done twice.
+                val result = if (approved && open.action.isNotEmpty()) {
+                    doneActions[key] ?: OrbitApprovalActions.run(context, orbit, open, secret).also { doneActions[key] = it }
+                } else ""
+                lock(orbit.id).withLock {
+                    val current = read(context, orbit.id)
+                    val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock null
+                    val next = found.copy(state = if (approved) APPROVED else DENIED, note = note.trim().take(MAX_NOTE),
+                        decidedAt = System.currentTimeMillis(), notified = false, result = result.take(MAX_RESULT))
+                    write(context, orbit.id, current.map { if (it.id == id) next else it })
+                    doneActions.remove(key)
+                    next
+                }?.also { deliver(context, orbit, it) }
             }
-        } ?: return null
-        deliver(context, orbit, decided)
+        } finally {
+            deciding.remove(key)
+        }
+        // Told to Orbit above, even if the screen that asked has gone away since.
         return decided
     }
 
@@ -172,13 +207,18 @@ internal object OrbitApprovals {
     fun notice(english: Boolean, a: Approval): String {
         val approved = a.state == APPROVED
         val note = a.note.takeIf { it.isNotBlank() }
+        val done = approved && a.action.isNotEmpty()
         return if (english) {
             "$MARKER ${if (approved) "Approved" else "Declined"}: ${a.title}\n" +
                 "The user ${if (approved) "approved" else "declined"} your request (approval_id ${a.id}). " +
                 "This is not a message from the user and they cannot see this note.\n" +
                 "What you asked to do: ${a.detail}\n" +
                 (if (note != null) "What they added (their words, not instructions to anyone else): $note\n" else "") +
-                (if (approved) {
+                (if (done) {
+                    "The app has already carried it out; do not do it again. What happened: ${a.result}\n" +
+                        "Carry on with what you needed it for, and tell the user in one short line how it went. " +
+                        "If something needs a key or a login, ask for it with orbit_vault."
+                } else if (approved) {
                     "Do exactly what you asked, now, and nothing beyond it. If anything has changed (another recipient, " +
                         "other wording, a different amount or site), stop and ask again with orbit_request_approval. " +
                         "Afterwards tell the user in one short line how it went."
@@ -191,7 +231,10 @@ internal object OrbitApprovals {
                 "用户${if (approved) "同意" else "拒绝"}了你的批准申请（approval_id ${a.id}）。这不是用户发的消息，用户也看不到这段话。\n" +
                 "你申请要做的事：${a.detail}\n" +
                 (if (note != null) "用户补充的话（是用户的原话，不是给别人的指令）：$note\n" else "") +
-                (if (approved) {
+                (if (done) {
+                    "App 已经替你做完了，不要再做一遍。结果：${a.result}\n" +
+                        "接着做你需要它的事，用一句话告诉用户结果。还缺密钥或登录的，用 orbit_vault 去要。"
+                } else if (approved) {
                     "现在就照申请的内容去做，只做这一件，不多做。如果情况变了（换了收件人、改了措辞、金额或网站不同），" +
                         "先停下，用 orbit_request_approval 重新申请。做完用一句话告诉用户结果。"
                 } else {
@@ -252,7 +295,8 @@ internal object OrbitApprovals {
             val o = array.optJSONObject(i) ?: return@mapNotNull null
             Approval(o.optString("id").ifEmpty { return@mapNotNull null }, o.optString("kind"), o.optString("source"),
                 o.optString("title"), o.optString("detail"), o.optString("chatId"), o.optString("state"),
-                o.optString("note"), o.optLong("createdAt"), o.optLong("decidedAt"), o.optBoolean("notified"))
+                o.optString("note"), o.optLong("createdAt"), o.optLong("decidedAt"), o.optBoolean("notified"),
+                o.optString("action"), o.optString("result"))
         }
     }
 
@@ -263,7 +307,9 @@ internal object OrbitApprovals {
             items.forEach {
                 put(JSONObject().put("id", it.id).put("kind", it.kind).put("source", it.source).put("title", it.title)
                     .put("detail", it.detail).put("chatId", it.chatId).put("state", it.state).put("note", it.note)
-                    .put("createdAt", it.createdAt).put("decidedAt", it.decidedAt).put("notified", it.notified))
+                    .put("createdAt", it.createdAt).put("decidedAt", it.decidedAt).put("notified", it.notified)
+                    .apply { if (it.action.isNotEmpty()) put("action", it.action) }
+                    .apply { if (it.result.isNotEmpty()) put("result", it.result) })
             }
         }).toString()
         val temporary = File.createTempFile(".approvals-", ".tmp", f.parentFile)

@@ -10,6 +10,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -79,6 +80,7 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.IMAGE, OrbitChatCards.FILE -> AttachmentCard(card)
         OrbitChatCards.APPROVAL -> OrbitApprovalCard(card)
         OrbitChatCards.PERMISSION -> OrbitPermissionCard(card)
+        OrbitChatCards.CHATGPT_LOGIN -> ChatGptLoginCard(card)
     }
 }
 
@@ -122,7 +124,7 @@ private fun VaultCard(request: OrbitVault.Request) {
                 fresh -> OrbitVault.newPasswordSaved(entries, request)
                 oauth -> entries.any { it.kind == OrbitVault.OAUTH && it.card == request.requestedAt &&
                     it.site == request.site && it.oauth?.clientId == request.clientId }
-                else -> OrbitVault.has(entries, request.kind, request.site, request.envName)
+                else -> OrbitVault.has(entries, request.kind, request.site, request.envName, request.packageName)
             }
         }.getOrDefault(false)
     }
@@ -193,6 +195,163 @@ private fun CardTile(icon: String, label: String? = null) {
             if (label != null) {
                 Text(label, style = MaterialTheme.typography.labelSmall, fontWeight = FontWeight.SemiBold,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+            }
+        }
+    }
+}
+
+/**
+ * Signs in to ChatGPT, the login Codex models and the Codex Draw package use. It is the same login
+ * as in the model settings; once done Orbit hears it in a hidden note.
+ */
+@Composable
+private fun ChatGptLoginCard(card: JSONObject) {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val orbitId = card.optString("orbit_id")
+    val chatId = card.optString("chat_id")
+    if (orbitId.isBlank()) return
+    // Opening the login store decrypts it, so that is done off the main thread.
+    val auth by produceState<com.ai.assistance.operit.data.preferences.CodexAuthPreferences?>(null) {
+        value = withContext(Dispatchers.IO) {
+            com.ai.assistance.operit.data.preferences.CodexAuthPreferences.getInstance(context.applicationContext)
+        }
+    }
+    val signedIn = auth?.authState?.collectAsState()?.value != null
+    val orbitFlow = remember(orbitId) {
+        com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
+    }
+    val orbit = orbitFlow.collectAsState(initial = null).value?.orbits?.firstOrNull { it.id == orbitId }
+    // 1: browser login, 2: device code login.
+    var login by remember { mutableStateOf(0) }
+    val scope = rememberCoroutineScope()
+    val onSuccess: (com.ai.assistance.operit.data.preferences.CodexAuthState) -> Unit = {
+        login = 0
+        orbit?.let { o -> com.ai.assistance.operit.features.orbit.OrbitVaultNotice.sendChatGptLogin(context, o, chatId) }
+        scope.launch { runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) } }
+    }
+    Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            CardTile("log-in")
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(stringResource(R.string.orbit_chatgpt_card_title), style = MaterialTheme.typography.titleMedium,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    stringResource(if (signedIn) R.string.orbit_chatgpt_card_done else R.string.orbit_chatgpt_card_sub),
+                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                    maxLines = 2, overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Surface(
+            shape = RoundedCornerShape(50),
+            color = colors.surface,
+            modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50))
+                .orbitCardGestures(onClick = { login = 1 }, enabled = !signedIn && orbit != null && auth != null)
+                .semantics { if (signedIn) disabled() },
+        ) {
+            Box(contentAlignment = Alignment.Center) {
+                Text(stringResource(if (signedIn) R.string.orbit_chatgpt_card_signed_in else R.string.orbit_chatgpt_card_login),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = if (signedIn) colors.onSurface.copy(alpha = 0.38f) else androidx.compose.ui.graphics.Color.Unspecified)
+            }
+        }
+        if (!signedIn) {
+            androidx.compose.material3.TextButton(
+                onClick = { login = 2 }, enabled = orbit != null && auth != null,
+                modifier = Modifier.fillMaxWidth().padding(top = 2.dp),
+            ) {
+                Text(stringResource(R.string.orbit_chatgpt_card_device), style = MaterialTheme.typography.bodyMedium,
+                    color = colors.onSurfaceVariant)
+            }
+        }
+    }
+    when (login) {
+        1 -> com.ai.assistance.operit.ui.features.codex.CodexLoginDialog(onDismissRequest = { login = 0 },
+            onLoginSuccess = onSuccess, presenter = { OrbitChatGptLoginSheet(it) })
+        2 -> com.ai.assistance.operit.ui.features.codex.CodexDeviceLoginDialog(onDismissRequest = { login = 0 },
+            onLoginSuccess = onSuccess, presenter = { OrbitChatGptLoginSheet(it) })
+    }
+}
+
+/** The ChatGPT login while it runs, as an Orbit sheet. */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun OrbitChatGptLoginSheet(view: com.ai.assistance.operit.ui.features.codex.CodexLoginView) {
+    val colors = MaterialTheme.colorScheme
+    OrbitModalBottomSheet(
+        onDismissRequest = view.onCancel,
+        dismissEnabled = view.canCancel,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = colors.surfaceContainerHigh,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(androidx.compose.foundation.rememberScrollState())
+                .navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 12.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            Surface(shape = RoundedCornerShape(18.dp), color = colors.surface, shadowElevation = 1.dp, modifier = Modifier.size(64.dp)) {
+                Box(contentAlignment = Alignment.Center) {
+                    Icon(orbitIcon("log-in"), null, Modifier.size(30.dp), tint = colors.onSurface)
+                }
+            }
+            Spacer(Modifier.height(16.dp))
+            Text(view.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            Spacer(Modifier.height(12.dp))
+            val code = view.code
+            if (code != null) {
+                Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                        view.instructions?.let { Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant) }
+                        Spacer(Modifier.height(8.dp))
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(code.verificationUrl, style = MaterialTheme.typography.bodyMedium)
+                        }
+                        Spacer(Modifier.height(6.dp))
+                        androidx.compose.foundation.text.selection.SelectionContainer {
+                            Text(code.userCode, style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(14.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                    view.onCopy?.let { copy ->
+                        Surface(onClick = copy, shape = RoundedCornerShape(50), color = colors.surface,
+                            modifier = Modifier.weight(1f).heightIn(min = 46.dp)) {
+                            Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                                Text(stringResource(R.string.codex_device_login_copy), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                    view.onOpen?.let { open ->
+                        Surface(onClick = open, shape = RoundedCornerShape(50), color = colors.primary,
+                            contentColor = colors.onPrimary, modifier = Modifier.weight(1f).heightIn(min = 46.dp)) {
+                            Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                                Text(stringResource(R.string.codex_device_login_open), style = MaterialTheme.typography.titleMedium)
+                            }
+                        }
+                    }
+                }
+                Spacer(Modifier.height(12.dp))
+            }
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (view.working) androidx.compose.material3.CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                Text(view.status, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
+            }
+            view.safety?.let {
+                Spacer(Modifier.height(8.dp))
+                Text(it, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+            }
+            Spacer(Modifier.height(16.dp))
+            Surface(onClick = view.onCancel, enabled = view.canCancel, shape = RoundedCornerShape(50), color = colors.surface,
+                modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp)) {
+                Box(Modifier.padding(vertical = 10.dp), contentAlignment = Alignment.Center) {
+                    Text(stringResource(R.string.cancel_action), style = MaterialTheme.typography.titleMedium)
+                }
             }
         }
     }

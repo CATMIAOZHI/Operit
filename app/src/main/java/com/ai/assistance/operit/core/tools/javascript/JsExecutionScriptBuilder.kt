@@ -668,7 +668,10 @@ internal fun buildExecutionRuntimeBridgeScript(): String {
                             : ''
                     )
                 );
-                var moduleCache = registrationMode
+                // A call carrying its own keys (an Orbit's package keys) gets modules of its own, so a
+                // module that read a key at load time is never handed to another caller.
+                var isolatedModules = toBoolean(readCallValue('__operit_isolated_modules', false));
+                var moduleCache = registrationMode || isolatedModules
                     ? Object.create(null)
                     : ensureModuleInstanceCache();
 

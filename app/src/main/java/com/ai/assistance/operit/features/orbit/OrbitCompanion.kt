@@ -119,6 +119,7 @@ object OrbitCompanion {
         OrbitReactions.drop(orbitId)
         // Its vault, forget plan and forgotten list are encrypted outside the Orbit's folder.
         runCatching { OrbitSecretFile.deleteAllForOrbit(appContext, orbitId) }
+        OrbitVault.forgetCached(orbitId)
         // Model-only task chats are independent NORMAL nodes, not children in the archive graph.
         val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(appContext)
         chats.filter { it.id in chatIds && it.hiddenReason == "ORBIT_TASK" }.forEach {
