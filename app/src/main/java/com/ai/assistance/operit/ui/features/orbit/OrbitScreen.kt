@@ -105,6 +105,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.semantics
@@ -172,6 +173,7 @@ fun OrbitScreen(
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val preferences = remember { OrbitPreferences.getInstance(context) }
     // Settings already read open the page at once; only the very first visit waits for them.
     val settings by preferences.settingsFlow.collectAsState(initial = preferences.loadedSnapshot())
@@ -262,6 +264,7 @@ private fun OrbitChatPage(
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     var showProfile by rememberSaveable(orbit.id) { mutableStateOf(false) }
     // The chat screen's own view model (same owner, same key), for quoting a post above its input box.
     val chatViewModel: com.ai.assistance.operit.ui.features.chat.viewmodel.ChatViewModel =
@@ -410,7 +413,7 @@ private fun OrbitChatPage(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                android.widget.Toast.makeText(context, context.getString(R.string.orbit_chats_failed),
+                android.widget.Toast.makeText(context, resources.getString(R.string.orbit_chats_failed),
                     android.widget.Toast.LENGTH_SHORT).show()
             } finally {
                 forkingMessage = false
@@ -1098,6 +1101,7 @@ private fun OrbitDevHeader(
     val mainTitle = stringResource(R.string.orbit_chats_main)
     var pickerOpen by remember { mutableStateOf(false) }
     val context = LocalContext.current
+    val resources = LocalResources.current
     // Subagents under Orbit's chats, read again each time the list opens.
     val subagents by androidx.compose.runtime.produceState(
         emptyList<com.ai.assistance.operit.data.model.SubagentRunEntity>(), orbit.talkChatIds, pickerOpen,
@@ -1197,6 +1201,7 @@ internal fun OrbitAvatar(
     petVisible: Boolean = true,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
     // A built-in role's picture ships with the app, so an Orbit without its own picture uses it.
@@ -1304,6 +1309,7 @@ private fun OrbitSettingsPage(
 ) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val preferences = remember { OrbitPreferences.getInstance(context) }
     val cardColor = settingsCardColor(hasBackgroundImage)
@@ -1522,6 +1528,7 @@ private fun OrbitHome(
     onManageRoleCards: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     // The chat page puts its buttons in the top bar; this list has none.
     val setTopBarActions = com.ai.assistance.operit.ui.main.LocalTopBarActions.current

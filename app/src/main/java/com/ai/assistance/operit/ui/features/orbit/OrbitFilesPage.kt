@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -117,6 +118,7 @@ private fun friendlyName(path: String): String {
 @Composable
 internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val files = remember(orbitId) { OrbitFiles.of(context, orbitId) }
     val who = rememberOrbitName(orbitId)
     var reload by remember { mutableIntStateOf(0) }
@@ -215,7 +217,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
                     Box(Modifier.weight(1f)) { SectionTitle(stringResource(title)) }
                     // A person or group is added by asking Orbit; the prompt waits in the chat box.
                     TextButton(onClick = {
-                        onDraft(context.getString(if (folder.endsWith("people")) R.string.orbit_person_new_draft else R.string.orbit_group_new_draft))
+                        onDraft(resources.getString(if (folder.endsWith("people")) R.string.orbit_person_new_draft else R.string.orbit_group_new_draft))
                     }, modifier = Modifier.padding(top = 14.dp)) {
                         Text(stringResource(R.string.orbit_files_create))
                     }
@@ -267,6 +269,7 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
 @Composable
 internal fun OrbitMadeFileRow(entry: OrbitFiles.Entry, onClick: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val name = entry.path.substringAfterLast('/')
     OrbitListRow(
         icon = orbitIcon(orbitFileIcon(name)),
@@ -312,6 +315,7 @@ internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFile
 @Composable
 internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean = false) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val editor = rememberOrbitFileEditor(files, path)
     OrbitFilePage(
         title = path.substringAfterLast('/'),
@@ -353,6 +357,7 @@ internal fun OrbitMadeFileActions(
     onPreview: ((java.io.File) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     OrbitDialog(
         onDismissRequest = onDismiss,
@@ -398,6 +403,7 @@ internal fun OrbitMadeFileActions(
 @Composable
 private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var reload by remember { mutableIntStateOf(0) }
     val result by produceState<Result<List<OrbitFiles.TrashItem>>?>(null, reload) {

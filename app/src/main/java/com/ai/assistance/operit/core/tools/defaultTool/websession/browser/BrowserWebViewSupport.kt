@@ -1080,7 +1080,9 @@ internal fun StandardBrowserSessionTools.applySessionUserAgent(
         useWideViewPort = isDesktopMode && session.viewportWidthPx == null
         loadWithOverviewMode = isDesktopMode && session.viewportWidthPx == null
         // Sites can otherwise read the app's package name from every request.
-        if (WebViewFeature.isFeatureSupported(WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST)) {
+        // Same feature as WebViewFeature.REQUESTED_WITH_HEADER_ALLOW_LIST; the constant itself is
+        // restricted to the AndroidX library group, while feature names are stable strings.
+        if (WebViewFeature.isFeatureSupported("REQUESTED_WITH_HEADER_ALLOW_LIST")) {
             WebSettingsCompat.setRequestedWithHeaderOriginAllowList(this, emptySet())
         }
 

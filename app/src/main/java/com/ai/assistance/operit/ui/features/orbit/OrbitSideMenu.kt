@@ -61,6 +61,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -111,6 +112,7 @@ internal fun OrbitSideMenu(
     onLeaveOrbit: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var renaming by remember { mutableStateOf<OrbitSideChat?>(null) }
     var deleting by remember { mutableStateOf<OrbitSideChat?>(null) }
@@ -179,7 +181,7 @@ internal fun OrbitSideMenu(
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                Toast.makeText(context, context.getString(R.string.orbit_chats_failed), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, resources.getString(R.string.orbit_chats_failed), Toast.LENGTH_SHORT).show()
             } finally {
                 busy = false
             }
@@ -189,14 +191,14 @@ internal fun OrbitSideMenu(
     fun newSideChat() {
         when {
             orbit.openSideChats.size >= OrbitSettings.MAX_SIDE_CHATS -> Toast.makeText(
-                context, context.getString(R.string.orbit_chats_limit, OrbitSettings.MAX_SIDE_CHATS), Toast.LENGTH_SHORT,
+                context, resources.getString(R.string.orbit_chats_limit, OrbitSettings.MAX_SIDE_CHATS), Toast.LENGTH_SHORT,
             ).show()
             !orbit.canAddSideChat -> Toast.makeText(
-                context, context.getString(R.string.orbit_chats_limit_all, OrbitSettings.MAX_ALL_SIDE_CHATS), Toast.LENGTH_SHORT,
+                context, resources.getString(R.string.orbit_chats_limit_all, OrbitSettings.MAX_ALL_SIDE_CHATS), Toast.LENGTH_SHORT,
             ).show()
             // No title to type: it is named after the first message, like any chat.
             else -> act {
-                val id = OrbitCompanion.createSideChat(context, orbit.id, context.getString(R.string.new_conversation))
+                val id = OrbitCompanion.createSideChat(context, orbit.id, resources.getString(R.string.new_conversation))
                 open(id)
             }
         }
@@ -205,7 +207,7 @@ internal fun OrbitSideMenu(
     fun setArchived(side: OrbitSideChat, archived: Boolean) {
         if (!archived && orbit.openSideChats.size >= OrbitSettings.MAX_SIDE_CHATS) {
             Toast.makeText(
-                context, context.getString(R.string.orbit_chats_unarchive_limit, OrbitSettings.MAX_SIDE_CHATS), Toast.LENGTH_SHORT,
+                context, resources.getString(R.string.orbit_chats_unarchive_limit, OrbitSettings.MAX_SIDE_CHATS), Toast.LENGTH_SHORT,
             ).show()
             return
         }

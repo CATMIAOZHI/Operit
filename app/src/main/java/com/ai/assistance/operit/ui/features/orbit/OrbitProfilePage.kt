@@ -59,6 +59,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
@@ -118,6 +119,7 @@ internal fun OrbitProfilePage(
     onDraft: (String) -> Unit = {},
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val who = orbitName(orbit)
     val dao = remember(context) { OrbitTaskRepository(context).dao }
     val running by OrbitCompanion.running.collectAsState()
@@ -273,6 +275,7 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
     // A picked photo waits here while the user frames it; the crop window then hands it to the chat.
     var cropSource by remember { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
+    val resources = LocalResources.current
     Box(modifier) {
         OrbitAvatar(
             orbit = orbit,
@@ -323,10 +326,10 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
                 }
                 if (attached) {
                     cropSource = null
-                    onDraft(context.getString(R.string.orbit_avatar_draft_image))
+                    onDraft(resources.getString(R.string.orbit_avatar_draft_image))
                 } else {
                     android.widget.Toast.makeText(
-                        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
+                        context, resources.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
                     ).show()
                 }
             },
@@ -350,6 +353,7 @@ private fun OrbitAvatarSheet(
     onDismiss: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(
@@ -359,7 +363,7 @@ private fun OrbitAvatarSheet(
         },
     )
     fun failed() = android.widget.Toast.makeText(
-        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
+        context, resources.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
     ).show()
     /** Runs [block], then closes the sheet and hands its prompt to the chat. */
     fun ask(block: suspend () -> String?) {
@@ -420,7 +424,7 @@ private fun OrbitAvatarSheet(
                     icon = orbitIcon("rotate-ccw"),
                     label = stringResource(R.string.orbit_reset_avatar),
                     enabled = !busy,
-                    onClick = { ask { context.getString(R.string.orbit_avatar_draft_reset) } },
+                    onClick = { ask { resources.getString(R.string.orbit_avatar_draft_reset) } },
                     modifier = Modifier.weight(1f),
                 )
             }
@@ -442,7 +446,7 @@ private fun OrbitAvatarSheet(
                                 modifier = Modifier.weight(1f),
                                 onClick = {
                                     ask {
-                                        context.getString(R.string.orbit_avatar_draft_pet, petName, pet.id)
+                                        resources.getString(R.string.orbit_avatar_draft_pet, petName, pet.id)
                                     }
                                 },
                             )
@@ -500,6 +504,7 @@ private fun PetAvatarChoice(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val preview by produceState<androidx.compose.ui.graphics.ImageBitmap?>(null, pet) {
         value = com.ai.assistance.operit.pet.PetAvatar.preview(context, pet)
     }
@@ -1066,6 +1071,7 @@ private fun IdentitySection(
     onOpenFiles: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val lifecycle by androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle.currentStateFlow.collectAsState()
     val visible = LocalProfileVisible.current && lifecycle.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)
     val hue by rememberSaveable(orbit.id) { mutableIntStateOf(kotlin.random.Random.nextInt(360)) }
@@ -1147,6 +1153,7 @@ private fun IdentitySection(
 @Composable
 private fun OrbitExportRow(orbit: OrbitProfile) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var exporting by remember { mutableStateOf(false) }
     // The zip holds every chat and memory, so a tap only asks first.

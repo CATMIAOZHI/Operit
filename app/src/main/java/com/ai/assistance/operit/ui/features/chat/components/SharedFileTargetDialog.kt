@@ -28,6 +28,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -231,6 +232,7 @@ fun SharedIncomingContentHandler(
     onOpenOrbit: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val orbitSettings by remember { OrbitPreferences.getInstance(context).settingsFlow }.collectAsState(initial = null)
     // Only a running Orbit can take a share; a paused one would have nobody to answer.
@@ -317,7 +319,7 @@ fun SharedIncomingContentHandler(
                         }
                     }
                 }
-                val message = listOf(note, context.getString(R.string.orbit_share_files_message, paths.size,
+                val message = listOf(note, resources.getString(R.string.orbit_share_files_message, paths.size,
                     paths.joinToString("\n") { "- $it" })).filter { it.isNotBlank() }.joinToString("\n\n")
                 com.ai.assistance.operit.ui.features.orbit.sendToOrbit(context, orbit, message)
                 openOrbit(orbit)
@@ -326,7 +328,7 @@ fun SharedIncomingContentHandler(
             } catch (e: Exception) {
                 // Files saved before the failure go to the trash, so a half share does not linger unannounced.
                 saved.forEach { path -> runCatching { files.delete(path) } }
-                android.widget.Toast.makeText(context, context.getString(R.string.orbit_share_failed, orbit.name),
+                android.widget.Toast.makeText(context, resources.getString(R.string.orbit_share_failed, orbit.name),
                     android.widget.Toast.LENGTH_SHORT).show()
             }
         }

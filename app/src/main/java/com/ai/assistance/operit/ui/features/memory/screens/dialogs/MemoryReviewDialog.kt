@@ -10,6 +10,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.memory.screens.MemoryLibraryPage
@@ -24,6 +25,7 @@ import java.util.Date
 @Composable
 fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillName: String? = null) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val reviewErrorFormat = stringResource(R.string.memory_review_error)
     val repo = remember(profileId) { MemoryReviewRepository(context, profileId) }
     val settings = remember(profileId) { MemorySearchSettingsPreferences(context, profileId) }
@@ -142,7 +144,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
                                 }.distinct().take(8)
                                 val recall = com.ai.assistance.operit.data.repository.ChatRecallRepository(context, record.sourceChatId)
                                 evidenceText = ids.mapNotNull { recall.message(it)?.content?.take(2000) }.joinToString("\n\n")
-                                    .ifBlank { context.getString(R.string.orbit_memory_source_missing) }
+                                    .ifBlank { resources.getString(R.string.orbit_memory_source_missing) }
                             } }) { Text(stringResource(R.string.orbit_memory_view_evidence)) }
                             evidenceText?.let {
                                 Text(stringResource(R.string.orbit_memory_evidence_current), style = MaterialTheme.typography.bodySmall)

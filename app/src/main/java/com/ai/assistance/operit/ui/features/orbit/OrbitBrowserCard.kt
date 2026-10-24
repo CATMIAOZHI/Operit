@@ -61,7 +61,7 @@ private const val PREVIEW_MS = 2_000L
  */
 @Composable
 internal fun OrbitBrowserCard(chatId: String, bubbleColor: Color, visible: Boolean, slot: OrbitCardSlot) {
-    remember { OrbitBrowserWatch.loadCards() }
+    LaunchedEffect(Unit) { OrbitBrowserWatch.loadCards() }
     val cards by OrbitBrowserWatch.cards.collectAsState()
     val mine = remember(cards, chatId, slot) {
         cards.filter { card ->

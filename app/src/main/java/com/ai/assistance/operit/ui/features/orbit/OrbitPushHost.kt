@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
@@ -128,7 +129,7 @@ internal fun <T : Any> OrbitPushHost(
     var gestureDone by remember { mutableStateOf(false) }
     val currentEntries by rememberUpdatedState(entries)
     val currentOnPop by rememberUpdatedState(onPop)
-    remember { state.depth = entries.size; Unit }
+    SideEffect { state.depth = entries.size }
 
     LaunchedEffect(entries) {
         val before = drawn

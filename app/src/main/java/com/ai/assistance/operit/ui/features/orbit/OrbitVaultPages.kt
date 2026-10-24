@@ -58,6 +58,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -110,6 +111,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
         return
     }
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val login = request.kind == OrbitVault.LOGIN
     // Signing up or resetting: the password is new, so it is typed twice (or generated).
@@ -349,7 +351,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                                 secret = ""
                                 if (saved == null) {
                                     saving = false
-                                    Toast.makeText(context, context.getString(R.string.orbit_vault_card_update_gone), Toast.LENGTH_SHORT).show()
+                                    Toast.makeText(context, resources.getString(R.string.orbit_vault_card_update_gone), Toast.LENGTH_SHORT).show()
                                     return@launch
                                 }
                                 runCatching {
@@ -381,7 +383,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         } catch (e: Exception) {
                             finishing = false
                             saving = false
-                            Toast.makeText(context, context.getString(R.string.orbit_vault_save_failed, OrbitVault.MAX_ENTRIES), Toast.LENGTH_SHORT).show()
+                            Toast.makeText(context, resources.getString(R.string.orbit_vault_save_failed, OrbitVault.MAX_ENTRIES), Toast.LENGTH_SHORT).show()
                         }
                     }
                 },
@@ -412,6 +414,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
 @Composable
 internal fun OrbitImportMemorySheet(orbit: OrbitProfile, onDismiss: () -> Unit, onSent: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val clipboard = LocalClipboardManager.current
     val prompt = stringResource(R.string.orbit_import_prompt)
     var pasted by rememberSaveable { mutableStateOf("") }
@@ -430,7 +433,7 @@ internal fun OrbitImportMemorySheet(orbit: OrbitProfile, onDismiss: () -> Unit, 
             }
             FilledTonalButton(onClick = {
                 clipboard.setText(AnnotatedString(prompt))
-                Toast.makeText(context, context.getString(R.string.orbit_import_copied), Toast.LENGTH_SHORT).show()
+                Toast.makeText(context, resources.getString(R.string.orbit_import_copied), Toast.LENGTH_SHORT).show()
             }) {
                 Icon(orbitIcon("copy"), null, Modifier.size(18.dp))
                 Spacer(Modifier.width(8.dp))
@@ -451,7 +454,7 @@ internal fun OrbitImportMemorySheet(orbit: OrbitProfile, onDismiss: () -> Unit, 
                 enabled = !sending && pasted.isNotBlank() && !tooLong, modifier = Modifier.fillMaxWidth(),
                 onClick = {
                     sending = true
-                    sendToOrbit(context, orbit, context.getString(R.string.orbit_import_message, pasted.trim()))
+                    sendToOrbit(context, orbit, resources.getString(R.string.orbit_import_message, pasted.trim()))
                     onSent()
                 },
             ) { Text(stringResource(R.string.orbit_import_send, orbit.name)) }
