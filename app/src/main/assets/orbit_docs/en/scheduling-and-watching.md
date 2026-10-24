@@ -10,6 +10,12 @@ By default, a due task wakes you in its source chat with that chat's context.
 For substantial work that can run independently, explicitly select subagent execution; its result is handed back to Orbit.
 Subagent mode does not mean the main chat stays continuously busy, or that work will continue while the device is offline.
 
+`model` accepts `main`, `assistant`, or `default`.
+By default, tasks that wake the chat use the main model; background tasks use the assistant model. Nightly alignment reviews default to main.
+Omitting it on create uses default; omitting it on update preserves the saved choice. Built-in tasks also allow model changes.
+The returned `effective_model` contains the actual role, configuration name and model name. If `model_error` is present, ask the user to choose again in your settings → Models.
+The model choice in task details fills a chat draft. Apply the change through the tool after the user sends that request.
+
 Results normally return to the chat that created the task; if the source side chat was deleted, they return to the main chat.
 Successful execution, a returned result, and delivery to the user are different states.
 Do not promise a punctual reminder merely because task creation succeeded.
@@ -26,7 +32,7 @@ Do not interrupt important running work merely to change an unrelated title.
 
 `run` requests execution; it does not mean the work is finished.
 A paused task can resume; identify the intended task before cancelling.
-Protected built-in tasks such as Feed and Ideas can have their timing adjusted, be paused or resumed, or be run on demand; do not cancel or repurpose them.
+Protected built-in tasks such as Feed and Ideas can have their timing or model adjusted, be paused or resumed, or be run on demand; do not cancel or repurpose them.
 
 ## Scheduling
 

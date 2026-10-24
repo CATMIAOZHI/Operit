@@ -367,7 +367,7 @@ object MemoryLearningCoordinator {
                 runHead(journal.cursor(first).messageId,journal.carry(generation).take(CARRY_LIMIT)).toByteArray().size
             val config = try {
                 MemoryLearningSnapshot.build(context,emptyList(),fixedBytes,
-                    settings.shouldIncludeThinking())
+                    settings.shouldIncludeThinking(), chatId = chatId)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 // A window that cannot even hold the instructions will not become reviewable by

@@ -1067,8 +1067,12 @@ object AIMessageManager {
 
         return try {
             AppLogger.d(TAG, "开始使用AI生成对话总结：总结 ${messagesToSummarize.size} 条消息")
+            // The target chat owns the model route and the Orbit usage tag, even when a caller
+            // supplied the shared service (manual, automatic and insert-at-message summaries).
+            val summaryService = chatId?.let { EnhancedAIService.getChatInstance(context, it) }
+                ?: enhancedAiService
             val summary =
-                enhancedAiService.generateSummary(
+                summaryService.generateSummary(
                     conversationToSummarize,
                     previousSummary,
                     effectiveSummaryConfig

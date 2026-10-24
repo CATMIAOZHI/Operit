@@ -12,6 +12,29 @@ Multiple companions may exist, but only one runs at a time. A role card seeds So
 later editing or deleting that card does not change Orbit. Each companion has a persistent
 main conversation. Naming remains an Orbit tool action.
 
+Each companion stores model choices in `orbit_models` DataStore: main, assistant, optional
+image fallback and advanced function overrides. Shared model configurations supply endpoints,
+credentials and model lists; references bind by config ID and exact model name (an empty name
+explicitly means a plugin's default model). Initialization
+copies the current CHAT/MEMORY choices once, then never follows the main app’s functional choices.
+An unavailable selection blocks that call with a settings hint. Image capability comes from the
+existing per-model capability setting; no automatic paid probe or model-name guessing is used.
+`MultiServiceManager` routes Orbit functions while `OrbitUsageTag` retains accounting identity.
+Function-map refreshes affect only main-app caches; companion choice changes and deletion retire
+that companion's caches, while shared account edits still refresh all owners. Active leases finish
+before their retired provider is released. Orbit send preparation suspends without blocking the UI
+and reserves the chat until dispatch, preserving the submitted draft and its send order.
+Preparation blocks duplicate queue/steer submissions and remains cancellable without clearing the
+draft. Summary generation and configuration use the target chat's service; last-send model and memory
+overrides are stored per chat. Deleted/deleting owners, including stale usage tags, are rejected
+before resolving a provider, and model-setting initialization/removal share the same lock.
+
+Room migration 44→45 adds `orbit_tasks.modelRole` (`DEFAULT`, `MAIN`, `ASSISTANT`).
+Default chat wakes use main; background tasks use assistant; alignment always defaults to main.
+Explicit task choices override those defaults for that execution only. `orbit_task` create/update
+accept `model=default/main/assistant`, and its result includes `effective_model`. Protected routines
+allow model changes. Task-details choices fill a chat draft rather than directly editing the task.
+
 Each Orbit defaults to its own profile, notes, memory graph, conversation recall and learned
 skills. Branches and background/child chats inherit ownership. This is default memory routing,
 not an OS sandbox: explicit user requests may use existing command/file tools to read other

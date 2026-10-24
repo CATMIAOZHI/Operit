@@ -420,7 +420,7 @@ object OrbitTaskRunner {
             },
             onSent = {
                 check(complete(context, state, observation, "", "", OrbitRunEntity.IN_CHAT)) { "Task was paused, cancelled or replaced" }
-            }, decision = decision)
+            }, decision = decision, modelRole = OrbitModels.taskRole(task))
         } finally { OrbitChatDecision.end(chatId, decision) }
         if (told.sent) {
             val outcome = when {

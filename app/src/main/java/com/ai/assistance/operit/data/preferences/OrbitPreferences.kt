@@ -198,6 +198,12 @@ class OrbitPreferences private constructor(context: Context) {
 
     suspend fun current(): OrbitSettings = settingsFlow.first().also { keepSnapshot(it) }
 
+    /** Late tool work must fail closed once its companion starts deletion. */
+    suspend fun requireModelOwner(orbitId: String): OrbitProfile =
+        checkNotNull(current().orbits.firstOrNull { it.id == orbitId && !it.deleting }) {
+            appContext.getString(com.ai.assistance.operit.R.string.orbit_model_owner_unavailable)
+        }
+
     /**
      * The latest settings for code that cannot suspend but must not mistake an Orbit chat for a
      * normal one: it waits for the first read once, right after the app starts, and is free after.
@@ -296,6 +302,7 @@ class OrbitPreferences private constructor(context: Context) {
             preferences.remove(dailyKey(orbitId))
             if (preferences[ACTIVE_ORBIT_ID] == orbitId) preferences.remove(ACTIVE_ORBIT_ID)
         }
+        OrbitModelPreferences(appContext).remove(orbitId)
         withContext(Dispatchers.IO) {
             com.ai.assistance.operit.features.orbit.OrbitSoulRepository.removeDirectory(orbitDir(orbitId))
             com.ai.assistance.operit.features.orbit.OrbitPackages.forgetNamesInUse()

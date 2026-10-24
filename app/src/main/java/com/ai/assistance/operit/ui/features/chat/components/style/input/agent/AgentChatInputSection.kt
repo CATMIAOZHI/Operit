@@ -408,10 +408,11 @@ fun AgentChatInputSection(
     }
     val activeProfileId by userPreferencesManager.activeMemorySpaceIdFlow.collectAsState(initial = "default")
     var preferenceProfiles by remember { mutableStateOf<List<MemorySpace>>(emptyList()) }
+    val orbitChatModel = com.ai.assistance.operit.ui.features.orbit.rememberOrbitChatModel(currentChatId, configSummaries)
     val currentConfigMapping =
-        configMappingWithIndex[FunctionType.CHAT]
+        orbitChatModel?.mapping ?: configMappingWithIndex[FunctionType.CHAT]
             ?: FunctionConfigMapping(FunctionalConfigManager.DEFAULT_CONFIG_ID, 0)
-    val isModelSelectionLockedByCharacterCard = !characterCardBoundChatModelConfigId.isNullOrBlank()
+    val isModelSelectionLockedByCharacterCard = orbitChatModel == null && !characterCardBoundChatModelConfigId.isNullOrBlank()
     val isMemorySelectionLockedByCharacterCard = !characterCardBoundMemoryProfileId.isNullOrBlank()
     val effectiveConfigMapping =
         if (isModelSelectionLockedByCharacterCard) {
@@ -451,10 +452,13 @@ fun AgentChatInputSection(
         configSummaries.find { it.id == effectiveConfigMapping.configId }
     val mappedModelName =
         activeConfigSummary?.let { config ->
-            getModelList(config.modelName).getOrNull(effectiveConfigMapping.modelIndex)
+            com.ai.assistance.operit.data.preferences.OrbitModelRef
+                .fromSelection(config, effectiveConfigMapping.modelIndex)?.modelName
         }
     val displayModelName =
-        if (isModelSelectionLockedByCharacterCard) {
+        if (mappedModelName == "") {
+            stringResource(R.string.orbit_model_plugin_default)
+        } else if (isModelSelectionLockedByCharacterCard) {
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.not_selected)
         } else {
             mappedModelName?.takeIf { it.isNotBlank() } ?: stringResource(R.string.functional_model_reselect)
@@ -499,7 +503,9 @@ fun AgentChatInputSection(
 
     val hasDraftText = userMessage.text.isNotBlank()
     val canSendMessage = hasDraftText || attachments.isNotEmpty()
-    val showQueueAction = isProcessing && canSendMessage
+    val modelPreparingChatIds by actualViewModel.modelPreparingChatIds.collectAsState()
+    val isPreparingModel = currentChatId in modelPreparingChatIds
+    val showQueueAction = isProcessing && canSendMessage && !isPreparingModel
     // Orbit has no voice conversation (it would open the floating window and show its tool calls).
     // With nothing to send, its round button slides away and only the microphone stays.
     val orbitPreferences = remember { com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context) }
@@ -557,7 +563,7 @@ fun AgentChatInputSection(
     }
 
     fun handleEnterSendAction() {
-        if (!canSendMessage) return
+        if (!canSendMessage || isPreparingModel) return
         if (showQueueAction) {
             onQueueMessage()
             setShowAttachmentPanel(false)
@@ -623,7 +629,15 @@ fun AgentChatInputSection(
         }
 
     val onSelectModel: (String, Int) -> Unit = { selectedId, modelIndex ->
-        if (isModelSelectionLockedByCharacterCard) {
+        if (orbitChatModel != null) {
+            val name = configSummaries.firstOrNull { it.id == selectedId }?.let {
+                com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(it, modelIndex)?.modelName
+            }
+            if (name != null) scope.launch {
+                com.ai.assistance.operit.ui.features.orbit.selectOrbitChatModel(context, orbitChatModel.orbitId, selectedId, name)
+                showModelSelectorPopup.value = false
+            }
+        } else if (isModelSelectionLockedByCharacterCard) {
             val currentModelIndex = configSummaries.find { it.id == effectiveConfigMapping.configId }?.let { config ->
                 getValidModelIndex(config.modelName, effectiveConfigMapping.modelIndex)
             } ?: effectiveConfigMapping.modelIndex.coerceAtLeast(0)
@@ -2164,8 +2178,10 @@ private fun AgentModelSelectorItem(
     var expandedConfigId by remember { mutableStateOf<String?>(null) }
     val currentModelName =
         currentConfig?.let { config ->
-            getModelList(config.modelName).getOrNull(currentConfigMapping.modelIndex)
-        } ?: stringResource(R.string.functional_model_reselect)
+            com.ai.assistance.operit.data.preferences.OrbitModelRef
+                .fromSelection(config, currentConfigMapping.modelIndex)?.modelName
+        }?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }
+            ?: stringResource(R.string.functional_model_reselect)
 
     Row(
         modifier =
@@ -2204,7 +2220,7 @@ private fun AgentModelSelectorItem(
         )
         Spacer(modifier = Modifier.width(8.dp))
         Text(
-            text = currentModelName.ifEmpty { stringResource(R.string.not_selected) },
+            text = currentModelName,
             fontSize = 13.sp,
             color = MaterialTheme.colorScheme.primary,
             maxLines = 2,
@@ -2310,7 +2326,10 @@ private fun AgentModelSelectorItem(
                 @Composable
                 fun AgentConfigItem(config: ModelConfigSummary) {
                     val isSelected = config.id == currentConfigMapping.configId
-                    val modelList = getModelList(config.modelName)
+                    val modelList = getModelList(config.modelName).ifEmpty {
+                        if (com.ai.assistance.operit.data.preferences.OrbitModelRef.fromSelection(config, 0)?.modelName == "")
+                            listOf("") else emptyList()
+                    }
                     val hasMultipleModels = modelList.size > 1
                     val isExpanded = expandedConfigId == config.id
 
@@ -2330,7 +2349,7 @@ private fun AgentModelSelectorItem(
                                     Text(text = stringResource(R.string.chat_model_count, modelList.size), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 10.sp)
                                     Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 } else {
-                                    Text(text = config.modelName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                                    Text(text = modelList.firstOrNull()?.ifEmpty { stringResource(R.string.orbit_model_plugin_default) } ?: config.modelName, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant, fontSize = 11.sp, maxLines = 1, overflow = TextOverflow.Ellipsis)
                                     Icon(imageVector = if (isExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown, contentDescription = null, modifier = Modifier.size(16.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
                                 }
                             }
@@ -2359,8 +2378,8 @@ private fun AgentModelSelectorItem(
                                             .padding(horizontal = 8.dp, vertical = 4.dp),
                                         verticalAlignment = Alignment.CenterVertically,
                                     ) {
-                                        Text(text = modelName, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                                        IconButton(onClick = { onToggleFavorite(config.id, modelName) }, modifier = Modifier.size(24.dp)) {
+                                        Text(text = modelName.ifEmpty { stringResource(R.string.orbit_model_plugin_default) }, fontSize = 12.sp, fontWeight = if (isModelSelected) FontWeight.Bold else FontWeight.Normal, color = if (isModelSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                                        if (modelName.isNotEmpty()) IconButton(onClick = { onToggleFavorite(config.id, modelName) }, modifier = Modifier.size(24.dp)) {
                                             Icon(
                                                 if (isModelFav) Icons.Filled.Star else Icons.Outlined.StarOutline,
                                                 contentDescription = if (isModelFav) stringResource(R.string.remove_model_from_favorites) else stringResource(R.string.add_model_to_favorites),

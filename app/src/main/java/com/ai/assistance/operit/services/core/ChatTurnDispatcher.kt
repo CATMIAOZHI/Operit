@@ -346,7 +346,9 @@ class ChatTurnDispatcher {
                         val state =
                             core.inputProcessingStateByChatId.value[resolvedChatId]
                                 ?: InputProcessingState.Idle
-                        if (state is InputProcessingState.Error) {
+                        // Model preparation can finish with an error/cancellation before a stream
+                        // exists; consume that terminal result instead of waiting for a timeout.
+                        if (state is InputProcessingState.Error || terminalSignal.isCompleted) {
                             val terminal = terminalSignal.await()
                             when (terminal) {
                                 is ChatTurnTerminalSignal.Failed ->

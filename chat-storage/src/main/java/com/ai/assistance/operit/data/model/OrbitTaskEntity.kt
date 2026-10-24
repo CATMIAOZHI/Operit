@@ -41,6 +41,8 @@ data class OrbitTaskEntity(
      * background subagent does the work and hands its result to Orbit, which then tells the user.
      */
     @ColumnInfo(defaultValue = "0") val useSubagent: Boolean = false,
+    /** DEFAULT follows the execution lane (alignment always uses main); MAIN or ASSISTANT overrides it. */
+    @ColumnInfo(defaultValue = "'DEFAULT'") val modelRole: String = "DEFAULT",
 )
 
 @Entity(tableName = "orbit_events", indices = [Index("taskId")])

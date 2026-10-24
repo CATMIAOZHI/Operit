@@ -68,6 +68,25 @@ private val TaskCardShape = RoundedCornerShape(20.dp)
 private val TaskCardTop = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
 private val TaskCardBottom = RoundedCornerShape(bottomStart = 20.dp, bottomEnd = 20.dp)
 
+private enum class TaskGroup(val title: Int) {
+    ATTENTION(R.string.orbit_tasks_group_attention),
+    ACTIVE(R.string.orbit_tasks_group_active),
+    PAUSED(R.string.orbit_tasks_group_paused),
+    FINISHED(R.string.orbit_tasks_group_finished);
+
+    fun contains(task: OrbitTaskEntity): Boolean = when (this) {
+        ATTENTION -> task.state == "WAITING_USER" || task.state == "VERIFY"
+        ACTIVE -> task.state == "ACTIVE"
+        PAUSED -> task.state == "PAUSED"
+        FINISHED -> task.state == "DONE" || task.state == "CANCELLED"
+    }
+}
+
+private sealed interface TaskPage {
+    data class Group(val group: TaskGroup) : TaskPage
+    data class Detail(val taskId: String) : TaskPage
+}
+
 @Composable
 private fun taskCardColor(): Color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f)
 
@@ -84,6 +103,7 @@ internal fun OrbitTasksPage(
     val repository = remember(context) { OrbitTaskRepository(context) }
     val scope = rememberCoroutineScope()
     var selected by rememberSaveable(orbitId) { mutableStateOf(initialTaskId) }
+    var selectedGroup by rememberSaveable(orbitId) { mutableStateOf<TaskGroup?>(null) }
     var busy by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf(false) }
     var errorDetail by remember { mutableStateOf<String?>(null) }
@@ -101,6 +121,13 @@ internal fun OrbitTasksPage(
         try { repository.dao.observeTasks(orbitId).collect { value = it } }
         catch (e: CancellationException) { throw e }
         catch (e: Exception) { error = true }
+    }
+    val groups = remember(tasks) {
+        // Keep the DAO's newest-created-first order; background runs do not shuffle the list.
+        // The retired daily check-in must not linger under "finished".
+        val all = tasks.orEmpty().filterNot { OrbitTaskRepository.isRetiredCheckIn(it) }
+        TaskGroup.entries.map { group -> group to all.filter(group::contains) }
+            .filter { it.second.isNotEmpty() }
     }
     // A run put off (busy chat, quiet hours) waits on its event; that is the real next time.
     val dues by produceState(emptyMap<String, Long>(), orbitId, retry) {
@@ -128,8 +155,16 @@ internal fun OrbitTasksPage(
     }
     // A message from one task's buttons does not follow the user to another task.
     fun clearFeedback() { actionError = null; notice = null }
-    fun back() { clearFeedback(); if (selected != null && initialTaskId == null) selected = null else onBack() }
-    // An open task in the list is left by the push host below, with the back swipe.
+    fun back() {
+        clearFeedback()
+        when {
+            initialTaskId != null -> onBack()
+            selected != null -> selected = null
+            selectedGroup != null -> selectedGroup = null
+            else -> onBack()
+        }
+    }
+    // The host below leaves one level at a time, including its predictive back swipe.
     OrbitPageBack { back() }
 
     val listState = rememberLazyListState()
@@ -193,14 +228,44 @@ internal fun OrbitTasksPage(
             // Opening a task pushes its page in from the right over the list, like iOS; the back
             // swipe slides it away under the finger.
             OrbitPushHost(
-                entries = listOfNotNull(selected),
-                onPop = { clearFeedback(); selected = null },
+                entries = listOfNotNull<TaskPage>(
+                    selectedGroup?.let { TaskPage.Group(it) },
+                    selected?.let { TaskPage.Detail(it) },
+                ),
+                onPop = ::back,
                 base = {
                     Box(Modifier.fillMaxSize().background(pageColor)) {
-                        TaskList(rememberOrbitName(orbitId), tasks, dues, latestRuns, listState, ::back, errorBanner, loadFailed = error) { clearFeedback(); selected = it }
+                        TaskList(
+                            who = rememberOrbitName(orbitId),
+                            tasks = tasks,
+                            groups = groups,
+                            dues = dues,
+                            latestRuns = latestRuns,
+                            listState = listState,
+                            onBack = ::back,
+                            errorBanner = errorBanner,
+                            loadFailed = error,
+                            onOpenGroup = { selectedGroup = it },
+                            onOpen = { clearFeedback(); selected = it },
+                        )
                     }
                 },
-                page = detail,
+                page = { destination ->
+                    when (destination) {
+                        is TaskPage.Detail -> detail(destination.taskId)
+                        is TaskPage.Group -> TaskGroupPage(
+                            group = destination.group,
+                            members = groups.firstOrNull { it.first == destination.group }?.second.orEmpty(),
+                            tasks = tasks,
+                            dues = dues,
+                            latestRuns = latestRuns,
+                            onBack = ::back,
+                            errorBanner = errorBanner,
+                            loadFailed = error,
+                            onOpen = { clearFeedback(); selected = it },
+                        )
+                    }
+                },
             )
         }
     }
@@ -389,25 +454,16 @@ internal fun TaskConfirmSheet(
 private fun TaskList(
     who: String,
     tasks: List<OrbitTaskEntity>?,
+    groups: List<Pair<TaskGroup, List<OrbitTaskEntity>>>,
     dues: Map<String, Long>,
     latestRuns: Map<String, OrbitRunEntity>,
     listState: LazyListState,
     onBack: () -> Unit,
     errorBanner: LazyListScope.() -> Unit,
     loadFailed: Boolean,
+    onOpenGroup: (TaskGroup) -> Unit,
     onOpen: (String) -> Unit,
 ) {
-    val groups = remember(tasks) {
-        // The old built-in daily check-in is cancelled at start-up; it does not linger under "finished".
-        val all = tasks.orEmpty().filterNot { com.ai.assistance.operit.features.orbit.OrbitTaskRepository.isRetiredCheckIn(it) }
-        listOf(
-            R.string.orbit_tasks_group_attention to all.filter { it.state == "WAITING_USER" || it.state == "VERIFY" },
-            R.string.orbit_tasks_group_active to all.filter { it.state == "ACTIVE" },
-            R.string.orbit_tasks_group_paused to all.filter { it.state == "PAUSED" },
-            R.string.orbit_tasks_group_finished to all.filter { it.state == "DONE" || it.state == "CANCELLED" },
-        ).filter { it.second.isNotEmpty() }
-    }
-    val divider = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
     LazyColumn(
         Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding(),
         state = listState,
@@ -421,21 +477,71 @@ private fun TaskList(
         errorBanner()
         if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
         else if (tasks != null && groups.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
-        groups.forEach { (title, group) ->
-            item(key = "group-$title") { SectionTitle(stringResource(title)) }
-            itemsIndexed(group, key = { _, task -> task.id }, contentType = { _, _ -> "task" }) { index, task ->
-                val shape: Shape = when {
-                    group.size == 1 -> TaskCardShape
-                    index == 0 -> TaskCardTop
-                    index == group.lastIndex -> TaskCardBottom
-                    else -> RectangleShape
-                }
-                Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 0.dp)
-                    .background(taskCardColor(), shape)) {
-                    if (index > 0) HorizontalDivider(Modifier.padding(start = 70.dp, end = 16.dp), color = divider)
-                    TaskListRow(task, tasks.orEmpty(), dues[task.id], latestRuns[task.id], shape) { onOpen(task.id) }
+        groups.forEach { (group, members) ->
+            item(key = "group-${group.name}") { SectionTitle(stringResource(group.title)) }
+            taskRows(members.take(3), tasks.orEmpty(), dues, latestRuns, onOpen)
+            if (members.size > 3) item(key = "more-${group.name}") {
+                TextButton(onClick = { onOpenGroup(group) }) {
+                    Text(stringResource(R.string.orbit_tasks_show_all))
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun TaskGroupPage(
+    group: TaskGroup,
+    members: List<OrbitTaskEntity>,
+    tasks: List<OrbitTaskEntity>?,
+    dues: Map<String, Long>,
+    latestRuns: Map<String, OrbitRunEntity>,
+    onBack: () -> Unit,
+    errorBanner: LazyListScope.() -> Unit,
+    loadFailed: Boolean,
+    onOpen: (String) -> Unit,
+) {
+    // The push host keeps this state while a task is open above the group.
+    val listState = rememberLazyListState()
+    OrbitPageBack(onBack = onBack)
+    LazyColumn(
+        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+            .statusBarsPadding().navigationBarsPadding(),
+        state = listState,
+        contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 40.dp),
+    ) {
+        item(key = "header") { OrbitPageHeader(stringResource(group.title), onBack) }
+        errorBanner()
+        if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
+        else if (tasks != null && members.isEmpty()) item(key = "empty") {
+            EmptyHint(stringResource(R.string.orbit_tasks_group_empty))
+        }
+        taskRows(members, tasks.orEmpty(), dues, latestRuns, onOpen)
+    }
+}
+
+/** Both lists use the displayed slice for rounded corners, including the three-row preview. */
+private fun LazyListScope.taskRows(
+    members: List<OrbitTaskEntity>,
+    tasks: List<OrbitTaskEntity>,
+    dues: Map<String, Long>,
+    latestRuns: Map<String, OrbitRunEntity>,
+    onOpen: (String) -> Unit,
+) {
+    itemsIndexed(members, key = { _, task -> task.id }, contentType = { _, _ -> "task" }) { index, task ->
+        val shape: Shape = when {
+            members.size == 1 -> TaskCardShape
+            index == 0 -> TaskCardTop
+            index == members.lastIndex -> TaskCardBottom
+            else -> RectangleShape
+        }
+        Column(Modifier.fillMaxWidth().padding(top = if (index == 0) 6.dp else 0.dp)
+            .background(taskCardColor(), shape)) {
+            if (index > 0) HorizontalDivider(
+                Modifier.padding(start = 70.dp, end = 16.dp),
+                color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f),
+            )
+            TaskListRow(task, tasks, dues[task.id], latestRuns[task.id], shape) { onOpen(task.id) }
         }
     }
 }
@@ -579,6 +685,7 @@ private fun TaskDetail(
                 }, divider)
             }
         }
+        item(key = "model") { OrbitTaskModelCard(task, onDraft) }
         if (task.kind == OrbitGeofence.KIND) item(key = "location-status") { GeofenceStatus(task) }
         item(key = "result") {
             val run = lastRun

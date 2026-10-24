@@ -23,6 +23,8 @@
     <string name="orbit_tasks_group_active">进行中</string>
     <string name="orbit_tasks_group_paused">已暂停</string>
     <string name="orbit_tasks_group_finished">已结束</string>
+    <string name="orbit_tasks_show_all">查看全部</string>
+    <string name="orbit_tasks_group_empty">这个分组暂时没有任务。</string>
     <string name="skill_detail_files">包含的文件</string>
     <string name="skill_detail_location">存放位置</string>
     <string name="skill_detail_entry_file">入口文件：%1$s</string>

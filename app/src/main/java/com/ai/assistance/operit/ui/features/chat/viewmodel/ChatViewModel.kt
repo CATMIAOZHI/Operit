@@ -422,6 +422,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
 
     // 会话隔离：仅当“当前聊天ID == 正在流式的聊天ID”时，才显示处理中/停止按钮
     val activeStreamingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.activeStreamingChatIds }
+    val modelPreparingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.modelPreparingChatIds }
     val activeRunStartedAt: StateFlow<Map<String, Long>> by lazy { messageProcessingDelegate.activeRunStartedAt }
     val userWaitingChatIds: StateFlow<Set<String>> by lazy { messageProcessingDelegate.userWaitingChatIds }
     val currentChatIsLoading: StateFlow<Boolean> by lazy {
@@ -1242,7 +1243,7 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 // 检查是否是群聊
                 val currentChat = chatHistoryDelegate.chatHistories.value.firstOrNull { it.id == currentChatId }
                 val isGroupChat = currentChat?.characterGroupId != null
-                val summaryConfig = messageCoordinationDelegate.readSummaryConfig()
+                val summaryConfig = messageCoordinationDelegate.readSummaryConfig(currentChatId)
 
                 val summaryMessage = AIMessageManager.summarizeMemory(
                     enhancedAiService!!,
@@ -2025,6 +2026,9 @@ class ChatViewModel(private val context: Context) : ViewModel() {
      * The quoted message moves from the composer into the queued item, so it goes with this message.
      */
     fun enqueuePendingQueueMessage(chatId: String, text: String, isQueueBlocked: Boolean): Long? {
+        // The submitted draft remains visible until route preparation succeeds. It must not also
+        // become a queued/steered turn through a stale button or keyboard callback.
+        if (chatId in modelPreparingChatIds.value) return null
         val snapshot = attachmentDelegate.attachments.value.toList()
         val reply = _replyToMessage.value
         val id = pendingMessageQueueStore.enqueue(chatId, text, isQueueBlocked, snapshot, reply) ?: return null

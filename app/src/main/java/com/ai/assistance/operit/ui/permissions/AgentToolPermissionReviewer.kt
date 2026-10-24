@@ -278,7 +278,9 @@ class AgentToolPermissionReviewer private constructor(context: Context) {
         val reviewerModel =
             resolvePermissionReviewerModelSelection(
                 configuredMapping =
-                    functionalConfigManager.getConfigMappingForFunction(
+                    com.ai.assistance.operit.features.orbit.OrbitModels.mapping(
+                        appContext, FunctionType.PERMISSION_REVIEWER, parentChatId)
+                    ?: functionalConfigManager.getConfigMappingForFunction(
                         FunctionType.PERMISSION_REVIEWER
                     ),
                 parentModelConfigId = reviewContext.parentModelConfigId,

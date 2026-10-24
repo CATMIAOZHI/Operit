@@ -30,6 +30,9 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.flow
+import kotlinx.coroutines.flow.emitAll
+import kotlinx.coroutines.flow.filterNotNull
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -209,6 +212,25 @@ class ApiConfigDelegate(
                         }
                     }
                 }
+                .combine(combine(contextChatId,
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
+                ) { chatId, settings -> settings.ownerForChat(chatId)?.id }) { main, orbitId -> main to orbitId }
+                .flatMapLatest { (main, orbitId) ->
+                    if (orbitId == null) kotlinx.coroutines.flow.flowOf(main)
+                    else {
+                        val orbitModels = com.ai.assistance.operit.data.preferences.OrbitModelPreferences(context)
+                        flow {
+                            emit(orbitModels.current(orbitId))
+                            emitAll(orbitModels.observe(orbitId).filterNotNull())
+                        }.combine(modelConfigManager.configSummariesFlow) { settings, configs ->
+                            val ref = settings.main
+                            val config = configs.firstOrNull { it.id == ref?.configId }
+                            val index = if (ref != null && config != null)
+                                ref.resolveIndex(config.modelName, config.apiProviderTypeId) else -1
+                            EffectiveChatConfigTarget(ref?.configId.orEmpty(), index >= 0, index)
+                        }
+                    }
+                }
                 .stateIn(
                     configScope,
                     kotlinx.coroutines.flow.SharingStarted.Eagerly,
@@ -350,6 +372,7 @@ class ApiConfigDelegate(
     suspend fun resolveChatContextSettings(configIdOverride: String? = null, chatId: String? = contextChatId.value): ChatContextSettings {
         modelConfigManager.initializeIfNeeded()
         val configId = configIdOverride?.trim()?.takeIf { it.isNotEmpty() }
+            ?: com.ai.assistance.operit.features.orbit.OrbitModels.mapping(context, FunctionType.CHAT, chatId)?.configId
             ?: functionalConfigManager.getConfigIdForFunction(FunctionType.CHAT)
         val config = requireNotNull(modelConfigManager.getModelConfig(configId)) { "Model config not found: $configId" }
         val resolved = resolveChatContext(contextPreferences.resolve(chatId, config), config)

@@ -185,6 +185,8 @@ class MessageProcessingDelegate(
 
     private val _activeStreamingChatIds = MutableStateFlow<Set<String>>(emptySet())
     val activeStreamingChatIds: StateFlow<Set<String>> = _activeStreamingChatIds.asStateFlow()
+    private val _modelPreparingChatIds = MutableStateFlow<Set<String>>(emptySet())
+    val modelPreparingChatIds: StateFlow<Set<String>> = _modelPreparingChatIds.asStateFlow()
     private val _activeRunStartedAt = MutableStateFlow<Map<String, Long>>(emptyMap())
     val activeRunStartedAt: StateFlow<Map<String, Long>> = _activeRunStartedAt.asStateFlow()
     /**
@@ -329,6 +331,8 @@ class MessageProcessingDelegate(
     private val lastScrollEmitMsByChatKey = ConcurrentHashMap<String, AtomicLong>()
     private val suppressIdleCompletedStateByChatId = ConcurrentHashMap<String, Boolean>()
     private val pendingAsyncSummaryUiByChatId = ConcurrentHashMap<String, Boolean>()
+    private data class ModelPreparation(val job: Job, val userWaiting: Boolean)
+    private val pendingModelPreparations = ConcurrentHashMap<String, ModelPreparation>()
 
     private fun chatKey(chatId: String?): String = chatId ?: "__DEFAULT_CHAT__"
 
@@ -365,9 +369,21 @@ class MessageProcessingDelegate(
         _activeRunStartedAt.value = activeChatIds.associateWith {
             chatRuntimes.getValue(it).runStartedElapsed
         }
-        _userWaitingChatIds.value = activeChatIds.filterTo(HashSet()) { chatRuntimes.getValue(it).userWaiting }
-        _activeStreamingChatIds.value = activeChatIds
-        _isLoading.value = anyLoading
+        val preparing = pendingModelPreparations.toMap()
+        _modelPreparingChatIds.value = preparing.keys
+        _userWaitingChatIds.value = activeChatIds.filterTo(HashSet()) { chatRuntimes.getValue(it).userWaiting } +
+            preparing.filterValues { it.userWaiting }.keys
+        _activeStreamingChatIds.value = activeChatIds + preparing.keys
+        _isLoading.value = anyLoading || pendingModelPreparations.isNotEmpty()
+    }
+
+    /** Keep queued dispatchers waiting while the UI asynchronously resolves a model route. */
+    fun setPendingModelPreparation(chatId: String, preparation: Job, pending: Boolean, userWaiting: Boolean = false) {
+        if (pending) pendingModelPreparations[chatId] = ModelPreparation(preparation, userWaiting)
+        else pendingModelPreparations[chatId]?.takeIf { it.job === preparation }?.let {
+            pendingModelPreparations.remove(chatId, it)
+        }
+        updateGlobalLoadingState()
     }
 
     private fun isTerminalInputState(state: EnhancedInputProcessingState): Boolean {
@@ -750,6 +766,10 @@ class MessageProcessingDelegate(
     fun draftForChat(chatId: String): String =
         if (activeDraftChatId == chatId) _userMessage.value.text else userMessageDraftsByChatId[chatId]?.text.orEmpty()
 
+    fun clearSubmittedDraft(chatId: String, submittedText: String) {
+        if (draftForChat(chatId) == submittedText) clearUserMessageDraft(chatId)
+    }
+
     private fun setUserMessageDraft(value: TextFieldValue) {
         if (_userMessage.value != value) draftRevision++
         _userMessage.value = value
@@ -831,6 +851,14 @@ class MessageProcessingDelegate(
         val updated = _currentTurnToolInvocationCountByChatId.value.toMutableMap()
         updated.remove(chatId)
         _currentTurnToolInvocationCountByChatId.value = updated
+    }
+
+    /** A route can fail or be cancelled before sendUserMessage owns the registered turn. */
+    fun finishUnstartedTurn(chatId: String, options: ChatTurnOptions, error: String = "", cancelled: Boolean = false) {
+        options.turnId?.let { turnId ->
+            onTurnTerminated(if (cancelled) ChatTurnTerminalSignal.Cancelled(turnId, chatId)
+                else ChatTurnTerminalSignal.Failed(turnId, chatId, error))
+        }
     }
 
     fun sendUserMessage(

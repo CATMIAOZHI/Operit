@@ -23,6 +23,8 @@ data class ChatTurnOptions(
     val collaborationHistoryCutoff: Long? = null,
     /** Runtime model-function route. Internal turns can use a functional model without becoming CHAT. */
     val functionType: FunctionType = FunctionType.CHAT,
+    /** Host-only per-turn role for a scheduled Orbit wake; never changes the chat's saved selection. */
+    val orbitModelRole: String? = null,
     /**
      * The provider conversation this turn belongs to, when that is not the chat the turn runs in.
      * An internal turn whose conversation outlives any single chat pins it here so a provider that
