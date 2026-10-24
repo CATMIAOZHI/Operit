@@ -184,30 +184,56 @@ internal class MemoryLearningJournal(
             save()
         }
     }
-    suspend fun export(): List<String> {
+    suspend fun export(): List<String> = exportWithResults().failures
+
+    /** What an export did: the reasons that went wrong, and each change of the batch as it ended up. */
+    internal class ExportResult(val failures: List<String>, val results: List<MemoryReviewChange>)
+
+    suspend fun exportWithResults(): ExportResult {
         if (resolveScope() != profile) {
             discardForScopeChange()
-            return listOf(context.getString(com.ai.assistance.operit.R.string.orbit_memory_learning_scope_changed))
+            return ExportResult(listOf(context.getString(com.ai.assistance.operit.R.string.orbit_memory_learning_scope_changed)), emptyList())
         }
         // The import below can suspend, so the journal is only locked for the read and the release.
         val array = synchronized(lock) {
             reload()
             state.optJSONArray("export")
-        } ?: return emptyList()
+        } ?: return ExportResult(emptyList(), emptyList())
         val changes = (0 until array.length()).map { reviews.fromJson(array.getJSONObject(it)) }
         // Keep the durable export on failure. The caller stops this attempt and reports the error;
         // a later trigger can import the same IDs without regenerating or losing the reviewed batch.
         reviews.importCompletedBatch(changes)
         val failures = mutableListOf<String>()
-        for (change in changes) {
+        // A notes change that drops lines goes last. It may be the second half of a move (an entry
+        // added to LESSONS.md, then removed from memory.md); if any other change of the page was not
+        // saved, applying the removal would lose that entry, so it is held back instead.
+        val (removals, others) = changes.partition { it.kind == "notes" && it.addition.isEmpty() && dropsLines(it) }
+        /**
+         * True only when the change is saved, or is waiting for the user's review with nothing
+         * gone wrong. Rejected, dropped as outdated, or a pending one whose write failed is unsaved.
+         */
+        suspend fun apply(change: MemoryReviewChange): Boolean {
             currentCoroutineContext().ensureActive()
-            try {
+            return try {
                 // A rejected or manually revised proposal is already settled and must stay so.
                 val stored = reviews.list().first { it.id == change.id }
-                if (stored.status in setOf("pending","applying")) reviews.applyAutomaticDecision(context,stored)
+                val result = if (stored.status in setOf("pending","applying"))
+                    reviews.applyAutomaticDecision(context,stored) else stored
+                result.status == "approved" || (result.status == "pending" && result.reason.isEmpty())
             } catch (e: kotlinx.coroutines.CancellationException) { throw e }
-            catch (e: Exception) { failures += learningFailureDetail("apply ${change.id}",e) }
+            catch (e: Exception) { failures += learningFailureDetail("apply ${change.id}",e); false }
         }
+        val unsaved = others.filterNot { apply(it) }
+        if (removals.isNotEmpty()) {
+            if (unsaved.isEmpty()) removals.forEach { apply(it) }
+            else removals.forEach {
+                reviews.holdBack(it.id, "Not applied: it removes lines from memory.md while " +
+                    unsaved.joinToString { u -> u.title } + " from the same page was not saved, so a moved entry " +
+                    "would have been lost")
+            }
+        }
+        val ids = changes.mapTo(HashSet()) { it.id }
+        val results = reviews.list().filter { it.id in ids }
         // Failed writes remain visible in the review UI; evidence has still been reviewed.
         synchronized(lock) {
             reload()
@@ -215,7 +241,12 @@ internal class MemoryLearningJournal(
             if (state.optJSONArray("export")?.toString() == array.toString()) state.remove("export")
             save()
         }
-        return failures
+        return ExportResult(failures, results)
+    }
+
+    private fun dropsLines(change: MemoryReviewChange): Boolean {
+        val kept = change.body.lines().map { it.trim() }.filter { it.isNotEmpty() }.toHashSet()
+        return change.before.lines().any { it.trim().isNotEmpty() && it.trim() !in kept }
     }
     companion object {
         /** One lock per journal file, shared by every instance in this process. */

@@ -775,18 +775,31 @@ private fun MessageItem(
         }
         }
 
-        DropdownMenu(
-            expanded = showContextMenu,
-            onDismissRequest = { showContextMenu = false },
-            modifier = Modifier.widthIn(min = 200.dp),
-            shape = RoundedCornerShape(16.dp),
-            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
-            properties = PopupProperties(
-                focusable = true,
-                dismissOnBackPress = true,
-                dismissOnClickOutside = true
-            )
-        ) {
+        val messageMenu: @Composable (@Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit) -> Unit = { content ->
+            if (orbitLook) {
+                com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
+                    expanded = showContextMenu,
+                    onDismissRequest = { showContextMenu = false },
+                    modifier = Modifier.widthIn(min = 200.dp),
+                    content = content,
+                )
+            } else {
+                DropdownMenu(
+                    expanded = showContextMenu,
+                    onDismissRequest = { showContextMenu = false },
+                    modifier = Modifier.widthIn(min = 200.dp),
+                    shape = RoundedCornerShape(16.dp),
+                    containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+                    properties = PopupProperties(
+                        focusable = true,
+                        dismissOnBackPress = true,
+                        dismissOnClickOutside = true,
+                    ),
+                    content = content,
+                )
+            }
+        }
+        messageMenu {
             if (orbitLook && message.sender == "ai" && orbitUserReactions != null) {
                 val current = orbitUserReactions.byMessage[reactionKey]
                 OrbitTapbackRow(

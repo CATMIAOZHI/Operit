@@ -167,7 +167,12 @@ internal class WebSessionBrowserHost(
                         // in the page first, and closes it (handing it back) from its first page.
                         val canGoBack = hostState.browserState.canGoBack
                         root.onBackKey = watch?.let { w ->
-                            if (w.controlling && canGoBack) callbacks::onBack else w.onClose
+                            when {
+                                w.controlling && hostState.browserState.pendingDialog != null ->
+                                    ({ callbacks.onHandlePendingDialog(false, null) })
+                                w.controlling && canGoBack -> callbacks::onBack
+                                else -> w.onClose
+                            }
                         }
                         val ended = lastWatchTalk?.takeIf { watchWork == null && it !in orbitWorks }
                         lastWatchTalk = watchWork?.executorChatId
@@ -992,7 +997,9 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     /** Takes the back key while set; Orbit's watch screen closes with it. */
     var onBackKey: (() -> Unit)? = null
         set(value) {
+            val wasWatching = field != null
             field = value
+            if (value == null && wasWatching) resetBackTransform()
             syncBackCallback()
         }
 
@@ -1002,13 +1009,46 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
      * [onBackKey] is set, so other times back goes where it always did.
      */
     private var backCallback: Any? = null
+    private var backCommitting = false
 
     private fun syncBackCallback() {
         if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.TIRAMISU) return
         val want = onBackKey != null && isAttachedToWindow
         val dispatcher = findOnBackInvokedDispatcher()
         if (want && backCallback == null && dispatcher != null) {
-            val callback = android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+            val callback = if (android.os.Build.VERSION.SDK_INT >= 34) {
+                object : android.window.OnBackAnimationCallback {
+                    override fun onBackStarted(backEvent: android.window.BackEvent) {
+                        if (backCommitting) return
+                        animate().cancel()
+                    }
+                    override fun onBackProgressed(backEvent: android.window.BackEvent) {
+                        if (backCommitting) return
+                        val p = backEvent.progress.coerceIn(0f, 1f)
+                        scaleX = 1f - 0.06f * p
+                        scaleY = scaleX
+                        translationX = width * 0.12f * p *
+                            if (backEvent.swipeEdge == android.window.BackEvent.EDGE_LEFT) 1f else -1f
+                        alpha = 1f - 0.2f * p
+                    }
+                    override fun onBackCancelled() {
+                        if (backCommitting) return
+                        animate().scaleX(1f).scaleY(1f).translationX(0f).alpha(1f)
+                            .setDuration(180).withEndAction(null).start()
+                    }
+                    override fun onBackInvoked() {
+                        if (backCommitting) return
+                        backCommitting = true
+                        animate().scaleX(0.94f).scaleY(0.94f).alpha(0.8f).setDuration(140)
+                            .withEndAction {
+                                onBackKey?.invoke()
+                                resetBackTransform()
+                            }.start()
+                    }
+                }
+            } else {
+                android.window.OnBackInvokedCallback { onBackKey?.invoke() }
+            }
             dispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, callback)
             backCallback = callback
         } else if (!want && backCallback != null) {
@@ -1023,6 +1063,7 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     }
 
     override fun onDetachedFromWindow() {
+        resetBackTransform()
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
             backCallback?.let { cb ->
                 runCatching { findOnBackInvokedDispatcher()?.unregisterOnBackInvokedCallback(cb as android.window.OnBackInvokedCallback) }
@@ -1035,6 +1076,16 @@ private class DeceptiveMinimizedLayout(context: Context) : FrameLayout(context) 
     init {
         clipChildren = false
         clipToPadding = false
+    }
+
+    private fun resetBackTransform() {
+        backCommitting = false
+        animate().cancel()
+        animate().withEndAction(null)
+        scaleX = 1f
+        scaleY = 1f
+        translationX = 0f
+        alpha = 1f
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {

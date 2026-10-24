@@ -50,9 +50,7 @@
         }
     ]
 }*/
-
 const LegacyMemoryQuery = (function () {
-
     function resolveCallerCardId() {
         if (typeof getCallerCardId !== 'function') {
             return undefined;
@@ -60,7 +58,6 @@ const LegacyMemoryQuery = (function () {
         const callerCardId = String(getCallerCardId() || '').trim();
         return callerCardId || undefined;
     }
-
     async function query_memory_links(params) {
         try {
             const result = await Tools.Memory.queryLinks({
@@ -72,26 +69,24 @@ const LegacyMemoryQuery = (function () {
                 callerCardId: resolveCallerCardId(),
             });
             complete({ success: !!result, message: '记忆链接查询完成', data: result });
-        } catch (error) {
+        }
+        catch (error) {
             complete({ success: false, message: `查询记忆链接失败: ${error?.message ?? error}` });
         }
     }
-
     async function main() {
         complete({
             success: true,
             message: "旧记忆查询（只读）已加载：可用 query_memory、get_memory_by_title、query_memory_links；旧记忆不再新增或修改，新内容请用 memory_review。",
         });
     }
-
     return { query_memory_links, main };
 })();
-
 exports.query_memory_links = LegacyMemoryQuery.query_memory_links;
 exports.main = LegacyMemoryQuery.main;
 exports.query_memory = async (params) => complete(await toolCall({
-    name: "query_memory", params: {...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || ''}
+    name: "query_memory", params: { ...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || '' }
 }));
 exports.get_memory_by_title = async (params) => complete(await toolCall({
-    name: "get_memory_by_title", params: {...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || ''}
+    name: "get_memory_by_title", params: { ...params, caller_card_id: getCallerCardId(), __operit_package_chat_id: getChatId() || '' }
 }));

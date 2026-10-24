@@ -327,16 +327,24 @@ internal object OrbitVaultBroker {
         }
     }
 
-    /** `export NAME='…'` for a key the user let into the terminal, read by `eval` in the shell. */
+    /**
+     * `export NAME='…'` for a key or password the user let into the terminal, read by `eval` in the
+     * shell; a login also exports its user name as `NAME_USERNAME`.
+     */
     private fun env(context: Context, incoming: Incoming): Outgoing {
         if (incoming.method != "GET") throw Refused(400, "Use GET for /env/")
         val surrogate = incoming.target.removePrefix("/env/").substringBefore('?')
         val entry = resolve(context, surrogate, null) ?: throw Refused(403, "Invalid surrogate")
         if (entry.envName.isEmpty()) throw Refused(403,
-            "The user has not allowed this key in the terminal; use the proxy, or ask with a new request_api_key card")
-        val quoted = "'" + entry.secret.replace("'", "'\\''") + "'"
+            "The user has not allowed this in the terminal; ask with an orbit_vault request_update card")
+        // A value too short to mask in output stays out, whenever it was allowed.
+        if (entry.secret.length < OrbitVault.MIN_ENV_SECRET) throw Refused(403,
+            "This value is too short to be masked in output, so it cannot be loaded into the terminal")
+        fun quoted(value: String) = "'" + value.replace("'", "'\\''") + "'"
+        val user = if (entry.kind == OrbitVault.LOGIN && entry.username.isNotEmpty())
+            "export ${entry.envName}_USERNAME=${quoted(entry.username)}\n" else ""
         return Outgoing(200, listOf("Content-Type" to "text/plain; charset=utf-8", "Cache-Control" to "no-store"),
-            "export ${entry.envName}=$quoted\n".toByteArray(Charsets.UTF_8))
+            (user + "export ${entry.envName}=${quoted(entry.secret)}\n").toByteArray(Charsets.UTF_8))
     }
 
     /** RFC 3986 path segment: unreserved, sub-delims, ':' and '@' stay; everything else is %XX. */
@@ -364,7 +372,10 @@ internal object OrbitVaultBroker {
         if (!MessageDigest.isEqual(mac(context, orbitId, entry).toByteArray(), given.toByteArray())) {
             throw Refused(403, "This surrogate is out of date; get a new one with orbit_vault action terminal")
         }
-        if (entry.kind != OrbitVault.API_KEY) throw Refused(403, "Only saved API keys can be used from the terminal")
+        // A password the user allowed may be loaded as a variable; only keys go through the proxy.
+        if (entry.kind != OrbitVault.API_KEY && !(host == null && entry.kind == OrbitVault.LOGIN)) {
+            throw Refused(403, "Only saved API keys can be used through the terminal proxy")
+        }
         if (host != null && entry.apiHosts.none { OrbitVault.matchesHost(host, it) }) {
             throw Refused(403, if (entry.apiHosts.isEmpty()) "This key has no API hosts; it can only be loaded with orbit_vault env"
                 else "This key may only be sent to ${entry.apiHosts.joinToString()}")

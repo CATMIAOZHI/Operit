@@ -5,9 +5,17 @@
     <string name="orbit_avatar_draft_pet">帮我把头像换成我的宠物「%1$s」（宠物编号：%2$s）。</string>
     <string name="orbit_avatar_draft_reset">请把头像恢复成角色卡的默认头像。</string>
     <string name="orbit_avatar_sheet_note">选好后会放进聊天框，发给 %1$s，由它来换。</string>
+    <string name="orbit_avatar_crop_title">调整头像</string>
+    <string name="orbit_avatar_crop_hint">双指缩放、拖动调整位置。缩小可以把整张图放进圆里。</string>
+    <string name="orbit_avatar_crop_whole">显示整张图</string>
+    <string name="orbit_avatar_crop_fill">填满圆框</string>
+    <string name="orbit_avatar_crop_done">完成</string>
+    <string name="orbit_avatar_crop_saving">正在处理…</string>
     <string name="orbit_person_new_draft">帮我新建一个人物：</string>
     <string name="orbit_group_new_draft">帮我记录一个圈子及其中的人际关系：</string>
     <string name="orbit_goal_note_draft">请给目标《%1$s》记录一条进展：</string>
     <string name="orbit_build_continue_draft">请继续修改作品《%1$s》：</string>
     <string name="orbit_skill_new_draft">请帮我创建一个技能：</string>
+    <string name="orbit_credential_edit_draft">帮我修改密码凭据保险箱里「%1$s」这一条（凭据编号：%2$s）：</string>
+    <string name="orbit_credential_reconnect_draft">帮我重新连接密码凭据保险箱里「%1$s」的 OAuth 登录（凭据编号：%2$s）。</string>
 </resources>

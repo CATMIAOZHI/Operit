@@ -9,6 +9,7 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -198,6 +199,17 @@ internal object OrbitForget {
             }
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             val spaceId = space(context, orbit)
+            // A correction of memory: a background review that read the old messages is now outdated,
+            // so nothing it found can be saved, and every chat rebuilds its memory prefix.
+            step("learning") {
+                try {
+                    OrbitLearningBoundary.explicitEdit(context, spaceId) { }
+                } catch (e: IllegalStateException) {
+                    // Another correction landed between the read and the write; one more try settles it.
+                    OrbitLearningBoundary.explicitEdit(context, spaceId) { }
+                }
+                0
+            }
             // Future work first, so nothing writes the information back while it is being removed.
             step("scheduled") {
                 val tasks = OrbitTaskRepository(context)
@@ -277,7 +289,8 @@ internal object OrbitForget {
             // Only a clean run joins the forgotten list; otherwise the user could not fix what is left
             // because every write mentioning it would be refused. Cleanup has already happened either way.
             if (failed.isEmpty() && after.unscanned.isEmpty() && remaining.none { it.category != USER_REVIEW }) {
-                runCatching { remember(context, orbit.id, planId, terms, current.map { it.locator }) }
+                // Without the list, later writes are not checked against it; that is not "all clear".
+                step("forgotten_list") { remember(context, orbit.id, planId, terms, current.map { it.locator }); 0 }
             }
             withContext(Dispatchers.IO) { planStore(context, orbit.id).delete() }
             Outcome(cleaned, remaining, failed, after.unscanned)
@@ -301,8 +314,18 @@ internal object OrbitForget {
             store.write(data.toString())
         }
 
-    private fun sha(value: String) = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
-        .joinToString("") { "%02x".format(it) }
+    private fun sha(value: String) = hex(MessageDigest.getInstance("SHA-256").digest(value.toByteArray()))
+
+    private val HEX = "0123456789abcdef".toCharArray()
+    private fun hex(bytes: ByteArray): String {
+        val out = CharArray(bytes.size * 2)
+        bytes.forEachIndexed { i, b ->
+            val v = b.toInt() and 0xff
+            out[i * 2] = HEX[v ushr 4]
+            out[i * 2 + 1] = HEX[v and 0x0f]
+        }
+        return String(out)
+    }
 
     /** True when [text] contains something the user had this Orbit forget. */
     suspend fun containsForgotten(context: Context, orbitId: String, text: String): Boolean = withContext(Dispatchers.IO) {
@@ -313,7 +336,18 @@ internal object OrbitForget {
         val byLength = (0 until terms.length()).map { terms.getJSONObject(it) }
             .groupBy({ it.getInt("length") }, { it.getString("hash") }).mapValues { it.value.toSet() }
         val t = normalize(text)
-        byLength.any { (length, hashes) -> (0..t.length - length).any { sha(salt + t.substring(it, it + length)) in hashes } }
+        // One digest for the whole scan (a long file has many windows); the salt goes in first as
+        // in [sha], so the hashes match the stored ones.
+        val digest = MessageDigest.getInstance("SHA-256")
+        val saltBytes = salt.toByteArray()
+        byLength.any { (length, hashes) ->
+            (0..t.length - length).any { start ->
+                if (start and 0x3ff == 0) kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                digest.update(saltBytes)
+                digest.update(t.substring(start, start + length).toByteArray())
+                hex(digest.digest()) in hashes
+            }
+        }
     }
 
     /** The Orbit that owns memory space [spaceId], if any. */

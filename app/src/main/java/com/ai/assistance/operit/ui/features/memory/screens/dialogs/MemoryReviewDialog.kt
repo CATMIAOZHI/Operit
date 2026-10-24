@@ -122,7 +122,7 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
     ) { shownId ->
     val record = records.find { it.id == shownId }
     MemoryLibraryPage(record?.title ?: stringResource(R.string.memory_review_title), profileId,
-        { leave("back") }, interceptBack = dirty || busy) {
+        { leave("back") }, interceptBack = dirty || busy, backEnabled = !busy) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 if (record == null) {
@@ -206,16 +206,28 @@ fun MemoryReviewDialog(profileId: String, onDismiss: () -> Unit, initialSkillNam
         }
     }
     }
-    if (discardTarget != null) AlertDialog(
-        onDismissRequest = { discardTarget = null },
-        title = { Text(stringResource(R.string.memory_notes_discard_title)) },
-        confirmButton = { TextButton(onClick = {
+    if (discardTarget != null) {
+        val discard = {
             val target = discardTarget
             discardTarget = null
             if (target == "close") onDismiss() else selectedId = null
-        }) { Text(stringResource(R.string.confirm)) } },
-        dismissButton = { TextButton(onClick = { discardTarget = null }) { Text(stringResource(R.string.cancel)) } }
-    )
+        }
+        if (MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.memory_notes_discard_title),
+                onConfirm = discard,
+                onDismiss = { discardTarget = null },
+                destructive = true,
+            )
+        } else {
+            AlertDialog(
+                onDismissRequest = { discardTarget = null },
+                title = { Text(stringResource(R.string.memory_notes_discard_title)) },
+                confirmButton = { TextButton(onClick = discard) { Text(stringResource(R.string.confirm)) } },
+                dismissButton = { TextButton(onClick = { discardTarget = null }) { Text(stringResource(R.string.cancel)) } },
+            )
+        }
+    }
 }
 
 @Composable

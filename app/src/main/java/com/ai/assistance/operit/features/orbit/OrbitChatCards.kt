@@ -83,6 +83,7 @@ internal object OrbitChatCards {
         .put("new_password", request.newPassword)
         .put("requested_at", request.requestedAt)
         .apply { if (request.envName.isNotEmpty()) put("env_name", request.envName).put("env_reason", request.envReason) }
+        .apply { if (request.updateId.isNotEmpty()) put("update_id", request.updateId) }
         .apply { if (request.kind == OrbitVault.OAUTH) {
             put("authorization_url", request.authorizationUrl).put("token_url", request.tokenUrl)
                 .put("client_id", request.clientId).put("scope", request.scope)
@@ -125,7 +126,10 @@ internal object OrbitChatCards {
         val site = card.optString("site").takeIf { it.isNotBlank() } ?: return null
         val hosts = card.optJSONArray("api_hosts")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
             .filter { it.isNotBlank() }
-        val envName = card.optString("env_name").takeIf { kind == OrbitVault.API_KEY && it.matches(OrbitVault.ENV_NAME) }.orEmpty()
+        val updateId = card.optString("update_id").takeIf { kind != OrbitVault.OAUTH }.orEmpty()
+        // An update card offers the terminal for a login too; an adding card only for a key.
+        val envName = card.optString("env_name")
+            .takeIf { (kind == OrbitVault.API_KEY || updateId.isNotEmpty()) && it.matches(OrbitVault.ENV_NAME) }.orEmpty()
         // A key that only goes into the terminal may have no hosts for the proxy.
         if (kind == OrbitVault.API_KEY && hosts.isEmpty() && envName.isEmpty()) return null
         return OrbitVault.Request(
@@ -135,6 +139,7 @@ internal object OrbitChatCards {
             requestedAt = card.optLong("requested_at"),
             envName = envName,
             envReason = if (envName.isEmpty()) "" else card.optString("env_reason").take(200),
+            updateId = updateId,
             authorizationUrl = card.optString("authorization_url"), tokenUrl = card.optString("token_url"),
             clientId = card.optString("client_id"), scope = card.optString("scope"),
         ).takeIf { kind != OrbitVault.OAUTH || runCatching { OrbitOAuthProtocol.validate(it) }.isSuccess }
@@ -254,19 +259,91 @@ internal object OrbitVaultNotice {
                 } else null to emptyList()
                 val envName = entries.firstOrNull { it.id == id }?.envName.orEmpty()
                 val notice = build(LocaleUtils.usesEnglishPrompt(app), request, id, previous, untried, envName)
-                // Another note or reply can take the chat at the same moment; wait for it and try again.
-                val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
-                while (true) {
-                    val left = deadline - android.os.SystemClock.elapsedRealtime()
-                    if (left <= 0) break
-                    val told = OrbitWake.tell(app, orbit, chatId, notice, left, left)
-                    if (told != OrbitWake.Told.BUSY) break
-                    kotlinx.coroutines.delay(1_500)
-                }
+                deliver(app, orbit, chatId, notice)
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
                 AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about a saved credential: ${e.message}")
+            }
+        }
+    }
+
+    /** Another note or reply can take the chat at the same moment; wait for it and try again. */
+    private suspend fun deliver(app: Context, orbit: OrbitProfile, chatId: String, notice: String) {
+        val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
+        while (true) {
+            val left = deadline - android.os.SystemClock.elapsedRealtime()
+            if (left <= 0) break
+            val told = OrbitWake.tell(app, orbit, chatId, notice, left, left)
+            if (told != OrbitWake.Told.BUSY) break
+            kotlinx.coroutines.delay(1_500)
+        }
+    }
+
+    /** What changed on an update card, for [sendUpdate]. */
+    fun buildUpdate(english: Boolean, saved: OrbitVault.Entry, newValue: Boolean, newUsername: Boolean,
+        envBefore: String): String {
+        val login = saved.kind == OrbitVault.LOGIN
+        val env = saved.envName
+        return if (english) {
+            val what = if (login) "login for ${saved.site}" else "API key for ${saved.site}"
+            buildString {
+                append("$MARKER Updated the $what\n")
+                append("The user updated the $what on the secure card (credential_id ${saved.id}). ")
+                append("This is not a message from the user; they typed nothing here and cannot see this note.\n")
+                append(when {
+                    newValue && login -> "The password was changed. "
+                    newValue -> "The key was changed. "
+                    else -> "The ${if (login) "password" else "key"} itself was not changed. "
+                })
+                if (newUsername) append("The user name was changed. ")
+                append(when {
+                    env.isNotEmpty() -> "It may be used in the terminal as \$$env" +
+                        (if (login) " (user name in \$${env}_USERNAME)" else "") + "; get the command with orbit_vault env. "
+                    envBefore.isNotEmpty() -> "It may no longer be used in the terminal. "
+                    else -> "It is not allowed in the terminal. "
+                })
+                append("Any earlier terminal surrogate or env command for it no longer works; get a new one if needed.\n")
+                append("If you were waiting on this, carry on now. Otherwise reply with one short line, or call " +
+                    "${OrbitReactionNotice.NOTHING_TO_DO} if nothing needs saying. Never repeat a saved value, and do not mention hidden notes.")
+            }
+        } else {
+            val what = if (login) "${saved.site} 的登录" else "${saved.site} 的 API 密钥"
+            buildString {
+                append("$MARKER 已更新 $what\n")
+                append("用户在安全卡片里更新了 $what（credential_id ${saved.id}）。这不是用户发的消息，用户没有在这里打字，也看不到这段话。\n")
+                append(when {
+                    newValue && login -> "密码换了新的。"
+                    newValue -> "密钥换了新的。"
+                    else -> if (login) "密码本身没换。" else "密钥本身没换。"
+                })
+                if (newUsername) append("用户名改了。")
+                append(when {
+                    env.isNotEmpty() -> "现在允许在终端里用，变量名 \$$env" +
+                        (if (login) "（用户名在 \$${env}_USERNAME）" else "") + "；用 orbit_vault 的 env 拿载入命令。"
+                    envBefore.isNotEmpty() -> "现在不再允许在终端里用。"
+                    else -> "不允许在终端里用。"
+                })
+                append("之前拿到的终端替身值和载入命令都失效了，要用就重新拿。\n")
+                append("如果刚才有事情正等着它，现在就接着做；没有的话简短回一句，没什么要说就调用 " +
+                    "${OrbitReactionNotice.NOTHING_TO_DO}。绝不复述保存的值，也不要提“隐藏消息”这些内部说法。")
+            }
+        }
+    }
+
+    /** Tells Orbit, in the card's chat, what the user changed on an update card. */
+    fun sendUpdate(context: Context, orbit: OrbitProfile, request: OrbitVault.Request, saved: OrbitVault.Entry,
+        newValue: Boolean, newUsername: Boolean, envBefore: String) {
+        val chatId = request.chatId.ifBlank { orbit.chatId }
+        if (chatId.isBlank()) return
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                deliver(app, orbit, chatId, buildUpdate(LocaleUtils.usesEnglishPrompt(app), saved, newValue, newUsername, envBefore))
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about an updated credential: ${e.message}")
             }
         }
     }

@@ -48,6 +48,26 @@ internal val LocalOrbitHostedBack = staticCompositionLocalOf { false }
 internal val LocalOrbitPageActive = compositionLocalOf { true }
 
 /**
+ * Runs [onReturn] each time this page is on top again after a page opened over it has closed. A
+ * page under another one stays as it was (scrolled where it was), so one that shows what a page
+ * above can change (a file, a restored version) reads it again here.
+ */
+@Composable
+internal fun OrbitOnPageReturn(onReturn: () -> Unit) {
+    val active = LocalOrbitPageActive.current
+    val currentOnReturn by rememberUpdatedState(onReturn)
+    var covered by remember { mutableStateOf(false) }
+    LaunchedEffect(active) {
+        if (!active) {
+            covered = true
+        } else if (covered) {
+            covered = false
+            currentOnReturn()
+        }
+    }
+}
+
+/**
  * A page's back. Inside an [OrbitPushHost] a plain back is left to the host, which slides the
  * page away with the predictive back gesture; [intercept] keeps it here instead, for a page that
  * must handle back itself first (an unsaved edit, a delete in progress, its own inner view).

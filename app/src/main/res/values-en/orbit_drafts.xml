@@ -4,9 +4,17 @@
     <string name="orbit_avatar_draft_pet">Please use my pet "%1$s" as your avatar (pet id: %2$s).</string>
     <string name="orbit_avatar_draft_reset">Please change your avatar back to the role card\'s picture.</string>
     <string name="orbit_avatar_sheet_note">Your choice goes into the chat box for %1$s, who changes it.</string>
+    <string name="orbit_avatar_crop_title">Adjust avatar</string>
+    <string name="orbit_avatar_crop_hint">Pinch to zoom and drag to move. Zoom out to fit the whole picture in the circle.</string>
+    <string name="orbit_avatar_crop_whole">Show whole picture</string>
+    <string name="orbit_avatar_crop_fill">Fill the circle</string>
+    <string name="orbit_avatar_crop_done">Done</string>
+    <string name="orbit_avatar_crop_saving">Working…</string>
     <string name="orbit_person_new_draft">Help me add a new person:</string>
     <string name="orbit_group_new_draft">Help me record a social circle and its relationships:</string>
     <string name="orbit_goal_note_draft">Please log progress on the goal "%1$s":</string>
     <string name="orbit_build_continue_draft">Please keep working on "%1$s":</string>
     <string name="orbit_skill_new_draft">Please create a skill for me:</string>
+    <string name="orbit_credential_edit_draft">Please change the "%1$s" item in the password &amp; credential vault (credential id: %2$s):</string>
+    <string name="orbit_credential_reconnect_draft">Please reconnect the OAuth login for "%1$s" in the password &amp; credential vault (credential id: %2$s).</string>
 </resources>

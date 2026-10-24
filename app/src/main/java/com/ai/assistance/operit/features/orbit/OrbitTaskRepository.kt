@@ -230,35 +230,29 @@ class OrbitTaskRepository(private val context: Context) {
     }
 
     /**
-     * Keeps an Orbit's old daily check-in in step with its settings. New Orbits no longer get one:
-     * only a check-in that already exists is kept up to date.
+     * The daily check-in is no longer a built-in task. An Orbit that still has one from an older
+     * version, or a manual check-in still queued, gets it cancelled; the user's own tasks are untouched.
      */
-    suspend fun syncDaily(): OrbitTaskEntity? = OrbitExecutionGate.serialized {
-        val settings = OrbitPreferences.getInstance(context).current()
-        val orbit = settings.active?.takeUnless { it.deleting } ?: return@serialized null
-        val id = "daily-${orbit.id}"
-        val now = System.currentTimeMillis()
-        val old = dao.task(id) ?: return@serialized null
-        val state = when {
-            !settings.proactiveEnabled -> "PAUSED"
-            old.state in setOf("WAITING_USER", "VERIFY") -> old.state
-            old.state == "PAUSED" && dao.latestRun(id)?.state == "INTERRUPTED" -> "PAUSED"
-            else -> "ACTIVE"
+    suspend fun retireDaily() {
+        for (orbit in OrbitPreferences.getInstance(context).current().orbits) {
+            val retired = OrbitExecutionGate.serialized {
+                val now = System.currentTimeMillis()
+                dao.tasks(orbit.id).filter { isRetiredCheckIn(it) && it.state != "CANCELLED" }
+                    .filter { dao.replaceDefinition(it.copy(state = "CANCELLED", updatedAt = now), it.version) }
+            }
+            retired.forEach {
+                OrbitBrowserControl.release(it.id)
+                OrbitTaskRunner.cancelTask(it.id)
+            }
         }
-        val title = context.getString(com.ai.assistance.operit.R.string.orbit_daily_task)
-        val proposed = OrbitTaskEntity(id, orbit.id, orbit.chatId, title, settings.focusNotes,
-            "DAILY", "", 1440, settings.checkInMinuteOfDay, "CHANGES", state,
-            old.version, now + OrbitCompanion.delayUntilNextCheckIn(now, settings.checkInMinuteOfDay),
-            old.lastObservation, "", old.createdAt, now,
-            timeoutMinutes = old.timeoutMinutes, useSubagent = old.useSubagent)
-        if (old.instruction != proposed.instruction || old.dailyMinute != proposed.dailyMinute ||
-            old.state != proposed.state || old.chatId != proposed.chatId) {
-            dao.replaceDefinition(proposed, old.version)
-        }
-        dao.task(id)
     }
 
     companion object {
+        /** The retired built-in daily check-in, or a manual run of it. */
+        fun isRetiredCheckIn(task: OrbitTaskEntity): Boolean =
+            (task.kind == "DAILY" && task.id == "daily-${task.orbitId}") ||
+                (task.kind == "ONCE" && task.id.startsWith("manual-${task.orbitId}-"))
+
         /** A run without its own limit gets five minutes. */
         const val DEFAULT_TIMEOUT_MINUTES = 5
 

@@ -35,11 +35,17 @@ class MemoryLearningActions(
                     size > READ_VERSION_LIMIT
             })
     }
-    private fun readVersion(target: String): String? = readVersions["$profileId\u0000$target"]
+    /**
+     * One chat's reads, kept apart from another chat's and from the background review's: a version
+     * someone else read says nothing about what this caller has seen.
+     */
+    private fun versionKey(target: String) =
+        "$profileId\u0000$sourceChatId\u0000${if (background) "review" else "chat"}\u0000$target"
+    private fun readVersion(target: String): String? = readVersions[versionKey(target)]
     private fun rememberVersion(target: String, version: String) {
-        readVersions["$profileId\u0000$target"] = version
+        readVersions[versionKey(target)] = version
     }
-    private fun forgetVersion(target: String) { readVersions.remove("$profileId\u0000$target") }
+    private fun forgetVersion(target: String) { readVersions.remove(versionKey(target)) }
     /** An Orbit's memory.md is sectioned; null for every other space. */
     private val notesFormat = MemoryNotesRepository.sectionFormat(context, profileId)
     /** People, circles and the lessons book: only a background review of an Orbit maintains them here. */
@@ -386,7 +392,7 @@ private fun notesEdit(base: String, operation: String, content: String, oldText:
             MemoryNotesRepository.Failure.EMPTY ->
                 if (operation == "add") "content is required" else "old_text and content are required"
             MemoryNotesRepository.Failure.NOT_UNIQUE -> exactEditError(
-                stripInvisibleCharacters(base),stripInvisibleCharacters(oldText))
+                stripInvisibleCharacters(base),stripInvisibleCharacters(oldText), sectioned = format != null)
             MemoryNotesRepository.Failure.CONFLICT -> "memory.md changed while this batch ran; read it again"
             MemoryNotesRepository.Failure.FULL -> MemoryNotesRepository.OVERFLOW_MESSAGE
             MemoryNotesRepository.Failure.INVALID -> "Use add/replace/remove"
@@ -463,7 +469,18 @@ internal fun memoryCapacityError(document: String, before: Int, after: Int, limi
         "over_by=${after-limit}. Read the latest staged content with memory_read, then shorten or remove " +
         "existing text by at least ${after-limit} characters before retrying. A replacement can also exceed the limit."
 
-internal fun exactEditError(current: String, old: String): String {
+internal fun exactEditError(current: String, old: String, sectioned: Boolean = false): String {
+    if (sectioned && old.isNotEmpty()) {
+        // A sectioned memory.md is matched inside each section's entries, never across its headings.
+        val bodies = MemoryNoteSections.parse(current).bodies().map { it.second }
+        val found = bodies.sumOf { body -> generateSequence(body.indexOf(old).takeIf { it >= 0 }) { at ->
+            body.indexOf(old, at + 1).takeIf { it >= 0 } }.count() }
+        if (found == 0 && current.contains(old)) return "old_text must lie inside one section's entries: leave out " +
+            "section headings and markers and copy only the entry line(s) to change, then retry."
+        return "old_text must match exactly once inside one section; found ${if (found == 0) "0" else "more than 1"} " +
+            "matches. Read the latest staged content with memory_read and copy an exact, unique entry line " +
+            "(include more of the line if ambiguous), or name its section."
+    }
     val match = if (old.isEmpty() || !current.contains(old)) "0" else "more than 1"
     return "old_text must match exactly once; found $match matches. Read the latest staged content with " +
         "memory_read or skill_read and copy an exact, unique span (include more surrounding text if ambiguous)."

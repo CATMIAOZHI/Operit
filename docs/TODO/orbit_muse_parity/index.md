@@ -68,7 +68,7 @@ status: in-progress
 | 表情回应 | `orbit_react` 给用户最新的消息点一个表情，存在 `orbit/<UUID>/reactions.json`，显示在消息气泡右下角 [DONE batch4] |
 | 侧聊 | 顶部右边的「聊天」按钮里新建、切换、重命名、删除侧聊；`orbit_chat` list / create / read；在侧聊里安排的任务结果回到那个侧聊，侧聊删掉后回到主聊天 [DONE batch4] |
 | 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
-| 密码保险箱 | `orbit_vault`：request_login / request_api_key 在聊天里放一张安全卡片并立即返回；用户点卡片在弹层里填，值直接加密存进保险箱，保存后隐藏通知 Orbit 接着做，关掉卡片什么都不发；Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5，卡片流程 batch7] |
+| 密码凭据保险箱 | `orbit_vault`：request_login / request_api_key 在聊天里放一张安全卡片并立即返回；用户点卡片在弹层里填，值直接加密存进保险箱，保存后隐藏通知 Orbit 接着做，关掉卡片什么都不发；Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5，卡片流程 batch7] |
 | 发图片和文件 | `orbit_file` 的 send：把 `files/` 里的文件像真人一样发进聊天，图片点一下存相册，其他文件点一下用别的应用打开；Orbit 读图时的「已查看 N 张图像」在 Orbit 聊天里不显示 [DONE batch7] |
 | 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、动态点子、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉；SOUL / IDENTITY / 提示词里的命中只列出请用户自己改；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5] |
 | 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
@@ -88,6 +88,7 @@ status: in-progress
 - [x] Feed：Orbit 在后台写的短文章信息流（25d778e8c）
 - [x] Ideas：Orbit 主动提出的建议卡片（25d778e8c）
 - [ ] Tailscale 等内网设备连接——暂缓
+- [ ] 只能有 1 个 Orbit：创建新 Orbit 前必须先删掉现有的那个（以后做；现在额度和用量页已经按“所有 Orbit 共用一份额度”设计，改成单 Orbit 后不用再改）
 
 ## 做不了（及原因）
 
@@ -118,7 +119,7 @@ status: in-progress
 | 主动消息偏好、主动消息逐条决定 | `tools/11`、`runtime-samples/20` | 偏好文件分「要说 / 别说 / 什么时间 / 怎么说」四块；默认不打扰 |
 | 侧聊、聊天渠道 | `tools/12`、`23-聊天渠道.md` | 侧聊是和用户的一对一聊天；定时结果回到创建它的那个聊天 |
 | 设备命令族 | `tools/12`、`24-设备命令.md`、`skills/device-data` | 先列设备、再查命令、再调用，命令表不写死；没授权的命令在调用时弹框让用户批准；离线读缓存必须告诉用户是缓存 |
-| 密码保险箱 | `tools/12`、`skills/00-凭证注入模式.md` | 录入卡片直接把值存进保险箱，助手只看到站点和字段名；脚本拿不到明文，只能向白名单主机发带凭证的请求 |
+| 密码凭据保险箱 | `tools/12`、`skills/00-凭证注入模式.md` | 录入卡片直接把值存进保险箱，助手只看到站点和字段名；脚本拿不到明文，只能向白名单主机发带凭证的请求 |
 | 富格式成果、动态 UI 卡片 | `tools/13` | 成果创建时就定好归属，之后不搬；改成果时传用户原话 |
 | Feed | `31-Feed提示词与unit结构.md` | Feed 只由一段文字提示词决定；每条内容必须写一句「为什么给你看」 |
 | Ideas、图片生成、回收站、「忘掉」流程、起名卡片 | `tools/13`、`skills/forget` | 「忘掉」先做只读规划，用户确认最新计划后才删 |

@@ -777,7 +777,7 @@ private fun PackageItem(row: PackageRow, on: Boolean, onToggle: (Boolean) -> Uni
             modifier = Modifier.semantics { contentDescription = row.title },
         )
     }
-    if (!row.required) DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+    if (!row.required) OrbitDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
         DropdownMenuItem(
             text = { Text(stringResource(R.string.orbit_packages_remove)) },
             leadingIcon = { Icon(orbitIcon("trash-2"), contentDescription = null, modifier = Modifier.size(18.dp)) },

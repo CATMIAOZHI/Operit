@@ -281,7 +281,15 @@ fun AgentChatInputSection(
             inputState is InputProcessingState.Summarizing ||
             inputState is InputProcessingState.Receiving
     if (showTokenLimitDialog.value) {
-        AlertDialog(
+        if (com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.token_limit_warning),
+                message = stringResource(R.string.token_limit_warning_message),
+                confirmLabel = stringResource(R.string.continue_send),
+                onConfirm = { showTokenLimitDialog.value = false; onSendMessage() },
+                onDismiss = { showTokenLimitDialog.value = false },
+            )
+        } else AlertDialog(
             onDismissRequest = {
                 showTokenLimitDialog.value = false
             },

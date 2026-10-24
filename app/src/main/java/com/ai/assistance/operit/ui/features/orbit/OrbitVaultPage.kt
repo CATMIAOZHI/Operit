@@ -183,7 +183,12 @@ private fun VaultRow(entry: OrbitVault.Entry, showTime: Boolean, onClick: () -> 
  * to change it they delete it and let Orbit ask again with a card. Screenshots are blocked here.
  */
 @Composable
-internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: () -> Unit) {
+internal fun OrbitVaultEntryPage(
+    orbit: OrbitProfile,
+    entryId: String,
+    onBack: () -> Unit,
+    onDraft: (String) -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
@@ -296,6 +301,27 @@ internal fun OrbitVaultEntryPage(orbit: OrbitProfile, entryId: String, onBack: (
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(start = 4.dp, end = 4.dp, top = 10.dp, bottom = 24.dp),
                 )
+                // Orbit does the change: the prompt waits in the main chat's input box, and once sent
+                // Orbit shows the update card (or reconnects an OAuth login).
+                val draft = stringResource(
+                    if (entry.kind == OrbitVault.OAUTH) R.string.orbit_credential_reconnect_draft
+                    else R.string.orbit_credential_edit_draft,
+                    entry.site, entry.id,
+                )
+                Surface(
+                    shape = RoundedCornerShape(50),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp).clip(RoundedCornerShape(50))
+                        .clickable(enabled = !deleting, role = Role.Button) { onDraft(draft) },
+                ) {
+                    Text(
+                        stringResource(R.string.orbit_vault_edit),
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 15.dp),
+                    )
+                }
                 Surface(
                     shape = RoundedCornerShape(50),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),

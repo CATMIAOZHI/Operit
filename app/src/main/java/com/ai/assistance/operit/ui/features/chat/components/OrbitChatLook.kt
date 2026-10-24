@@ -680,13 +680,10 @@ fun OrbitPieceMenu(
     onMore: () -> Unit,
     onReply: (() -> Unit)?,
 ) {
-    androidx.compose.material3.DropdownMenu(
+    com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         modifier = Modifier.widthIn(min = 200.dp),
-        shape = androidx.compose.foundation.shape.RoundedCornerShape(16.dp),
-        containerColor = androidx.compose.material3.MaterialTheme.colorScheme.surfaceContainerHigh,
-        properties = androidx.compose.ui.window.PopupProperties(focusable = true, dismissOnBackPress = true, dismissOnClickOutside = true),
     ) {
         OrbitTapbackRow(selected, onPick, onMore)
         if (onReply != null) {

@@ -155,6 +155,55 @@ class OrbitTaskDaoTest {
         assertNull(dao.enqueueDue("task", 1012))
     }
 
+    @Test fun `a run stopped for used up allowances before its turn waits and runs again`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST").copy(nextRunAt = 5000))
+        assertTrue(dao.enqueueManual("task", "request", 1000))
+        val first = checkNotNull(claim())
+        assertTrue(dao.stopForQuota(first, 3000, 9000, 1010, "allowance"))
+        assertEquals("ACTIVE", dao.task("task")!!.state)
+        assertEquals("INTERRUPTED", dao.run(first.id)!!.state)
+        assertTrue(dao.pendingDeliveries("orbit").isEmpty())
+        // The retry keeps its manual key and waits for its time; a stale stop does nothing more.
+        val retry = checkNotNull(dao.enqueueDue("task", 1011))
+        assertTrue(retry.id.contains(":manual:") && retry.dueAt == 3000L)
+        assertFalse(dao.stopForQuota(first, 4000, 9000, 1012, "again"))
+        val second = checkNotNull(dao.claim(retry, "worker", "boot", 3000, 20, 100))
+        assertTrue(dao.stopForQuota(second, 6000, 9000, 3010, "allowance"))
+        // Retried again, the key does not grow.
+        assertEquals(1, Regex(":quota-retry:").findAll(checkNotNull(dao.enqueueDue("task", 3011)).id).count())
+    }
+
+    @Test fun `a started turn cut short by allowances is never replayed`() = runBlocking {
+        // A repeating task gives up only this run and goes on at its next time.
+        dao.insertTask(definition(kind = "ASSIST"))
+        val first = checkNotNull(claim())
+        dao.insertBinding(com.ai.assistance.operit.data.model.OrbitTaskChatEntity("hidden", first.id, first.generation, "hidden"))
+        assertTrue(dao.stopForQuota(first, 3000, 9000, 1010, "allowance"))
+        assertEquals("ACTIVE", dao.task("task")!!.state)
+        assertEquals(9000L, dao.task("task")!!.nextRunAt)
+        assertNull(dao.enqueueDue("task", 1011))
+        assertEquals(9000L, checkNotNull(dao.enqueueDue("task", 9000)).dueAt)
+        // A one-time task is left for the user to check instead.
+        dao.insertTask(definition(id = "once", kind = "ASSIST").copy(scheduleMode = "ONCE"))
+        val once = checkNotNull(claim(id = "once"))
+        dao.insertBinding(com.ai.assistance.operit.data.model.OrbitTaskChatEntity("hidden-once", once.id, once.generation, "hidden-once"))
+        assertFalse(dao.stopForQuota(once, 3000, 9000, 1010, "allowance"))
+        assertTrue(dao.interrupt(once, 1011, "interrupted"))
+        assertEquals("PAUSED", dao.task("once")!!.state)
+    }
+
+    @Test fun `a run with an unconfirmed effect is not retried for the allowance`() = runBlocking {
+        dao.insertTask(definition(kind = "ASSIST"))
+        val token = checkNotNull(claim())
+        val action = com.ai.assistance.operit.data.model.OrbitActionEntity(
+            "write", "task", token.id, token.generation, "orbit_write_artifact", "digest",
+            "PREPARED", "Save report", 1001, 1001)
+        assertEquals("STARTED", dao.beginAction(token, action, "boot", 1001, 11)?.state)
+        assertFalse(dao.stopForQuota(token, 3000, 9000, 1002, "allowance"))
+        assertTrue(dao.interrupt(token, 1003, "interrupted"))
+        assertEquals("VERIFY", dao.task("task")!!.state)
+    }
+
     @Test fun `unreceipted write after reboot requires explicit verification before new generation`() = runBlocking {
         dao.insertTask(definition(kind = "ASSIST"))
         val token = checkNotNull(claim())

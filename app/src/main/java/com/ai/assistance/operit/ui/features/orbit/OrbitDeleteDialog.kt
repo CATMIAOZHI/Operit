@@ -4,11 +4,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.material3.AlertDialog
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -46,16 +45,16 @@ internal fun OrbitDeleteDialog(
     val name = orbit.name.ifBlank { stringResource(R.string.nav_orbit) }
     var typing by remember(orbit.id) { mutableStateOf(false) }
     if (!typing) {
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = onDismiss,
-            title = { Text(stringResource(R.string.orbit_delete_title, name)) },
+            title = stringResource(R.string.orbit_delete_title, name),
             text = { Text(stringResource(R.string.orbit_delete_message)) },
             confirmButton = {
-                TextButton(onClick = { typing = true }) {
-                    Text(stringResource(R.string.orbit_delete_continue), color = MaterialTheme.colorScheme.error)
+                OrbitDialogAction(onClick = { typing = true }, destructive = true) {
+                    Text(stringResource(R.string.orbit_delete_continue))
                 }
             },
-            dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
         return
     }
@@ -70,9 +69,9 @@ internal fun OrbitDeleteDialog(
         }
     }
     val matches = orbitDeletePhraseMatches(typed, phrase)
-    AlertDialog(
+    OrbitDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.orbit_delete_confirm_title)) },
+        title = stringResource(R.string.orbit_delete_confirm_title),
         text = {
             Column(Modifier.fillMaxWidth()) {
                 Text(stringResource(R.string.orbit_delete_type_hint))
@@ -84,20 +83,19 @@ internal fun OrbitDeleteDialog(
                     onValueChange = { typed = it.take(200) },
                     singleLine = true,
                     placeholder = { Text(phrase) },
+                    shape = RoundedCornerShape(20.dp),
                     modifier = Modifier.fillMaxWidth(),
                 )
             }
         },
         confirmButton = {
-            TextButton(enabled = matches && secondsLeft == 0, onClick = onConfirm) {
+            OrbitDialogAction(enabled = matches && secondsLeft == 0, onClick = onConfirm, destructive = true) {
                 Text(
                     if (secondsLeft > 0) stringResource(R.string.orbit_delete_wait, secondsLeft)
                     else stringResource(R.string.orbit_delete),
-                    color = if (matches && secondsLeft == 0) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f),
                 )
             }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) } },
     )
 }

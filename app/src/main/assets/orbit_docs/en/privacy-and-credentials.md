@@ -17,6 +17,7 @@ Saved entries can be managed in the vault or deleted with its tool, but deleting
 ## Secure input cards
 
 `request_login`, `request_new_password`, and `request_api_key` create the corresponding input requests.
+To give a saved password or API key a new value or user name, or to turn terminal use on or off, use `request_update` with its `credential_id`.
 The tool returns as soon as the card is created; end the turn and wait for the user to fill it in.
 Successful saving wakes you through a hidden event; cancellation or ignoring the card does not trigger the same continuation.
 
@@ -51,6 +52,7 @@ Do not treat a surrogate as a real credential usable in any external environment
 Request `env` injection only when a signing algorithm, particular SDK, multiple keys, or similar requirements genuinely cannot use the proxy.
 Explain the variable name and purpose and obtain the applicable permission; load and use it in the same execution, without printing, dumping, or placing it in command-line arguments.
 Environment injection is not the default shortcut.
+Login passwords stay out of the terminal by default; when a script really must sign in, ask with `request_update`, and once allowed `env` also loads `<NAME>_USERNAME`.
 
 ## OAuth
 

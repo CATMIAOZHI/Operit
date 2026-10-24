@@ -2827,7 +2827,14 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                     append(s(R.string.toolreg_run_ui_subagent_hint))
                 }
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { uiTools.runUiSubAgent(tool) } }
+            executor = { tool ->
+                // The phone-control subagent's model calls are the calling Orbit's, like its turn's.
+                runBlockingIoPreservingToolRuntimeContext {
+                    kotlinx.coroutines.withContext(
+                        com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)
+                    ) { uiTools.runUiSubAgent(tool) }
+                }
+            }
     )
 
     // 在输入框中设置文本

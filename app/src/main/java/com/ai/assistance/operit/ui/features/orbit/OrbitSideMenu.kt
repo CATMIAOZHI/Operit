@@ -36,9 +36,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -326,12 +324,13 @@ internal fun OrbitSideMenu(
         )
     }
     deleting?.let { side ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { if (!busy) deleting = null },
-            title = { Text(stringResource(R.string.orbit_chats_delete)) },
+            dismissEnabled = !busy,
+            title = stringResource(R.string.orbit_chats_delete),
             text = { Text(stringResource(R.string.orbit_chats_delete_confirm, side.title)) },
             confirmButton = {
-                TextButton(enabled = !busy, onClick = {
+                OrbitDialogAction(enabled = !busy, destructive = true, onClick = {
                     // Show the main chat first, so the screen never sits on a chat being deleted.
                     if (currentChatId == side.chatId) onSelect(orbit.chatId)
                     act {
@@ -340,10 +339,10 @@ internal fun OrbitSideMenu(
                     }
                 }) {
                     if (busy) BusyMark()
-                    Text(stringResource(R.string.delete), color = if (busy) Color.Unspecified else MaterialTheme.colorScheme.error)
+                    Text(stringResource(R.string.delete))
                 }
             },
-            dismissButton = { TextButton(enabled = !busy, onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(enabled = !busy, secondary = true, onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -535,18 +534,13 @@ private fun ArchivePage(
 
 private class MenuAction(val icon: String, val label: String, val danger: Boolean = false, val onClick: () -> Unit)
 
-/** The long-press menu of a side chat, like Muse's: when it was started, then the actions. */
+/** The long-press menu of a side chat: when it was started, then the actions. */
 @Composable
 private fun SideChatActions(expanded: Boolean, createdAt: Long, actions: List<MenuAction>, onDismiss: () -> Unit) {
-    DropdownMenu(
+    OrbitDropdownMenu(
         expanded = expanded,
         onDismissRequest = onDismiss,
         offset = DpOffset(8.dp, 6.dp),
-        shape = RoundedCornerShape(26.dp),
-        containerColor = MaterialTheme.colorScheme.surface,
-        tonalElevation = 0.dp,
-        shadowElevation = 10.dp,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f)),
     ) {
         val started = remember(createdAt) {
             val locale = Locale.getDefault()
@@ -679,22 +673,25 @@ private fun ChatRow(
 @Composable
 private fun TitleDialog(title: String, initial: String, busy: Boolean, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf(initial) }
-    AlertDialog(
+    OrbitDialog(
         onDismissRequest = onDismiss,
-        title = { Text(title) },
+        dismissEnabled = !busy,
+        title = title,
         text = {
             OutlinedTextField(
                 text, { if (it.length <= OrbitSettings.MAX_SIDE_CHAT_TITLE) text = it }, singleLine = true, enabled = !busy,
                 label = { Text(stringResource(R.string.orbit_chats_title_label)) },
                 placeholder = { Text(stringResource(R.string.orbit_chats_title_hint)) },
+                shape = RoundedCornerShape(20.dp),
+                modifier = Modifier.fillMaxWidth(),
             )
         },
         confirmButton = {
-            TextButton(enabled = text.isNotBlank() && !busy, onClick = { onSave(text.trim()) }) {
+            OrbitDialogAction(enabled = text.isNotBlank() && !busy, onClick = { onSave(text.trim()) }) {
                 if (busy) BusyMark()
                 Text(stringResource(R.string.save))
             }
         },
-        dismissButton = { TextButton(enabled = !busy, onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { OrbitDialogAction(enabled = !busy, secondary = true, onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
     )
 }

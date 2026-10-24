@@ -60,25 +60,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.rounded.Person
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.ModalBottomSheet
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.TimePicker
 import androidx.compose.material3.rememberModalBottomSheetState
-import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
@@ -540,7 +534,10 @@ private fun OrbitChatPage(
     // slides up over it and the pages opened from the profile slide in from the right, like iOS.
     CompositionLocalProvider(LocalOrbitActivity provides rememberOrbitActivity(orbit, currentChatId)) {
     Box(Modifier.fillMaxSize()) {
-        BackHandler(enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) { tab = OrbitTab.CHAT }
+        val tabBack = rememberOrbitBackMotion()
+        OrbitBackHandler(tabBack, enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) {
+            tab = OrbitTab.CHAT
+        }
         // The back swipe slides the developer view to the right under the finger, like leaving a page.
         // Stays on while the view moves, so a second back is swallowed here instead of leaving Orbit.
         androidx.activity.compose.PredictiveBackHandler(
@@ -668,7 +665,10 @@ private fun OrbitChatPage(
                 // Tabs switch at once, like an iOS tab bar: a fade would let the chat underneath show
                 // through for a moment. Each page draws the same header in the same place as the
                 // chat, so Orbit's picture stays put on top while the content changes.
-                if (tab != OrbitTab.CHAT && !devView) {
+                // The tab layer stays composed on the chat tab (unplaced, header only), so a pet
+                // avatar is not loaded again and does not flash each time a tab is opened.
+                if (!devView) {
+                    val onTab = tab != OrbitTab.CHAT
                     val tabHeader: @Composable () -> Unit = remember(orbit) {
                         {
                             OrbitHeader(
@@ -680,8 +680,9 @@ private fun OrbitChatPage(
                             )
                         }
                     }
+                    Box(Modifier.orbitDismissLayer(tabBack)) {
                     CompositionLocalProvider(LocalOrbitTabHeader provides tabHeader) {
-                        OrbitTabPage(orbit, pageTab,
+                        OrbitTabPage(orbit, pageTab, visible = onTab,
                             onDraft = { text ->
                                 // The prompt waits in the main chat's input box for the user to finish.
                                 draftToOrbit(context, orbit, text)
@@ -695,6 +696,7 @@ private fun OrbitChatPage(
                                 tab = OrbitTab.CHAT
                             },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
+                    }
                     }
                 }
             }
@@ -828,6 +830,7 @@ private fun OrbitChatPage(
                     onOpenToolAccess = { push(OrbitSubPage.TOOL_ACCESS) },
                     onOpenVault = { push(OrbitSubPage.VAULT) },
                     onOpenImport = { showImport = true },
+                    onOpenUsage = { push(OrbitSubPage.USAGE) },
                     onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
@@ -836,6 +839,9 @@ private fun OrbitChatPage(
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
+                OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
+                    onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) })
+                OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
                 OrbitSubPage.SOUL -> OrbitSoulFilePage(orbit.id, onBack = back)
                 OrbitSubPage.IDENTITY -> OrbitIdentityFilePage(orbit.id, onBack = back)
                 OrbitSubPage.USER -> OrbitUserFilePage(orbit, onBack = back)
@@ -866,7 +872,7 @@ private fun OrbitChatPage(
                         if (now.lastOrNull() == OrbitSubPage.VAULT_ENTRY.name) {
                             stackNames = now.dropLast(1).joinToString(",")
                         }
-                    })
+                    }, onDraft = { draftToChat(it) })
                     else LaunchedEffect(Unit) { pop() }
                 }
                 OrbitSubPage.TOOL_PERMISSIONS -> {
@@ -953,7 +959,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, APPEARANCE, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1287,6 +1293,7 @@ private fun OrbitSettingsPage(
     onOpenToolAccess: () -> Unit,
     onOpenVault: () -> Unit,
     onOpenImport: () -> Unit,
+    onOpenUsage: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
@@ -1311,6 +1318,9 @@ private fun OrbitSettingsPage(
             verticalArrangement = Arrangement.spacedBy(18.dp),
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
+
+            // Like Muse's plan card: how much of the week's and the extra allowance is spent.
+            OrbitQuotaCard(orbit = orbit, cardColor = cardColor, onOpenUsage = onOpenUsage)
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
@@ -1807,9 +1817,10 @@ private fun CompanionPickerDialog(
     onDismiss: () -> Unit,
     onSelect: (CharacterCard) -> Unit,
 ) {
-    AlertDialog(
+    OrbitDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.orbit_choose_companion)) },
+        title = stringResource(R.string.orbit_choose_companion),
+        scrollable = false,
         text = {
             LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
                 items(cards, key = { it.id }) { card ->
@@ -1842,63 +1853,7 @@ private fun CompanionPickerDialog(
                 }
             }
         },
-        confirmButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
-    )
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CheckInTimeDialog(minuteOfDay: Int, onDismiss: () -> Unit, onConfirm: (Int) -> Unit) {
-    val state =
-        rememberTimePickerState(
-            initialHour = minuteOfDay / 60,
-            initialMinute = minuteOfDay % 60,
-            is24Hour = true,
-        )
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.orbit_check_in_time)) },
-        text = { TimePicker(state = state) },
-        confirmButton = {
-            TextButton(onClick = { onConfirm(state.hour * 60 + state.minute) }) {
-                Text(stringResource(R.string.confirm))
-            }
-        },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
-    )
-}
-
-@Composable
-private fun FocusNotesField(initialNotes: String, onSave: suspend (String) -> Unit) {
-    var notes by remember { mutableStateOf(initialNotes) }
-    var savedNotes by remember { mutableStateOf(initialNotes) }
-    // Save after typing pauses, and once more when the sheet goes away, instead of on every key.
-    LaunchedEffect(notes) {
-        kotlinx.coroutines.delay(600)
-        if (notes != savedNotes) {
-            onSave(notes)
-            savedNotes = notes
-        }
-    }
-    val latestNotes by rememberUpdatedState(notes)
-    val latestSaved by rememberUpdatedState(savedNotes)
-    DisposableEffect(Unit) {
-        onDispose {
-            if (latestNotes != latestSaved) {
-                val pending = latestNotes
-                CoroutineScope(Dispatchers.IO).launch { onSave(pending) }
-            }
-        }
-    }
-    OutlinedTextField(
-        value = notes,
-        onValueChange = { value -> notes = value.take(OrbitSettings.MAX_FOCUS_NOTES_LENGTH) },
-        label = { Text(stringResource(R.string.orbit_focus_label, stringResource(R.string.nav_orbit))) },
-        placeholder = { Text(stringResource(R.string.orbit_focus_placeholder)) },
-        minLines = 3,
-        maxLines = 8,
-        shape = RoundedCornerShape(14.dp),
-        modifier = Modifier.fillMaxWidth(),
+        dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) } },
     )
 }
 

@@ -66,11 +66,11 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
                 }
             }
             LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval,
-                stringResource(R.string.memory_interval_unit_turns)) {
+                stringResource(R.string.memory_interval_unit_turns), orbitSpace) {
                 prefs.setMemoryReviewInterval(it); memoryInterval = it
             }
             LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval,
-                stringResource(R.string.memory_interval_unit_iterations)) {
+                stringResource(R.string.memory_interval_unit_iterations), orbitSpace) {
                 prefs.setSkillReviewInterval(it); skillInterval = it
             }
             ListItem(
@@ -81,7 +81,7 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
                         TextButton(onClick = { delayMenu = true }) {
                             Text(stringResource(R.string.memory_learning_delay_minutes, learningDelay))
                         }
-                        DropdownMenu(expanded = delayMenu, onDismissRequest = { delayMenu = false }) {
+                        LearningDropdownMenu(orbitSpace, expanded = delayMenu, onDismissRequest = { delayMenu = false }) {
                             listOf(1, 5, 10, 30, 60).forEach { minutes ->
                                 DropdownMenuItem(text = {
                                     Text(stringResource(R.string.memory_learning_delay_minutes, minutes))
@@ -106,13 +106,13 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
 }
 
 @Composable
-private fun LearningIntervalSetting(title: String, value: Int, unit: String, onChange: (Int) -> Unit) {
+private fun LearningIntervalSetting(title: String, value: Int, unit: String, orbitSpace: Boolean, onChange: (Int) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
     ListItem(headlineContent = { Text(title) }, trailingContent = {
         Box {
             // A bare number does not say whether the interval counts turns, replies or tool calls.
             TextButton(onClick = { expanded = true }) { Text("$value $unit") }
-            DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+            LearningDropdownMenu(orbitSpace, expanded, onDismissRequest = { expanded = false }) {
                 listOf(5, 10, 20, 50).forEach { interval ->
                     DropdownMenuItem(text = { Text("$interval $unit") }, onClick = {
                         onChange(interval); expanded = false
@@ -121,6 +121,22 @@ private fun LearningIntervalSetting(title: String, value: Int, unit: String, onC
             }
         }
     })
+}
+
+@Composable
+private fun LearningDropdownMenu(
+    orbitSpace: Boolean,
+    expanded: Boolean,
+    onDismissRequest: () -> Unit,
+    content: @Composable ColumnScope.() -> Unit,
+) {
+    if (orbitSpace) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitDropdownMenu(
+            expanded = expanded, onDismissRequest = onDismissRequest, content = content,
+        )
+    } else {
+        DropdownMenu(expanded = expanded, onDismissRequest = onDismissRequest, content = content)
+    }
 }
 
 @Composable

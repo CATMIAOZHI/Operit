@@ -33,6 +33,7 @@ import java.util.concurrent.TimeoutException as JavaTimeoutException
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.runBlocking
 
@@ -102,6 +103,12 @@ class TokenTrackingAIService(
         enableRetry: Boolean,
         statsCategory: TokenStatCategory?,
     ): Stream<String> {
+        // An Orbit's call is held to its token allowance before anything is sent, and counted after.
+        val orbitTag = currentCoroutineContext()[com.ai.assistance.operit.features.orbit.OrbitUsageTag]
+        if (orbitTag != null) {
+            com.ai.assistance.operit.features.orbit.OrbitQuota.checkAllowed(appContext, orbitTag)
+        }
+        val meter = orbitTag?.let { OrbitMeter(chatHistory, availableTools) }
         val request = newRequest(statsCategory)
         val delegateStream =
             delegate.sendMessage(
@@ -124,7 +131,7 @@ class TokenTrackingAIService(
                 enableRetry = enableRetry,
                 statsCategory = statsCategory,
             )
-        return wrapStream(delegateStream, request)
+        return wrapStream(delegateStream, request, orbitTag, meter)
     }
 
     override suspend fun testConnection(
@@ -210,23 +217,57 @@ class TokenTrackingAIService(
     private fun wrapStream(
         delegateStream: Stream<String>,
         request: TokenStatRequestContext,
+        orbitTag: com.ai.assistance.operit.features.orbit.OrbitUsageTag?,
+        meter: OrbitMeter?,
     ): Stream<String> {
+        val onFinished: (suspend () -> Unit)? = if (orbitTag == null || meter == null) null else {
+            suspend { recordOrbitUsage(appContext, orbitTag, request, meter) }
+        }
         return if (delegateStream is TextStreamEventCarrier) {
             TrackingRevisableStream(
                 inner = delegateStream,
                 eventChannel = delegateStream.eventChannel,
                 request = request,
                 appContext = appContext,
+                meter = meter,
+                onFinished = onFinished,
             )
         } else {
-            TrackingStream(inner = delegateStream, request = request, appContext = appContext)
+            TrackingStream(inner = delegateStream, request = request, appContext = appContext, meter = meter,
+                onFinished = onFinished)
         }
+    }
+
+    /**
+     * This Orbit call's own estimate, for whatever the provider does not report: what was sent, and
+     * what came back so far. It never reads the service's running counters (some keep earlier calls'
+     * numbers), so a call that fails, times out or is stopped still counts only itself.
+     */
+    private class OrbitMeter(private val sent: List<PromptTurn>, private val tools: List<ToolPrompt>?) {
+        // Counted by kind of character and estimated once, so many short chunks do not each round down.
+        @Volatile private var cjk = 0L
+        @Volatile private var other = 0L
+
+        fun onChunk(value: String) {
+            if (value.isEmpty()) return
+            val c = value.count { it.code in 0x4E00..0x9FFF }
+            cjk += c
+            other += value.length - c
+        }
+
+        fun input(): Long =
+            sent.sumOf { com.ai.assistance.operit.util.ChatUtils.estimateTokenCount(it.content).toLong() } +
+                (tools?.sumOf { com.ai.assistance.operit.util.ChatUtils.estimateTokenCount(it.toString()).toLong() } ?: 0L)
+
+        fun output(): Long = kotlin.math.ceil(cjk * 1.5 + other * 0.25).toLong()
     }
 
     private class TrackingStream(
         private val inner: Stream<String>,
         private val request: TokenStatRequestContext,
         private val appContext: Context,
+        private val meter: OrbitMeter?,
+        private val onFinished: (suspend () -> Unit)?,
     ) : Stream<String> {
         override val isLocked: Boolean get() = inner.isLocked
         override val bufferedCount: Int get() = inner.bufferedCount
@@ -244,14 +285,17 @@ class TokenTrackingAIService(
                         sawFirstToken = true
                         request.onFirstToken()
                     }
+                    meter?.onChunk(value)
                     collector.emit(value)
                 }
             } catch (t: Throwable) {
                 request.finish(classify(t))
+                onFinished?.let { withContext(NonCancellable) { it() } }
                 persistAndCapture(appContext, request, t)
                 throw t
             }
             request.finish(TokenStatStatus.COMPLETED)
+            onFinished?.let { withContext(NonCancellable) { it() } }
             recordSafely(appContext, request)
         }
     }
@@ -261,6 +305,8 @@ class TokenTrackingAIService(
         override val eventChannel: SharedStream<TextStreamEvent>,
         private val request: TokenStatRequestContext,
         private val appContext: Context,
+        private val meter: OrbitMeter?,
+        private val onFinished: (suspend () -> Unit)?,
     ) : RevisableTextStream {
         override val isLocked: Boolean get() = inner.isLocked
         override val bufferedCount: Int get() = inner.bufferedCount
@@ -276,20 +322,51 @@ class TokenTrackingAIService(
                         sawFirstToken = true
                         request.onFirstToken()
                     }
+                    meter?.onChunk(value)
                     collector.emit(value)
                 }
             } catch (t: Throwable) {
                 request.finish(classify(t))
+                onFinished?.let { withContext(NonCancellable) { it() } }
                 persistAndCapture(appContext, request, t)
                 throw t
             }
             request.finish(TokenStatStatus.COMPLETED)
+            onFinished?.let { withContext(NonCancellable) { it() } }
             recordSafely(appContext, request)
         }
     }
 
     companion object {
         private const val TAG = "TokenTrackingAIService"
+
+        /**
+         * Counts an ended Orbit call against its allowance, whether it finished, failed or was
+         * stopped: what the provider reported, and this call's own count for whatever it did not
+         * report, so neither a provider without usage reports nor a call cut short spends for free.
+         * Counting never fails the call.
+         */
+        private suspend fun recordOrbitUsage(
+            appContext: Context,
+            tag: com.ai.assistance.operit.features.orbit.OrbitUsageTag,
+            request: TokenStatRequestContext,
+            meter: OrbitMeter,
+        ) {
+            try {
+                val usage = request.aggregatedUsage()
+                val input = usage?.let {
+                    it.totalInputTokens
+                        ?: listOfNotNull(it.uncachedInputTokens, it.cachedInputTokens, it.cacheWriteTokens)
+                            .takeIf { parts -> parts.isNotEmpty() }?.sum()
+                } ?: meter.input()
+                val output = usage?.let {
+                    it.outputTokens?.plus(if (it.reasoningIncludedInOutput == false) it.reasoningTokens ?: 0L else 0L)
+                } ?: meter.output()
+                com.ai.assistance.operit.features.orbit.OrbitQuota.record(appContext, tag, input, output)
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "Orbit 用量记录失败，不影响请求", e)
+            }
+        }
 
         /** 单次统计落账的有界等待时长；测试可缩短以验证超时只日志不阻塞业务。 */
         internal var recordTimeoutMs: Long = 5_000L

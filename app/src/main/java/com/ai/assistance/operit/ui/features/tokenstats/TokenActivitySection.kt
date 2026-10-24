@@ -639,11 +639,12 @@ private fun TokenActivityProfileCard() {
 }
 
 @Composable
-private fun TokenActivityHeatmap(
+internal fun TokenActivityHeatmap(
     state: TokenActivityUiState,
     zone: ZoneId,
     locale: Locale,
     modifier: Modifier = Modifier,
+    textColor: Color = TokenStatsCardMuted,
 ) {
     val data = state.yearData
     if (state.loading || data == null) {
@@ -721,10 +722,10 @@ private fun TokenActivityHeatmap(
             }
         }
     }
-    val monthPaint = remember(density) {
+    val monthPaint = remember(density, textColor) {
         Paint().apply {
             textSize = with(density) { 12.sp.toPx() }
-            color = TokenStatsCardMuted.toArgb()
+            color = textColor.toArgb()
             isAntiAlias = true
         }
     }
@@ -927,7 +928,7 @@ private fun TokenActivityHeatmap(
                 )
                 else -> stringResource(R.string.token_activity_tap_hint)
             }
-            Text(text, style = MaterialTheme.typography.bodySmall, color = TokenStatsCardMuted, maxLines = 1)
+            Text(text, style = MaterialTheme.typography.bodySmall, color = textColor, maxLines = 1)
         }
 
         Row(
@@ -935,13 +936,13 @@ private fun TokenActivityHeatmap(
             horizontalArrangement = Arrangement.End,
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(stringResource(R.string.token_activity_less), fontSize = 12.sp, color = TokenStatsCardMuted)
+            Text(stringResource(R.string.token_activity_less), fontSize = 12.sp, color = textColor)
             Spacer(Modifier.width(4.dp))
             colors.forEach { color ->
                 Box(Modifier.size(block).background(color, RoundedCornerShape(3.dp)))
                 Spacer(Modifier.width(gap))
             }
-            Text(stringResource(R.string.token_activity_more), fontSize = 12.sp, color = TokenStatsCardMuted)
+            Text(stringResource(R.string.token_activity_more), fontSize = 12.sp, color = textColor)
         }
     }
 }

@@ -1228,8 +1228,12 @@ class EnhancedAIService private constructor(
                         com.ai.assistance.operit.data.model.CharacterCardMemoryProfileBindingMode.FIXED_PROFILE
                 }?.memoryProfileId?.takeIf { it.isNotBlank() } ?: preferencesManager.activeMemorySpaceIdFlow.first()
             }
-        val memorySpaceIdOverride = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(
+        val (memorySpaceIdOverride, chatOrbit) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolveWithOwner(
             context, chatId, requestedMemorySpaceId)
+        // An Orbit's turn carries whose it is to every model call it makes, tool continuations too.
+        val orbitUsageTag = chatOrbit?.let {
+            com.ai.assistance.operit.features.orbit.OrbitQuota.tagFor(context, it, chatId, functionType, isSubTask)
+        }
         val toolTimingScopeId = options.toolTimingScopeId
         val stream = options.stream
         val disableWarning = options.disableWarning
@@ -1787,7 +1791,7 @@ class EnhancedAIService private constructor(
         val sessionContext = com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(
             providerConversationId,
             workspacePath,
-        )
+        ) + (orbitUsageTag ?: kotlin.coroutines.EmptyCoroutineContext)
         val sessionStream = object : Stream<String> by wrappedStream {
             override suspend fun collect(collector: StreamCollector<String>) {
                 withContext(sessionContext) { wrappedStream.collect(collector) }
@@ -2420,7 +2424,8 @@ class EnhancedAIService private constructor(
                     ?: chatId?.takeIf { it.isNotBlank() }
                     ?: providerSessionId,
                 context.workspacePath,
-            ),
+            ) + (kotlinx.coroutines.currentCoroutineContext()[com.ai.assistance.operit.features.orbit.OrbitUsageTag]
+                ?: kotlin.coroutines.EmptyCoroutineContext),
             start = CoroutineStart.LAZY,
         ) {
             val chatHistoryManager =
@@ -3098,13 +3103,34 @@ class EnhancedAIService private constructor(
         return generateSummaryFromPromptTurns(messages.toPromptTurns(), previousSummary, summaryConfig)
     }
 
+    /**
+     * A summary or a title made for an Orbit's chat is counted against Orbit's allowance. Inside a
+     * background task's turn it stays that task's cost; in a chat it is named for what it is.
+     */
+    private suspend fun orbitTagOutsideTurn(
+        purpose: com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose,
+    ): kotlin.coroutines.CoroutineContext {
+        val chat = com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.CHAT
+        val subagent = com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.SUBAGENT
+        val inTurn = kotlinx.coroutines.currentCoroutineContext()[com.ai.assistance.operit.features.orbit.OrbitUsageTag]
+        return when {
+            inTurn == null ->
+                com.ai.assistance.operit.features.orbit.OrbitQuota.tagForChat(context, providerSessionId, purpose)
+                    ?: kotlin.coroutines.EmptyCoroutineContext
+            purpose == com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.TITLE ||
+                inTurn.purpose == chat || inTurn.purpose == subagent -> inTurn.withPurpose(purpose)
+            else -> inTurn
+        }
+    }
+
     suspend fun generateSummaryFromPromptTurns(
             messages: List<PromptTurn>,
             previousSummary: String?,
             summaryConfig: ConversationSummaryConfig = ConversationSummaryConfig()
     ): String {
         // 调用ConversationService中的方法
-        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId) +
+            orbitTagOutsideTurn(com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.SUMMARY)) {
             conversationService.generateSummaryFromPromptTurns(messages, previousSummary, multiServiceManager, summaryConfig)
         }
     }
@@ -3116,7 +3142,8 @@ class EnhancedAIService private constructor(
         attachmentFileNames: List<String> = emptyList(),
         fromRecentConversation: Boolean = false,
     ): String {
-        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId)) {
+        return withContext(com.ai.assistance.operit.api.chat.llmprovider.OpenCodeSessionContext(providerSessionId) +
+            orbitTagOutsideTurn(com.ai.assistance.operit.features.orbit.OrbitQuota.Purpose.TITLE)) {
             conversationService.generateConversationTitle(
                 userText = userText,
                 attachmentFileNames = attachmentFileNames,
@@ -3755,15 +3782,22 @@ class EnhancedAIService private constructor(
      * @return AI分析结果
      */
     suspend fun analyzeImageWithIntent(imagePath: String, userIntent: String?): String {
-        return conversationService.analyzeImageWithIntent(imagePath, userIntent, multiServiceManager)
+        // A tool reading media for an Orbit's chat spends Orbit's allowance, wherever it is called from.
+        return withContext(com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)) {
+            conversationService.analyzeImageWithIntent(imagePath, userIntent, multiServiceManager)
+        }
     }
 
     suspend fun analyzeAudioWithIntent(audioPath: String, userIntent: String?): String {
-        return conversationService.analyzeAudioWithIntent(audioPath, userIntent, multiServiceManager)
+        return withContext(com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)) {
+            conversationService.analyzeAudioWithIntent(audioPath, userIntent, multiServiceManager)
+        }
     }
 
     suspend fun analyzeVideoWithIntent(videoPath: String, userIntent: String?): String {
-        return conversationService.analyzeVideoWithIntent(videoPath, userIntent, multiServiceManager)
+        return withContext(com.ai.assistance.operit.features.orbit.OrbitQuota.toolCallContext(context)) {
+            conversationService.analyzeVideoWithIntent(videoPath, userIntent, multiServiceManager)
+        }
     }
 
     /**

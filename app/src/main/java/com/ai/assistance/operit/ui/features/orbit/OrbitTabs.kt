@@ -62,8 +62,6 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
@@ -203,23 +201,47 @@ internal fun OrbitTabPage(
     onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit = {},
     filesVersion: Int = 0,
     onOpenFile: (String) -> Unit = {},
+    /**
+     * False while the chat tab is shown. The page then keeps only Orbit's header alive, unplaced,
+     * so the picture (a pet's animation especially) is not loaded again on every tab switch.
+     */
+    visible: Boolean = true,
 ) {
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Keeps the task on screen while its page slides away.
     var shownTaskId by remember(orbit.id) { mutableStateOf(openTaskId) }
     LaunchedEffect(openTaskId) { openTaskId?.let { shownTaskId = it } }
-    Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
-        // A task page over the tab hides the tab from screen readers.
-        Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
-            when (tab) {
-                OrbitTab.CHAT -> Unit
-                OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft, onQuote)
-                OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
-                OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
-                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+    // Leaving for the chat closes an open task, as leaving the tab always did.
+    LaunchedEffect(visible) { if (!visible) openTaskId = null }
+    val header = LocalOrbitTabHeader.current
+    val density = LocalDensity.current
+    // Measured after the first frame; the guess is the header's usual size so nothing jumps.
+    val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+    var headerHeight by remember { mutableStateOf(statusBarTop + 120.dp) }
+    Box(Modifier.fillMaxSize().then(if (visible) Modifier else Modifier.orbitKeptUnplaced())) {
+        if (visible) {
+            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+                // A task page over the tab hides the tab from screen readers.
+                Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+                    CompositionLocalProvider(LocalOrbitTabHeaderHeight provides if (header != null) headerHeight else null) {
+                        when (tab) {
+                            OrbitTab.CHAT -> Unit
+                            OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft, onQuote)
+                            OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
+                            OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
+                            OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+                        }
+                    }
+                }
             }
         }
-        OrbitCoverPage(visible = openTaskId != null, onDismiss = { openTaskId = null }) {
+        // One header for every tab, over each page's list and the pages it pushes, under a task.
+        if (header != null) {
+            Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
+                header()
+            }
+        }
+        OrbitCoverPage(visible = visible && openTaskId != null, onDismiss = { openTaskId = null }) {
             (openTaskId ?: shownTaskId)?.let { taskId ->
                 key(taskId) {
                     OrbitTasksPage(orbit.id, onBack = { openTaskId = null }, initialTaskId = taskId,
@@ -230,11 +252,21 @@ internal fun OrbitTabPage(
     }
 }
 
+/** Keeps the content composed (its state and loaded pictures) without placing, drawing or touching it. */
+private fun Modifier.orbitKeptUnplaced(): Modifier = layout { measurable, constraints ->
+    measurable.measure(constraints)
+    layout(0, 0) { }
+}
+
 /**
- * Orbit's header (menu, picture and name) for the tab pages. Every tab shows it fixed on top in
- * the same place as in the chat, so the picture never moves when the user switches tabs.
+ * Orbit's header (menu, picture and name) for the tab pages. [OrbitTabPage] draws one for every
+ * tab, fixed on top in the same place as in the chat, so the picture never moves or reloads when
+ * the user switches tabs.
  */
 internal val LocalOrbitTabHeader = compositionLocalOf<(@Composable () -> Unit)?> { null }
+
+/** The height of the shared tab header, for a page's top padding; null when no header is shown. */
+private val LocalOrbitTabHeaderHeight = compositionLocalOf<Dp?> { null }
 
 /**
  * The page frame: Orbit's fixed header, a large title and an optional action on the right. [info]
@@ -252,19 +284,17 @@ private fun TabList(
     content: LazyListScope.() -> Unit,
 ) {
     val openDrawer = com.ai.assistance.operit.ui.main.LocalOpenAppDrawer.current
-    val header = LocalOrbitTabHeader.current
-    val density = LocalDensity.current
-    // Measured after the first frame; the guess is the header's usual size so nothing jumps.
+    val headerHeight = LocalOrbitTabHeaderHeight.current
+    val header = headerHeight
     val statusBarTop = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-    var headerHeight by remember { mutableStateOf(statusBarTop + 120.dp) }
     // The header's lower edge fades out, so the title tucks a little under it.
-    val listTop = if (header == null) statusBarTop + 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp)
+    val listTop = if (headerHeight == null) statusBarTop + 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp)
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
             modifier = if (header == null) Modifier.fillMaxSize().statusBarsPadding() else Modifier.fillMaxSize(),
             contentPadding = PaddingValues(
                 start = 20.dp, end = 20.dp, bottom = 24.dp,
-                top = if (header == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
+                top = if (headerHeight == null) 8.dp else (headerHeight - 12.dp).coerceAtLeast(0.dp),
             ),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
@@ -296,11 +326,6 @@ private fun TabList(
             content()
         }
         overlay?.invoke(listTop)
-        if (header != null) {
-            Box(Modifier.fillMaxWidth().onSizeChanged { headerHeight = with(density) { it.height.toDp() } }) {
-                header()
-            }
-        }
     }
 }
 
@@ -311,7 +336,7 @@ private fun TabIntroSheet(emoji: String, title: String, lines: List<String>, onD
     val colors = MaterialTheme.colorScheme
     val scope = rememberCoroutineScope()
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().verticalScroll(rememberScrollState())
                 .padding(start = 24.dp, end = 24.dp, bottom = 16.dp),
@@ -706,65 +731,29 @@ private fun BriefPill(brief: String, onClick: () -> Unit) {
 @Composable
 private fun BriefDialog(who: String, initial: String, onDismiss: () -> Unit, onSave: (String) -> Unit) {
     var text by rememberSaveable { mutableStateOf(initial) }
-    val colors = MaterialTheme.colorScheme
     val changed = text.trim() != initial.trim()
-    Dialog(onDismissRequest = onDismiss, properties = DialogProperties(usePlatformDefaultWidth = false)) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = 20.dp).imePadding(),
-            verticalArrangement = Arrangement.spacedBy(14.dp),
-        ) {
-            // With the keyboard up the card gives way and scrolls; the two buttons always keep their room.
-            Surface(
-                shape = RoundedCornerShape(32.dp), color = colors.surfaceContainerHigh,
-                modifier = Modifier.fillMaxWidth().weight(1f, fill = false),
-            ) {
-                Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Column(Modifier.padding(start = 24.dp, end = 24.dp, top = 24.dp, bottom = 16.dp)) {
-                        Text(
-                            stringResource(R.string.orbit_feed_brief_dialog_title),
-                            style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold,
-                        )
-                        Spacer(Modifier.height(6.dp))
-                        Text(
-                            stringResource(R.string.orbit_feed_brief_hint, who),
-                            style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
-                        )
-                    }
-                    HorizontalDivider(color = colors.outlineVariant.copy(alpha = 0.5f))
-                    TextField(
-                        text, { if (it.length <= OrbitBoardRepository.MAX_BRIEF) text = it },
-                        textStyle = MaterialTheme.typography.bodyLarge,
-                        minLines = 6, maxLines = 12,
-                        colors = TextFieldDefaults.colors(
-                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
-                            focusedIndicatorColor = Color.Transparent, unfocusedIndicatorColor = Color.Transparent,
-                        ),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp),
-                    )
-                }
+    OrbitDialog(
+        onDismissRequest = onDismiss,
+        title = stringResource(R.string.orbit_feed_brief_dialog_title),
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Text(stringResource(R.string.orbit_feed_brief_hint, who))
+                OutlinedTextField(
+                    text, { if (it.length <= OrbitBoardRepository.MAX_BRIEF) text = it },
+                    textStyle = MaterialTheme.typography.bodyLarge,
+                    minLines = 6, maxLines = 12,
+                    shape = RoundedCornerShape(20.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                DialogPill(stringResource(R.string.cancel), enabled = true, onClick = onDismiss, modifier = Modifier.weight(1f))
-                DialogPill(stringResource(R.string.save), enabled = changed, onClick = { onSave(text) }, modifier = Modifier.weight(1f))
-            }
-        }
-    }
-}
-
-@Composable
-private fun DialogPill(text: String, enabled: Boolean, onClick: () -> Unit, modifier: Modifier) {
-    val colors = MaterialTheme.colorScheme
-    Surface(
-        onClick = onClick, enabled = enabled, shape = RoundedCornerShape(50), color = colors.surfaceContainerHigh,
-        modifier = modifier.height(56.dp),
-    ) {
-        Box(contentAlignment = Alignment.Center) {
-            Text(
-                text, style = MaterialTheme.typography.titleMedium,
-                color = if (enabled) colors.onSurface else colors.onSurface.copy(alpha = 0.38f),
-            )
-        }
-    }
+        },
+        confirmButton = {
+            OrbitDialogAction(onClick = { onSave(text) }, enabled = changed) { Text(stringResource(R.string.save)) }
+        },
+        dismissButton = {
+            OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) }
+        },
+    )
 }
 
 @OptIn(ExperimentalFoundationApi::class)
@@ -845,7 +834,7 @@ private fun FeedPostRow(
                     }
                 }
             }
-            DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+            OrbitDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                 if (!isFirst) {
                     DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_up)) }, onClick = { menu = false; onMove(true) })
                 }
@@ -1077,17 +1066,17 @@ private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
     }
 
     dismissing?.let { idea ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { dismissing = null },
-            title = { Text(stringResource(R.string.orbit_idea_dismiss)) },
+            title = stringResource(R.string.orbit_idea_dismiss),
             text = { Text(stringResource(R.string.orbit_idea_dismiss_message)) },
             confirmButton = {
-                TextButton(onClick = {
+                OrbitDialogAction(onClick = {
                     dismissing = null
                     action { repository.update(idea.id, state = "DISMISSED") }
                 }) { Text(stringResource(R.string.orbit_idea_dismiss_action)) }
             },
-            dismissButton = { TextButton(onClick = { dismissing = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { dismissing = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
 }
@@ -1262,7 +1251,7 @@ private fun IdeaSheet(
             block()
         }
     }
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, containerColor = colors.surface) {
         Column(Modifier.fillMaxWidth().navigationBarsPadding()) {
             Column(Modifier.weight(1f, fill = false).verticalScroll(rememberScrollState())) {
                 Column(Modifier.padding(horizontal = 24.dp)) {
@@ -1329,7 +1318,7 @@ private fun IdeaSheet(
                     ) {
                         Box(contentAlignment = Alignment.Center) { Icon(orbitIcon("ellipsis"), stringResource(R.string.more)) }
                     }
-                    DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    OrbitDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                         DropdownMenuItem(
                             text = { Text(stringResource(R.string.orbit_feed_like)) },
                             leadingIcon = { Icon(orbitIcon("thumbs-up"), null, tint = if (idea.liked) LikeGreen else colors.onSurface) },
@@ -1458,7 +1447,7 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
     val sheetGoal = goalSheet?.let { id -> goals?.firstOrNull { it.id == id } }
     if (sheetGoal != null) {
         val goal = sheetGoal
-        ModalBottomSheet(onDismissRequest = { goalSheet = null }) {
+        OrbitModalBottomSheet(onDismissRequest = { goalSheet = null }) {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
                     .padding(horizontal = 20.dp).padding(bottom = 20.dp),
@@ -1524,23 +1513,23 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
     }
 
     deletingNote?.let { id ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { deletingNote = null },
-            title = { Text(stringResource(R.string.orbit_goal_note_delete_confirm)) },
+            title = stringResource(R.string.orbit_goal_note_delete_confirm),
             confirmButton = {
-                TextButton(onClick = {
+                OrbitDialogAction(destructive = true, onClick = {
                     deletingNote = null
                     action { notesRepository.delete(id) }
-                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.delete)) }
             },
-            dismissButton = { TextButton(onClick = { deletingNote = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { deletingNote = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
     val sheetItem = trackingSheet?.let { id -> tracking?.firstOrNull { it.id == id } }
     if (sheetItem != null) {
         val item = sheetItem
-        ModalBottomSheet(onDismissRequest = { trackingSheet = null }) {
+        OrbitModalBottomSheet(onDismissRequest = { trackingSheet = null }) {
             Column(
                 Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
                     .padding(horizontal = 20.dp).padding(bottom = 20.dp),
@@ -1571,17 +1560,17 @@ private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, on
         }
     }
     confirmDelete?.let { id ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { confirmDelete = null },
-            title = { Text(stringResource(R.string.orbit_tracking_delete_confirm)) },
+            title = stringResource(R.string.orbit_tracking_delete_confirm),
             confirmButton = {
-                TextButton(onClick = {
+                OrbitDialogAction(destructive = true, onClick = {
                     confirmDelete = null
                     trackingSheet = null
                     action { trackingRepository.delete(id) }
-                }) { Text(stringResource(R.string.delete), color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.delete)) }
             },
-            dismissButton = { TextButton(onClick = { confirmDelete = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { confirmDelete = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
 
@@ -1640,25 +1629,27 @@ private fun GoalNoteCard(note: OrbitBoardRepository.Item, onDelete: () -> Unit) 
 private fun GoalEditor(goal: OrbitGoalEntity?, onDismiss: () -> Unit, onSave: (String, String) -> Unit) {
     var title by rememberSaveable { mutableStateOf(goal?.title.orEmpty()) }
     var plan by rememberSaveable { mutableStateOf(goal?.plan.orEmpty()) }
-    AlertDialog(
+    OrbitDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(if (goal == null) R.string.orbit_goal_create else R.string.orbit_goal_edit)) },
+        title = stringResource(if (goal == null) R.string.orbit_goal_create else R.string.orbit_goal_edit),
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                 OutlinedTextField(
                     title, { if (it.length <= 80) title = it }, label = { Text(stringResource(R.string.orbit_goal_title)) },
                     singleLine = true, modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                 )
                 OutlinedTextField(
                     plan, { if (it.length <= 8000) plan = it }, minLines = 4, maxLines = 8,
                     label = { Text(stringResource(R.string.orbit_goal_plan)) }, modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(20.dp),
                 )
             }
         },
         confirmButton = {
-            TextButton(enabled = title.isNotBlank(), onClick = { onSave(title, plan) }) { Text(stringResource(android.R.string.ok)) }
+            OrbitDialogAction(enabled = title.isNotBlank(), onClick = { onSave(title, plan) }) { Text(stringResource(android.R.string.ok)) }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) } },
+        dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) } },
     )
 }
 
@@ -1865,12 +1856,12 @@ private fun OrbitBuildsPage(
     }
     }
     deletingUpload?.let { upload ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { deletingUpload = null },
-            title = { Text(stringResource(R.string.orbit_uploads_delete_title)) },
+            title = stringResource(R.string.orbit_uploads_delete_title),
             text = { Text(stringResource(R.string.orbit_uploads_delete_text, upload.name)) },
             confirmButton = {
-                TextButton(onClick = {
+                OrbitDialogAction(destructive = true, onClick = {
                     deletingUpload = null
                     action {
                         try {
@@ -1879,9 +1870,9 @@ private fun OrbitBuildsPage(
                             uploadsReload++
                         }
                     }
-                }) { Text(stringResource(R.string.orbit_file_delete), color = MaterialTheme.colorScheme.error) }
+                }) { Text(stringResource(R.string.orbit_file_delete)) }
             },
-            dismissButton = { TextButton(onClick = { deletingUpload = null }) { Text(stringResource(R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { deletingUpload = null }, secondary = true) { Text(stringResource(R.string.cancel)) } },
         )
     }
     // A work's page slides in over the list; the back swipe slides it away under the finger.
@@ -1990,7 +1981,7 @@ private fun BuildRow(
                 Icon(orbitIcon("ellipsis-vertical"), stringResource(R.string.orbit_library_more_actions), Modifier.size(20.dp),
                     tint = colors.onSurfaceVariant)
             }
-            DropdownMenu(expanded = open, onDismissRequest = { open = false }) { menu { open = false } }
+            OrbitDropdownMenu(expanded = open, onDismissRequest = { open = false }) { menu { open = false } }
         }
     }
 }

@@ -32,9 +32,9 @@ internal object OrbitVaultTools {
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "密码保险箱：保存和使用登录密码、API 密钥、公开客户端 OAuth 登录。你永远看不到保存的值。",
+        description = "密码凭据保险箱：保存和使用登录密码、API 密钥、公开客户端 OAuth 登录。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/list/fill/http_request/terminal/env/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/request_update/list/fill/http_request/terminal/env/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
             ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather", required = false),
@@ -46,10 +46,10 @@ internal object OrbitVaultTools {
             ToolParameterSchema("oauth_flow", description = "request_oauth：只支持 authorization_code_pkce（默认）；device flow 不支持，改用 request_api_key", required = false),
             ToolParameterSchema("client_auth", description = "request_oauth：只支持 none（默认）。需要 client_secret 的服务不支持，改用 request_api_key，绝不向用户要 client_secret", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
-            ToolParameterSchema("env_name", description = "request_api_key：可选，代理做不到时（要签名、SDK、多把密钥）请求把密钥载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许", required = false),
-            ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填，一句话告诉用户为什么代理不够用", required = false),
+            ToolParameterSchema("env_name", description = "request_api_key / request_update：可选，代理做不到时（要签名、SDK、多把密钥、脚本登录）请求载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许", required = false),
+            ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填；request_update：可选。一句话告诉用户为什么需要在终端里用", required = false),
             ToolParameterSchema("domain", description = "list：可选，只列这个网站的", required = false),
-            ToolParameterSchema("credential_id", description = "fill/http_request/terminal/env/delete：保险箱条目编号（来自 list）", required = false),
+            ToolParameterSchema("credential_id", description = "request_update/fill/http_request/terminal/env/delete：保险箱条目编号（来自 list）", required = false),
             ToolParameterSchema("field", description = "fill：username 或 password", required = false),
             ToolParameterSchema("ref", description = "fill：浏览器快照里输入框的 ref", required = false),
             ToolParameterSchema("submit", description = "fill：填完后是否按回车，默认 false", required = false),
@@ -63,13 +63,14 @@ internal object OrbitVaultTools {
   - 放完卡片就结束这一轮，可以简单说一句“卡片在下面，填好我接着弄”。用户保存后你会收到一条隐藏通知，再接着做；用户不填或关掉卡片，你什么都不会收到，不要追问，也不要为同一个网站再放一张卡（再要会返回 already_sent，指向已经放的那张）。
   - request_api_key 之前，先从服务商的官方文档查清两件事：认证方式和 API 主机名（api_hosts），再定 placement。卡片建好后 placement 改不了，填错只能重新放一张让用户再填。保存时不会检查密钥对不对，第一次真实调用才知道；返回 401/403 时先查请求有没有带上密钥、placement 对不对，再怀疑密钥本身。
   - OAuth 用 request_oauth：先查服务商官方文档，确认公开客户端支持授权码 + PKCE S256、不需要 client_secret，并允许登记回调 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2。传 provider、authorization_url、token_url、client_id、scope、api_hosts。卡片马上返回，用户在系统浏览器授权，token 由 App 直接存保险箱，成功后收到隐藏通知；取消不通知。用 http_request 调 API，过期且有 refresh_token 时 App 自动刷新。OAuth 暂不支持 terminal/env。不能保证每家服务都支持；要 client_secret、device flow 或不接受此回调的服务，明确说明做不了，改用 request_api_key。不要索要或伪造客户端密钥，也不要在 Orbit 浏览器里走 OAuth。
+  - 已经存过的密码或 API 密钥要改（用户换了密码、密钥过期、要允许或不再允许在终端里用）：用 request_update 加 credential_id，在聊天里放一张更新卡片。用户可以换新值（留空就不换）、改登录的用户名，也可以打开或关掉“允许在终端使用”。想在终端用时可以带 env_name 和 env_reason；不带的话沿用原来的变量名，没有就自动起一个。保存后你会收到隐藏通知，说明改了什么、变量名是什么。OAuth 登录不能更新，要重连就用 request_oauth。
   - 不支持的认证方式要直说并讲原因，不要硬套最接近的一种：需要签名的请求（如 AWS 签名）、一次要多个密钥、用账号密码做 API 认证。
   - 要签名的请求（阿里云、AWS）、只认环境变量的 SDK、一次要两把密钥（每把各放一张卡）这类代理做不到的情况，可以在 request_api_key 里加 env_name 和 env_reason，请用户允许把密钥载入终端。用户打开了开关，保存后才能用 env；没打开就只能走代理，或者直说做不到。能用代理时不要要 env_name。
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
   - API：用 http_request，宿主会把密钥加到请求里，只发往存密钥时登记的主机，返回里的密钥会被打码。
   - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置：Authorization 头、Basic 认证的“用户名:密钥”（比如 curl -u 'api:<替身值>'）、自定义头、查询参数或网址路径（比如 Telegram 的 /bot<替身值>/sendMessage），再把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
-  - 用户允许载入终端的密钥（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读密钥。不要 echo、打印、写进文件或记忆，也不要把密钥值放进命令行参数；工具输出里出现密钥会被打码。
+  - 用户允许载入终端的密钥或密码（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读取。登录密码还会把用户名载入成 <env_name>_USERNAME。不要 echo、打印、写进文件或记忆，也不要把值放进命令行参数；工具输出里出现会被打码。值更新后旧命令会失效，再调一次 env。
   - 汇报时只说用没用成，不要说出任何保存的值。
 """,
     )
@@ -83,12 +84,27 @@ internal object OrbitVaultTools {
             suspend fun entry() = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == arg("credential_id") }
                 ?: error("No vault entry with that credential_id; use list")
             val result: Any = when (arg("action")) {
-                "request_login", "request_new_password", "request_api_key", "request_oauth" -> {
+                "request_login", "request_new_password", "request_api_key", "request_oauth", "request_update" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
                         "The secure entry card only works in a chat with the user; ask the user in chat"
                     }
                     val chatId = caller.orEmpty()
-                    val request = if (arg("action") == "request_oauth") {
+                    val request = if (arg("action") == "request_update") {
+                        val e = entry()
+                        check(e.kind == OrbitVault.LOGIN || e.kind == OrbitVault.API_KEY) {
+                            "An OAuth login cannot be updated; use request_oauth to connect it again"
+                        }
+                        val envName = arg("env_name").uppercase().ifEmpty { e.envName.ifEmpty { e.slot } }
+                            .ifEmpty { OrbitVault.defaultEnvName(e) }
+                        require(envName.matches(OrbitVault.ENV_NAME)) {
+                            "env_name must be a shell variable name in capitals, such as GITHUB_TOKEN"
+                        }
+                        // The user name stays out of the chat; the sheet reads it from the vault.
+                        OrbitVault.Request(orbit.id, chatId, e.kind, e.site,
+                            if (e.kind == OrbitVault.LOGIN) "https://${e.site}" else "", "", e.apiHosts, e.placement,
+                            requestedAt = System.currentTimeMillis(), envName = envName,
+                            envReason = arg("env_reason").take(200), updateId = e.id)
+                    } else if (arg("action") == "request_oauth") {
                         require(arg("oauth_flow").ifEmpty { "authorization_code_pkce" } == "authorization_code_pkce" &&
                             arg("client_auth").ifEmpty { "none" } == "none" && arg("client_secret").isEmpty()) {
                             OrbitOAuthProtocol.UNSUPPORTED
@@ -133,13 +149,13 @@ internal object OrbitVaultTools {
                     // A key card asked again with other hosts or placement corrects the first one, so it is a new card.
                     val key = listOf(chatId, request.kind, request.newPassword, request.site.lowercase(),
                         request.apiHosts.sorted().joinToString(","), request.placement, request.envName,
-                        request.authorizationUrl, request.tokenUrl, request.clientId, request.scope).joinToString("|")
+                        request.authorizationUrl, request.tokenUrl, request.clientId, request.scope, request.updateId).joinToString("|")
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     // The card goes into the chat and the turn moves on; a save sends a hidden note.
                     if (sentCards.putIfAbsent(key, now) != null) {
                         JSONObject().put("already_sent", true).put("site", request.site)
-                            .put("note", "A card for this site is already in the chat above. Do not send another; " +
+                            .put("note", "This card is already in the chat above. Do not send another; " +
                                 "the user fills that one in whenever they like. End this turn now.")
                     } else JSONObject().put("card_sent", true).put("site", request.site)
                         .apply { if (request.kind == OrbitVault.OAUTH) put("redirect_uri", OrbitOAuth.redirectUri(context)) }
@@ -198,15 +214,24 @@ internal object OrbitVaultTools {
                 "terminal" -> terminal(context, orbit.id, entry())
                 "env" -> {
                     val e = entry()
-                    check(e.kind == OrbitVault.API_KEY) { "env only works with a saved API key" }
+                    check(e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.LOGIN) { "env only works with a saved API key or login" }
                     check(e.envName.isNotEmpty()) {
-                        "The user has not allowed this key in the terminal. Use http_request or terminal (the proxy); if " +
-                            "those cannot do it, ask again with request_api_key and env_name + env_reason, or tell the user."
+                        "The user has not allowed this in the terminal. " + (if (e.kind == OrbitVault.LOGIN)
+                            "Use fill in the browser; if a script really needs it, " else
+                            "Use http_request or terminal (the proxy); if those cannot do it, ") +
+                            "ask with request_update (credential_id, env_name, env_reason), or tell the user."
+                    }
+                    check(e.secret.length >= OrbitVault.MIN_ENV_SECRET) {
+                        "This value is too short to be masked in output, so it cannot be loaded into the terminal. " +
+                            "Use fill, http_request or terminal instead, or tell the user."
                     }
                     JSONObject().put("credential_id", e.id).put("site", e.site).put("env_name", e.envName)
+                        .apply { if (e.kind == OrbitVault.LOGIN) put("username_env", "${e.envName}_USERNAME") }
                         .put("command", com.ai.assistance.operit.features.orbit.OrbitVaultBroker.envCommand(context, orbit.id, e))
                         .put("note", "Run command in the same terminal command as your script, e.g. `<command> && python " +
-                            "script.py`; the key is then in \$${e.envName}. Never echo, print or write it to a file or memory, " +
+                            "script.py`; the value is then in \$${e.envName}" +
+                            (if (e.kind == OrbitVault.LOGIN) " and the user name in \$${e.envName}_USERNAME" else "") +
+                            ". Never echo, print or write it to a file or memory, " +
                             "and do not pass its value as a command-line argument. If the command says the surrogate is out of " +
                             "date or cannot connect, call env again.")
                 }
@@ -218,7 +243,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, list, fill, http_request, terminal, env or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, request_update, list, fill, http_request, terminal, env or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {

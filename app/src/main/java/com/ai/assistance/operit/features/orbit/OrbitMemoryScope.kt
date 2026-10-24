@@ -59,7 +59,11 @@ object OrbitMemoryScope {
         }
     }
 
-    suspend fun resolve(context: Context, chatId: String?, requested: String?): String? {
+    suspend fun resolve(context: Context, chatId: String?, requested: String?): String? =
+        resolveWithOwner(context, chatId, requested).first
+
+    /** [resolve], and the Orbit that owns [chatId] (null for a chat of the main app), from one lookup. */
+    suspend fun resolveWithOwner(context: Context, chatId: String?, requested: String?): Pair<String?, OrbitProfile?> {
         val orbit = owner(context, chatId)
         val preferences = UserPreferencesManager.getInstance(context)
         if (orbit == null) {
@@ -68,12 +72,12 @@ object OrbitMemoryScope {
                     "This memory belongs to another Orbit"
                 }
             }
-            return requested
+            return requested to null
         }
         val spaceId = ensureInitialized(context, orbit)
         val metadata = preferences.getMemorySpaceFlow(spaceId).first()
         check(metadata.ownerOrbitId == orbit.id) { "Orbit memory ownership is invalid" }
-        return spaceId
+        return spaceId to orbit
     }
 
     /** Only legacy profiles without a binding are migrated. A missing bound space is an error. */

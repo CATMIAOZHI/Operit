@@ -50,6 +50,9 @@ data class OrbitActionRow(
     val updatedAt: Long,
 )
 
+/** Marks an event put back because Orbit's token allowance ran out; see [OrbitTaskDao.stopForQuota]. */
+private const val QUOTA_RETRY_KEY = ":quota-retry:"
+
 @Dao
 interface OrbitTaskDao {
     @Query("SELECT r.id AS id, r.taskId AS taskId, t.title AS title, t.kind AS kind, r.state AS state, SUBSTR(r.observation,1,400) AS observation, SUBSTR(r.error,1,400) AS error, r.startedAt AS startedAt, r.finishedAt AS finishedAt, r.generation AS generation FROM orbit_runs r INNER JOIN orbit_tasks t ON t.id = r.taskId WHERE t.orbitId = :orbitId AND r.decision NOT IN ('" + OrbitRunEntity.UNCHANGED + "', '" + OrbitRunEntity.SKIPPED + "', '" + OrbitRunEntity.IN_CHAT + "') AND r.decision NOT LIKE '@in_chat:%' ORDER BY r.startedAt DESC LIMIT 200")
@@ -749,6 +752,40 @@ interface OrbitTaskDao {
         updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now))
         insertDelivery(OrbitDeliveryEntity(current.id, current.id, task.id, task.version, task.orbitId,
             task.chatId, task.title, message, now, "PENDING", null, null, false))
+        return true
+    }
+
+    /**
+     * Ends a run that Orbit's used-up token allowance cut short, keeping the task active so the
+     * allowance coming back (a new week, or the user) needs no resume:
+     * - No model turn started yet: nothing happened, so the same work is put back for [retryAt] as a
+     *   new event with the same kind of key (a manual or location run stays one).
+     * - A turn started: it may have used an ordinary tool with effects and no receipt, so this run is
+     *   never repeated. A repeating task gives up only this run and goes on at [nextRunAt], as after
+     *   any failed run; a one-time task returns false and [interrupt] asks the user to check it.
+     * A run with an unconfirmed effect also returns false.
+     */
+    @Transaction
+    suspend fun stopForQuota(token: OrbitRunEntity, retryAt: Long, nextRunAt: Long, now: Long, message: String): Boolean {
+        val current = run(token.id) ?: return false
+        val task = task(token.taskId) ?: return false
+        if (current.state != "RUNNING" || current.owner != token.owner || current.generation != token.generation ||
+            task.version != token.taskVersion || task.state != "ACTIVE") return false
+        markUnreceiptedUnknown(task.id, now)
+        if (unresolvedActions(task.id).isNotEmpty()) return false
+        val started = bindings(current.id, current.generation).isNotEmpty()
+        if (started && (task.kind == "ONCE" || task.scheduleMode == "ONCE")) return false
+        val event = event(current.eventId)
+        updateRun(current.copy(state = "INTERRUPTED", error = message, finishedAt = now))
+        deleteEvent(current.eventId)
+        if (started) {
+            updateTask(task.copy(nextRunAt = nextRunAt, updatedAt = now))
+        } else {
+            insertEvent(OrbitEventEntity(
+                id = current.eventId.substringBefore(QUOTA_RETRY_KEY) + QUOTA_RETRY_KEY + now,
+                taskId = task.id, taskVersion = task.version, dueAt = retryAt, createdAt = now,
+                sourceRunId = event?.sourceRunId.orEmpty()))
+        }
         return true
     }
 

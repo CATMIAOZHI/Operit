@@ -211,6 +211,7 @@ internal object OrbitWork {
                         ?: com.ai.assistance.operit.features.orbit.OrbitWake.titleOf(content)?.let { scheduledTitle.format(it) }
                         ?: com.ai.assistance.operit.features.orbit.OrbitVaultNotice.titleOf(content)
                         ?: com.ai.assistance.operit.features.orbit.OrbitTaskBlock.titleOf(content)
+                        ?: com.ai.assistance.operit.features.orbit.OrbitQuota.titleOf(content)
                         ?: com.ai.assistance.operit.features.orbit.OrbitPermissionCards.titleOf(content)
                         ?: com.ai.assistance.operit.features.orbit.OrbitApprovals.titleOf(content)
                         ?: com.ai.assistance.operit.features.orbit.OrbitSubagentNotice.titleOf(content)

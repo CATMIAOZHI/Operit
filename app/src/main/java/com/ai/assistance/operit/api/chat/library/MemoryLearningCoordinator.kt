@@ -14,6 +14,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.flow.first
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicInteger
@@ -517,15 +518,36 @@ object MemoryLearningCoordinator {
                 created += staged.size
                 staged.clear()
                 session.page = null
-                journal.export().forEach { session.addFailure(it) }
+                val exported = journal.exportWithResults()
+                exported.failures.forEach { session.addFailure(it) }
                 // Each page has its own round, tool-call and time budget.
                 pastRequests += session.requests.get()
                 pastCalls += session.calls.get()
                 session.requests.set(0)
                 session.calls.set(0)
                 deadline.set(android.os.SystemClock.elapsedRealtime() + BATCH_TIMEOUT_MS)
-                return JSONObject().put("committed",true).put("more",batch.more)
-                    .put("next",if (batch.more) "Call read_next for the next page." else "That was the last page. Call $FINISH.")
+                // "committed" only says the page is done; each change reports whether it was saved.
+                val notSaved = exported.results.filter { it.status !in setOf("approved", "pending", "staged") }
+                val waiting = exported.results.count { it.status == "pending" && it.reason.isEmpty() }
+                val failed = exported.results.filter { it.status == "pending" && it.reason.isNotEmpty() }
+                val result = JSONObject().put("committed",true).put("more",batch.more)
+                    .put("saved", exported.results.count { it.status == "approved" })
+                if (waiting > 0) result.put("waiting_for_user_review", waiting)
+                val problems = (notSaved + failed).map { change ->
+                    JSONObject().put("target", change.title).put("kind", change.kind)
+                        .put("status", if (change.status == "pending") "failed" else change.status)
+                        .put("reason", change.reason.take(300))
+                }
+                if (problems.isNotEmpty()) result.put("not_saved", JSONArray(problems))
+                val redo = when {
+                    problems.isEmpty() -> ""
+                    batch.more -> "Some changes were not saved (not_saved). After read_next, read the target again " +
+                        "and redo only what still matters with that page; never redo something the user asked Orbit to forget. "
+                    else -> "Some changes were not saved (not_saved) and no page is left to redo them with; " +
+                        "name them in your final message so they show in the review log. "
+                }
+                return result.put("next", redo +
+                    if (batch.more) "Call read_next for the next page." else "That was the last page. Call $FINISH.")
             }
 
             override suspend fun handOff(carry: String) = journal.keepCarry(carry, carryGeneration)

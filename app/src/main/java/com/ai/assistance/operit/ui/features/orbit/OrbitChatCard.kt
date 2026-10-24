@@ -49,6 +49,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -107,12 +108,17 @@ private fun VaultCard(request: OrbitVault.Request) {
     val login = request.kind == OrbitVault.LOGIN
     val oauth = request.kind == OrbitVault.OAUTH
     val fresh = login && request.newPassword
+    val updating = request.updateId.isNotEmpty()
     val version by OrbitVault.version.collectAsState()
+    // An update card: whether its entry still exists (null while reading).
+    var gone by remember(request) { mutableStateOf(false) }
     val saved by produceState(false, request, version) {
         // A new-password card is done once a password is saved after it; an older login does not count.
         value = runCatching {
             val entries = OrbitVault.entries(context, request.orbitId)
             when {
+                updating -> entries.firstOrNull { it.id == request.updateId }
+                    .also { gone = it == null }?.let { it.savedAt >= request.requestedAt } ?: false
                 fresh -> OrbitVault.newPasswordSaved(entries, request)
                 oauth -> entries.any { it.kind == OrbitVault.OAUTH && it.card == request.requestedAt &&
                     it.site == request.site && it.oauth?.clientId == request.clientId }
@@ -131,6 +137,10 @@ private fun VaultCard(request: OrbitVault.Request) {
                 )
                 Text(
                     when {
+                        updating && gone -> stringResource(R.string.orbit_vault_card_update_gone)
+                        updating && saved -> stringResource(R.string.orbit_vault_card_updated)
+                        updating && login -> stringResource(R.string.orbit_vault_card_update_login_sub, request.site)
+                        updating -> stringResource(R.string.orbit_vault_card_update_key_sub)
                         fresh && saved -> stringResource(R.string.orbit_vault_card_new_password_saved)
                         fresh -> stringResource(R.string.orbit_vault_card_new_password_sub, request.site)
                         saved -> stringResource(R.string.orbit_vault_card_saved)
@@ -148,12 +158,15 @@ private fun VaultCard(request: OrbitVault.Request) {
             shape = RoundedCornerShape(50),
             color = colors.surface,
             modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50))
-                .orbitCardGestures(onClick = { OrbitVault.open(request) }),
+                .orbitCardGestures(onClick = { OrbitVault.open(request) }, enabled = !(updating && gone))
+                // Long press still reaches the message; a screen reader hears the button is off.
+                .semantics { if (updating && gone) disabled() },
         ) {
             Box(contentAlignment = Alignment.Center) {
                 Text(
                     stringResource(
                         when {
+                            updating -> R.string.orbit_vault_card_update
                             oauth && saved -> R.string.orbit_oauth_reconnect
                             oauth -> R.string.orbit_oauth_connect
                             fresh && saved -> R.string.orbit_vault_reset
@@ -164,6 +177,8 @@ private fun VaultCard(request: OrbitVault.Request) {
                         },
                     ),
                     style = MaterialTheme.typography.titleMedium,
+                    color = if (updating && gone) colors.onSurface.copy(alpha = 0.38f)
+                        else androidx.compose.ui.graphics.Color.Unspecified,
                 )
             }
         }
@@ -277,13 +292,14 @@ internal fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) 
     var saving by remember { mutableStateOf(false) }
     var scale by remember { mutableStateOf(1f) }
     var offset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
-    androidx.compose.ui.window.Dialog(
+    OrbitModalWindow(
         onDismissRequest = onDismiss,
+        dismissEnabled = !saving,
         properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
     ) {
         Box(
             Modifier.fillMaxSize().background(androidx.compose.ui.graphics.Color.Black)
-                .pointerInput(Unit) { detectTapGestures(onTap = { onDismiss() }) },
+                .pointerInput(Unit) { detectTapGestures(onTap = { if (!saving) onDismiss() }) },
         ) {
             AsyncImage(
                 model = file,
@@ -305,6 +321,7 @@ internal fun OrbitImageViewer(file: File, label: String, onDismiss: () -> Unit) 
             )
             Surface(
                 onClick = onDismiss,
+                enabled = !saving,
                 shape = androidx.compose.foundation.shape.CircleShape,
                 color = androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f),
                 modifier = Modifier.align(Alignment.TopStart).statusBarsPadding().padding(16.dp).size(44.dp),

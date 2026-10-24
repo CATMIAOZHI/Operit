@@ -373,9 +373,6 @@ object OrbitCompanion {
     suspend fun restoreSchedule(context: Context) {
         OrbitTaskScheduler.migrateAndSchedule(context, restore = true)
     }
-
-    /** Runs a check-in right away, for trying Orbit out. */
-    suspend fun runNow(context: Context) = OrbitTaskScheduler.runNow(context)
 }
 
 class OrbitCheckInWorker(

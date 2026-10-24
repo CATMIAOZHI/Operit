@@ -207,6 +207,8 @@ object OrbitWake {
         onSent: suspend () -> Unit = {},
         decision: OrbitChatDecision.Turn? = null,
         announce: Boolean = true,
+        /** Builds the notice once the chat is held, for a notice that says how things are right now. */
+        noticeNow: (suspend () -> String)? = null,
     ): Told {
         val app = context.applicationContext
         val holder = ChatRuntimeHolder.getInstance(app)
@@ -234,6 +236,7 @@ object OrbitWake {
             // Another notice may have taken the chat while this one waited for the lock.
             if (!quietNow()) return@withLock Told.BUSY
             if (!ready()) return@withLock Told.DROPPED
+            val text = noticeNow?.invoke() ?: notice
             before = withContext(Dispatchers.IO) { dao.latestAiTimestamp(chatId) } ?: 0L
             if (turnId != null) {
                 terminal = core.registerChatTurn(turnId).also { signal ->
@@ -246,7 +249,7 @@ object OrbitWake {
                 val sent = withContext(Dispatchers.Main.immediate) {
                         core.trySendUserMessageToExistingChat(
                             chatId = chatId,
-                            messageText = notice,
+                            messageText = text,
                             // Hidden in the chat but kept in the conversation. It is not typed by the user,
                             // so it leaves the composer and its reply selection alone; the reply is
                             // announced below.

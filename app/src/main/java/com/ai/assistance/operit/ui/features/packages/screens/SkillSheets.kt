@@ -166,6 +166,7 @@ internal fun SkillDetailSheet(
     onHistory: (() -> Unit)?,
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
+    orbitStyle: Boolean = false,
 ) {
     var showInstructions by remember(skill.name) { mutableStateOf(false) }
     var confirmDelete by remember(skill.name) { mutableStateOf(false) }
@@ -174,11 +175,13 @@ internal fun SkillDetailSheet(
     // Keeps the sheet's own back gesture working when it opens from Orbit's pages.
     val sheetBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitSheetBack()
     sheetBack.Provide {
-    ModalBottomSheet(
+    SkillModalSheet(
+        orbitStyle = orbitStyle,
+        dismissEnabled = !deleting,
         onDismissRequest = { if (!deleting) onDismiss() },
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = remember { { _: SheetValue -> !busy } }),
     ) {
-        sheetBack.forward()
+        if (!orbitStyle) sheetBack.forward()
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
                 .padding(horizontal = 20.dp).padding(bottom = 24.dp),
@@ -272,6 +275,27 @@ internal fun SkillDetailSheet(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SkillModalSheet(
+    orbitStyle: Boolean,
+    dismissEnabled: Boolean,
+    onDismissRequest: () -> Unit,
+    sheetState: androidx.compose.material3.SheetState,
+    content: @Composable androidx.compose.foundation.layout.ColumnScope.() -> Unit,
+) {
+    if (orbitStyle) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitModalBottomSheet(
+            onDismissRequest = onDismissRequest,
+            sheetState = sheetState,
+            dismissEnabled = dismissEnabled,
+            content = content,
+        )
+    } else {
+        ModalBottomSheet(onDismissRequest = onDismissRequest, sheetState = sheetState, content = content)
+    }
+}
+
 /** A problem shown inside the sheet, so it is not hidden behind it. */
 @Composable
 private fun SheetError(message: String) {
@@ -307,10 +331,13 @@ internal fun SkillImportSheet(
     error: String?,
     onImport: () -> Unit,
     onDismiss: () -> Unit,
+    orbitStyle: Boolean = false,
 ) {
     val fieldShape = RoundedCornerShape(14.dp)
     val busy by rememberUpdatedState(importing)
-    ModalBottomSheet(
+    SkillModalSheet(
+        orbitStyle = orbitStyle,
+        dismissEnabled = !importing,
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = remember { { _: SheetValue -> !busy } }),
     ) {

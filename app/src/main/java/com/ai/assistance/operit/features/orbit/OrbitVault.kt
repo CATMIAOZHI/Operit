@@ -41,8 +41,9 @@ internal object OrbitVault {
         /** Saved from a new-password card: that card's [Request.requestedAt]; 0 for any other save. */
         val card: Long = 0,
         /**
-         * API key: the environment variable the user let Orbit load it into in the terminal, for uses
-         * the proxy cannot cover (signing, SDKs). Empty when the key stays behind the proxy only.
+         * The environment variable the user let Orbit load it into in the terminal, for uses the
+         * proxy or the browser cannot cover (signing, SDKs, a script that logs in). A login also
+         * gets its user name as `<name>_USERNAME`. Empty when it stays out of the terminal.
          */
         val envName: String = "",
         /**
@@ -85,10 +86,17 @@ internal object OrbitVault {
         val tokenUrl: String = "",
         val clientId: String = "",
         val scope: String = "",
+        /** An update card: the saved entry it changes. Empty for a card that adds one. */
+        val updateId: String = "",
     )
 
     /** A shell variable name: letters, digits and underscores, not starting with a digit. */
     val ENV_NAME = Regex("[A-Z_][A-Z0-9_]{1,63}")
+    /**
+     * Shortest value that may go into the terminal: tool output is masked by matching the value, and
+     * a shorter one (a PIN) would match ordinary text everywhere, so it could not be masked.
+     */
+    const val MIN_ENV_SECRET = 6
 
     private val pending = MutableStateFlow<Request?>(null)
     /** The entry sheet the Orbit page shows, opened from a card in the chat. */
@@ -173,10 +181,16 @@ internal object OrbitVault {
                     it.kind == request.kind && it.site == request.site &&
                         (if (request.kind == API_KEY) it.slot == request.envName else it.username == name)
                 }
+                // A key card that asked for a variable decides it; any other card keeps what was allowed.
+                val envName = when {
+                    request.kind == API_KEY && request.envName.isNotEmpty() ->
+                        if (allowEnv && request.envName.matches(ENV_NAME) && secret.length >= MIN_ENV_SECRET) request.envName else ""
+                    else -> same?.envName.orEmpty().takeIf { secret.length >= MIN_ENV_SECRET }.orEmpty()
+                }
                 val entry = Entry(same?.id ?: UUID.randomUUID().toString().take(8), request.kind, request.site,
                     name, secret, request.apiHosts, request.placement, System.currentTimeMillis(),
                     card = if (request.newPassword) request.requestedAt else 0,
-                    envName = if (allowEnv && request.kind == API_KEY && request.envName.matches(ENV_NAME)) request.envName else "",
+                    envName = envName,
                     slot = if (request.kind == API_KEY) request.envName else "")
                 val next = current.filterNot { it.id == entry.id } + entry
                 require(next.size <= MAX_ENTRIES) { "The vault is full" }
@@ -185,6 +199,39 @@ internal object OrbitVault {
                 entry.id
             }
         }
+
+    /**
+     * Changes a saved login or key from an update card: a new [secret] (null keeps it), a new user
+     * name for a login, and whether it may be loaded into the terminal as [envName] (empty: not).
+     * Returns the saved entry, or null when it was deleted meanwhile.
+     */
+    suspend fun update(context: Context, orbitId: String, id: String, username: String?, secret: String?,
+        envName: String): Entry? = withContext(Dispatchers.IO) {
+        require(secret == null || secret.isNotEmpty() && secret.length <= 4000) { "Empty value" }
+        require(envName.isEmpty() || envName.matches(ENV_NAME)) { "Bad variable name" }
+        lock(orbitId).withLock {
+            val current = read(context, orbitId)
+            val old = current.firstOrNull { it.id == id } ?: return@withLock null
+            require(old.kind == LOGIN || old.kind == API_KEY) { "Only logins and API keys can be updated" }
+            require(envName.isEmpty() || (secret ?: old.secret).length >= MIN_ENV_SECRET) { "Too short for the terminal" }
+            val updated = old.copy(
+                username = if (old.kind == LOGIN && username != null) username.trim().take(200) else old.username,
+                secret = secret ?: old.secret,
+                envName = envName,
+                savedAt = System.currentTimeMillis(),
+            )
+            write(context, orbitId, current.map { if (it.id == id) updated else it })
+            changes.value++
+            updated
+        }
+    }
+
+    /** A variable name for an entry that never asked for one, such as GITHUB_COM_PASSWORD. */
+    fun defaultEnvName(entry: Entry): String {
+        val base = entry.site.uppercase().replace(Regex("[^A-Z0-9]+"), "_").trim('_').take(40)
+            .let { if (it.isEmpty() || it[0].isDigit()) "X_$it" else it }
+        return base + if (entry.kind == LOGIN) "_PASSWORD" else "_API_KEY"
+    }
 
     suspend fun delete(context: Context, orbitId: String, id: String): Boolean = withContext(Dispatchers.IO) {
         lock(orbitId).withLock {
@@ -293,7 +340,10 @@ internal object OrbitVault {
     suspend fun envKeys(context: Context, orbitId: String): List<String> {
         val now = changes.value
         return envCache[orbitId]?.takeIf { it.version == now }?.secrets
-            ?: entries(context, orbitId).filter { it.envName.isNotEmpty() && it.secret.length >= 6 }.map { it.secret }
+            ?: entries(context, orbitId).filter { it.envName.isNotEmpty() }
+                // A login's user name goes into the terminal with it; it is masked too when long enough.
+                .flatMap { listOf(it.secret) + if (it.kind == LOGIN) listOf(it.username) else emptyList() }
+                .filter { it.length >= MIN_ENV_SECRET }.distinct()
                 .also { envCache[orbitId] = EnvCache(now, it) }
     }
 
