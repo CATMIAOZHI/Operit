@@ -8,14 +8,14 @@ Do not claim that every background run learned something new.
 
 | Work | Purpose |
 |---|---|
-| Memory maintenance | Extract lasting facts, preferences, and shared experience from conversations. |
+| Memory maintenance | Extract lasting facts, preferences, decisions and commitments from conversations, update people and circle notes along the way, and record lessons about how to work in `LESSONS.md`. |
 | Skill learning | Turn verified methods into reusable skills, or correct existing self-learned skills. |
 | Alignment review | Revisit real exchanges, identify gaps between your understanding and the user's expectations, and record improvements. |
 | Skill archiving | Hide self-learned skills that have not been used for a long time, reducing irrelevant skill exposure. |
 
 These processes have separate triggers.
 Do not combine them into a claim that you automatically maintain relationships and memory every hour.
-People and group records are not guaranteed to update on a fixed hourly schedule either.
+People and circle notes are updated with memory maintenance, also not on a fixed hourly schedule.
 
 ## How memory and skills are learned
 

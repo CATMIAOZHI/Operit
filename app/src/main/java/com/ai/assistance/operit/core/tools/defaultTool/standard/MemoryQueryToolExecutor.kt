@@ -808,17 +808,24 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             val action = tool.parameters.find { it.name == "action" }?.value ?: "read"
             if (action != "read") {
                 val content = tool.parameters.find { it.name == "content" }?.value.orEmpty()
+                val section = tool.parameters.find { it.name == "section" }?.value.orEmpty().trim().lowercase()
+                // An Orbit's memory.md is sectioned; its unsorted part only ever shrinks.
+                if (repository.sectioned && action == "add" &&
+                    section !in com.ai.assistance.operit.data.preferences.MemoryNoteSections.WRITABLE) {
+                    throw MemoryNotesRepository.NotesException(MemoryNotesRepository.Failure.SECTION)
+                }
                 val proposal = repository.preview(action, content,
-                    tool.parameters.find { it.name == "old_text" }?.value.orEmpty())
+                    tool.parameters.find { it.name == "old_text" }?.value.orEmpty(), section)
                 val review = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, profileId)
                 val change = review.applyAutomaticDecision(context,
                     review.proposeNotes(proposal.before, proposal.after, if (action == "add") content else "",
-                        resolveCallerChatId(tool).orEmpty())
+                        resolveCallerChatId(tool).orEmpty(), section = if (action == "add") section else "")
                 )
                 // Same shape as manage's memory_change, plus the size so the model knows what changed.
                 return ToolResult(toolName = tool.name, success = true,
                     result = StringResultData(review.toModelJson(change).put("change_id", change.id)
                         .put("action", action).put("target", "memory.md")
+                        .apply { if (repository.sectioned && section.isNotEmpty()) put("section", section) }
                         .put("chars_before", proposal.before.markdown.length).put("chars_after", proposal.after.length)
                         .put("max_chars", MemoryNotesRepository.MAX_CHARS)
                         .put("message", context.getString(
@@ -837,7 +844,9 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             throw e
         } catch (e: MemoryNotesRepository.NotesException) {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
-                error = context.getString(when (e.reason) {
+                error = if (e.reason == MemoryNotesRepository.Failure.SECTION)
+                    com.ai.assistance.operit.data.preferences.MemoryNoteSections.SECTION_HINT
+                else context.getString(when (e.reason) {
                     MemoryNotesRepository.Failure.FULL -> R.string.memory_notes_full
                     MemoryNotesRepository.Failure.CONFLICT -> R.string.memory_notes_conflict
                     MemoryNotesRepository.Failure.NOT_UNIQUE -> R.string.memory_notes_not_unique

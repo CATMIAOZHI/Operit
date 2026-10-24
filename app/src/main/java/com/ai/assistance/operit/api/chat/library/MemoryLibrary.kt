@@ -452,7 +452,8 @@ object MemoryLibrary {
             if (includeNotes && analysis.notes.isNotEmpty()) {
                 try {
                     val notesRepo = com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, profileId)
-                    for (addition in analysis.notes) {
+                    // A sectioned (Orbit) memory.md is kept by its own review, which names each section.
+                    if (!notesRepo.sectioned) for (addition in analysis.notes) {
                     val proposal = notesRepo
                         .preview("add", addition)
                     if (proposal.before.markdown != proposal.after) {
