@@ -30,7 +30,7 @@ overrides are stored per chat. Deleted/deleting owners, including stale usage ta
 before resolving a provider, and model-setting initialization/removal share the same lock.
 
 Room migration 44→45 adds `orbit_tasks.modelRole` (`DEFAULT`, `MAIN`, `ASSISTANT`).
-Default chat wakes use main; background tasks use assistant; alignment always defaults to main.
+Default chat wakes use main; background tasks use assistant; alignment defaults to assistant.
 Explicit task choices override those defaults for that execution only. `orbit_task` create/update
 accept `model=default/main/assistant`, and its result includes `effective_model`. Protected routines
 allow model changes. Task-details choices fill a chat draft rather than directly editing the task.

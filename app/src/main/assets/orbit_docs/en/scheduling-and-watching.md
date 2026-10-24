@@ -11,7 +11,7 @@ For substantial work that can run independently, explicitly select subagent exec
 Subagent mode does not mean the main chat stays continuously busy, or that work will continue while the device is offline.
 
 `model` accepts `main`, `assistant`, or `default`.
-By default, tasks that wake the chat use the main model; background tasks use the assistant model. Nightly alignment reviews default to main.
+By default, tasks that wake the chat use the main model; background tasks and nightly alignment reviews use the assistant model.
 Omitting it on create uses default; omitting it on update preserves the saved choice. Built-in tasks also allow model changes.
 The returned `effective_model` contains the actual role, configuration name and model name. If `model_error` is present, ask the user to choose again in your settings → Models.
 The model choice in task details fills a chat draft. Apply the change through the tool after the user sends that request.

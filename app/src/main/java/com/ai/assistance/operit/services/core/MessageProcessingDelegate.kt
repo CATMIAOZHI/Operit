@@ -1347,6 +1347,7 @@ class MessageProcessingDelegate(
                     notifyReplyOverride = turnOptions.notifyReply,
                     chatModelConfigIdOverride = chatModelConfigIdOverride,
                     chatModelIndexOverride = chatModelIndexOverride,
+                    chatReasoningLevelOverride = turnOptions.chatReasoningLevel,
                     memorySpaceIdOverride = memorySpaceIdOverride,
                     toolTimingScopeId = aiMessageTimestamp.toString(),
                     disableWarning = turnOptions.disableWarning,

@@ -669,6 +669,7 @@ class MessageCoordinationDelegate(
             // so the role card it was made from no longer affects it.
             val isOrbitChat =
                 (ownerSnapshot ?: orbitPreferences.current()).ownerForChat(chatId) != null
+            var orbitReasoningLevel: Int? = null
             val roleCardId =
                 roleCardIdOverride?.takeIf { it.isNotBlank() }
                     ?: if (turnOptions.isSubTask) {
@@ -686,11 +687,14 @@ class MessageCoordinationDelegate(
                                 Pair(chatModelConfigIdOverride, chatModelIndexOverride ?: 0)
                             }
                             isOrbitChat -> {
-                                val mapping = withContext(Dispatchers.IO) {
-                                    com.ai.assistance.operit.features.orbit.OrbitModels.mapping(
+                                val route = withContext(Dispatchers.IO) {
+                                    com.ai.assistance.operit.features.orbit.OrbitModels.route(
                                         context, turnOptions.functionType, chatId, turnOptions.orbitModelRole)
                                 }
-                                Pair(mapping?.configId, mapping?.modelIndex)
+                                // A subagent keeps the reasoning its spawn chose.
+                                orbitReasoningLevel = route?.backgroundReasoningLevel
+                                    ?.takeUnless { turnOptions.isCollaborationAgent }
+                                Pair(route?.mapping?.configId, route?.mapping?.modelIndex)
                             }
                             isAutoContinuation -> {
                                 val lastRoute = lastSendRoutes[chatId]
@@ -779,7 +783,7 @@ class MessageCoordinationDelegate(
                     suppressUserMessageInHistory = suppressUserMessageInHistory,
                     isGroupOrchestrationTurn = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
-                    turnOptions = turnOptions
+                    turnOptions = orbitReasoningLevel?.let { turnOptions.copy(chatReasoningLevel = it) } ?: turnOptions
                 )
 
                 if (accepted && prepareAsynchronously && shouldReadComposerState && effectiveMessageTextOverride == null) {

@@ -49,6 +49,8 @@ data class OrbitModelSettings(
     val assistant: OrbitModelRef? = null,
     val multimodal: OrbitModelRef? = null,
     val overrides: Map<String, OrbitModelRef> = emptyMap(),
+    /** Reasoning for background work on the assistant model; the chat keeps its own slider. */
+    val assistantThinkingLevel: Int = ApiPreferences.DEFAULT_THINKING_QUALITY_LEVEL,
 ) {
     fun selection(function: FunctionType): OrbitModelRef? =
         if (function == FunctionType.CHAT) main
