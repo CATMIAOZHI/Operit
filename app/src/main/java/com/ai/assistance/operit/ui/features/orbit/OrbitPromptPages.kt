@@ -22,9 +22,7 @@ import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
@@ -104,16 +102,23 @@ internal fun OrbitFilePage(
     var confirmDiscard by remember { mutableStateOf(false) }
     var autoEdited by rememberSaveable { mutableStateOf(false) }
     var warnedTooLong by remember { mutableStateOf(false) }
+    // True while the file is read again: the old text stays on screen, but cannot be edited.
+    var loading by remember { mutableStateOf(true) }
     LaunchedEffect(reload) {
         failed = false
+        loading = true
         content = try { load() } catch (e: CancellationException) { throw e } catch (e: Exception) { failed = true; null }
+        loading = false
         if (startEditing && !autoEdited) {
             content?.let { onEditStart(); draft = it; editing = true; autoEdited = true }
         }
     }
+    // Back from a page opened over this one: read the file again, keeping an edit in progress as it is.
+    OrbitOnPageReturn { if (!editing) reload++ }
     fun toast(id: Int) = android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
     fun leaveEditor() { editing = false; draft = "" }
     fun back() {
+        if (busy) return
         when {
             editing && draft != content -> confirmDiscard = true
             editing -> leaveEditor()
@@ -124,15 +129,22 @@ internal fun OrbitFilePage(
         if (busy) return
         busy = true
         scope.launch {
-            try { block() } catch (e: CancellationException) { throw e } catch (e: Exception) { toast(failedMessage) }
+            try { block() } catch (e: CancellationException) { throw e }
+            catch (e: com.ai.assistance.operit.features.orbit.OrbitFiles.ChangedMeanwhile) {
+                // The edit stays in the editor, so the user can copy it before reopening the file.
+                toast(R.string.orbit_file_changed_meanwhile)
+            }
+            catch (e: Exception) { toast(failedMessage) }
             finally { busy = false }
         }
     }
-    OrbitPageBack(intercept = editing || interceptBack) { back() }
+    OrbitPageBack { back() }
+    val editorBack = rememberOrbitBackMotion()
+    OrbitBackHandler(editorBack, enabled = editing || interceptBack || busy, canDismiss = !busy) { back() }
 
     // The empty tap handler keeps taps on the title or blank areas from reaching what is underneath.
     Column(
-        Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        Modifier.fillMaxSize().orbitDismissLayer(editorBack).background(MaterialTheme.colorScheme.background)
             .pointerInput(Unit) { detectTapGestures() }
             .statusBarsPadding(),
     ) {
@@ -166,7 +178,7 @@ internal fun OrbitFilePage(
                             }
                         }) { Icon(orbitIcon("check"), stringResource(R.string.orbit_file_save)) }
                     } else if (save != null) {
-                        IconButton(enabled = content != null, onClick = {
+                        IconButton(enabled = content != null && !loading, onClick = {
                             onEditStart()
                             draft = content.orEmpty()
                             editing = true
@@ -180,12 +192,13 @@ internal fun OrbitFilePage(
                     }
                     if (actions.isNotEmpty() || editing) {
                         Box {
-                            IconButton(onClick = { showMenu = true }) {
+                            IconButton(enabled = !busy, onClick = { showMenu = true }) {
                                 Icon(orbitIcon("ellipsis"), stringResource(R.string.orbit_file_more))
                             }
-                            DropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
+                            OrbitDropdownMenu(expanded = showMenu, onDismissRequest = { showMenu = false }) {
                                 if (editing) {
                                     DropdownMenuItem(
+                                        enabled = !busy,
                                         text = { Text(stringResource(R.string.orbit_file_discard)) },
                                         leadingIcon = { Icon(orbitIcon("x"), null) },
                                         onClick = { showMenu = false; leaveEditor() },
@@ -193,6 +206,7 @@ internal fun OrbitFilePage(
                                 }
                                 actions.forEach { action ->
                                     DropdownMenuItem(
+                                        enabled = !busy,
                                         text = { Text(action.label) },
                                         leadingIcon = { Icon(orbitIcon(action.icon), null) },
                                         onClick = {
@@ -266,11 +280,12 @@ internal fun OrbitFilePage(
         }
     }
     if (confirmDiscard) {
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { confirmDiscard = false },
-            title = { Text(stringResource(R.string.orbit_file_discard_title)) },
-            confirmButton = { TextButton(onClick = { confirmDiscard = false; leaveEditor() }) { Text(stringResource(R.string.orbit_file_discard)) } },
-            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text(stringResource(R.string.orbit_file_keep_editing)) } },
+            dismissEnabled = !busy,
+            title = stringResource(R.string.orbit_file_discard_title),
+            confirmButton = { OrbitDialogAction(enabled = !busy, onClick = { confirmDiscard = false; leaveEditor() }, destructive = true) { Text(stringResource(R.string.orbit_file_discard)) } },
+            dismissButton = { OrbitDialogAction(onClick = { confirmDiscard = false }, secondary = true) { Text(stringResource(R.string.orbit_file_keep_editing)) } },
         )
     }
 }
@@ -304,11 +319,13 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
 internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
     val files = remember(orbitId) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId) }
+    val editor = rememberOrbitFileEditor(files, com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT)
     OrbitFilePage(
         title = stringResource(R.string.orbit_file_alignment),
         note = stringResource(R.string.orbit_file_alignment_note, rememberOrbitName(orbitId)),
-        load = { files.read(com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT) },
-        save = { files.write(com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT, it) },
+        load = editor.load,
+        save = editor.save,
+        onEditStart = editor.onEditStart,
         onBack = onBack,
         maxChars = com.ai.assistance.operit.features.orbit.OrbitFiles.MAX_ALIGNMENT_PROMPT,
     )
@@ -322,6 +339,9 @@ internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
 internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
     var loaded by remember(orbit.id) { mutableStateOf<String?>(null) }
+    // The text the editor opened, saved with the draft: a restored draft must not take the
+    // re-read file as its base and overwrite what Orbit wrote meanwhile.
+    var editBase by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     suspend fun repository(): UserProfileDocumentRepository {
         val spaceId = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
         return UserProfileDocumentRepository.forMemorySpace(context, spaceId)
@@ -331,9 +351,17 @@ internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
         note = stringResource(R.string.orbit_user_note, orbitName(orbit)),
         load = { repository().load().also { loaded = it } },
         save = { body ->
-            val expected = checkNotNull(loaded)
-            if (body != expected) repository().saveUserEdit(body, expected)
+            val expected = checkNotNull(editBase)
+            if (body != expected) {
+                val repository = repository()
+                // Changed by Orbit meanwhile: the page then says so and keeps the draft to copy.
+                if (repository.load() != expected) {
+                    throw com.ai.assistance.operit.features.orbit.OrbitFiles.ChangedMeanwhile(UserProfileDocumentRepository.USER_FILE_NAME)
+                }
+                repository.saveUserEdit(body, expected)
+            }
         },
+        onEditStart = { editBase = checkNotNull(loaded) },
         onBack = onBack,
         maxChars = UserProfileDocumentRepository.MAX_CONTENT_CHARS,
     )
@@ -350,6 +378,8 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     var loaded by remember(orbit.id) {
         mutableStateOf<com.ai.assistance.operit.data.preferences.MemoryNotesRepository.Snapshot?>(null)
     }
+    // The version the editor opened, saved with the draft (see OrbitUserFilePage).
+    var editVersion by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     suspend fun spaceId() = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.ensureInitialized(context, orbit)
     // The page shows and edits every section heading without the app's marker lines.
     suspend fun notes() = com.ai.assistance.operit.data.preferences.MemoryNotesRepository(context, spaceId())
@@ -362,19 +392,24 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
             repository.editorText(repository.load().also { loaded = it }.markdown)
         },
         save = { body ->
-            val opened = checkNotNull(loaded)
+            val opened = checkNotNull(editVersion)
             val repository = notes()
-            if (body != repository.editorText(opened.markdown)) {
+            val latest = repository.load()
+            if (body != repository.editorText(latest.markdown)) {
+                if (latest.version != opened) {
+                    throw com.ai.assistance.operit.features.orbit.OrbitFiles.ChangedMeanwhile("memory.md")
+                }
                 val space = spaceId()
-                val latest = repository.load()
-                check(latest.version == opened.version) { "memory.md changed while editing" }
                 val reviews = com.ai.assistance.operit.data.preferences.MemoryReviewRepository(context, space)
                 val change = reviews.proposeNotes(latest, repository.fromEditor(body))
-                check(reviews.decide(context, change.id, true, "user", reason).status == "approved") {
-                    "memory.md changed while editing"
+                val decided = reviews.decide(context, change.id, true, "user", reason)
+                if (decided.status == "superseded" && !decided.reason.contains("forget")) {
+                    throw com.ai.assistance.operit.features.orbit.OrbitFiles.ChangedMeanwhile("memory.md")
                 }
+                check(decided.status == "approved") { "memory.md was not saved: ${decided.reason}" }
             }
         },
+        onEditStart = { editVersion = checkNotNull(loaded).version },
         onBack = onBack,
         maxChars = com.ai.assistance.operit.data.preferences.MemoryNotesRepository.MAX_CHARS,
         // The editor's text has no marker lines; the limit applies to the text saving stores.

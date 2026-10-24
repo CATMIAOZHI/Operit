@@ -104,8 +104,12 @@ private fun ProcessRecordPage(
     OrbitPageBack(onBack = onBack)
     // Covered by a page opened from here, it stops reading until it is on top again.
     val active = androidx.compose.runtime.rememberUpdatedState(LocalOrbitPageActive.current)
+    // Back from a page opened from here: read again, and ask whether the work runs again (a
+    // finished subagent can be given more work meanwhile).
+    var returned by remember(process) { androidx.compose.runtime.mutableIntStateOf(0) }
+    OrbitOnPageReturn { returned++ }
     // Work still going on (a background run, a subagent) is read again every few seconds until it ends.
-    val record by produceState<ProcessRecord?>(null, process, developer) {
+    val record by produceState<ProcessRecord?>(null, process, developer, returned) {
         suspend fun selfRunning(): Boolean = try {
             when (process) {
                 is OrbitProcess.TaskRun -> OrbitTaskRepository(context).dao.run(process.runId)?.state == "RUNNING"
@@ -124,7 +128,7 @@ private fun ProcessRecordPage(
         } catch (e: Exception) {
             false
         }
-        var running = when (process) {
+        var running = if (returned > 0) selfRunning() else when (process) {
             is OrbitProcess.TaskRun -> process.running
             is OrbitProcess.Learning -> process.running
             is OrbitProcess.Subagent -> process.running

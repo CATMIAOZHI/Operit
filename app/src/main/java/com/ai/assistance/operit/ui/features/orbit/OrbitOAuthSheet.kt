@@ -13,7 +13,6 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -39,10 +38,16 @@ import kotlinx.coroutines.launch
 internal fun OrbitOAuthSheet(orbit: OrbitProfile, request: OrbitVault.Request) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheet = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var opening by remember(request) { mutableStateOf(false) }
-    ModalBottomSheet(
+    val sheet = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = remember(request) {
+            { value: androidx.compose.material3.SheetValue -> value != androidx.compose.material3.SheetValue.Hidden || !opening }
+        },
+    )
+    OrbitModalBottomSheet(
         onDismissRequest = { if (!opening) OrbitVault.close(request) },
+        dismissEnabled = !opening,
         sheetState = sheet,
         containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
     ) {
@@ -67,6 +72,7 @@ internal fun OrbitOAuthSheet(orbit: OrbitProfile, request: OrbitVault.Request) {
                     scope.launch {
                         try {
                             OrbitOAuth.start(context, request)
+                            opening = false
                             sheet.hide()
                             OrbitVault.close(request)
                         } catch (e: kotlinx.coroutines.CancellationException) {

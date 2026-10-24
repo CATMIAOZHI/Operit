@@ -121,7 +121,7 @@ internal object OrbitTextPreview {
         val context = LocalContext.current
         val colors = MaterialTheme.colorScheme
         val loaded by produceState<Loaded?>(null, file) { value = withContext(Dispatchers.IO) { read(file) } }
-        androidx.compose.ui.window.Dialog(
+        OrbitModalWindow(
             onDismissRequest = onDismiss,
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         ) {

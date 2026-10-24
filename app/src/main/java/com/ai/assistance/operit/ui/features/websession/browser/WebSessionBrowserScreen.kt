@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import android.net.Uri
 import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
@@ -169,6 +171,7 @@ internal fun WebSessionBrowserScreen(
             if (watch.controlling) {
                 browserState.pendingDialog?.let { pendingDialog ->
                     PendingDialogOverlay(
+                        orbitStyle = true,
                         dialog = pendingDialog,
                         promptValue = promptDraft,
                         onPromptValueChange = { promptDraft = it },
@@ -467,8 +470,11 @@ private fun PendingDialogOverlay(
     promptValue: String,
     onPromptValueChange: (String) -> Unit,
     onConfirm: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    orbitStyle: Boolean = false,
 ) {
+    val backMotion = if (orbitStyle) com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion() else null
+    if (backMotion != null) com.ai.assistance.operit.ui.features.orbit.OrbitPopupBack(backMotion, onDismiss)
     Box(
         modifier =
             Modifier
@@ -477,7 +483,8 @@ private fun PendingDialogOverlay(
         contentAlignment = Alignment.Center
     ) {
         Surface(
-            modifier = Modifier.padding(horizontal = 20.dp),
+            modifier = Modifier.padding(horizontal = 20.dp)
+                .then(if (backMotion != null) Modifier.orbitDismissLayer(backMotion) else Modifier),
             shape = RoundedCornerShape(20.dp),
             color = MaterialTheme.colorScheme.surface,
             contentColor = MaterialTheme.colorScheme.onSurface,

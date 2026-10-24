@@ -97,6 +97,7 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
         }
     }
     MemoryLibraryPage(stringResource(R.string.memory_notes_title), profileId, ::dismiss,
+        backEnabled = !busy,
         interceptBack = busy || (draft != null && draft != opened)) {
         Box(Modifier.fillMaxSize()) {
             Column(
@@ -149,6 +150,13 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
         }
     }
     if (confirmDiscard) {
+        if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitConfirmDialog(
+                title = stringResource(R.string.memory_notes_discard_title),
+                onConfirm = onDismiss,
+                onDismiss = { confirmDiscard = false },
+            )
+        } else {
         AlertDialog(
             onDismissRequest = { confirmDiscard = false },
             title = { Text(stringResource(R.string.memory_notes_discard_title)) },
@@ -159,5 +167,6 @@ fun MemoryNotesDialog(profileId: String, onDismiss: () -> Unit) {
                 TextButton(onClick = { confirmDiscard = false }) { Text(stringResource(R.string.cancel)) }
             }
         )
+        }
     }
 }

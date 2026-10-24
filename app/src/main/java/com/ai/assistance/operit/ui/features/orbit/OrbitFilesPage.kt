@@ -2,6 +2,7 @@ package com.ai.assistance.operit.ui.features.orbit
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -15,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
@@ -163,11 +163,13 @@ internal fun OrbitFilesPage(orbitId: String, onBack: () -> Unit, onDraft: (Strin
         }
         // A notebook that is still its empty template has nothing to delete.
         val exists = list?.firstOrNull { it.path == path }?.let { it.size >= 0 } ?: (notebook == null)
+        val editor = rememberOrbitFileEditor(files, path)
         OrbitFilePage(
             title = notebook?.let { stringResource(it.title) } ?: path.substringAfterLast('/').removeSuffix(".md"),
             note = note,
-            load = { files.read(path) },
-            save = { files.write(path, it) },
+            load = editor.load,
+            save = editor.save,
+            onEditStart = editor.onEditStart,
             onBack = closeFile,
             actions = if (!exists) emptyList() else listOf(OrbitFileAction(stringResource(R.string.orbit_file_delete), "trash-2") {
                 files.delete(path)
@@ -276,15 +278,47 @@ internal fun OrbitMadeFileRow(entry: OrbitFiles.Entry, onClick: () -> Unit) {
     )
 }
 
+/**
+ * Loading and saving for the user's edit of one of Orbit's files. The save starts from the text
+ * the page opened with, so it is refused (and nothing is lost on disk) when Orbit or a background
+ * task changed the file while the user was editing.
+ */
+internal class OrbitFileEditor(
+    val load: suspend () -> String,
+    val save: suspend (String) -> Unit,
+    /** Pass to [OrbitFilePage]: the text a new draft starts from becomes the base its save checks. */
+    val onEditStart: () -> Unit,
+)
+
+@Composable
+internal fun rememberOrbitFileEditor(files: OrbitFiles, path: String): OrbitFileEditor {
+    // The draft is restored after the app is rebuilt, so the text it started from is too; a fresh
+    // read on restore must not become the base, or an old draft would overwrite a newer file.
+    val base = rememberSaveable(path) { mutableStateOf<String?>(null) }
+    return remember(files, path) {
+        var loaded: String? = null
+        OrbitFileEditor(
+            load = { files.read(path).also { loaded = it } },
+            save = { text ->
+                files.writeIfUnchanged(path, checkNotNull(base.value) { "The file was not opened" }, text)
+                base.value = text
+            },
+            onEditStart = { base.value = loaded },
+        )
+    }
+}
+
 /** A text file Orbit made for the user: read, edit, share or move to the trash. */
 @Composable
 internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onBack: () -> Unit, interceptBack: Boolean = false) {
     val context = LocalContext.current
+    val editor = rememberOrbitFileEditor(files, path)
     OrbitFilePage(
         title = path.substringAfterLast('/'),
         note = stringResource(R.string.orbit_user_file_note, who),
-        load = { files.read(path) },
-        save = { files.write(path, it) },
+        load = editor.load,
+        save = editor.save,
+        onEditStart = editor.onEditStart,
         onBack = onBack,
         interceptBack = interceptBack,
         actions = listOfNotNull(
@@ -320,28 +354,28 @@ internal fun OrbitMadeFileActions(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    AlertDialog(
+    OrbitDialog(
         onDismissRequest = onDismiss,
-        title = { Text(entry.path.substringAfterLast('/'), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+        title = entry.path.substringAfterLast('/'),
         text = {
-            Column {
+            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (pinned != null) {
-                    TextButton(onClick = { onDismiss(); onTogglePin() }, modifier = Modifier.fillMaxWidth()) {
+                    OrbitDialogAction(onClick = { onDismiss(); onTogglePin() }, secondary = true) {
                         Text(stringResource(if (pinned) R.string.orbit_library_unpin else R.string.orbit_library_pin), Modifier.fillMaxWidth())
                     }
                 }
-                TextButton(onClick = {
+                OrbitDialogAction(onClick = {
                     onDismiss()
                     val file = runCatching { files.fileFor(entry.path) }.getOrNull()
                     if (onPreview != null && file != null && file.isFile && OrbitMediaPreview.canPreview(file.name)) onPreview(file)
                     else openOrbitFile(context) { files.fileFor(entry.path) }
-                }, modifier = Modifier.fillMaxWidth()) {
+                }, secondary = true) {
                     Text(stringResource(R.string.orbit_file_open), Modifier.fillMaxWidth())
                 }
-                TextButton(onClick = { onDismiss(); shareOrbitFile(context) { files.fileFor(entry.path) } }, modifier = Modifier.fillMaxWidth()) {
+                OrbitDialogAction(onClick = { onDismiss(); shareOrbitFile(context) { files.fileFor(entry.path) } }, secondary = true) {
                     Text(stringResource(R.string.orbit_file_share), Modifier.fillMaxWidth())
                 }
-                TextButton(onClick = {
+                OrbitDialogAction(onClick = {
                     onDismiss()
                     scope.launch {
                         try {
@@ -352,13 +386,12 @@ internal fun OrbitMadeFileActions(
                         }
                         onDeleted()
                     }
-                }, modifier = Modifier.fillMaxWidth()) {
-                    Text(stringResource(R.string.orbit_file_delete), Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error)
+                }, destructive = true) {
+                    Text(stringResource(R.string.orbit_file_delete), Modifier.fillMaxWidth())
                 }
             }
         },
-        confirmButton = {},
-        dismissButton = { TextButton(onClick = onDismiss) { Text(stringResource(android.R.string.cancel)) } },
+        dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
     )
 }
 
@@ -378,7 +411,7 @@ private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
         }
         reload++
     }
-    OrbitListPage(stringResource(R.string.orbit_files_trash), onBack, interceptBack = true) {
+    OrbitListPage(stringResource(R.string.orbit_files_trash), onBack) {
         item(key = "help") {
             Text(stringResource(R.string.orbit_files_trash_desc, OrbitFiles.TRASH_DAYS), style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(bottom = 8.dp))
@@ -398,35 +431,34 @@ private fun OrbitTrashPage(files: OrbitFiles, onBack: () -> Unit) {
         }
     }
     chosen?.let { item ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { chosen = null },
-            title = { Text(friendlyName(item.path), maxLines = 2, overflow = TextOverflow.Ellipsis) },
+            title = friendlyName(item.path),
             text = {
-                Column {
-                    TextButton(onClick = {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    OrbitDialogAction(onClick = {
                         chosen = null
                         act { files.restore(item.id); toast(context, R.string.orbit_trash_restored) }
-                    }, modifier = Modifier.fillMaxWidth()) { Text(stringResource(R.string.orbit_trash_restore), Modifier.fillMaxWidth()) }
-                    TextButton(onClick = { chosen = null; confirmPurge = item }, modifier = Modifier.fillMaxWidth()) {
-                        Text(stringResource(R.string.orbit_trash_delete_forever), Modifier.fillMaxWidth(), color = MaterialTheme.colorScheme.error)
+                    }) { Text(stringResource(R.string.orbit_trash_restore), Modifier.fillMaxWidth()) }
+                    OrbitDialogAction(onClick = { chosen = null; confirmPurge = item }, destructive = true) {
+                        Text(stringResource(R.string.orbit_trash_delete_forever), Modifier.fillMaxWidth())
                     }
                 }
             },
-            confirmButton = {},
-            dismissButton = { TextButton(onClick = { chosen = null }) { Text(stringResource(android.R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { chosen = null }, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
     confirmPurge?.let { item ->
-        AlertDialog(
+        OrbitDialog(
             onDismissRequest = { confirmPurge = null },
-            title = { Text(stringResource(R.string.orbit_trash_delete_forever_title)) },
+            title = stringResource(R.string.orbit_trash_delete_forever_title),
             text = { Text(stringResource(R.string.orbit_trash_delete_forever_text)) },
             confirmButton = {
-                TextButton(onClick = { confirmPurge = null; act { files.purge(item.id) } }) {
-                    Text(stringResource(R.string.orbit_trash_delete_forever), color = MaterialTheme.colorScheme.error)
+                OrbitDialogAction(onClick = { confirmPurge = null; act { files.purge(item.id) } }, destructive = true) {
+                    Text(stringResource(R.string.orbit_trash_delete_forever))
                 }
             },
-            dismissButton = { TextButton(onClick = { confirmPurge = null }) { Text(stringResource(android.R.string.cancel)) } },
+            dismissButton = { OrbitDialogAction(onClick = { confirmPurge = null }, secondary = true) { Text(stringResource(android.R.string.cancel)) } },
         )
     }
 }

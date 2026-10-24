@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.memory.screens.dialogs
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
@@ -142,7 +144,7 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     val fullPage: @Composable (ChatRecallPart) -> Unit = { part ->
         val partLength = part.content.codePointCount(0,part.content.length)
         MemoryLibraryPage(stringResource(R.string.memory_recall_full), profileId,
-            { if (!busy) fullMessage = null }, interceptBack = busy) {
+            { if (!busy) fullMessage = null }, interceptBack = busy, backEnabled = !busy) {
             Column(Modifier.fillMaxSize().padding(16.dp)) {
                 Text("${charOffset+1}–${charOffset+partLength} / ${part.totalChars}",
                     style = MaterialTheme.typography.labelMedium)
@@ -166,14 +168,26 @@ fun ChatRecallDialog(profileId: String, onDismiss: () -> Unit) {
     // A whole message opens as its own page over the results; the back swipe slides it away.
     var shownPart by remember { mutableStateOf(fullMessage) }
     LaunchedEffect(fullMessage) { fullMessage?.let { shownPart = it } }
+    val isOrbit = com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)
+    val resultBack = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+    if (isOrbit) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+            resultBack, enabled = backStack.isNotEmpty() && fullMessage == null,
+        ) {
+            activeWork?.cancel()
+            if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
+        }
+    }
     Box(Modifier.fillMaxSize()) {
     // Hidden from screen readers while a whole message covers it.
-    Box(Modifier.fillMaxSize().then(if (fullMessage != null) Modifier.clearAndSetSemantics { } else Modifier)) {
+    Box(Modifier.fillMaxSize()
+        .then(if (isOrbit) Modifier.orbitDismissLayer(resultBack) else Modifier)
+        .then(if (fullMessage != null) Modifier.clearAndSetSemantics { } else Modifier)) {
     MemoryLibraryPage(stringResource(R.string.chat_recall_title), profileId, {
         activeWork?.cancel()
         if (backStack.isNotEmpty()) backStack.removeAt(backStack.lastIndex).invoke()
         else onDismiss()
-    }, interceptBack = backStack.isNotEmpty()) {
+    }, interceptBack = backStack.isNotEmpty() && !isOrbit) {
         Box(Modifier.fillMaxSize()) {
             Column(Modifier.fillMaxSize().padding(16.dp),verticalArrangement=Arrangement.spacedBy(8.dp)) {
                 Text(stringResource(R.string.chat_recall_hint),style=MaterialTheme.typography.bodySmall)

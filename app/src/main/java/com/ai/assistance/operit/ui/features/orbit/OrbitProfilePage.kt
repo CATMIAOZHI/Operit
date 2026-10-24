@@ -29,9 +29,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Info
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.runtime.produceState
@@ -80,7 +78,6 @@ import com.ai.assistance.operit.features.orbit.OrbitBrowserWatch
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.pet.displayName
-import com.ai.assistance.operit.util.FileUtils
 import java.text.DateFormat
 import java.util.Date
 import java.util.Locale
@@ -273,12 +270,15 @@ internal fun OrbitCircleButton(
 @Composable
 private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, modifier: Modifier = Modifier) {
     var showSheet by remember { mutableStateOf(false) }
+    // A picked photo waits here while the user frames it; the crop window then hands it to the chat.
+    var cropSource by remember { mutableStateOf<Uri?>(null) }
+    val context = LocalContext.current
     Box(modifier) {
         OrbitAvatar(
             orbit = orbit,
             size = 120,
             animatePet = true,
-            petVisible = LocalProfileVisible.current && !showSheet,
+            petVisible = LocalProfileVisible.current && !showSheet && cropSource == null,
             onClickLabel = stringResource(R.string.orbit_change_avatar),
             onClick = { showSheet = true },
         )
@@ -298,21 +298,66 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
             }
         }
     }
-    if (showSheet) OrbitAvatarSheet(orbitName(orbit), onDraft = onDraft, onDismiss = { showSheet = false })
+    if (showSheet) {
+        OrbitAvatarSheet(
+            orbitName(orbit),
+            onDraft = onDraft,
+            onPickedImage = { cropSource = it },
+            onDismiss = { showSheet = false },
+        )
+    }
+    cropSource?.let { source ->
+        OrbitAvatarCropWindow(
+            source = source,
+            onCropped = { file ->
+                // Attached to the chat box so Orbit gets the framed picture with the request.
+                val attached = try {
+                    com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)
+                        .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
+                        .handleAttachment(Uri.fromFile(file).toString())
+                    true
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    file.delete()
+                    false
+                }
+                if (attached) {
+                    cropSource = null
+                    onDraft(context.getString(R.string.orbit_avatar_draft_image))
+                } else {
+                    android.widget.Toast.makeText(
+                        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
+                    ).show()
+                }
+            },
+            onDismiss = { cropSource = null },
+        )
+    }
 }
 
 /**
  * One sheet for every way to ask for a new picture: a photo, the role card's own picture, or one
- * of the user's pets shown as round previews. The choice goes to Orbit's chat box as a request;
- * Orbit changes its own avatar (orbit_set_avatar).
+ * of the user's pets shown as round previews. A photo is framed first ([onPickedImage] opens the
+ * crop window); every choice then goes to Orbit's chat box as a request, and Orbit changes its own
+ * avatar (orbit_set_avatar).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitAvatarSheet(who: String, onDraft: (String) -> Unit, onDismiss: () -> Unit) {
+private fun OrbitAvatarSheet(
+    who: String,
+    onDraft: (String) -> Unit,
+    onPickedImage: (Uri) -> Unit,
+    onDismiss: () -> Unit,
+) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var busy by remember { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = remember {
+            { value: androidx.compose.material3.SheetValue -> value != androidx.compose.material3.SheetValue.Hidden || !busy }
+        },
+    )
     fun failed() = android.widget.Toast.makeText(
         context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
     ).show()
@@ -333,20 +378,21 @@ private fun OrbitAvatarSheet(who: String, onDraft: (String) -> Unit, onDismiss: 
     }
     val pickImage =
         rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri: Uri? ->
-            if (uri == null) return@rememberLauncherForActivityResult
-            ask {
-                // A copy the app keeps, attached to the chat box so Orbit gets the picture with the request.
-                val saved = FileUtils.copyFileToInternalStorage(context, uri, "orbit_avatar_request")
-                    ?: return@ask null
-                com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context.applicationContext)
-                    .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
-                    .handleAttachment(saved.toString())
-                context.getString(R.string.orbit_avatar_draft_image)
+            if (uri == null || busy) return@rememberLauncherForActivityResult
+            busy = true
+            scope.launch {
+                try {
+                    sheetState.hide()
+                } finally {
+                    busy = false
+                    onDismiss()
+                    onPickedImage(uri)
+                }
             }
         }
     val pets by remember { com.ai.assistance.operit.pet.PetPreferences.get(context).pets }.collectAsState()
 
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, dismissEnabled = !busy) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
         ) {
@@ -1129,18 +1175,18 @@ private fun OrbitExportRow(orbit: OrbitProfile) {
         if (!exporting) confirming = true
     }
     if (confirming) {
-        androidx.compose.material3.AlertDialog(
+        OrbitDialog(
             onDismissRequest = { confirming = false },
-            title = { Text(stringResource(R.string.orbit_export_confirm_title, orbitName(orbit))) },
+            title = stringResource(R.string.orbit_export_confirm_title, orbitName(orbit)),
             text = { Text(stringResource(R.string.orbit_export_confirm_message)) },
             confirmButton = {
-                androidx.compose.material3.TextButton(onClick = {
+                OrbitDialogAction(onClick = {
                     confirming = false
                     startExport()
                 }) { Text(stringResource(R.string.orbit_export_confirm)) }
             },
             dismissButton = {
-                androidx.compose.material3.TextButton(onClick = { confirming = false }) {
+                OrbitDialogAction(onClick = { confirming = false }, secondary = true) {
                     Text(stringResource(android.R.string.cancel))
                 }
             },

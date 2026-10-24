@@ -533,6 +533,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             runCatching {
                 com.ai.assistance.operit.features.orbit.OrbitCompanion.restoreSchedule(applicationContext)
             }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit check-in schedule", it) }
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitQuota.restoreResetNotice(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit allowance reset note", it) }
         }
 
         // The subagent store is read from disk when first used; read it here, off the main thread,

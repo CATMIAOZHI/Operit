@@ -202,18 +202,22 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     suspend fun writeIfUnchanged(path: String, before: String, after: String): Written = io {
         val p = writable(path)
         require(after.length <= MAX_TEXT) { "Text is longer than $MAX_TEXT characters" }
+        require(p != ALIGNMENT || after.length <= MAX_ALIGNMENT_PROMPT) {
+            "$ALIGNMENT is longer than $MAX_ALIGNMENT_PROMPT characters; shorten it"
+        }
         val f = File(root, p)
         val existed = f.isFile
         val current = if (existed) inside(f).readText() else ""
         // An apply interrupted after the write but before the index update finishes that here.
         if (current == after) return@io Written(p, current, after, existed = existed).also { afterChange(p) }
-        check(current == before || (!existed && before == template(p).orEmpty())) {
-            "$p changed after it was read; read it again"
-        }
+        if (current != before && !(!existed && before == template(p).orEmpty())) throw ChangedMeanwhile(p)
         atomic(f, after)
         afterChange(p)
         Written(p, if (existed) current else null, after, existed = existed)
     }
+
+    /** The file is no longer what the writer read; nothing was written. */
+    class ChangedMeanwhile(path: String) : IllegalStateException("$path changed after it was read; read it again")
 
     /** Appends [text] unless the file already holds it as whole lines, so a retried apply adds it once. */
     suspend fun appendOnce(path: String, text: String): Written = io {

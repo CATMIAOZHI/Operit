@@ -88,7 +88,9 @@ internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -
         ColorUtils.colorToHSL(palette.toArgb(), hsl)
         val accent = if (orbit.appearance.palette == OrbitChatPalette.INK) {
             if (dark) Color(0xFFDDDDDF) else Color(0xFF242426)
-        } else Color.hsl(hsl[0], hsl[1].coerceIn(0.25f, 0.65f), if (dark) 0.76f else 0.34f)
+        } else if (dark) {
+            Color.hsl(hsl[0], hsl[1].coerceIn(0.25f, 0.65f), 0.76f)
+        } else orbitLightAccent(hsl[0], hsl[1])
         val onAccent = if (accent.luminance() > 0.179f) Color.Black else Color.White
         if (dark) darkColorScheme(
             primary = accent, onPrimary = onAccent, primaryContainer = bubble, onPrimaryContainer = Color.White,
@@ -126,6 +128,25 @@ internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -
         MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, content = content)
     }
 }
+
+/**
+ * The light theme's accent (thinking slider, send button, model name): the chosen color's own hue,
+ * kept as light as it can be while it still reads on white, so it stays close to the palette swatch
+ * instead of turning a dark shade of it.
+ */
+internal fun orbitLightAccent(hue: Float, saturation: Float): Color {
+    val s = saturation.coerceIn(0.35f, 0.75f)
+    var lightness = 0.62f
+    while (lightness > 0.30f) {
+        val color = Color.hsl(hue, s, lightness)
+        if (1.05f / (color.luminance() + 0.05f) >= ORBIT_ACCENT_MIN_CONTRAST) return color
+        lightness -= 0.02f
+    }
+    return Color.hsl(hue, s, 0.30f)
+}
+
+/** Contrast against white the light accent keeps, enough for its icons, slider and short labels. */
+private const val ORBIT_ACCENT_MIN_CONTRAST = 3.2f
 
 /** A small RGB histogram ignores transparent padding and plain white/black avatar backgrounds. */
 internal fun orbitDominantColor(pixels: IntArray): Int {

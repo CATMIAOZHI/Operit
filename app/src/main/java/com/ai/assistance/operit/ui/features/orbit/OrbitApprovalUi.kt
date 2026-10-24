@@ -24,7 +24,6 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextField
@@ -226,10 +225,15 @@ internal fun OrbitApprovalSheet(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var note by remember(approval.id) { mutableStateOf("") }
     var declining by remember(approval.id) { mutableStateOf(startDeclining) }
     var busy by remember(approval.id) { mutableStateOf(false) }
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = remember(approval.id) {
+            { value: androidx.compose.material3.SheetValue -> value != androidx.compose.material3.SheetValue.Hidden || !busy }
+        },
+    )
     fun close() {
         scope.launch {
             runCatching { sheetState.hide() }
@@ -250,8 +254,9 @@ internal fun OrbitApprovalSheet(
             close()
         }
     }
-    ModalBottomSheet(
+    OrbitModalBottomSheet(
         onDismissRequest = { if (!busy) onDismiss() },
+        dismissEnabled = !busy,
         sheetState = sheetState,
         containerColor = colors.surfaceContainerHigh,
     ) {

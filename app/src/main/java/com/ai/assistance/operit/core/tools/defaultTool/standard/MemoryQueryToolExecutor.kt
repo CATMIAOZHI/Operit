@@ -828,9 +828,15 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
                         .apply { if (repository.sectioned && section.isNotEmpty()) put("section", section) }
                         .put("chars_before", proposal.before.markdown.length).put("chars_after", proposal.after.length)
                         .put("max_chars", MemoryNotesRepository.MAX_CHARS)
-                        .put("message", context.getString(
-                            if (change.status == "approved") R.string.memory_review_auto_applied
-                            else R.string.memory_review_staged)).toString()))
+                        .put("message", when {
+                            change.status == "approved" -> context.getString(R.string.memory_review_auto_applied)
+                            // Dropped, not waiting: saying "pending review" would make Orbit tell the user it is saved.
+                            change.status == "superseded" ->
+                                "Not saved: ${change.reason.ifBlank { "memory changed after this was proposed" }}. Nothing was written."
+                            change.status == "pending" && change.reason.isNotEmpty() ->
+                                "Not saved: the write failed (${change.reason}). Read memory.md again, then retry once."
+                            else -> context.getString(R.string.memory_review_staged)
+                        }).toString()))
             }
             val snapshot = repository.load()
             ToolResult(
@@ -846,12 +852,24 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
                 error = if (e.reason == MemoryNotesRepository.Failure.SECTION)
                     com.ai.assistance.operit.data.preferences.MemoryNoteSections.SECTION_HINT
+                else if (e.reason == MemoryNotesRepository.Failure.NOT_UNIQUE && repository.sectioned)
+                    com.ai.assistance.operit.api.chat.library.exactEditError(
+                        com.ai.assistance.operit.data.preferences.stripInvisibleCharacters(
+                            runCatching { repository.load().markdown }.getOrDefault("")),
+                        com.ai.assistance.operit.data.preferences.stripInvisibleCharacters(
+                            tool.parameters.find { it.name == "old_text" }?.value.orEmpty()),
+                        sectioned = true)
                 else context.getString(when (e.reason) {
                     MemoryNotesRepository.Failure.FULL -> R.string.memory_notes_full
                     MemoryNotesRepository.Failure.CONFLICT -> R.string.memory_notes_conflict
                     MemoryNotesRepository.Failure.NOT_UNIQUE -> R.string.memory_notes_not_unique
                     else -> R.string.memory_notes_invalid
                 }))
+        } catch (e: IllegalArgumentException) {
+            // A rule the change broke (for example something the user had Orbit forget): retrying
+            // later will not help, so the reason is given as it is.
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = e.message?.takeIf { it.isNotBlank() } ?: context.getString(R.string.memory_notes_invalid))
         } catch (e: Exception) {
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
                 error = context.getString(R.string.memory_notes_io_error))

@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.memory.screens
 
+import com.ai.assistance.operit.ui.features.orbit.orbitDismissLayer
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.layout.*
 import androidx.compose.material.icons.Icons
@@ -27,11 +29,16 @@ fun MemoryLibraryPage(
      * swipe; true keeps it here while the page has its own inner view or unsaved work to handle.
      */
     interceptBack: Boolean = false,
+    backEnabled: Boolean = true,
     content: @Composable () -> Unit
 ) {
     if (com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(profileId)) {
-        com.ai.assistance.operit.ui.features.orbit.OrbitPageBack(intercept = interceptBack, onBack = onBack)
-        Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitPageBack(onBack = onBack)
+        val motion = com.ai.assistance.operit.ui.features.orbit.rememberOrbitBackMotion()
+        com.ai.assistance.operit.ui.features.orbit.OrbitBackHandler(
+            motion, enabled = interceptBack || !backEnabled, canDismiss = backEnabled,
+        ) { onBack() }
+        Surface(Modifier.fillMaxSize().orbitDismissLayer(motion), color = MaterialTheme.colorScheme.background) {
             Column(Modifier.fillMaxSize().statusBarsPadding()) {
                 com.ai.assistance.operit.ui.features.orbit.OrbitPageHeader(
                     title, onBack, Modifier.padding(start = 20.dp, end = 20.dp, top = 8.dp),

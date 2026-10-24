@@ -108,29 +108,8 @@ object OrbitTaskScheduler {
         manager.cancelUniqueWork("orbit_manual_check_in")
         manager.cancelUniqueWork(WORK)
         manager.cancelUniqueWork(LONG_WORK)
-        OrbitTaskRepository(context).syncDaily()
+        OrbitTaskRepository(context).retireDaily()
         reschedule(context, restore = restore)
-    }
-
-    suspend fun runNow(context: Context) {
-        val repository = OrbitTaskRepository(context)
-        val daily = repository.syncDaily() ?: return
-        // Manual check-in is one event; it does not turn automatic check-ins on.
-        val now = System.currentTimeMillis()
-        // A manual check-in still waiting (a busy chat put it off) is the one the user asked for.
-        val waiting = repository.dao.tasks(daily.orbitId).any {
-            (it.id == daily.id || it.id.startsWith("manual-${daily.orbitId}-")) && it.state == "ACTIVE" &&
-                repository.dao.pendingManualCount(it.id, it.version) > 0
-        }
-        if (waiting) { reschedule(context); return }
-        val task = if (daily.state == "ACTIVE") daily else {
-            val oneShot = daily.copy(id = "manual-${daily.orbitId}-${java.util.UUID.randomUUID()}",
-                state = "ACTIVE", nextRunAt = now, intervalMinutes = 0, kind = "ONCE")
-            repository.dao.insertTask(oneShot)
-            oneShot
-        }
-        repository.dao.enqueueManual(task.id, java.util.UUID.randomUUID().toString(), now)
-        reschedule(context)
     }
 }
 

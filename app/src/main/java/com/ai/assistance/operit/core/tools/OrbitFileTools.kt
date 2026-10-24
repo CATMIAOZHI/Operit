@@ -48,7 +48,7 @@ internal object OrbitFileTools {
   - DEVICES.md：你能连上的设备，比如 Tailscale 组网里的电脑、NAS。不写密码。
   - files/：给用户做的文件，会出现在「构建」页的文件里。
   - read 一次最多返回 20000 字；没读完时末尾会写明读到第几行、下次怎么接着读（照着提示填 start_line，长行还要填 start_char）。list 一次最多 200 个，有 next_offset 时用 offset 接着列。
-  - write 会覆盖整个文件，先 read 再改；返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
+  - write 会覆盖整个文件，已有内容的文件必须先 read 再改；读完之后如果文件被用户或后台任务改过，write 会被拒绝、什么都不写，这时重新 read 再改。返回会说明新建还是覆盖、现在几行，以及改了哪些行。delete 后告诉用户可以在回收站恢复。
   - prompt_copy：用户要你的系统提示词时用，把 Orbit 部分（Orbit 段落和 SOUL.md，不含应用通用规则）存成 files/ 里的一份文件，告诉用户这是 Orbit 部分，在构建页的文件里找。
   - send：把 files/ 里的一个文件直接发到聊天里，像真人发消息一样。图片显示成图片，用户点开全屏看，底部有「保存」按钮；文本文件（txt、md、json、csv 等）点开在应用里直接显示；其他文件显示成附件卡，用户点一下用别的应用打开。只能在和用户的聊天里用。发完不要再贴路径。
   - import：把应用里别处的文件收进 files/（比如终端或其他工具生成的文件），用户就能在构建页的文件里看到。要给用户看，接着用 send 发到聊天里；音频会返回 markdown，可以放进回复里播放。
@@ -82,9 +82,37 @@ internal object OrbitFileTools {
                         }))
                         .toString()
                 }
-                "read" -> paged(arg("path"), files.read(arg("path")), args["start_line"], args["line_count"], args["start_char"])
-                "write" -> wrote(context, files.write(arg("path"), args["text"] ?: error("write needs text: the whole new content of the file")))
-                "append" -> appended(files.append(arg("path"), arg("text")))
+                "read" -> {
+                    val text = files.read(arg("path"))
+                    remember(orbit.id, runtime?.callerChatId, arg("path"), text)
+                    paged(arg("path"), text, args["start_line"], args["line_count"], args["start_char"])
+                }
+                "write" -> {
+                    val path = arg("path")
+                    val text = args["text"] ?: error("write needs text: the whole new content of the file")
+                    val stored = files.readStored(path)
+                    refuseForgotten(context, orbit.id, stored, text)
+                    val seen = seen(orbit.id, runtime?.callerChatId, path)
+                    // A file with real content is replaced only from what this chat last read of it,
+                    // so an edit the user or a background task made in between is never overwritten.
+                    val base = when {
+                        stored == null -> files.template(OrbitFiles.normalize(path)).orEmpty()
+                        seen == null -> error("Read $path first: write replaces the whole file, so start from what it holds now")
+                        else -> seen
+                    }
+                    val written = try {
+                        files.writeIfUnchanged(path, base, text)
+                    } catch (e: OrbitFiles.ChangedMeanwhile) {
+                        error("$path changed after you read it (the user or a background task edited it). Nothing was " +
+                            "written. Read it again and apply your change to what it holds now.")
+                    }
+                    remember(orbit.id, runtime?.callerChatId, path, text)
+                    wrote(context, written)
+                }
+                "append" -> {
+                    refuseForgotten(context, orbit.id, null, arg("text"))
+                    appended(files.append(arg("path"), arg("text")))
+                }
                 "daily" -> {
                     val line = arg("text")
                     val cut = line.replace(Regex("\\s+"), " ").trim().length > OrbitFiles.MAX_DAILY_LINE
@@ -227,6 +255,28 @@ internal object OrbitFileTools {
     private const val MAX_DIFF = 2000
     private const val MAX_LIST = 200
     private const val MAX_READ = 20_000
+    private const val MAX_READ_COPIES = 32
+
+    /** What each chat last read or wrote of a file: the base its next whole-file write must still match. */
+    private val readCopies = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, String>(MAX_READ_COPIES, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, String>?) = size > MAX_READ_COPIES
+        })
+    private fun copyKey(orbitId: String, chatId: String?, path: String) =
+        "$orbitId\u0000${chatId.orEmpty()}\u0000${runCatching { OrbitFiles.normalize(path) }.getOrDefault(path)}"
+    private fun remember(orbitId: String, chatId: String?, path: String, text: String) {
+        readCopies[copyKey(orbitId, chatId, path)] = text
+    }
+    private fun seen(orbitId: String, chatId: String?, path: String): String? = readCopies[copyKey(orbitId, chatId, path)]
+
+    /** New text that brings back something the user had this Orbit forget is refused before it is written. */
+    private suspend fun refuseForgotten(context: Context, orbitId: String, before: String?, text: String) {
+        val old = before?.lines()?.toHashSet().orEmpty()
+        val added = text.lines().filterNot { it in old }.joinToString("\n")
+        require(!com.ai.assistance.operit.features.orbit.OrbitForget.containsForgotten(context, orbitId, added)) {
+            "This text contains something the user asked you to forget; leave it out. Nothing was written."
+        }
+    }
 
     /**
      * The lines asked for, up to [MAX_READ] characters. A whole file comes back as it is; a part

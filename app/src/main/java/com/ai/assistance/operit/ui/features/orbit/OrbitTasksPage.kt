@@ -278,9 +278,11 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
     val format = remember { DateFormat.getDateTimeInstance(DateFormat.MEDIUM, DateFormat.SHORT) }
     // Kept outside the list, so coming back from one run returns to where the user was.
     val historyState = rememberLazyListState()
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        val runBack = rememberOrbitBackMotion()
+        OrbitBackHandler(runBack, enabled = openRun != null) { openRunId = null }
         Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
+            Modifier.fillMaxWidth().orbitDismissLayer(runBack).navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
             if (openRun == null) {
@@ -310,7 +312,6 @@ private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: 
                     }
                 }
             } else {
-                BackHandler { openRunId = null }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(onClick = { openRunId = null }) {
                         Icon(orbitIcon("arrow-left"), stringResource(R.string.back))
@@ -367,7 +368,7 @@ internal fun TaskConfirmSheet(
     onDismiss: () -> Unit,
     onConfirm: () -> Unit,
 ) {
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 20.dp).padding(bottom = 20.dp),
             horizontalAlignment = Alignment.CenterHorizontally,
@@ -397,7 +398,8 @@ private fun TaskList(
     onOpen: (String) -> Unit,
 ) {
     val groups = remember(tasks) {
-        val all = tasks.orEmpty()
+        // The old built-in daily check-in is cancelled at start-up; it does not linger under "finished".
+        val all = tasks.orEmpty().filterNot { com.ai.assistance.operit.features.orbit.OrbitTaskRepository.isRetiredCheckIn(it) }
         listOf(
             R.string.orbit_tasks_group_attention to all.filter { it.state == "WAITING_USER" || it.state == "VERIFY" },
             R.string.orbit_tasks_group_active to all.filter { it.state == "ACTIVE" },
@@ -418,7 +420,7 @@ private fun TaskList(
         }
         errorBanner()
         if (tasks == null && !loadFailed) item(key = "loading") { TaskLoading() }
-        else if (tasks != null && tasks.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
+        else if (tasks != null && groups.isEmpty()) item(key = "empty") { EmptyHint(stringResource(R.string.orbit_tasks_empty, who)) }
         groups.forEach { (title, group) ->
             item(key = "group-$title") { SectionTitle(stringResource(title)) }
             itemsIndexed(group, key = { _, task -> task.id }, contentType = { _, _ -> "task" }) { index, task ->

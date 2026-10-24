@@ -31,6 +31,8 @@ object OrbitTaskRunner {
     private const val LEASE_MS = 120_000L
     /** A due task whose chat is busy is tried again after this long. */
     private const val BUSY_RETRY_MS = 60_000L
+    /** How soon a run put off for used-up allowances looks again (the user may raise one). */
+    private const val QUOTA_RETRY_MS = 30 * 60_000L
     /** How long a due task waits in one go for Orbit's chat to be quiet. */
     private const val WAKE_IDLE_WAIT_MS = 60_000L
     /** How long a task woken in Orbit's chat may wait for the chat to be free; the turn itself is the chat's. */
@@ -158,6 +160,13 @@ object OrbitTaskRunner {
             val runStart = SystemClock.elapsedRealtime()
             withTimeout(timeoutMinutes * 60_000L) {
                 check(OrbitPreferences.getInstance(context).current().activeOrbitId == orbit.id)
+                // Orbit is paused while both token allowances are used up: the run waits and tries
+                // again later, so nothing is used up or marked failed while it cannot think.
+                if (OrbitQuota.paused(context) && dao.defer(token, System.currentTimeMillis() + QUOTA_RETRY_MS, boot,
+                        System.currentTimeMillis(), SystemClock.elapsedRealtime())) {
+                    deferred = true
+                    return@withTimeout
+                }
                 var checkpoint = checkNotNull(dao.run(token.id))
                 if (!checkpoint.hasSource) {
                     val source = try {
@@ -257,14 +266,15 @@ object OrbitTaskRunner {
         } catch (e: CancellationException) {
             if (e is TimeoutCancellationException && currentCoroutineContext().isActive) {
                 // A review keeps what it wrote down and reads on from there at its next run; it is never paused.
-                if (!continueReview(context, state)) {
+                if (!stopForQuota(context, state) && !continueReview(context, state)) {
                     dao.interrupt(token, System.currentTimeMillis(), context.getString(
                         com.ai.assistance.operit.R.string.orbit_run_timed_out, task.title, timeoutMinutes))
                 }
             } else throw e
         } catch (e: Exception) {
+            // Cut short by used-up allowances: the task waits and tries again, it is not paused.
             // A review that stopped without its result keeps what it wrote down and goes on later.
-            if (!continueReview(context, state)) {
+            if (!stopForQuota(context, state) && !continueReview(context, state)) {
                 dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
             }
         } finally {
@@ -319,6 +329,24 @@ object OrbitTaskRunner {
 
     private fun sha(text: String): String = MessageDigest.getInstance("SHA-256")
         .digest(text.toByteArray()).joinToString("") { "%02x".format(it) }
+
+    /**
+     * A run that stopped while Orbit's token allowances are used up (the model call was refused, or
+     * the turn ended without a result because of it) does not pause the task, which a new week or a
+     * raised allowance would never resume: see [com.ai.assistance.operit.data.dao.OrbitTaskDao.stopForQuota].
+     * False when the allowances are not used up, or the user has to check the run.
+     */
+    private suspend fun stopForQuota(context: Context, state: ActiveRun): Boolean = try {
+        val now = System.currentTimeMillis()
+        OrbitQuota.paused(context) && AppDatabase.getDatabase(context).orbitTaskDao().stopForQuota(
+            state.token, now + QUOTA_RETRY_MS, OrbitTaskRepository.nextAt(state.task, now), now,
+            context.getString(com.ai.assistance.operit.R.string.orbit_run_quota_paused))
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Exception) {
+        com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Run not put back for the allowance: ${e.message}")
+        false
+    }
 
     /**
      * Ends an alignment review run before its review is finished (time ran out, or it stopped

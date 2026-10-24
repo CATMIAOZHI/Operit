@@ -592,6 +592,9 @@ fun SkillConfigScreen(
 
     if (showImportDialog) {
         SkillImportSheet(
+            orbitStyle = skillRepository.memorySpaceId?.let {
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
+            } == true,
             tabIndex = importTabIndex,
             onTabChange = { importTabIndex = it; importError = null },
             repoUrl = repoUrlInput,
@@ -616,6 +619,9 @@ fun SkillConfigScreen(
 
     if (showSkillLoadErrorsDialog) {
         SkillLoadErrorsDialog(
+            orbitStyle = skillRepository.memorySpaceId?.let {
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
+            } == true,
             errors = skillLoadErrors,
             onDismiss = { showSkillLoadErrorsDialog = false }
         )
@@ -623,6 +629,9 @@ fun SkillConfigScreen(
 
     selectedSkill?.let { skill ->
         SkillDetailSheet(
+            orbitStyle = skillRepository.memorySpaceId?.let {
+                com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
+            } == true,
             skill = skill,
             detail = selectedSkillDetail,
             isLoading = isSkillDetailLoading,
@@ -787,14 +796,11 @@ private fun buildSkillDetailDialogData(
 @Composable
 private fun SkillLoadErrorsDialog(
     errors: Map<String, String>,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    orbitStyle: Boolean = false,
 ) {
     val scrollState = rememberScrollState()
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text(text = stringResource(R.string.error_occurred_simple)) },
-        text = {
+    val body: @Composable () -> Unit = {
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
@@ -816,7 +822,24 @@ private fun SkillLoadErrorsDialog(
                     Spacer(modifier = Modifier.height(12.dp))
                 }
             }
-        },
+    }
+    if (orbitStyle) {
+        com.ai.assistance.operit.ui.features.orbit.OrbitDialog(
+            onDismissRequest = onDismiss,
+            title = stringResource(R.string.error_occurred_simple),
+            text = body,
+            confirmButton = {
+                com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction(onClick = onDismiss) {
+                    Text(stringResource(R.string.ok))
+                }
+            },
+        )
+        return
+    }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(text = stringResource(R.string.error_occurred_simple)) },
+        text = body,
         confirmButton = {
             TextButton(onClick = onDismiss) {
                 Text(text = stringResource(R.string.ok))

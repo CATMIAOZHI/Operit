@@ -51,7 +51,7 @@ internal object OrbitMediaPreview {
     @Composable
     private fun Player(file: File, onDismiss: () -> Unit) {
         val context = LocalContext.current
-        androidx.compose.ui.window.Dialog(
+        OrbitModalWindow(
             onDismissRequest = onDismiss,
             properties = androidx.compose.ui.window.DialogProperties(usePlatformDefaultWidth = false),
         ) {

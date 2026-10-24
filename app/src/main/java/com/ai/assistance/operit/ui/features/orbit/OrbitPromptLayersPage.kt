@@ -134,6 +134,8 @@ internal fun OrbitPromptLayersPage(
         } }.onFailure { if (it is CancellationException) throw it }
             .onSuccess { layerCache = orbit.id to it }
     }
+    // Back from a file opened from this list: read the sizes again, the file may have changed.
+    OrbitOnPageReturn { reload++ }
     // The same iOS push as Orbit's other pages, with the swipe back following the finger.
     OrbitPushHost(
         entries = listOfNotNull(view),

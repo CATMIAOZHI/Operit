@@ -32,7 +32,6 @@ import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -44,6 +43,7 @@ import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -114,17 +114,56 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
     val login = request.kind == OrbitVault.LOGIN
     // Signing up or resetting: the password is new, so it is typed twice (or generated).
     val fresh = login && request.newPassword
+    // An update card changes a saved entry: a new value is optional, and the terminal is offered for a login too.
+    val updating = request.updateId.isNotEmpty()
+    val vaultVersion by OrbitVault.version.collectAsState()
+    // (read yet, the saved entry), read again on every vault change: an entry deleted meanwhile reads as (true, null).
+    val lookup by produceState<Pair<Boolean, OrbitVault.Entry?>>(false to null, request, vaultVersion) {
+        if (updating) value = true to runCatching {
+            OrbitVault.entries(context, request.orbitId).firstOrNull { it.id == request.updateId }
+        }.getOrNull()
+    }
+    val existing = lookup.second
+    val gone = updating && lookup.first && existing == null
+    var loaded by remember(request) { mutableStateOf(!updating) }
     var username by remember(request) { mutableStateOf(request.usernameHint) }
     var secret by remember(request) { mutableStateOf("") }
     var again by remember(request) { mutableStateOf("") }
     var visible by remember(request) { mutableStateOf(false) }
     var saving by remember(request) { mutableStateOf(false) }
+    var finishing by remember(request) { mutableStateOf(false) }
+    // Nothing can be typed until an update has its saved values in place, so none are overwritten.
+    val editable = !saving && loaded && !gone
     // Orbit asked to load the key into the terminal; off until the user turns it on.
-    val asksEnv = !login && request.envName.isNotEmpty()
+    val asksEnv = request.envName.isNotEmpty() && (updating || !login)
     var allowEnv by remember(request) { mutableStateOf(false) }
+    LaunchedEffect(existing) {
+        val e = existing ?: return@LaunchedEffect
+        if (loaded) return@LaunchedEffect
+        username = e.username
+        allowEnv = e.envName.isNotEmpty()
+        loaded = true
+    }
     // A key with no hosts for the proxy is of use only in the terminal, so it needs the switch on.
-    val envOnly = asksEnv && request.apiHosts.isEmpty()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    // An update may still take that away again: the user decides what stays allowed.
+    val envOnly = asksEnv && !login && request.apiHosts.isEmpty() && !updating
+    val envTarget = if (allowEnv) request.envName else ""
+    // Nothing to save on an update until something differs from what is saved.
+    val changed = !updating || existing?.let { e ->
+        secret.isNotEmpty() || (login && username.trim() != e.username) || envTarget != e.envName
+    } == true
+    // Tool output is masked by matching the value, which a very short one (a PIN) cannot be.
+    val effectiveSecret = secret.ifEmpty { existing?.secret.orEmpty() }
+    val envTooShort = asksEnv && allowEnv && effectiveSecret.isNotEmpty() &&
+        effectiveSecret.length < OrbitVault.MIN_ENV_SECRET
+    val sheetState = rememberModalBottomSheetState(
+        skipPartiallyExpanded = true,
+        confirmValueChange = remember(request) {
+            { value: androidx.compose.material3.SheetValue ->
+                value != androidx.compose.material3.SheetValue.Hidden || !saving || finishing
+            }
+        },
+    )
     val colors = MaterialTheme.colorScheme
     SecureWindow()
     fun dismiss() {
@@ -138,8 +177,9 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
         disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
         unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent,
     )
-    ModalBottomSheet(
+    OrbitModalBottomSheet(
         onDismissRequest = { if (!saving) OrbitVault.close(request) },
+        dismissEnabled = !saving,
         sheetState = sheetState,
         containerColor = colors.surfaceContainerHigh,
     ) {
@@ -158,6 +198,8 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 fontWeight = FontWeight.SemiBold, textAlign = TextAlign.Center)
             Spacer(Modifier.height(4.dp))
             Text(stringResource(when {
+                    updating && login -> R.string.orbit_vault_sheet_update_login
+                    updating -> R.string.orbit_vault_sheet_update_key
                     fresh -> R.string.orbit_vault_sheet_new_password
                     login -> R.string.orbit_vault_sheet_add_login
                     else -> R.string.orbit_vault_sheet_add_key
@@ -182,7 +224,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 Column {
                     if (login) {
                         TextField(
-                            username, { if (it.length <= 200) username = it }, singleLine = true, enabled = !saving,
+                            username, { if (it.length <= 200) username = it }, singleLine = true, enabled = editable,
                             label = { Text(stringResource(R.string.orbit_vault_username)) }, colors = fieldColors,
                             modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Email, autoCorrect = false),
@@ -190,8 +232,13 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = colors.outlineVariant.copy(alpha = 0.6f))
                     }
                     TextField(
-                        secret, { if (it.length <= 4000) secret = it }, singleLine = true, enabled = !saving,
-                        label = { Text(stringResource(if (login) R.string.orbit_vault_password else R.string.orbit_vault_api_key)) },
+                        secret, { if (it.length <= 4000) secret = it }, singleLine = true, enabled = editable,
+                        label = { Text(stringResource(when {
+                            updating && login -> R.string.orbit_vault_new_password_optional
+                            updating -> R.string.orbit_vault_new_key_optional
+                            login -> R.string.orbit_vault_password
+                            else -> R.string.orbit_vault_api_key
+                        })) },
                         visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                         keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
                         colors = fieldColors,
@@ -206,7 +253,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                     if (fresh) {
                         HorizontalDivider(Modifier.padding(horizontal = 18.dp), color = colors.outlineVariant.copy(alpha = 0.6f))
                         TextField(
-                            again, { if (it.length <= 4000) again = it }, singleLine = true, enabled = !saving,
+                            again, { if (it.length <= 4000) again = it }, singleLine = true, enabled = editable,
                             label = { Text(stringResource(R.string.orbit_vault_password_confirm)) },
                             visualTransformation = if (visible) VisualTransformation.None else PasswordVisualTransformation(),
                             keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password, autoCorrect = false),
@@ -229,7 +276,7 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                         again = made
                         visible = true
                     },
-                    enabled = !saving,
+                    enabled = editable,
                     modifier = Modifier.padding(top = 4.dp),
                 ) {
                     Icon(orbitIcon("wand-sparkles"), null, Modifier.size(16.dp))
@@ -242,16 +289,16 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(start = 18.dp, end = 12.dp, top = 12.dp, bottom = 14.dp)) {
                         Row(
-                            Modifier.fillMaxWidth().toggleable(value = allowEnv, enabled = !saving, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = { allowEnv = it }),
+                            Modifier.fillMaxWidth().toggleable(value = allowEnv, enabled = editable, role = androidx.compose.ui.semantics.Role.Switch, onValueChange = { allowEnv = it }),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Text(stringResource(R.string.orbit_vault_env_allow, orbit.name),
+                            Text(stringResource(if (login) R.string.orbit_vault_env_allow_login else R.string.orbit_vault_env_allow, orbit.name),
                                 style = MaterialTheme.typography.bodyLarge, modifier = Modifier.weight(1f))
                             Spacer(Modifier.width(8.dp))
                             // The whole row is the switch, so a screen reader reads its words with it.
-                            Switch(checked = allowEnv, onCheckedChange = null, enabled = !saving)
+                            Switch(checked = allowEnv, onCheckedChange = null, enabled = editable)
                         }
-                        Text(stringResource(R.string.orbit_vault_env_desc, "$" + request.envName),
+                        Text(stringResource(if (login) R.string.orbit_vault_env_desc_login else R.string.orbit_vault_env_desc, "$" + request.envName),
                             style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
                             modifier = Modifier.padding(top = 4.dp, end = 6.dp))
                         if (request.envReason.isNotBlank()) {
@@ -268,24 +315,54 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                 Spacer(Modifier.width(8.dp))
                 Text(
                     when {
+                        gone -> stringResource(R.string.orbit_vault_card_update_gone)
+                        !loaded -> stringResource(R.string.orbit_vault_update_loading)
+                        envTooShort -> stringResource(R.string.orbit_vault_env_too_short, OrbitVault.MIN_ENV_SECRET)
+                        updating && !changed -> stringResource(R.string.orbit_vault_update_unchanged)
+                        login && allowEnv -> stringResource(R.string.orbit_vault_entry_promise_env_login, orbit.name)
                         login -> stringResource(R.string.orbit_vault_entry_promise, orbit.name, request.site)
                         envOnly && !allowEnv -> stringResource(R.string.orbit_vault_env_required)
                         allowEnv -> stringResource(R.string.orbit_vault_entry_promise_env, orbit.name)
                         else -> stringResource(R.string.orbit_vault_entry_promise_key, orbit.name)
                     },
-                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (gone || envTooShort) colors.error else colors.onSurfaceVariant,
                 )
             }
             Spacer(Modifier.height(28.dp))
             Button(
-                enabled = !saving && secret.isNotEmpty() && (!login || username.isNotBlank()) && (!fresh || again == secret) &&
-                    (!envOnly || allowEnv),
+                enabled = editable && (updating || secret.isNotEmpty()) && (!login || username.isNotBlank()) &&
+                    (!fresh || again == secret) && (!envOnly || allowEnv) && !envTooShort &&
+                    (!updating || existing != null && changed),
                 shape = RoundedCornerShape(50),
                 modifier = Modifier.fillMaxWidth().height(52.dp),
                 onClick = {
                     saving = true
                     scope.launch {
                         try {
+                            if (updating) {
+                                val before = checkNotNull(existing)
+                                val newValue = secret.isNotEmpty()
+                                val saved = OrbitVault.update(context, orbit.id, request.updateId,
+                                    if (login) username else null, secret.ifEmpty { null },
+                                    if (allowEnv) request.envName else "")
+                                secret = ""
+                                if (saved == null) {
+                                    saving = false
+                                    Toast.makeText(context, context.getString(R.string.orbit_vault_card_update_gone), Toast.LENGTH_SHORT).show()
+                                    return@launch
+                                }
+                                runCatching {
+                                    com.ai.assistance.operit.features.orbit.OrbitApprovals.recordVaultSave(
+                                        context, orbit.id, request.chatId, request.site, login)
+                                }
+                                finishing = true
+                                runCatching { sheetState.hide() }
+                                OrbitVault.close(request)
+                                OrbitVaultNotice.sendUpdate(context, orbit, request, saved, newValue,
+                                    login && saved.username != before.username, before.envName)
+                                return@launch
+                            }
                             val id = OrbitVault.save(context, orbit.id, request, username, secret, allowEnv = asksEnv && allowEnv)
                             secret = ""
                             again = ""
@@ -295,12 +372,14 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                                 com.ai.assistance.operit.features.orbit.OrbitApprovals.recordVaultSave(
                                     context, orbit.id, request.chatId, request.site, login)
                             }
+                            finishing = true
                             runCatching { sheetState.hide() }
                             OrbitVault.close(request)
                             OrbitVaultNotice.send(context, orbit, request, id)
                         } catch (e: kotlinx.coroutines.CancellationException) {
                             throw e
                         } catch (e: Exception) {
+                            finishing = false
                             saving = false
                             Toast.makeText(context, context.getString(R.string.orbit_vault_save_failed, OrbitVault.MAX_ENTRIES), Toast.LENGTH_SHORT).show()
                         }
@@ -311,7 +390,11 @@ internal fun OrbitVaultEntrySheet(orbit: OrbitProfile, request: OrbitVault.Reque
                     CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp, color = colors.onPrimary)
                     Spacer(Modifier.width(8.dp))
                 }
-                Text(stringResource(if (fresh) R.string.orbit_vault_set else R.string.orbit_vault_add),
+                Text(stringResource(when {
+                        updating -> R.string.orbit_vault_save_changes
+                        fresh -> R.string.orbit_vault_set
+                        else -> R.string.orbit_vault_add
+                    }),
                     style = MaterialTheme.typography.titleMedium)
             }
             TextButton(onClick = { dismiss() }, enabled = !saving, modifier = Modifier.fillMaxWidth().height(52.dp)) {
@@ -334,7 +417,7 @@ internal fun OrbitImportMemorySheet(orbit: OrbitProfile, onDismiss: () -> Unit, 
     var pasted by rememberSaveable { mutableStateOf("") }
     var sending by remember { mutableStateOf(false) }
     val tooLong = pasted.length > MAX_IMPORT
-    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding().imePadding()
                 .padding(horizontal = 20.dp).padding(bottom = 20.dp),
