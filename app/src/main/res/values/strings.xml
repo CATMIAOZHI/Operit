@@ -9460,6 +9460,10 @@
     <string name="orbit_permission_dismissed">已告诉 %1$s，以后不提醒</string>
     <string name="orbit_permission_dismissing">正在告诉 %1$s…</string>
     <string name="orbit_permission_failed">没能打开，请到系统设置里手动允许</string>
+    <string name="orbit_permission_phone_title">给 %1$s 开启「%2$s」</string>
+    <string name="orbit_permission_phone_on">已开启，%1$s 现在可以用了</string>
+    <string name="orbit_permission_open_settings">去设置</string>
+    <string name="orbit_permission_in_settings">系统不再弹出授权框了，请在这里打开「%1$s」</string>
     <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>
     <string name="orbit_task_timeout_hours">每次运行最多 %1$d 小时</string>
     <string name="orbit_execution_record">查看执行记录</string>

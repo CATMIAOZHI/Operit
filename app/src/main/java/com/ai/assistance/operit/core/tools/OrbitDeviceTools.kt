@@ -60,7 +60,7 @@ internal object OrbitDeviceTools {
         ),
         details = """
   - 只在用户的请求需要时读，比如「给小王打电话前查下他的号码」「我下周有什么安排」「我现在在哪」。短信只在用户明确要求时读。
-  - 结果是这一刻从手机上实时读的。用户拒绝授权时，告诉他可以在系统设置里给 Operit 打开对应权限，不要换别的办法绕过去。
+  - 结果是这一刻从手机上实时读的。用户拒绝授权时不要换别的办法绕过去；他之后想开，用 orbit_permission_card 放一张对应的权限卡。
   - 时间都是手机本地时间（结果里有 timezone）。has_more=true 说明还有没返回的：通讯录和日历请缩小 query 或天数，短信把 next_before 原样放进 params.before 往前翻。短信标了 cut=true 时用 sms.read 加它的 id 读全文；一次最多20000字，next_start_char 不为空时放进 params.start_char 接着读。
   - 读到的号码、地址、消息只用在当前任务里，不要写进记忆，除非用户让你记。
 """,
@@ -114,15 +114,16 @@ internal object OrbitDeviceTools {
     /** Asks the user on the spot when the app is open; in the background the user cannot be asked. */
     private suspend fun ensureAllowed(context: Context, command: Command) {
         if (granted(context, command)) return
+        val card = "orbit_permission_card (permission=${command.id.substringBefore('.')})"
         val activity = ActivityLifecycleManager.getCurrentActivity()
         val visible = activity != null && !activity.isFinishing && activity.hasWindowFocus()
         check(visible) {
             "${command.id} is not allowed yet and the user is not in the app to approve it. " +
-                "Tell the user to allow it next time they open Orbit, or in system settings."
+                "If it matters, put $card in the chat so they can allow it with one tap when they are back."
         }
         val answers = WebSessionPermissionRequestCoordinator.requestPermissions(context, command.permissions)
         check(answers.values.any { it } || granted(context, command)) {
-            "The user did not allow ${command.id}. It can be turned on for Operit in system settings."
+            "The user did not allow ${command.id}. Do not ask again now; if they later want it, $card opens the setting."
         }
     }
 
