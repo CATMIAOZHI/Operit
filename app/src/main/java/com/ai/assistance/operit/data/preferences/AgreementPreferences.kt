@@ -22,6 +22,9 @@ class AgreementPreferences(context: Context) {
         return prefs.getString(KEY_ACCEPTED_AGREEMENT_VERSION, null) == CURRENT_AGREEMENT_VERSION
     }
 
+    fun hasAcceptedAnyAgreement(): Boolean =
+            !prefs.getString(KEY_ACCEPTED_AGREEMENT_VERSION, null).isNullOrBlank()
+
     /** Records acceptance of the agreement version bundled with this app release. */
     fun acceptCurrentAgreement() {
         prefs.edit()

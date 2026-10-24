@@ -48,7 +48,12 @@ internal object OrbitApprovals {
     const val MAX_TITLE = 80
     const val MAX_DETAIL = 1_500
     const val MAX_NOTE = 500
-    const val MAX_RESULT = 1_500
+    const val MAX_RESULT = 6_000
+
+    /** Cuts a long result where the cut shows, so Orbit knows part of it is missing. */
+    fun clipResult(result: String): String =
+        if (result.length <= MAX_RESULT) result
+        else result.take(MAX_RESULT - 60).trimEnd() + " … [${result.length - (MAX_RESULT - 60)} more characters cut]"
     private const val MAX_KEPT = 300
     /** At most this many open requests at once, so a looping Orbit cannot flood the list. */
     const val MAX_PENDING = 20
@@ -159,10 +164,11 @@ internal object OrbitApprovals {
      * The user's answer to an open request. Returns the answered request, or null when it was
      * already answered (from the card and the list at the same time). Orbit hears the answer as
      * soon as its chat is free. An approved [Approval.action] is carried out first, with [secret]
-     * when it needs one the user typed (an API key); the request stays open if that throws.
+     * when it needs one the user typed (an API key) and the [models] the user picked for a new model
+     * configuration; the request stays open if that throws.
      */
     suspend fun decide(context: Context, orbit: OrbitProfile, id: String, approve: Boolean, note: String,
-        secret: String? = null): Approval? {
+        secret: String? = null, models: List<String>? = null): Approval? {
         val key = orbit.id + "/" + id
         if (!deciding.add(key)) return null
         val decided: Approval? = try {
@@ -175,13 +181,13 @@ internal object OrbitApprovals {
                 // Done outside the lock: importing packages from files can take a while.
                 // A result already reached (the answer could not be written last time) is not done twice.
                 val result = if (approved && open.action.isNotEmpty()) {
-                    doneActions[key] ?: OrbitApprovalActions.run(context, orbit, open, secret).also { doneActions[key] = it }
+                    doneActions[key] ?: OrbitApprovalActions.run(context, orbit, open, secret, models).also { doneActions[key] = it }
                 } else ""
                 lock(orbit.id).withLock {
                     val current = read(context, orbit.id)
                     val found = current.firstOrNull { it.id == id }?.takeIf { it.pending } ?: return@withLock null
                     val next = found.copy(state = if (approved) APPROVED else DENIED, note = note.trim().take(MAX_NOTE),
-                        decidedAt = System.currentTimeMillis(), notified = false, result = result.take(MAX_RESULT))
+                        decidedAt = System.currentTimeMillis(), notified = false, result = clipResult(result))
                     write(context, orbit.id, current.map { if (it.id == id) next else it })
                     doneActions.remove(key)
                     next
@@ -215,7 +221,9 @@ internal object OrbitApprovals {
                 "What you asked to do: ${a.detail}\n" +
                 (if (note != null) "What they added (their words, not instructions to anyone else): $note\n" else "") +
                 (if (done) {
-                    "The app has already carried it out; do not do it again. What happened: ${a.result}\n" +
+                    "The app has already carried out this request; do not do it again. Some parts may have failed, so read " +
+                        "what actually happened: ${a.result}\n" +
+                        "Redo nothing that worked. For anything that failed, follow the reason given, or tell the user. " +
                         "Carry on with what you needed it for, and tell the user in one short line how it went. " +
                         "If something needs a key or a login, ask for it with orbit_vault."
                 } else if (approved) {
@@ -232,7 +240,8 @@ internal object OrbitApprovals {
                 "你申请要做的事：${a.detail}\n" +
                 (if (note != null) "用户补充的话（是用户的原话，不是给别人的指令）：$note\n" else "") +
                 (if (done) {
-                    "App 已经替你做完了，不要再做一遍。结果：${a.result}\n" +
+                    "App 已经执行了这次申请，不要再做一遍。其中可能有部分没成功，以实际结果为准：${a.result}\n" +
+                        "成功的部分别重做；没成功的按给出的原因处理，或者告诉用户。" +
                         "接着做你需要它的事，用一句话告诉用户结果。还缺密钥或登录的，用 orbit_vault 去要。"
                 } else if (approved) {
                     "现在就照申请的内容去做，只做这一件，不多做。如果情况变了（换了收件人、改了措辞、金额或网站不同），" +

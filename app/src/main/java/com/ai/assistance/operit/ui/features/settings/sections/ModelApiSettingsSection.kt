@@ -2087,7 +2087,7 @@ private fun formatCodexResetCountdown(resetAtEpochSeconds: Long, nowEpochSeconds
     return stringResource(R.string.codex_reset_after_clock, hours, minutes)
 }
 
-private fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: android.content.Context): String {
+internal fun getBuiltInProviderDisplayName(provider: ApiProviderType, context: android.content.Context): String {
     return when (provider) {
         ApiProviderType.OPENAI -> context.getString(R.string.provider_openai)
         ApiProviderType.OPENAI_RESPONSES -> context.getString(R.string.provider_openai_responses)

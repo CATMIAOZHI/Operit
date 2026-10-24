@@ -12,6 +12,7 @@ import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.util.LocaleUtils
@@ -23,6 +24,8 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import org.json.JSONObject
 
 /**
  * Permission cards Orbit puts in the chat, so the user turns on what it needs with one tap:
@@ -43,8 +46,10 @@ internal object OrbitPermissionCards {
     const val SMS = "sms"
     const val CONTACTS = "contacts"
     const val CALENDAR = "calendar"
+    const val MICROPHONE = "microphone"
     const val LOCATION = "location"
-    val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, LOCATION)
+    const val GEOFENCE = "geofence"
+    val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, MICROPHONE, LOCATION, GEOFENCE)
     val kinds = setOf(KEEP_ALIVE) + phoneKinds
 
     const val MARKER = "[orbit-permission]"
@@ -57,6 +62,7 @@ internal object OrbitPermissionCards {
     /** The saved list is read and written one at a time. */
     private val fileLock = kotlinx.coroutines.sync.Mutex()
     private val loading = java.util.concurrent.atomic.AtomicBoolean(false)
+    private val grantSending = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
 
     /** Card ids whose "don't remind me" reached Orbit, so every copy of the card shows it at once. */
     private val dismissedFlow = MutableStateFlow<Set<String>?>(null)
@@ -69,14 +75,16 @@ internal object OrbitPermissionCards {
     var lastStatus: OrbitTaskBlock.Status? = null
 
     /** A phone permission as a card shows it: on, and whether the system dialog can still ask for it. */
-    data class PhoneStatus(val on: Boolean, val canAsk: Boolean)
+    data class PhoneStatus(val on: Boolean, val canAsk: Boolean, val location: JSONObject? = null)
 
     /** The last read of each phone permission, for the same reason as [lastStatus]. */
     val lastPhoneStatus = java.util.concurrent.ConcurrentHashMap<String, PhoneStatus>()
 
     /** Reads [permission] now; call it off the main thread. */
     fun phoneStatus(context: Context, permission: String): PhoneStatus =
-        PhoneStatus(isOn(context, permission), canAsk(context, permission)).also { lastPhoneStatus[permission] = it }
+        PhoneStatus(isOn(context, permission), canAsk(context, permission),
+            if (permission == LOCATION || permission == GEOFENCE) locationStatus(context) else null)
+            .also { lastPhoneStatus[permission] = it }
 
     fun titleOf(content: String): String? =
         markerLine.find(content)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
@@ -87,29 +95,57 @@ internal object OrbitPermissionCards {
         SMS -> listOf(Manifest.permission.READ_SMS)
         CONTACTS -> listOf(Manifest.permission.READ_CONTACTS)
         CALENDAR -> listOf(Manifest.permission.READ_CALENDAR)
-        LOCATION -> listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+        MICROPHONE -> listOf(Manifest.permission.RECORD_AUDIO)
+        LOCATION -> listOf(Manifest.permission.ACCESS_COARSE_LOCATION)
+        GEOFENCE -> listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION) +
+            if (Build.VERSION.SDK_INT >= 29) listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION) else emptyList()
         else -> emptyList()
+    }
+
+    /** Foreground precise location must be granted before requesting background access separately. */
+    fun requestPermissions(context: Context, permission: String): List<String> = when {
+        permission != GEOFENCE -> runtimePermissions(permission)
+        !granted(context, Manifest.permission.ACCESS_FINE_LOCATION) ->
+            listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+        Build.VERSION.SDK_INT == 29 && !granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION) ->
+            listOf(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        else -> emptyList() // Android 11+: background location is enabled on the app's system settings page.
     }
 
     private fun granted(context: Context, permission: String) =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    fun locationStatus(context: Context): JSONObject = JSONObject()
+        .put("coarse", granted(context, Manifest.permission.ACCESS_COARSE_LOCATION))
+        .put("fine", granted(context, Manifest.permission.ACCESS_FINE_LOCATION))
+        .put("background", Build.VERSION.SDK_INT < 29 || granted(context, Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        .put("background_required", Build.VERSION.SDK_INT >= 29)
+        .put("location_services", context.getSystemService(android.location.LocationManager::class.java)?.let {
+            androidx.core.location.LocationManagerCompat.isLocationEnabled(it)
+        } ?: false)
 
     /** Whether the phone permission is on now. Reads system settings; call it off the main thread. */
     fun isOn(context: Context, permission: String): Boolean = when (permission) {
         NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled()
         NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
         // The approximate location is enough for Orbit's "where am I".
-        LOCATION -> runtimePermissions(permission).any { granted(context, it) }
+        LOCATION -> granted(context, Manifest.permission.ACCESS_COARSE_LOCATION) || granted(context, Manifest.permission.ACCESS_FINE_LOCATION)
+        GEOFENCE -> OrbitGeofence.permissionProblem(context) == null
         else -> runtimePermissions(permission).let { list -> list.isNotEmpty() && list.all { granted(context, it) } }
     }
 
     /** True when the system dialog can still turn it on; otherwise only the settings screen can. */
     fun canAsk(context: Context, permission: String): Boolean =
-        runtimePermissions(permission).let { list -> list.isNotEmpty() && !list.all { granted(context, it) } }
+        requestPermissions(context, permission).let { list -> list.isNotEmpty() && !list.all { granted(context, it) } }
 
     private fun settingsIntent(context: Context, permission: String): Intent = when (permission) {
         NOTIFY -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         NOTIFICATION_READ -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        GEOFENCE -> locationStatus(context).let { status ->
+            if (status.optBoolean("fine") && status.optBoolean("background") && !status.optBoolean("location_services"))
+                Intent(Settings.ACTION_LOCATION_SOURCE_SETTINGS)
+            else Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+        }
         else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
     }
 
@@ -140,8 +176,61 @@ internal object OrbitPermissionCards {
         SMS -> if (english) "reading SMS" else "读取短信"
         CONTACTS -> if (english) "contacts" else "通讯录"
         CALENDAR -> if (english) "calendar" else "日历"
-        LOCATION -> if (english) "location" else "位置"
+        MICROPHONE -> if (english) "microphone" else "麦克风"
+        LOCATION -> if (english) "current location" else "当前位置"
+        GEOFENCE -> if (english) "precise and background location for geofences" else "围栏所需的精准和后台定位"
         else -> permission
+    }
+
+    /** Called only after a card's recorded off -> on transition; opening settings alone never wakes Orbit. */
+    fun grantedFromCard(context: Context, orbitId: String, chatId: String, permission: String, cardId: String) {
+        if (chatId.isBlank() || !grantSending.add(cardId)) return
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val orbit = OrbitPreferences.getInstance(app).current().orbits
+                    .firstOrNull { it.id == orbitId && !it.deleting && chatId in it.talkChatIds } ?: return@launch
+                suspend fun stillOn() = withContext(Dispatchers.IO) {
+                    if (permission == KEEP_ALIVE) OrbitTaskBlock.status(app).allOn else isOn(app, permission)
+                }
+                if (!stillOn()) return@launch
+                val english = LocaleUtils.usesEnglishPrompt(app)
+                val what = label(english, permission)
+                val notice = if (english) {
+                    "$MARKER Granted: $what\n" +
+                        "The user opened the permission controls from your card and returned. " +
+                        "The app checked again: permission=$permission, status=on, original_chat=$chatId. " +
+                        "It was off before that attempt and is on now. This is not a message typed by the user. " +
+                        "Continue the work in this original chat that needed this permission; recheck any other requirements. " +
+                        "This grants only the permission, not approval for unrelated actions. Do not mention hidden notes."
+                } else {
+                    "$MARKER 已开启：$what\n" +
+                        "用户从你的卡片打开权限设置后回来了，App 已重新核实：" +
+                        "permission=$permission，status=on，原聊天=$chatId；这次操作前未开启，现在已开启。" +
+                        "这不是用户打字发的消息。接着处理原聊天中需要这个权限的事情，其余条件仍要核实。" +
+                        "这只表示权限已开启，不代表同意其他操作。不要提隐藏消息。"
+                }
+                val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
+                while (true) {
+                    val left = deadline - android.os.SystemClock.elapsedRealtime()
+                    if (left <= 0) break
+                    val told = OrbitWake.tell(app, orbit, chatId, notice, left, left,
+                        ready = {
+                            OrbitPreferences.getInstance(app).current().orbits.any {
+                                it.id == orbitId && !it.deleting && chatId in it.talkChatIds
+                            } && stillOn()
+                        }, announce = false)
+                    if (told != OrbitWake.Told.BUSY) break
+                    kotlinx.coroutines.delay(1_500)
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitPermissionCards", "Could not tell Orbit about a granted permission: ${e.message}")
+            } finally {
+                grantSending.remove(cardId)
+            }
+        }
     }
 
     /** Null until read; the first call reads it off the main thread, so a card never waits on the disk. */

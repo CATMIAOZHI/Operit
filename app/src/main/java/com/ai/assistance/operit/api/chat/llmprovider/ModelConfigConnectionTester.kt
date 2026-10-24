@@ -51,6 +51,8 @@ object ModelConfigConnectionTester {
         modelConfigManager: ModelConfigManager,
         config: ModelConfigData,
         requestedModelIndex: Int = 0,
+        /** Only checks that the model answers; skips the tool-call case. */
+        chatOnly: Boolean = false,
         onActiveServiceChanged: (AIService?) -> Unit = {}
     ): ModelConnectionTestReport {
         val actualModelIndex = getValidModelIndex(config.modelName, requestedModelIndex)
@@ -99,7 +101,7 @@ object ModelConfigConnectionTester {
                 ).collect { }
             }
 
-            if (configForTest.enableToolCall) {
+            if (configForTest.enableToolCall && !chatOnly) {
                 runCase(ModelConnectionTestType.TOOL_CALL) {
                     val availableTools =
                         listOf(

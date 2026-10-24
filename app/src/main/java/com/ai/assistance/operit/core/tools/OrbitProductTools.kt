@@ -106,7 +106,7 @@ internal object OrbitProductTools {
                             .put("changed", changed.isNotEmpty()).put("changed_fields", JSONArray(changed))
                     }
                 }
-                else -> error("Unknown action \"${action.orEmpty()}\"; use create, list, detail, update, pause, resume or cancel")
+                else -> error("Unknown action \"${action.orEmpty()}\"; use create, list, detail, step, update, pause, resume or cancel")
             }
         }
         ToolResult(tool.name, true, StringResultData(result.toString()))

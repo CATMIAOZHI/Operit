@@ -293,7 +293,8 @@ internal object OrbitFileTools {
         val charFrom = startChar?.trim()?.takeIf { it.isNotEmpty() }?.let {
             it.toIntOrNull()?.takeIf { n -> n >= 1 } ?: error("start_char must be a whole number from 1; got \"$it\"")
         } ?: 1
-        if (lines.isEmpty()) return ""
+        if (text.isEmpty()) return "[$path exists and is empty: 0 characters, 0 bytes. This is the end of the file.]"
+        if (lines.isEmpty()) return text
         require(from <= lines.size) { "start_line $from is past the end; $path has ${lines.size} lines" }
         val first = lines[from - 1]
         require(charFrom == 1 || charFrom <= first.length) { "start_char $charFrom is past the end of line $from, which has ${first.length} characters" }

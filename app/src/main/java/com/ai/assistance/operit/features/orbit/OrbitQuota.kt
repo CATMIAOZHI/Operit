@@ -240,16 +240,18 @@ object OrbitQuota {
      * old choice, so switching to "starts over with the week" never wipes extra spent in a past week
      * that was already counted as kept.
      */
-    suspend fun setLimits(context: Context, weekly: Long, extra: Long, extraWeekly: Boolean) {
+    /** A null value keeps what is stored, read inside the same edit so parallel changes never undo each other. */
+    suspend fun setLimits(context: Context, weekly: Long? = null, extra: Long? = null, extraWeekly: Boolean? = null) {
         val now = System.currentTimeMillis()
         context.applicationContext.orbitQuotaStore.edit { p ->
-            val s = read(p).at(now)
+            val stored = read(p)
+            val s = stored.at(now)
             p[WEEK_START] = s.weekStart
             p[WEEKLY_USED] = s.weeklyUsed
             p[EXTRA_USED] = s.extraUsed
-            p[WEEKLY_LIMIT] = weekly.coerceIn(MIN_WEEKLY, MAX_LIMIT)
-            p[EXTRA_LIMIT] = extra.coerceIn(0L, MAX_LIMIT)
-            p[EXTRA_WEEKLY] = extraWeekly
+            p[WEEKLY_LIMIT] = (weekly ?: stored.weeklyLimit).coerceIn(MIN_WEEKLY, MAX_LIMIT)
+            p[EXTRA_LIMIT] = (extra ?: stored.extraLimit).coerceIn(0L, MAX_LIMIT)
+            p[EXTRA_WEEKLY] = extraWeekly ?: stored.extraWeekly
         }
     }
 

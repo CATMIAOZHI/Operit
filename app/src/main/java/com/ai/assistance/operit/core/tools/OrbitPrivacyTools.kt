@@ -13,6 +13,7 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.data.preferences.UserProfileDocumentRepository
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
+import com.ai.assistance.operit.features.orbit.OrbitApprovals
 import com.ai.assistance.operit.features.orbit.OrbitForget
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitVault
@@ -68,12 +69,14 @@ internal object OrbitPrivacyTools {
         parametersStructured = listOf(
             ToolParameterSchema("text", description = "准备发出去的完整正文", required = true),
             ToolParameterSchema("recipient", description = "发给谁：名字、邮箱、号码或群名", required = true),
-            ToolParameterSchema("channel", description = "通过什么发：email/sms/wechat/qq/github/other", required = false),
+            ToolParameterSchema("channel", description = "通过什么发：email/sms/wechat/qq/github 或其他具体渠道名；传 approval_id 时必填", required = false),
+            ToolParameterSchema("approval_id", description = "可选：orbit_request_approval 已获批准的编号；申请必须写全本次正文、收件人和渠道，且来自当前聊天。有此参数时 channel 必填", required = false),
         ),
         details = """
   - 每次替用户对外发东西前都先调用。verdict 是 BLOCK 就不要发，按 checks 里的原因处理（改正文、问清收件人、先给用户看草稿）。
-  - 草稿要先原样发给用户看，用户同意后再检查和发送；改过的版本要重新给用户看。
-  - 这个工具不能判断用户的回复是不是同意：approval 永远是 UNVERIFIED。verdict 是 PASS 时，看 user_replies 里用户看过草稿后说的话（按时间排，最后一条最新），以最新的为准：明确同意才发；后面又说“等等”“不要发”、提了修改或含糊其辞都不算。
+  - 草稿要先原样发给用户看，用户同意后再检查和发送；也可用 orbit_request_approval 卡片让用户看完整正文、收件人和渠道，批准后传 approval_id。改过的版本要重新给用户看并同意。
+  - 传 approval_id 时，会核对同一个 Orbit、当前聊天、已批准状态以及正文/收件人/渠道是否一致。approval 为 APPROVED 且 verdict 为 PASS 时，可按卡片批准发送；approval_basis 说明依据。后续普通用户回复仍会返回 user_replies；若用户改口或提出修改，不得发送，应重新申请。
+  - 没传 approval_id 或批准后用户又说了话时，approval 可能是 UNVERIFIED：工具不能替你判断普通文字是否同意。verdict 为 PASS 时仍要读 user_replies（最后一条最新），明确同意才发；后面又说“等等”“不要发”、提了修改或含糊其辞都不算。
   - warnings 不拦截，但要想一想：比如正文里有电话号码、身份证号，确认是用户想发的。
 """,
     )
@@ -192,6 +195,18 @@ internal object OrbitPrivacyTools {
     private val placeholder = Regex("""\[(?:名字|姓名|xx+|todo|tbd|placeholder|insert[^\]]*)\]|\{\{|\}\}|\bTODO\b|\bTBD\b|占位|待填|待补充|XXX|lorem ipsum""", RegexOption.IGNORE_CASE)
     private val secretLike = Regex("""\b(?:sk-[A-Za-z0-9_-]{16,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16})""")
     private val vague = setOf("他", "她", "它", "他们", "她们", "大家", "对方", "那个人", "someone", "them", "him", "her", "they", "everyone")
+    private val stopSending = Regex(
+        """别发|不要发|不发了|先不发|暂不发|取消|等等|等一下|先等等|停下|撤回|改一下|先改|\b(?:cancel|stop|wait|hold on|hold off|do not send|don['’]?t send|not yet)\b""",
+        RegexOption.IGNORE_CASE,
+    )
+    private fun channelNames(channel: String): List<String> = when (channel.lowercase()) {
+        "email" -> listOf("email", "e-mail", "邮件", "邮箱")
+        "sms" -> listOf("sms", "短信")
+        "wechat" -> listOf("wechat", "微信")
+        "qq" -> listOf("qq")
+        "github" -> listOf("github")
+        else -> listOf(channel.lowercase()).filter { it.isNotBlank() && it != "other" }
+    }
     private val privacyPatterns = listOf(
         "phone number" to Regex("""(?<!\d)1[3-9]\d{9}(?!\d)|\+\d{1,3}[ -]?\d{3,4}[ -]?\d{3,4}[ -]?\d{3,4}"""),
         "ID card number" to Regex("""(?<!\d)\d{17}[\dXx](?![\dXx])"""),
@@ -228,6 +243,9 @@ internal object OrbitPrivacyTools {
             val talk = caller?.let { OrbitPreferences.getInstance(context).current().orbitForChat(it) } != null
             val userReplies = JSONArray()
             var repliesCut = false
+            var approval = "UNVERIFIED"
+            var approvalBasis = "A visible reply after the exact draft is required; its meaning must be checked."
+            var approvalNote = ""
             if (talk) {
                 val messages = ChatHistoryManager.getInstance(context).loadChatMessagesDesc(caller!!, 40)
                 // Quote marks, bullets and bold around a draft shown in the chat do not make it a different text.
@@ -236,29 +254,86 @@ internal object OrbitPrivacyTools {
                 val full = plain(text)
                 val probe = full.take(80)
                 fun said(m: com.ai.assistance.operit.data.model.ChatMessage) = plain(ChatUtils.removeThinkingContent(m.content))
-                // The newest draft that starts the same way, and whether it is the whole of this text.
-                val started = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
-                val shown = started?.takeIf { said(it).contains(full) }
-                // Every visible user message since the draft, oldest first: a later "wait, don't" overrides an earlier "ok".
-                val replies = shown?.let { s ->
-                    messages.filter {
-                        it.sender == "user" && it.timestamp > s.timestamp &&
-                            it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL
-                    }.sortedBy { it.timestamp }
-                }.orEmpty()
+                val approvalId = a["approval_id"]?.trim().orEmpty()
+                var since: Long? = null
+                if (approvalId.isNotEmpty()) {
+                    val card = OrbitApprovals.find(context, orbit.id, approvalId)
+                    val approvedHere = card?.kind == OrbitApprovals.REQUEST && card.chatId == caller &&
+                        card.state == OrbitApprovals.APPROVED && card.decidedAt > 0L && card.action.isEmpty()
+                    check("approved card in this chat", approvedHere,
+                        if (approvedHere) "Approval $approvalId belongs to this Orbit and chat and is approved"
+                        else "Use an approved request from this chat for an action Orbit will carry out")
+                    if (approvedHere && card != null) {
+                        val covered = plain(card.title + "\n" + card.detail)
+                        // A channel or recipient mentioned only inside the body is not the delivery target.
+                        val delivery = covered.replace(full, " ")
+                        val rawCovered = OrbitForget.normalize(card.title + "\n" + card.detail)
+                        val recipientCovered = recipient.isNotBlank() &&
+                            Regex("(?<![a-z0-9._%+@-])${Regex.escape(OrbitForget.normalize(recipient))}(?![a-z0-9._%+@-])")
+                                .containsMatchIn(rawCovered) && delivery.contains(plain(recipient))
+                        check("approved text", covered.contains(full),
+                            if (covered.contains(full)) "The approval contains this exact draft"
+                            else "The approval does not contain this complete draft; request approval for the final version")
+                        check("approved recipient", recipientCovered,
+                            if (recipientCovered) "The approval names this recipient"
+                            else "The approval does not name this recipient; ask again")
+                        val channel = a["channel"]?.trim().orEmpty()
+                        val channelCovered = channelNames(channel).any { delivery.contains(it) }
+                        check("approved channel", channelCovered,
+                            if (channelCovered) "The approval names channel $channel"
+                            else "Give a concrete channel and name it explicitly in the approval outside the message body")
+                        val completeHistory = messages.isNotEmpty() &&
+                            (messages.size < 40 || messages.last().timestamp <= card.decidedAt)
+                        check("replies after approval checked", completeHistory,
+                            if (completeHistory) "The recent chat includes the whole period after approval"
+                            else "The approval predates the recent chat window; request fresh approval so later changes cannot be missed")
+                        since = card.decidedAt
+                        approval = "APPROVED"
+                        approvalBasis = "Approval card $approvalId covers this text, recipient and channel in this chat."
+                        approvalNote = card.note
+                        if (approvalNote.isNotBlank()) {
+                            approval = "UNVERIFIED"
+                            approvalBasis = "The card was approved with an extra note; check approval_note for changes or conditions before sending."
+                        }
+                        check("approval note unchanged", !stopSending.containsMatchIn(card.note),
+                            if (stopSending.containsMatchIn(card.note)) "The user's approval note asks to wait, cancel or change it; ask again"
+                            else "The approval note does not ask to stop or change it")
+                    }
+                } else {
+                    // The newest draft that starts the same way, and whether it is the whole of this text.
+                    val started = messages.firstOrNull { it.sender == "ai" && said(it).contains(probe) }
+                    val shown = started?.takeIf { said(it).contains(full) }
+                    since = shown?.timestamp
+                    val answered = shown?.let { draft -> messages.any { it.sender == "user" && it.timestamp > draft.timestamp &&
+                        it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL } } == true
+                    check("draft shown and answered", answered, when {
+                        started == null -> "Show the user this exact text first and wait for their answer"
+                        shown == null -> "The draft you showed is different from this text; show the final version to the user first"
+                        !answered -> "The user has not answered since you showed the draft"
+                        else -> "The user answered after seeing this exact text; read user_replies (the last one is the newest) to decide if it approves"
+                    })
+                }
+                // Hidden approval notices are not ordinary user replies; later visible changes still matter.
+                val replies = since?.let { at -> messages.filter {
+                    it.sender == "user" && it.timestamp > at &&
+                        it.displayMode == com.ai.assistance.operit.data.model.ChatMessageDisplayMode.NORMAL
+                }.sortedBy { it.timestamp } }.orEmpty()
+                if (approvalId.isNotEmpty() && replies.isNotEmpty()) {
+                    check("no later stop or change", replies.none { stopSending.containsMatchIn(it.content) },
+                        if (replies.any { stopSending.containsMatchIn(it.content) }) "The user asked to wait, cancel or change it after approval; ask again"
+                        else "Read user_replies for any later changes before sending")
+                    approval = "UNVERIFIED"
+                    approvalBasis = "A card was approved, but the user spoke afterwards; verify their newest reply still permits this exact message."
+                }
                 repliesCut = replies.size > 5
                 replies.takeLast(5).forEach { m ->
                     val body = m.content.trim()
                     userReplies.put(JSONObject().put("message_id", m.timestamp).put("text", body.take(1000))
                         .apply { if (body.length > 1000) put("cut", true).put("chars", body.length) })
                 }
-                check("draft shown and answered", replies.isNotEmpty(), when {
-                    started == null -> "Show the user this exact text first and wait for their answer"
-                    shown == null -> "The draft you showed is different from this text; show the final version to the user first"
-                    replies.isEmpty() -> "The user has not answered since you showed the draft"
-                    else -> "The user answered after seeing this exact text; read user_replies (the last one is the newest) to decide if it approves"
-                })
             } else {
+                check("approval in a user chat", a["approval_id"].isNullOrBlank(),
+                    "approval_id can only be checked in its original chat with the user")
                 warnings.put("Background run: send only if the task instruction from the user clearly asks for this message")
             }
             val digest = MessageDigest.getInstance("SHA-256").digest("$recipient\n${OrbitForget.normalize(text)}".toByteArray())
@@ -277,13 +352,15 @@ internal object OrbitPrivacyTools {
                     .put("channel", a["channel"].orEmpty().take(20))).takeLast(200)).toString())
             }
             val result = JSONObject().put("verdict", if (blocked) "BLOCK" else "PASS").put("checks", checks).put("warnings", warnings)
-                // The tool can see that the user answered, never whether the answer was a yes.
-                .put("approval", "UNVERIFIED")
+                .put("approval", if (blocked) "UNVERIFIED" else approval).put("approval_basis", approvalBasis)
                 .apply {
+                    if (approvalNote.isNotBlank()) put("approval_note", approvalNote)
                     if (userReplies.length() > 0) put("user_replies", userReplies)
                     if (repliesCut) put("user_replies_note", "Only the 5 newest replies since the draft are shown; read the chat for earlier ones.")
                 }
                 .put("next", if (blocked) "Do not send. Fix what the failed checks say."
+                    else if (approval == "APPROVED") "Send exactly the text to the recipient through the channel covered by the approved card."
+                    else if (approvalNote.isNotBlank()) "Check approval_note and any user_replies: send only if they still clearly allow this exact message, recipient and channel; otherwise ask again."
                     else if (talk) "Send only if the newest of user_replies still clearly approves this text; if any later reply hesitates or says no, do not send and ask again."
                     else "Send only if the user's task instruction clearly asks for this message.")
             ToolResult(PRESEND, true, StringResultData(result.toString()))

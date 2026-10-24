@@ -65,7 +65,11 @@ internal fun approvalIcon(a: OrbitApprovals.Approval?): String = when {
     a.state == OrbitApprovals.APPROVED -> "shield-check"
     a.state == OrbitApprovals.DENIED -> "shield-x"
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.IMPORT_PACKAGES -> "package-plus"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.TOGGLE_PACKAGES -> "package"
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.CREATE_MODEL -> "cpu"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.USE_MODEL -> "cpu"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.INSTALL_COMPONENTS -> "download"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.CHANGE_SETTINGS -> "settings"
     else -> "shield-question"
 }
 
@@ -169,7 +173,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                         val target = a ?: return@Surface
                         val owner = orbit ?: return@Surface
                         // Part of the request is hidden, or a key is to be typed: that is done in the sheet.
-                        if (cut || OrbitApprovalActions.needsSecret(target.action)) { sheet = true; return@Surface }
+                        if (cut || OrbitApprovalActions.needsSecret(target.action) ||
+                            OrbitApprovalActions.picksModels(target.action)) { sheet = true; return@Surface }
                         busy = true
                         scope.launch {
                             val result = runCatching { OrbitApprovals.decide(context, owner, target.id, true, "") }
@@ -237,6 +242,33 @@ internal fun OrbitApprovalSheet(
     val needsKey = approval.pending && OrbitApprovalActions.needsSecret(approval.action)
     var key by remember(approval.id) { mutableStateOf("") }
     var keyVisible by remember(approval.id) { mutableStateOf(false) }
+    // A new model configuration: the user ticks the models from the provider's own list.
+    val modelRequest = remember(approval.id) {
+        if (approval.pending) OrbitApprovalActions.modelRequestOf(approval.action) else null
+    }
+    var modelList by remember(approval.id) { mutableStateOf<ModelListState>(ModelListState.Idle) }
+    var picked by remember(approval.id) { mutableStateOf(modelRequest?.models.orEmpty().toSet()) }
+    // Each fetch is numbered; a result that arrives after the key changed is dropped.
+    val fetchRun = remember(approval.id) { intArrayOf(0) }
+    // A dropped fetch is cancelled; a new one waits until it has really ended (at most the 30 s network limit).
+    var fetchJob by remember(approval.id) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var fetchEnding by remember(approval.id) { mutableStateOf(false) }
+    fun fetchModels() {
+        val m = modelRequest ?: return
+        if (modelList == ModelListState.Loading || fetchEnding) return
+        modelList = ModelListState.Loading
+        val run = ++fetchRun[0]
+        fetchJob = scope.launch {
+            val result = runCatching { OrbitApprovalActions.fetchModels(context, m.provider, m.endpoint, if (needsKey) key else "") }
+            if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) return@launch
+            if (run != fetchRun[0]) return@launch
+            modelList = result.fold({ ModelListState.Loaded(it) }, { ModelListState.Failed })
+        }
+    }
+    androidx.compose.runtime.LaunchedEffect(approval.id) {
+        // Nothing to type first (a local server): fetch the list straight away.
+        if (modelRequest != null && !needsKey) fetchModels()
+    }
     if (needsKey) SecureWindow()
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
@@ -255,7 +287,8 @@ internal fun OrbitApprovalSheet(
         scope.launch {
             val result = runCatching {
                 OrbitApprovals.decide(context, orbit, approval.id, approve, note,
-                    secret = if (approve && needsKey) key else null)
+                    secret = if (approve && needsKey) key else null,
+                    models = if (approve && modelRequest != null) picked.toList() else null)
             }
             busy = false
             if (result.isFailure) {
@@ -342,7 +375,22 @@ internal fun OrbitApprovalSheet(
                 Spacer(Modifier.height(12.dp))
                 Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
                     TextField(
-                        key, { if (it.length <= 4000) key = it }, singleLine = true, enabled = !busy,
+                        key, {
+                            if (it.length <= 4000 && it != key) {
+                                key = it
+                                // Another key may be another account: drop the old list and any fetch still running.
+                                if (modelList != ModelListState.Idle) {
+                                    fetchRun[0]++
+                                    fetchJob?.takeIf { it.isActive }?.let { job ->
+                                        fetchEnding = true
+                                        job.invokeOnCompletion { fetchEnding = false }
+                                        job.cancel()
+                                    }
+                                    modelList = ModelListState.Idle
+                                    picked = modelRequest?.models.orEmpty().toSet()
+                                }
+                            }
+                        }, singleLine = true, enabled = !busy,
                         label = { Text(stringResource(R.string.orbit_vault_api_key)) },
                         visualTransformation = if (keyVisible) androidx.compose.ui.text.input.VisualTransformation.None
                             else androidx.compose.ui.text.input.PasswordVisualTransformation(),
@@ -369,6 +417,22 @@ internal fun OrbitApprovalSheet(
                     Text(stringResource(R.string.orbit_approval_model_key_promise, orbit.name.ifBlank { stringResource(R.string.nav_orbit) }),
                         style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 }
+            }
+            if (modelRequest != null && !declining) {
+                Spacer(Modifier.height(12.dp))
+                OrbitModelPicker(
+                    suggested = modelRequest.models,
+                    // While a dropped fetch is still ending, show it as loading so the hint does not mislead.
+                    state = if (fetchEnding) ModelListState.Loading else modelList,
+                    picked = picked,
+                    canFetch = !needsKey || key.isNotBlank(),
+                    enabled = !busy,
+                    onFetch = ::fetchModels,
+                    onToggle = { name ->
+                        picked = if (name in picked) picked - name
+                        else if (picked.size < OrbitApprovalActions.MAX_PICKED_MODELS) picked + name else picked
+                    },
+                )
             }
             if (approval.pending) {
                 if (declining) {
@@ -401,7 +465,9 @@ internal fun OrbitApprovalSheet(
                     }
                 } else {
                     Button(
-                        onClick = { answer(true) }, enabled = !busy && (!needsKey || key.isNotBlank()), shape = RoundedCornerShape(50),
+                        onClick = { answer(true) },
+                        enabled = !busy && (!needsKey || key.isNotBlank()) && (modelRequest == null || picked.isNotEmpty()),
+                        shape = RoundedCornerShape(50),
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) {
                         if (busy) {

@@ -116,7 +116,7 @@ internal object OrbitProactivityTools {
                     val list = runCatching { JSONArray(raw) }.getOrElse {
                         error("decisions must be a JSON array like [{\"item\":\"id\",\"decision\":\"send\",\"reason\":\"time_sensitive\",\"note\":\"…\"}]")
                     }
-                    require(list.length() in 1..20) { "Give one call per item, at most 20" }
+                    require(list.length() in 1..20) { "Submit 1-20 items in one call, with each item appearing only once" }
                     // Checked in full first, so a mistake in one entry writes nothing.
                     val calls = (0 until list.length()).map { i ->
                         val o = list.optJSONObject(i) ?: error("Entry ${i + 1} is not an object")

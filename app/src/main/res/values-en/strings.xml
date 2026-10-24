@@ -9794,12 +9794,14 @@
     <string name="orbit_approval_import_title">Import tool packages</string>
     <string name="orbit_approval_import_from_app">From the main app:</string>
     <string name="orbit_approval_import_from_files">From files:</string>
+    <string name="orbit_approval_toggle_title">Switch tool packages</string>
+    <string name="orbit_approval_toggle_on">Switch on these packages (including dependencies):</string>
+    <string name="orbit_approval_toggle_off">Switch off these packages:</string>
     <string name="orbit_approval_reason">Why: %1$s</string>
     <string name="orbit_approval_model_title">New model configuration: %1$s</string>
     <string name="orbit_approval_model_name">Name: %1$s</string>
     <string name="orbit_approval_model_provider">Provider: %1$s</string>
     <string name="orbit_approval_model_endpoint">Endpoint: %1$s</string>
-    <string name="orbit_approval_model_models">Models: %1$s</string>
     <string name="orbit_approval_model_use_main">Also make it the main chat model</string>
     <string name="orbit_approval_model_use_assistant">Also make it the assistant model</string>
     <string name="orbit_approval_model_key">You type the API key when you approve</string>

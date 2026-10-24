@@ -22,11 +22,11 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
-/** Muse's credentials.*: the Secure Vault. Orbit never sees a saved value. */
+/** Secure Vault: Orbit never sees a saved value. */
 internal object OrbitVaultTools {
     const val NAME = "orbit_vault"
     private const val MAX_RESPONSE = 20_000
-    /** Like Muse, one card per site in a turn: asking again soon after points back to that card. */
+    /** One card per site in a turn: asking again soon after points back to that card. */
     private const val CARD_REPEAT_MS = 5 * 60_000L
     private val sentCards = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -38,7 +38,7 @@ internal object OrbitVaultTools {
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
             ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather", required = false),
-            ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。API 密钥给了 env_name 或 package_name 时可以不填", required = false),
+            ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。终端密钥给了 env_name 时可不填；工具包密钥给了 package_name 时禁止填", required = false),
             ToolParameterSchema("authorization_url", description = "request_oauth：服务商官方 https 授权地址，可含 access_type 等公开参数", required = false),
             ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址", required = false),
             ToolParameterSchema("client_id", description = "request_oauth：已注册的公开客户端 ID；回调 URI 必须登记为 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2", required = false),
@@ -47,8 +47,8 @@ internal object OrbitVaultTools {
             ToolParameterSchema("client_auth", description = "request_oauth：只支持 none（默认）。需要 client_secret 的服务不支持，改用 request_api_key，绝不向用户要 client_secret", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
             ToolParameterSchema("package_name", description = "request_api_key：可选，要这把密钥的工具包名（比如 tavily）。给了它就必须给 env_name，填这个包要的环境变量名；密钥只交给这个包，不进终端", required = false),
-            ToolParameterSchema("env_name", description = "request_api_key / request_update：可选，代理做不到时（要签名、SDK、多把密钥、脚本登录）请求载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许。配 package_name 时是那个工具包读的环境变量名", required = false),
-            ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填；request_update：可选。一句话告诉用户为什么需要在终端里用", required = false),
+            ToolParameterSchema("env_name", description = "request_api_key / request_update：可选，代理做不到时（要签名、SDK、多把密钥、脚本登录）请求载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许。配 package_name 时必填，是该工具包读的变量名，不授予终端访问，也不需要 env_reason", required = false),
+            ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 且没有 package_name 时必填；工具包密钥不需要。request_update：可选。一句话告诉用户为什么需要在终端里用", required = false),
             ToolParameterSchema("domain", description = "list：可选，只列这个网站的", required = false),
             ToolParameterSchema("credential_id", description = "request_update/fill/http_request/terminal/env/delete：保险箱条目编号（来自 list）", required = false),
             ToolParameterSchema("field", description = "fill：username 或 password", required = false),
@@ -62,10 +62,10 @@ internal object OrbitVaultTools {
         details = """
   - 需要登录或 API 密钥时，先 list 看有没有存过；没有就用 request_login / request_api_key。要注册新账号或重设密码时用 request_new_password，用户在卡片里设一个新密码（输两遍，也可以一键生成）。这会立刻在聊天里放一张安全卡片，然后马上返回，不会等用户。用户点卡片、在弹出的输入框里填，值直接存进保险箱，不经过聊天。只能在和用户的聊天里用。
   - 放完卡片就结束这一轮，可以简单说一句“卡片在下面，填好我接着弄”。用户保存后你会收到一条隐藏通知，再接着做；用户不填或关掉卡片，你什么都不会收到，不要追问，也不要为同一个网站再放一张卡（再要会返回 already_sent，指向已经放的那张）。
-  - request_api_key 之前，先从服务商的官方文档查清两件事：认证方式和 API 主机名（api_hosts），再定 placement。卡片建好后 placement 改不了，填错只能重新放一张让用户再填。保存时不会检查密钥对不对，第一次真实调用才知道；返回 401/403 时先查请求有没有带上密钥、placement 对不对，再怀疑密钥本身。
+  - request_api_key 之前，先从服务商的官方文档查清认证方式。走 http_request/terminal 代理时还要查清 API 主机名（api_hosts），再定 placement。工具包密钥不能传 api_hosts，按工具包要求填写 env_name。卡片建好后 placement 改不了，填错只能重新放一张让用户再填。保存时不会检查密钥对不对，第一次真实调用才知道；返回 401/403 时先查请求有没有带上密钥、placement 对不对，再怀疑密钥本身。
   - OAuth 用 request_oauth：先查服务商官方文档，确认公开客户端支持授权码 + PKCE S256、不需要 client_secret，并允许登记回调 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2。传 provider、authorization_url、token_url、client_id、scope、api_hosts。卡片马上返回，用户在系统浏览器授权，token 由 App 直接存保险箱，成功后收到隐藏通知；取消不通知。用 http_request 调 API，过期且有 refresh_token 时 App 自动刷新。OAuth 暂不支持 terminal/env。不能保证每家服务都支持；要 client_secret、device flow 或不接受此回调的服务，明确说明做不了，改用 request_api_key。不要索要或伪造客户端密钥，也不要在 Orbit 浏览器里走 OAuth。
   - 已经存过的密码或 API 密钥要改（用户换了密码、密钥过期、要允许或不再允许在终端里用）：用 request_update 加 credential_id，在聊天里放一张更新卡片。用户可以换新值（留空就不换）、改登录的用户名，也可以打开或关掉“允许在终端使用”。想在终端用时可以带 env_name 和 env_reason；不带的话沿用原来的变量名，没有就自动起一个。保存后你会收到隐藏通知，说明改了什么、变量名是什么。OAuth 登录不能更新，要重连就用 request_oauth。
-  - 不支持的认证方式要直说并讲原因，不要硬套最接近的一种：需要签名的请求（如 AWS 签名）、一次要多个密钥、用账号密码做 API 认证。
+  - http_request/terminal 代理不支持签名认证（如 AWS 签名）、一次使用多个密钥或用账号密码做 API 认证；不要硬套最接近的一种。用户通过卡片允许 env 后，可以用脚本/SDK 完成这些认证。
   - 要签名的请求（阿里云、AWS）、只认环境变量的 SDK、一次要两把密钥（每把各放一张卡）这类代理做不到的情况，可以在 request_api_key 里加 env_name 和 env_reason，请用户允许把密钥载入终端。用户打开了开关，保存后才能用 env；没打开就只能走代理，或者直说做不到。能用代理时不要要 env_name。
   - 绝不要让用户把密码、密钥、验证码发在聊天里。用户主动发了，也不要复述、不要存进记忆或文件。
   - 登录：先用浏览器打开该网站的登录页、拿快照，再用 fill 把用户名或密码填进对应输入框。只能填到同一网站的 https 页面。
@@ -73,7 +73,7 @@ internal object OrbitVaultTools {
   - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置：Authorization 头、Basic 认证的“用户名:密钥”（比如 curl -u 'api:<替身值>'）、自定义头、查询参数或网址路径（比如 Telegram 的 /bot<替身值>/sendMessage），再把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
   - 用户允许载入终端的密钥或密码（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读取。登录密码还会把用户名载入成 <env_name>_USERNAME。不要 echo、打印、写进文件或记忆，也不要把值放进命令行参数；工具输出里出现会被打码。值更新后旧命令会失效，再调一次 env。
   - 汇报时只说用没用成，不要说出任何保存的值。
-  - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
+  - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名，不传 api_hosts，不需要 env_reason。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
   - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
 """,
     )
@@ -279,7 +279,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, request_update, list, fill, http_request, terminal, env or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, request_update, request_chatgpt_login, list, fill, http_request, terminal, env or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {

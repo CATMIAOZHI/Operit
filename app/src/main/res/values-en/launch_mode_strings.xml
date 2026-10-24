@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="launch_mode_setting_title">Default screen when opening the app</string>
+    <string name="launch_mode_setting_orbit">Orbit mode · Turn off for standard mode</string>
+    <string name="launch_mode_setting_standard">Standard mode · Turn on for Orbit mode</string>
+    <string name="launch_mode_choose_title">Choose your mode</string>
+    <string name="launch_mode_choose_note">You can change this later in settings.</string>
+    <string name="launch_mode_orbit_recommended">Orbit (recommended)</string>
+    <string name="launch_mode_standard">Standard mode</string>
+    <string name="launch_mode_orbit_description">Your personal AI assistant. Get things done and set up the app through chat.</string>
+    <string name="launch_mode_standard_description">All Operit features, with manual setup.</string>
+    <string name="launch_mode_continue">Continue</string>
+    <string name="launch_mode_save_failed">Could not save your settings. Please try again.</string>
+</resources>
