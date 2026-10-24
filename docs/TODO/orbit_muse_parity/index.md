@@ -57,7 +57,7 @@ status: in-progress
 | 后台并行浏览器 | 每个子代理有自己的浏览器页，最多同时 3 个任务、每个任务最多 2 页；每个任务一张卡片，可查看、接管、停止，结束自动回收，结果走子代理通道回到主聊天 [DONE batch8] |
 | OAuth 登录卡 | `orbit_vault` 的 `request_oauth`：聊天里放登录卡，PKCE + 一次性 state，令牌加密存进保险箱，`http_request` 只发往登记主机并自动刷新；只支持公开客户端 [DONE batch8，待真实服务验证] |
 | 从主聊天分出侧聊 | 长按消息「从这里分出侧聊」或 `orbit_chat` 的 fork；侧聊只记来源位置，按需带入最多 6 条原话，不复制历史；来源条点一下跳回原消息 [DONE batch8] |
-| 保活引导和受阻提醒 | 起名之后 Orbit 用自己的口吻提一次后台保活；任务被系统拦下不再弹通知，用户回到 Operit 时给 Orbit 一条隐藏消息，由它按 PROACTIVE_PREFERENCES.md 决定说不说；`orbit_permission_card` 放保活权限卡（后台保活、忽略电池优化、以后别提醒），「别提醒」由 Orbit 写进偏好文件 [DONE batch8] |
+| 保活引导和受阻提醒 | 起名之后 Orbit 用自己的口吻提一次后台保活；任务被系统拦下不再弹通知，用户回到 Operit 时给 Orbit 一条隐藏消息，由它按 PROACTIVE_PREFERENCES.md 决定说不说；`orbit_permission_card` 放保活权限卡（后台保活、忽略电池优化、以后别提醒），「别提醒」由 Orbit 写进偏好文件 [DONE batch8]；权限卡又加了发送通知、读取通知、短信、通讯录、日历、位置，能弹系统授权框的先弹，弹不了的跳设置页 [DONE] |
 | 待审批 / 等待中的任务 | `orbit_task` 的 `pending`：等用户答复、等核实、失败后停下的任务 [DONE batch3a] |
 | 目标简报和进展记录 | `orbit_goal_note`：log 记进展，后台「目标简报」任务每天早上给每个进行中的目标写一封简报，显示在目标页；没有进行中的目标时自动跳过 [DONE batch3b] |
 | 后台自我提升 | 任务列表里的「夜间自我整理」：有新对话的夜里整理记忆、人物笔记、经验本、对齐总结，检查技能，合适时提点子；对话没变就不唤醒模型 [DONE batch3b] |

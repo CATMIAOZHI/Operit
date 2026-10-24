@@ -1,11 +1,15 @@
 package com.ai.assistance.operit.features.orbit
 
+import android.Manifest
 import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import android.provider.Settings
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.ContextCompat
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.OrbitProfile
@@ -21,9 +25,11 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Permission cards Orbit puts in the chat, so the user turns on what it needs with one tap. Only
- * keep-alive for now (Operit's background keep-alive and the battery-optimization exemption); more
- * kinds (notifications, SMS, calendar) can follow the same card.
+ * Permission cards Orbit puts in the chat, so the user turns on what it needs with one tap:
+ * keep-alive (Operit's background keep-alive and the battery-optimization exemption), and one card
+ * per phone permission in [phoneKinds] (sending and reading notifications, SMS, contacts, calendar,
+ * location). A new phone permission only needs its entry in [runtimePermissions], [isOn],
+ * [settingsIntent] and [label].
  *
  * "Don't remind me" is not kept as a switch the app obeys: it is told to Orbit, which writes it into
  * PROACTIVE_PREFERENCES.md and decides from there. The card only remembers that the note reached
@@ -32,7 +38,14 @@ import kotlinx.coroutines.sync.withLock
  */
 internal object OrbitPermissionCards {
     const val KEEP_ALIVE = "keep_alive"
-    val kinds = setOf(KEEP_ALIVE)
+    const val NOTIFY = "notify"
+    const val NOTIFICATION_READ = "notification_read"
+    const val SMS = "sms"
+    const val CONTACTS = "contacts"
+    const val CALENDAR = "calendar"
+    const val LOCATION = "location"
+    val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, LOCATION)
+    val kinds = setOf(KEEP_ALIVE) + phoneKinds
 
     const val MARKER = "[orbit-permission]"
     private val markerLine = Regex(Regex.escape(MARKER) + "[ \\t]*([^\\n]+)")
@@ -55,8 +68,81 @@ internal object OrbitPermissionCards {
     @Volatile
     var lastStatus: OrbitTaskBlock.Status? = null
 
+    /** A phone permission as a card shows it: on, and whether the system dialog can still ask for it. */
+    data class PhoneStatus(val on: Boolean, val canAsk: Boolean)
+
+    /** The last read of each phone permission, for the same reason as [lastStatus]. */
+    val lastPhoneStatus = java.util.concurrent.ConcurrentHashMap<String, PhoneStatus>()
+
+    /** Reads [permission] now; call it off the main thread. */
+    fun phoneStatus(context: Context, permission: String): PhoneStatus =
+        PhoneStatus(isOn(context, permission), canAsk(context, permission)).also { lastPhoneStatus[permission] = it }
+
     fun titleOf(content: String): String? =
         markerLine.find(content)?.groupValues?.get(1)?.trim()?.takeIf { it.isNotEmpty() }
+
+    /** The system permissions a phone card asks for in a dialog; empty when only a settings screen can turn it on. */
+    fun runtimePermissions(permission: String): List<String> = when (permission) {
+        NOTIFY -> if (Build.VERSION.SDK_INT >= 33) listOf(Manifest.permission.POST_NOTIFICATIONS) else emptyList()
+        SMS -> listOf(Manifest.permission.READ_SMS)
+        CONTACTS -> listOf(Manifest.permission.READ_CONTACTS)
+        CALENDAR -> listOf(Manifest.permission.READ_CALENDAR)
+        LOCATION -> listOf(Manifest.permission.ACCESS_COARSE_LOCATION, Manifest.permission.ACCESS_FINE_LOCATION)
+        else -> emptyList()
+    }
+
+    private fun granted(context: Context, permission: String) =
+        ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
+
+    /** Whether the phone permission is on now. Reads system settings; call it off the main thread. */
+    fun isOn(context: Context, permission: String): Boolean = when (permission) {
+        NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled()
+        NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
+        // The approximate location is enough for Orbit's "where am I".
+        LOCATION -> runtimePermissions(permission).any { granted(context, it) }
+        else -> runtimePermissions(permission).let { list -> list.isNotEmpty() && list.all { granted(context, it) } }
+    }
+
+    /** True when the system dialog can still turn it on; otherwise only the settings screen can. */
+    fun canAsk(context: Context, permission: String): Boolean =
+        runtimePermissions(permission).let { list -> list.isNotEmpty() && !list.all { granted(context, it) } }
+
+    private fun settingsIntent(context: Context, permission: String): Intent = when (permission) {
+        NOTIFY -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        NOTIFICATION_READ -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        else -> Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}"))
+    }
+
+    /** Opens the system screen that turns [permission] on; false when no screen could open. */
+    fun openSettings(context: Context, permission: String): Boolean {
+        val tries = listOf(
+            settingsIntent(context, permission),
+            Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:${context.packageName}")),
+        )
+        for (intent in tries) {
+            try {
+                context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (e: ActivityNotFoundException) {
+                continue
+            } catch (e: SecurityException) {
+                continue
+            }
+        }
+        return false
+    }
+
+    /** What the card turns on, in a few words, for Orbit's notes and reply quotes. */
+    fun label(english: Boolean, permission: String): String = when (permission) {
+        KEEP_ALIVE -> if (english) "background keep-alive" else "后台保活"
+        NOTIFY -> if (english) "sending notifications" else "发送通知"
+        NOTIFICATION_READ -> if (english) "reading notifications" else "读取通知"
+        SMS -> if (english) "reading SMS" else "读取短信"
+        CONTACTS -> if (english) "contacts" else "通讯录"
+        CALENDAR -> if (english) "calendar" else "日历"
+        LOCATION -> if (english) "location" else "位置"
+        else -> permission
+    }
 
     /** Null until read; the first call reads it off the main thread, so a card never waits on the disk. */
     fun dismissed(context: Context): StateFlow<Set<String>?> {
@@ -145,21 +231,22 @@ internal object OrbitPermissionCards {
     }
 
     fun dismissNotice(english: Boolean, permission: String): String {
-        val what = if (permission == KEEP_ALIVE) {
-            if (english) "background keep-alive" else "后台保活"
-        } else permission
+        val what = label(english, permission)
+        val held = permission == KEEP_ALIVE
         return if (english) {
             "$MARKER No more $what reminders\n" +
                 "The user tapped \"Don't remind me\" on the $what card. This is not a message from the user; they typed " +
                 "nothing here and cannot see this note.\n" +
                 "Write into the \"Never tell me about\" section of PROACTIVE_PREFERENCES.md that they do not want reminders " +
-                "about $what or about tasks held back for it, changing only that section. Do not offer the card again unless they ask. " +
+                "about $what" + (if (held) " or about tasks held back for it" else "") +
+                ", changing only that section. Do not offer the card again unless they ask. " +
                 "Then reply with one short, light line, or call ${OrbitReactionNotice.NOTHING_TO_DO} if nothing needs saying. " +
                 "Do not mention hidden notes."
         } else {
             "$MARKER 不再提醒$what\n" +
                 "用户在「$what」卡片上点了「以后别提醒」。这不是用户发的消息，用户没有在这里打字，也看不到这段话。\n" +
-                "把“不想再收到关于$what、以及因此被延后的任务的提醒”写进 PROACTIVE_PREFERENCES.md 的「别跟我说」，只改这一节。" +
+                "把“不想再收到关于$what" + (if (held) "、以及因此被延后的任务" else "") +
+                "的提醒”写进 PROACTIVE_PREFERENCES.md 的「别跟我说」，只改这一节。" +
                 "除非用户自己问，不要再放这张卡。然后轻松地回一句短话，没什么要说就调用 ${OrbitReactionNotice.NOTHING_TO_DO}。" +
                 "不要提“隐藏消息”这些内部说法。"
         }

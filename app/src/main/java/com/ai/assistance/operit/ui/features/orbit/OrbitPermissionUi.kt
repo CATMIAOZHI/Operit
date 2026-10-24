@@ -1,6 +1,11 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import android.app.Activity
+import android.content.Context
+import android.content.ContextWrapper
 import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,6 +34,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,6 +43,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.core.app.ActivityCompat
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
@@ -44,32 +51,30 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.orbit.OrbitPermissionCards
 import com.ai.assistance.operit.features.orbit.OrbitTaskBlock
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
  * A permission card in the chat ([OrbitPermissionCards]): each setting Orbit needs, with its own
  * button while it is off, and "Don't remind me". The settings are read again whenever the user comes
- * back to Operit, so a setting turned on in the system screen shows as on.
+ * back to Operit, so a setting turned on in the system screen shows as on. Keep-alive has two
+ * settings; every other kind is one phone permission.
  */
 @Composable
 internal fun OrbitPermissionCard(card: JSONObject) {
     val context = LocalContext.current
-    val colors = MaterialTheme.colorScheme
     val orbitId = card.optString("orbit_id")
     val cardId = card.optString("card_id")
     val permission = card.optString("permission")
-    if (orbitId.isBlank() || cardId.isBlank() || permission != OrbitPermissionCards.KEEP_ALIVE) return
+    if (orbitId.isBlank() || cardId.isBlank() || permission !in OrbitPermissionCards.kinds) return
     val orbitFlow = remember(orbitId) {
         OrbitPreferences.getInstance(context).settingsFlow.map { s -> s.orbits.firstOrNull { it.id == orbitId } }
     }
     val orbit = orbitFlow.collectAsState(initial = null).value
     val name = orbit?.name.orEmpty().ifBlank { stringResource(R.string.nav_orbit) }
-    val dismissedIds by OrbitPermissionCards.dismissed(context).collectAsState()
-    val dismissed = dismissedIds.orEmpty().contains(cardId)
-    val sendingIds by OrbitPermissionCards.sending.collectAsState()
-    val sending = cardId in sendingIds
     var tick by remember { mutableIntStateOf(0) }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
@@ -77,6 +82,25 @@ internal fun OrbitPermissionCard(card: JSONObject) {
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
+    val onDismiss = {
+        orbit?.let { OrbitPermissionCards.dismiss(context, it, card.optString("chat_id"), permission, cardId) }
+        Unit
+    }
+    Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
+        val on = if (permission == OrbitPermissionCards.KEEP_ALIVE) {
+            KeepAliveBody(name, tick, onRefresh = { tick++ })
+        } else {
+            PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ })
+        }
+        if (!on) DismissFooter(cardId, name, enabled = orbit != null, onDismiss)
+    }
+}
+
+/** Background keep-alive and the battery exemption; returns whether both are on. */
+@Composable
+private fun KeepAliveBody(name: String, tick: Int, onRefresh: () -> Unit): Boolean {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
     val status by produceState(OrbitPermissionCards.lastStatus, tick) {
         val read = runCatching { OrbitTaskBlock.status(context) }.getOrNull()
         if (read != null) OrbitPermissionCards.lastStatus = read
@@ -86,76 +110,175 @@ internal fun OrbitPermissionCard(card: JSONObject) {
     var busy by remember { mutableStateOf(false) }
     val s = status
     val allOn = s?.allOn == true
-    Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Surface(shape = RoundedCornerShape(14.dp), color = colors.surface, modifier = Modifier.size(52.dp)) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(orbitIcon("battery-charging"), null, Modifier.size(26.dp), tint = colors.onSurface)
+    CardHeader("battery-charging", stringResource(R.string.orbit_permission_keep_alive_title, name),
+        stringResource(if (allOn) R.string.orbit_permission_all_on else R.string.orbit_permission_keep_alive_sub))
+    Spacer(Modifier.height(14.dp))
+    PermissionRow(
+        label = stringResource(R.string.enable_background_keep_alive),
+        on = s?.keepAlive,
+        action = stringResource(R.string.orbit_permission_turn_on),
+        enabled = !busy,
+    ) {
+        busy = true
+        scope.launch {
+            runCatching { OrbitPermissionCards.enableKeepAlive(context) }
+                .onFailure { Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show() }
+            busy = false
+            onRefresh()
+        }
+    }
+    Spacer(Modifier.height(8.dp))
+    PermissionRow(
+        label = stringResource(R.string.orbit_permission_battery),
+        on = s?.battery,
+        action = stringResource(R.string.orbit_permission_allow),
+        enabled = true,
+    ) {
+        if (!OrbitPermissionCards.openBatteryExemption(context)) {
+            Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+    return allOn
+}
+
+private class PhoneLook(val icon: String, val title: Int, val note: Int)
+
+private fun phoneLook(permission: String) = when (permission) {
+    OrbitPermissionCards.NOTIFY -> PhoneLook("bell", R.string.orbit_phone_notify, R.string.orbit_phone_notify_note)
+    OrbitPermissionCards.NOTIFICATION_READ ->
+        PhoneLook("bell-ring", R.string.orbit_phone_notification_read, R.string.orbit_phone_notification_read_note)
+    OrbitPermissionCards.SMS -> PhoneLook("message-square", R.string.orbit_phone_sms, R.string.orbit_phone_sms_note)
+    OrbitPermissionCards.CONTACTS -> PhoneLook("contact", R.string.orbit_phone_contacts, R.string.orbit_phone_contacts_note)
+    OrbitPermissionCards.CALENDAR -> PhoneLook("calendar-days", R.string.orbit_phone_calendar, R.string.orbit_phone_calendar_note)
+    else -> PhoneLook("map-pin", R.string.orbit_phone_location, R.string.orbit_phone_location_note)
+}
+
+/**
+ * One phone permission. The button asks in the system dialog while it can; once the system stops
+ * showing the dialog (denied for good, or a kind only a settings screen turns on) it opens settings.
+ * Returns whether the permission is on.
+ */
+@Composable
+private fun PhoneBody(permission: String, cardId: String, name: String, tick: Int, onRefresh: () -> Unit): Boolean {
+    val context = LocalContext.current
+    val look = phoneLook(permission)
+    val activity = remember(context) { context.findActivity() }
+    val status by produceState(OrbitPermissionCards.lastPhoneStatus[permission], permission, tick) {
+        value = withContext(Dispatchers.IO) {
+            runCatching { OrbitPermissionCards.phoneStatus(context.applicationContext, permission) }.getOrNull()
+        } ?: value
+    }
+    // Denied with "don't ask again": the system no longer shows the dialog, so the button opens settings.
+    var settingsOnly by rememberSaveable(cardId) { mutableStateOf(false) }
+    var asking by remember { mutableStateOf(false) }
+    // Whether the system would explain the request before asking; with the answer after, this tells
+    // a refusal with no dialog (refused for good earlier) from the user denying in the dialog now.
+    var rationaleBefore by rememberSaveable(cardId) { mutableStateOf(false) }
+    val title = stringResource(look.title)
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
+        asking = false
+        // On as a whole (location with only the approximate one is enough): nothing more to do.
+        val nowOn = runCatching { OrbitPermissionCards.isOn(context, permission) }.getOrDefault(false)
+        val rationaleAfter = activity != null && OrbitPermissionCards.runtimePermissions(permission)
+            .any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
+        if (!nowOn && grants.isNotEmpty() && activity != null && !rationaleAfter) {
+            settingsOnly = true
+            if (!rationaleBefore) {
+                // Neither before nor after: the system answered without a dialog, because it was refused
+                // for good earlier (here, in the device tool or on the settings page). Go on to settings
+                // in the same tap and say what to turn on there.
+                if (OrbitPermissionCards.openSettings(context, permission)) {
+                    Toast.makeText(context, context.getString(R.string.orbit_permission_in_settings, title),
+                        Toast.LENGTH_LONG).show()
+                } else {
+                    Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
                 }
             }
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(stringResource(R.string.orbit_permission_keep_alive_title, name),
-                    style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
-                Text(
-                    stringResource(if (allOn) R.string.orbit_permission_all_on else R.string.orbit_permission_keep_alive_sub),
-                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                )
-            }
         }
-        Spacer(Modifier.height(14.dp))
-        PermissionRow(
-            label = stringResource(R.string.enable_background_keep_alive),
-            on = s?.keepAlive,
-            action = stringResource(R.string.orbit_permission_turn_on),
-            enabled = !busy,
-        ) {
-            busy = true
-            scope.launch {
-                runCatching { OrbitPermissionCards.enableKeepAlive(context) }
-                    .onFailure { Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show() }
-                busy = false
-                tick++
-            }
-        }
-        Spacer(Modifier.height(8.dp))
-        PermissionRow(
-            label = stringResource(R.string.orbit_permission_battery),
-            on = s?.battery,
-            action = stringResource(R.string.orbit_permission_allow),
-            enabled = true,
-        ) {
-            if (!OrbitPermissionCards.openBatteryExemption(context)) {
+        onRefresh()
+    }
+    val s = status
+    val on = s?.on == true
+    val viaSettings = settingsOnly || activity == null || s?.canAsk == false
+    CardHeader(look.icon, stringResource(R.string.orbit_permission_phone_title, name, title),
+        if (on) stringResource(R.string.orbit_permission_phone_on, name) else stringResource(look.note),
+        subMaxLines = Int.MAX_VALUE)
+    Spacer(Modifier.height(14.dp))
+    PermissionRow(
+        label = title,
+        on = s?.on,
+        action = stringResource(if (viaSettings) R.string.orbit_permission_open_settings else R.string.orbit_permission_turn_on),
+        enabled = !asking,
+    ) {
+        val asked = !viaSettings && runCatching {
+            asking = true
+            val wanted = OrbitPermissionCards.runtimePermissions(permission)
+            rationaleBefore = activity != null && wanted.any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
+            launcher.launch(wanted.toTypedArray())
+        }.isSuccess
+        if (!asked) {
+            asking = false
+            if (!OrbitPermissionCards.openSettings(context, permission)) {
                 Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
             }
         }
-        if (!allOn) {
-            Spacer(Modifier.height(6.dp))
-            if (dismissed || sending) {
-                Text(stringResource(if (dismissed) R.string.orbit_permission_dismissed else R.string.orbit_permission_dismissing, name),
-                    style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 10.dp),
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center)
-            } else {
-                Surface(
-                    onClick = {
-                        val owner = orbit ?: return@Surface
-                        OrbitPermissionCards.dismiss(context, owner, card.optString("chat_id"), permission, cardId)
-                    },
-                    enabled = orbit != null,
-                    shape = RoundedCornerShape(50),
-                    color = androidx.compose.ui.graphics.Color.Transparent,
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
-                ) {
-                    Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.orbit_permission_dont_remind),
-                            style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
-                    }
-                }
+    }
+    return on
+}
+
+@Composable
+private fun CardHeader(icon: String, title: String, sub: String, subMaxLines: Int = 2) {
+    val colors = MaterialTheme.colorScheme
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Surface(shape = RoundedCornerShape(14.dp), color = colors.surface, modifier = Modifier.size(52.dp)) {
+            Box(contentAlignment = Alignment.Center) {
+                Icon(orbitIcon(icon), null, Modifier.size(26.dp), tint = colors.onSurface)
+            }
+        }
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            Text(sub, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
+                maxLines = subMaxLines, overflow = TextOverflow.Ellipsis)
+        }
+    }
+}
+
+/** "Don't remind me", or what happened to it, while the card still has something off. */
+@Composable
+private fun DismissFooter(cardId: String, name: String, enabled: Boolean, onDismiss: () -> Unit) {
+    val context = LocalContext.current
+    val colors = MaterialTheme.colorScheme
+    val dismissedIds by OrbitPermissionCards.dismissed(context).collectAsState()
+    val dismissed = dismissedIds.orEmpty().contains(cardId)
+    val sendingIds by OrbitPermissionCards.sending.collectAsState()
+    val sending = cardId in sendingIds
+    Spacer(Modifier.height(6.dp))
+    if (dismissed || sending) {
+        Text(stringResource(if (dismissed) R.string.orbit_permission_dismissed else R.string.orbit_permission_dismissing, name),
+            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp).padding(vertical = 10.dp),
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center)
+    } else {
+        Surface(
+            onClick = onDismiss,
+            enabled = enabled,
+            shape = RoundedCornerShape(50),
+            color = androidx.compose.ui.graphics.Color.Transparent,
+            modifier = Modifier.fillMaxWidth().heightIn(min = 40.dp),
+        ) {
+            Box(Modifier.padding(vertical = 8.dp), contentAlignment = Alignment.Center) {
+                Text(stringResource(R.string.orbit_permission_dont_remind),
+                    style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant)
             }
         }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> if (baseContext === this) null else baseContext.findActivity()
+    else -> null
 }
 
 /** One setting: its name, and a button while it is off. [on] null while it is being read. */

@@ -41,7 +41,8 @@ internal object OrbitChatCards {
         val (what, title) = when (o?.optString("kind")) {
             APPROVAL -> (if (english) "Approval card" else "批准卡片") to field("title")
             PERMISSION -> (if (english) "Permission card" else "权限卡片") to
-                (if (o?.optString("permission") == OrbitPermissionCards.KEEP_ALIVE) (if (english) "background keep-alive" else "后台保活") else "")
+                (o?.optString("permission")?.takeIf { it in OrbitPermissionCards.kinds }
+                    ?.let { OrbitPermissionCards.label(english, it) }.orEmpty())
             VAULT_LOGIN -> (if (english) "Vault login card" else "登录保险箱卡片") to field("site")
             VAULT_KEY -> (if (english) "API key card" else "API 密钥卡片") to field("site")
             VAULT_OAUTH -> (if (english) "OAuth login card" else "OAuth 登录卡片") to field("site")

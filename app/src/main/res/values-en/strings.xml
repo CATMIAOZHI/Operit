@@ -9483,6 +9483,10 @@
     <string name="orbit_permission_dismissed">Told %1$s not to remind you again</string>
     <string name="orbit_permission_dismissing">Telling %1$s…</string>
     <string name="orbit_permission_failed">Could not open it; please allow it in system settings</string>
+    <string name="orbit_permission_phone_title">%2$s for %1$s</string>
+    <string name="orbit_permission_phone_on">On; %1$s can use it now</string>
+    <string name="orbit_permission_open_settings">Open settings</string>
+    <string name="orbit_permission_in_settings">Android no longer asks for this; turn on %1$s here</string>
     <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>
     <string name="orbit_task_timeout_hours">Each run can take up to %1$d hours</string>
     <string name="orbit_execution_record">View execution record</string>
