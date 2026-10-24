@@ -33,7 +33,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("interval_minutes", "integer", "检查间隔，15到10080分钟，默认60", false),
             ToolParameterSchema("notify_policy", description = "CHANGES 仅有价值变化时通知，ALWAYS 每次汇报，DIGEST 每日汇总有价值的结果", required = false),
             ToolParameterSchema("use_subagent", "boolean", "可选，默认 false：到点在聊天里叫醒你本人处理（提醒、问候、几步就能做完的事）。true：到点由后台子代理去做，做完把结果交回给你，再由你决定怎么告诉用户；适合步骤多、耗时长、不需要聊天上下文的活（如批量审查、长时间整理）", false),
-            ToolParameterSchema("model", description = "指定模型：main 主模型、assistant 辅助模型、default 默认（聊天内执行和对齐复盘用主模型，其余后台任务用辅助模型）。create 不填用 default；update 不填保留。Model role: main/assistant/default; default uses main for chat wakes and alignment, assistant for other background runs. Returns effective_model with the actual model.", required = false),
+            ToolParameterSchema("model", description = "指定模型：main 主模型、assistant 辅助模型、default 默认（聊天内执行用主模型，后台任务和对齐复盘用辅助模型）。create 不填用 default；update 不填保留。Model role: main/assistant/default; default uses main for chat wakes, assistant for background runs and alignment. Returns effective_model with the actual model.", required = false),
             ToolParameterSchema("timeout_minutes", "integer", "use_subagent=true 时子代理单次运行时限，1到1440分钟（最多24小时），不填默认5分钟；超时会停下并暂停任务", false),
         ),
         details = "根据用户交代的目标安排后续工作。用户说“某天几点提醒我”用 ONCE+run_at+notify_policy=ALWAYS；" +

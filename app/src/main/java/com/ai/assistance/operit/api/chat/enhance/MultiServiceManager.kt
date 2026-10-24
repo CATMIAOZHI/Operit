@@ -61,6 +61,8 @@ class MultiServiceManager(private val context: Context, private val chatId: Stri
         val modelConfig: ModelConfigData,
         val modelIndex: Int,
         val modelParameters: List<ModelParameter<*>>,
+        /** Reasoning the cached function service was built with; null for CHAT and config services. */
+        val thinkingQualityLevel: Int? = null,
         var activeLeases: Int = 0,
         var retired: Boolean = false,
         var released: Boolean = false
@@ -174,8 +176,11 @@ class MultiServiceManager(private val context: Context, private val chatId: Stri
         val actualModelIndex = configMapping.resolveModelIndex(config.modelName).modelIndex
         requireAvailableSelection(config, actualModelIndex)
         val selectedModelConfig = config.forSelectedModel(actualModelIndex)
+        // The level is part of the built service, so a changed level must not reuse the old one.
+        val reasoningLevel = configMapping.thinkingQualityLevel.takeIf { functionType != FunctionType.CHAT }
         serviceInstances[key]?.let {
-            if (it.modelConfig == selectedModelConfig && it.modelIndex == actualModelIndex) return it
+            if (it.modelConfig == selectedModelConfig && it.modelIndex == actualModelIndex &&
+                it.thinkingQualityLevel == reasoningLevel) return it
             serviceInstances.remove(key)
             retireManagedServiceLocked(it)
         }
@@ -195,6 +200,7 @@ class MultiServiceManager(private val context: Context, private val chatId: Stri
             modelIndex = actualModelIndex,
             modelParameters =
                 modelConfigManager.getModelParametersForConfigSnapshot(selectedModelConfig),
+            thinkingQualityLevel = reasoningLevel,
         )
         serviceInstances[key] = managedService
 

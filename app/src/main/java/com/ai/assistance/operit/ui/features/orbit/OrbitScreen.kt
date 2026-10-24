@@ -841,7 +841,9 @@ private fun OrbitChatPage(
                     onPause = back,
                 )
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
-                OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back)
+                OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
+                    onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
+                OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
@@ -964,7 +966,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

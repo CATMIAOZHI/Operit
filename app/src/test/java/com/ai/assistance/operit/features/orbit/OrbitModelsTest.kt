@@ -14,12 +14,13 @@ class OrbitModelsTest {
     private fun task() = OrbitTaskEntity("task", "orbit", "chat", "Task", "Do it", "ASSIST",
         "", 60, 0, "CHANGES", "ACTIVE", 1, 0, "", "", 0, 0)
 
-    @Test fun defaultsFollowExecutionLaneButAlignmentAndExplicitChoiceWin() {
+    @Test fun defaultsFollowExecutionLaneAlignmentUsesAssistantAndExplicitChoiceWins() {
         assertEquals(OrbitModels.MAIN, OrbitModels.taskRole(task()))
         assertEquals(OrbitModels.ASSISTANT, OrbitModels.taskRole(task().copy(useSubagent = true)))
         val alignment = task().copy(useSubagent = true, source = OrbitRoutines.ALIGNMENT_SOURCE)
-        assertEquals(OrbitModels.MAIN, OrbitModels.taskRole(alignment))
-        assertEquals(OrbitModels.ASSISTANT, OrbitModels.taskRole(alignment.copy(modelRole = OrbitModels.ASSISTANT)))
+        assertEquals(OrbitModels.ASSISTANT, OrbitModels.taskRole(alignment))
+        assertEquals(OrbitModels.ASSISTANT, OrbitModels.taskRole(alignment.copy(useSubagent = false)))
+        assertEquals(OrbitModels.MAIN, OrbitModels.taskRole(alignment.copy(modelRole = OrbitModels.MAIN)))
         assertEquals(OrbitModels.MAIN, OrbitModels.taskRole(task().copy(useSubagent = true, modelRole = OrbitModels.MAIN)))
     }
 

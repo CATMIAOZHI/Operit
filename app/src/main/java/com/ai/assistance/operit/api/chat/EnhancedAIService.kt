@@ -16,6 +16,7 @@ import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.api.chat.enhance.ToolTurnSignal
 import com.ai.assistance.operit.api.chat.enhance.resolveToolTurnSignal
 import com.ai.assistance.operit.api.chat.llmprovider.AIService
+import com.ai.assistance.operit.api.chat.llmprovider.withFunctionalReasoning
 import com.ai.assistance.operit.core.chat.logMessageTiming
 import com.ai.assistance.operit.core.chat.messageTimingNow
 import com.ai.assistance.operit.core.chat.TurnInputInbox
@@ -404,6 +405,8 @@ class EnhancedAIService private constructor(
         var notifyReplyOverride: Boolean? = null,
         var chatModelConfigIdOverride: String? = null,
         var chatModelIndexOverride: Int? = null,
+        /** Applies function-style reasoning to a CHAT turn on an overridden model (Orbit background work). */
+        var chatReasoningLevelOverride: Int? = null,
         var memorySpaceIdOverride: String? = null,
         var toolTimingScopeId: String? = null,
         var stream: Boolean = true,
@@ -470,10 +473,13 @@ class EnhancedAIService private constructor(
 
     // Execution context for a single sendMessage call to achieve concurrency
     private data class ModelExecutionSnapshot(
-        val lease: MultiServiceManager.ServiceLease
+        val lease: MultiServiceManager.ServiceLease,
+        val reasoningLevel: Int? = null,
     ) {
-        val service: AIService
-            get() = lease.service
+        val service: AIService =
+            reasoningLevel?.let {
+                lease.service.withFunctionalReasoning(config = lease.modelConfig, thinkingQualityLevel = it)
+            } ?: lease.service
         val config: ModelConfigData
             get() = lease.modelConfig
         val modelParameters: List<ModelParameter<*>>
@@ -501,6 +507,7 @@ class EnhancedAIService private constructor(
         val isolatedToolPrompts: List<ToolPrompt>? = null,
         val terminalToolNames: Set<String> = emptySet(),
         val promptHooksEnabled: Boolean = true,
+        val chatReasoningLevel: Int? = null,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
         val learningToolIterations: AtomicInteger = AtomicInteger(0),
@@ -600,7 +607,8 @@ class EnhancedAIService private constructor(
             } else {
                 multiServiceManager.acquireServiceForFunction(functionType)
             }
-        val snapshot = ModelExecutionSnapshot(lease)
+        val snapshot = ModelExecutionSnapshot(lease,
+            context.chatReasoningLevel.takeIf { functionType == FunctionType.CHAT && overrideConfigId != null })
         context.modelExecutionSnapshot = snapshot
         return snapshot
     }
@@ -1304,6 +1312,7 @@ class EnhancedAIService private constructor(
                     isolatedToolPrompts = isolatedToolPrompts,
                     terminalToolNames = terminalToolNames,
                     promptHooksEnabled = promptHooksEnabled,
+                    chatReasoningLevel = options.chatReasoningLevelOverride,
                 )
             registerExecutionContext(execContext)
             var hadFatalError = false

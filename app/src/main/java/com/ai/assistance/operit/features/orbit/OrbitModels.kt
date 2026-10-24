@@ -6,6 +6,7 @@ import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.FunctionConfigMapping
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.OrbitModelPreferences
@@ -20,9 +21,19 @@ object OrbitModels {
     const val MAIN = "MAIN"
     const val ASSISTANT = "ASSISTANT"
 
+    /** Short judgement calls stay light whatever the assistant level is. */
+    private val LOW_REASONING = setOf(FunctionType.TITLE_GENERATION, FunctionType.PERMISSION_REVIEWER,
+        FunctionType.PERMISSION_RISK_SCORER)
+
+    /**
+     * [backgroundReasoningLevel] is set only for a CHAT turn on the assistant model: that turn is
+     * background work, so it follows the assistant level instead of the chat's own slider.
+     */
+    class Route(val mapping: FunctionConfigMapping, val backgroundReasoningLevel: Int?)
+
     fun taskRole(task: OrbitTaskEntity): String = when (task.modelRole) {
         MAIN, ASSISTANT -> task.modelRole
-        else -> if (task.source == OrbitRoutines.ALIGNMENT_SOURCE || !task.useSubagent) MAIN else ASSISTANT
+        else -> if (task.source != OrbitRoutines.ALIGNMENT_SOURCE && !task.useSubagent) MAIN else ASSISTANT
     }
 
     fun checkedRole(value: String): String = value.trim().uppercase(java.util.Locale.ROOT).also {
@@ -52,14 +63,20 @@ object OrbitModels {
     }
 
     suspend fun mapping(context: Context, function: FunctionType, chatId: String? = null,
-        role: String? = null): FunctionConfigMapping? {
+        role: String? = null): FunctionConfigMapping? = route(context, function, chatId, role)?.mapping
+
+    suspend fun route(context: Context, function: FunctionType, chatId: String? = null,
+        role: String? = null): Route? {
         val orbitId = ownerId(context, chatId) ?: return null
         var chatRole = role
         if (function == FunctionType.CHAT && chatRole == null && chatId != null) {
             val dao = AppDatabase.getDatabase(context).orbitTaskDao()
             chatRole = dao.binding(chatId)?.let { dao.run(it.runId) }?.let { dao.task(it.taskId) }?.let(::taskRole)
         }
-        return mappingForOrbit(context, orbitId, function, chatRole)
+        val mapping = mappingForOrbit(context, orbitId, function, chatRole)
+        return Route(mapping, mapping.thinkingQualityLevel.takeIf {
+            function == FunctionType.CHAT && chatRole == ASSISTANT
+        })
     }
 
     suspend fun mappingForOrbit(context: Context, orbitId: String, function: FunctionType,
@@ -73,13 +90,16 @@ object OrbitModels {
             if (role == ASSISTANT) settings.assistant else settings.main
         } else settings.selection(function)
         val configs = ModelConfigManager(context)
+        val level = if (function in LOW_REASONING) ApiPreferences.MIN_THINKING_QUALITY_LEVEL
+        else settings.assistantThinkingLevel.coerceIn(ApiPreferences.MIN_THINKING_QUALITY_LEVEL,
+            ApiPreferences.MAX_THINKING_QUALITY_LEVEL)
         suspend fun resolve(ref: OrbitModelRef?): FunctionConfigMapping {
             checkNotNull(ref) { unavailable() }
             check(ref.configId in configs.configListFlow.first()) { unavailable() }
             val config = checkNotNull(configs.getModelConfig(ref.configId))
             val index = ref.resolveIndex(config.modelName, config.apiProviderTypeId)
             check(index >= 0) { unavailable() }
-            return ref.mapping(index)
+            return ref.mapping(index).copy(thinkingQualityLevel = level)
         }
         val selected = resolve(selection)
         if (function == FunctionType.IMAGE_RECOGNITION || function == FunctionType.UI_CONTROLLER) {

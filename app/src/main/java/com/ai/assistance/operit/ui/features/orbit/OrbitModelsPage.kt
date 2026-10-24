@@ -6,32 +6,39 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.model.FunctionType
 import com.ai.assistance.operit.data.model.ModelConfigSummary
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
+import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.OrbitModelPreferences
 import com.ai.assistance.operit.data.preferences.OrbitModelRef
 import com.ai.assistance.operit.data.preferences.OrbitModelSettings
 import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.ui.features.chat.components.style.input.common.thinkingQualityLevelLabelRes
 import com.ai.assistance.operit.ui.features.settings.components.*
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 @Composable
-internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit) {
+internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenModelConfig: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -75,6 +82,10 @@ internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit) {
         OrbitPageHeader(stringResource(R.string.orbit_models_title), onBack)
         Text(stringResource(R.string.orbit_models_note, orbitName(orbit)),
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        SettingsCard(backgroundColor = settingsCardColor(false)) {
+            SettingsNavRow(stringResource(R.string.orbit_models_config_entry), onClick = onOpenModelConfig,
+                subtitle = stringResource(R.string.orbit_models_config_entry_note), searchable = false)
+        }
         error?.let { Text(it, color = MaterialTheme.colorScheme.error) }
         val current = settings
         if (current == null) {
@@ -90,6 +101,10 @@ internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 ModelRow(stringResource(R.string.orbit_model_main), current.main, summaries) { if (!busy) picker = "main" }
                 SettingsRowDivider(inset = false)
                 ModelRow(stringResource(R.string.orbit_model_assistant), current.assistant, summaries) { if (!busy) picker = "assistant" }
+                SettingsRowDivider(inset = false)
+                AssistantReasoning(current.assistantThinkingLevel, enabled = !busy) { level ->
+                    update { it.copy(assistantThinkingLevel = level) }
+                }
             }
             Text(stringResource(R.string.orbit_model_assistant_note),
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -137,6 +152,12 @@ internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                 else -> modelFunctionTitle(checkNotNull(function))
             },
             summaries = summaries,
+            current = settings?.let { current -> when (key) {
+                "main" -> current.main
+                "assistant" -> current.assistant
+                "multimodal" -> current.multimodal
+                else -> current.overrides[key]
+            } },
             allowFollow = function != null,
             imageOnly = key == "multimodal" || function == FunctionType.IMAGE_RECOGNITION || function == FunctionType.UI_CONTROLLER,
             onDismiss = { picker = null },
@@ -166,46 +187,93 @@ private fun ModelRow(title: String, ref: OrbitModelRef?, summaries: List<ModelCo
     })
 }
 
+/** Background reasoning for the assistant model, in the main app's five steps. */
 @Composable
-private fun OrbitModelPicker(title: String, summaries: List<ModelConfigSummary>, allowFollow: Boolean,
-    imageOnly: Boolean, onDismiss: () -> Unit, onSelect: (OrbitModelRef?) -> Unit) {
+private fun AssistantReasoning(level: Int, enabled: Boolean, onChange: (Int) -> Unit) {
+    val min = ApiPreferences.MIN_THINKING_QUALITY_LEVEL
+    val max = ApiPreferences.MAX_THINKING_QUALITY_LEVEL
+    var pending by remember(level) { mutableFloatStateOf(level.coerceIn(min, max).toFloat()) }
+    val shown = pending.roundToInt()
+    Column(Modifier.fillMaxWidth().padding(vertical = 8.dp)) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(stringResource(R.string.orbit_model_assistant_reasoning), Modifier.weight(1f),
+                style = MaterialTheme.typography.bodyLarge, color = MaterialTheme.colorScheme.onSurface)
+            Text(stringResource(thinkingQualityLevelLabelRes(shown)), style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.primary)
+        }
+        Slider(value = pending, onValueChange = { pending = it.roundToInt().toFloat() },
+            onValueChangeFinished = { if (pending.roundToInt() != level) onChange(pending.roundToInt()) },
+            enabled = enabled, valueRange = min.toFloat()..max.toFloat(), steps = max - min - 1)
+        Text(stringResource(R.string.orbit_model_assistant_reasoning_note),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+private class PickerGroup(val summary: ModelConfigSummary, val refs: List<OrbitModelRef>)
+
+/** Grouped by configuration like the main app: a configuration with several models opens to list them. */
+@Composable
+private fun OrbitModelPicker(title: String, summaries: List<ModelConfigSummary>, current: OrbitModelRef?,
+    allowFollow: Boolean, imageOnly: Boolean, onDismiss: () -> Unit, onSelect: (OrbitModelRef?) -> Unit) {
     val context = LocalContext.current
-    val resources = LocalResources.current
     val manager = remember(context) { ModelConfigManager(context) }
     val pluginDefaultName = stringResource(R.string.orbit_model_plugin_default)
     var query by rememberSaveable { mutableStateOf("") }
-    val choices by produceState<List<Pair<OrbitModelRef, String>>?>(null, summaries, imageOnly) {
-        value = summaries.flatMap { summary ->
+    var expanded by rememberSaveable { mutableStateOf(current?.configId) }
+    val groups by produceState<List<PickerGroup>?>(null, summaries, imageOnly) {
+        value = summaries.mapNotNull { summary ->
             val config = if (imageOnly) manager.getModelConfig(summary.id) else null
-            val refs = getModelList(summary.modelName).map { OrbitModelRef(summary.id, it) }
+            // A config may list one model twice; the list keys need each once.
+            val refs = getModelList(summary.modelName).distinct().map { OrbitModelRef(summary.id, it) }
                 .ifEmpty { listOfNotNull(OrbitModelRef.fromSelection(summary, 0)) }
-            refs.filter { !imageOnly || config?.multimodalCapabilitiesForModel(it.modelName)?.image == true }
-                .map { it to summary.name }
-        }.distinctBy { it.first } // A config may list one model twice; the list keys need each once.
+                .filter { !imageOnly || config?.multimodalCapabilitiesForModel(it.modelName)?.image == true }
+            refs.takeIf { it.isNotEmpty() }?.let { PickerGroup(summary, it) }
+        }
     }
+    fun label(ref: OrbitModelRef) = ref.modelName.ifEmpty { pluginDefaultName }
     OrbitDialog(onDismissRequest = onDismiss, title = title, scrollable = false, text = {
         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             OutlinedTextField(query, { query = it }, Modifier.fillMaxWidth(),
                 placeholder = { Text(stringResource(R.string.orbit_models_search)) }, singleLine = true)
-            val filtered = choices?.filter { (ref, name) ->
-                query.isBlank() || ref.modelName.ifEmpty { pluginDefaultName }.contains(query, true) || name.contains(query, true)
+            val searching = query.isNotBlank()
+            val shown = groups?.mapNotNull { group ->
+                if (!searching || group.summary.name.contains(query, true)) group
+                else group.refs.filter { label(it).contains(query, true) }.takeIf { it.isNotEmpty() }
+                    ?.let { PickerGroup(group.summary, it) }
             }
-            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 360.dp)) {
+            LazyColumn(Modifier.fillMaxWidth().heightIn(max = 420.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp)) {
                 if (allowFollow) item("follow") {
-                    Text(stringResource(R.string.orbit_model_follow),
-                        Modifier.fillMaxWidth().clickable(role = Role.Button) { onSelect(null) }.padding(vertical = 16.dp))
+                    PickerRow(stringResource(R.string.orbit_model_follow), null, selected = current == null,
+                        trailing = null) { onSelect(null) }
                 }
-                if (filtered == null) item("loading") { CircularProgressIndicator() }
-                else if (filtered.isEmpty()) item("empty") {
+                if (shown == null) item("loading") { CircularProgressIndicator() }
+                else if (shown.isEmpty()) item("empty") {
                     Text(stringResource(if (imageOnly) R.string.orbit_models_no_image else R.string.orbit_models_empty),
                         Modifier.padding(vertical = 12.dp))
                 }
-                else items(filtered, key = { "${it.first.configId}/${it.first.modelName}" }) { (ref, name) ->
-                    Column(Modifier.fillMaxWidth().clickable(role = Role.Button) { onSelect(ref) }
-                        .padding(vertical = 12.dp)) {
-                        Text(ref.modelName.ifEmpty { pluginDefaultName },
-                            color = MaterialTheme.colorScheme.onSurface)
-                        Text(name, style = MaterialTheme.typography.bodySmall)
+                else shown.forEach { group ->
+                    val id = group.summary.id
+                    val single = group.refs.size == 1
+                    val open = !single && (searching || expanded == id)
+                    val holdsCurrent = current?.configId == id
+                    item("config/$id") {
+                        if (single) {
+                            val ref = group.refs.first()
+                            PickerRow(group.summary.name, label(ref), selected = ref == current,
+                                trailing = null) { onSelect(ref) }
+                        } else {
+                            PickerRow(group.summary.name,
+                                stringResource(R.string.functional_config_model_count, group.refs.size),
+                                selected = holdsCurrent, trailing = if (open) "chevron-down" else "chevron-right") {
+                                if (!searching) expanded = if (expanded == id) null else id
+                            }
+                        }
+                    }
+                    if (open) items(group.refs, key = { "model/$id/${it.modelName}" }) { ref ->
+                        PickerRow(label(ref), null, selected = ref == current, trailing = null, nested = true) {
+                            onSelect(ref)
+                        }
                     }
                 }
             }
@@ -213,6 +281,30 @@ private fun OrbitModelPicker(title: String, summaries: List<ModelConfigSummary>,
     }, dismissButton = {
         OrbitDialogAction(onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) }
     })
+}
+
+@Composable
+private fun PickerRow(title: String, subtitle: String?, selected: Boolean, trailing: String?,
+    nested: Boolean = false, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Row(Modifier.fillMaxWidth().padding(start = if (nested) 16.dp else 0.dp)
+        .clip(RoundedCornerShape(14.dp))
+        .background(if (selected) colors.primary.copy(alpha = 0.12f) else androidx.compose.ui.graphics.Color.Transparent)
+        .clickable(role = Role.Button, onClick = onClick)
+        .padding(horizontal = 12.dp, vertical = if (nested) 10.dp else 12.dp),
+        verticalAlignment = Alignment.CenterVertically) {
+        Column(Modifier.weight(1f)) {
+            Text(title, color = if (selected) colors.primary else colors.onSurface,
+                fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Normal,
+                style = if (nested) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge)
+            subtitle?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant) }
+        }
+        val icon = trailing ?: "check".takeIf { selected }
+        icon?.let {
+            Icon(orbitIcon(it), null, Modifier.padding(start = 8.dp).size(18.dp),
+                tint = if (trailing == null) colors.primary else colors.onSurfaceVariant)
+        }
+    }
 }
 
 @Composable
@@ -278,4 +370,18 @@ internal fun OrbitTaskModelCard(task: com.ai.assistance.operit.data.model.OrbitT
         }, dismissButton = {
             OrbitDialogAction({ picker = false }, secondary = true) { Text(stringResource(R.string.cancel)) }
         })
+}
+
+/** The app's shared model configurations, opened inside Orbit so back returns to the models page. */
+@Composable
+internal fun OrbitModelConfigPage(onBack: () -> Unit) {
+    OrbitPageBack(onBack = onBack)
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding()) {
+        OrbitPageHeader(stringResource(R.string.orbit_models_config_entry), onBack,
+            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            com.ai.assistance.operit.ui.features.settings.screens.ModelConfigScreen()
+        }
+    }
 }

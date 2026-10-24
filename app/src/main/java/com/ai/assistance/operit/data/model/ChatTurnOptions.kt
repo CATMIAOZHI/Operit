@@ -26,6 +26,11 @@ data class ChatTurnOptions(
     /** Host-only per-turn role for a scheduled Orbit wake; never changes the chat's saved selection. */
     val orbitModelRole: String? = null,
     /**
+     * Host-only reasoning level for a turn that runs Orbit's background work on the assistant model.
+     * Null keeps the chat's own thinking setting.
+     */
+    val chatReasoningLevel: Int? = null,
+    /**
      * The provider conversation this turn belongs to, when that is not the chat the turn runs in.
      * An internal turn whose conversation outlives any single chat pins it here so a provider that
      * caches prompt prefixes keeps reusing the prefix a sibling turn already warmed.
