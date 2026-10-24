@@ -57,6 +57,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
@@ -127,6 +128,7 @@ internal object OrbitAvatarCropMath {
 @Composable
 internal fun OrbitAvatarCropWindow(source: Uri, onCropped: suspend (File) -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val currentOnDismiss by rememberUpdatedState(onDismiss)
@@ -134,7 +136,7 @@ internal fun OrbitAvatarCropWindow(source: Uri, onCropped: suspend (File) -> Uni
     var image by remember(source) { mutableStateOf<Bitmap?>(null) }
     var saving by remember { mutableStateOf(false) }
     fun failed() = android.widget.Toast.makeText(
-        context, context.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
+        context, resources.getString(R.string.orbit_avatar_save_failed), android.widget.Toast.LENGTH_SHORT,
     ).show()
     LaunchedEffect(source) {
         val loaded = withContext(Dispatchers.IO) { runCatching { loadForCrop(context, source) }.getOrNull() }

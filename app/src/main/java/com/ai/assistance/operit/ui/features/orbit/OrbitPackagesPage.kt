@@ -53,6 +53,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -167,6 +168,7 @@ private fun filtered(folders: List<PackageFolder>, needle: String): List<Package
 @Composable
 internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val packageManager = remember { PackageManager.getInstance(context, AIToolHandler.getInstance(context)) }
     var reload by remember { mutableIntStateOf(0) }
@@ -213,16 +215,16 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
 
     fun reason(e: Exception, fallback: Int): String = when (e) {
         is OrbitPackages.NeedsMissingException ->
-            context.getString(R.string.orbit_packages_needs_missing, e.packageName)
+            resources.getString(R.string.orbit_packages_needs_missing, e.packageName)
         is OrbitPackages.StillNeededException ->
-            context.getString(
+            resources.getString(
                 R.string.orbit_packages_still_needed,
                 e.packageName,
-                e.dependents.joinToString(context.getString(R.string.orbit_packages_list_separator)),
+                e.dependents.joinToString(resources.getString(R.string.orbit_packages_list_separator)),
             )
         is OrbitPackages.RequiredException ->
-            context.getString(R.string.orbit_packages_required_locked)
-        else -> context.getString(fallback)
+            resources.getString(R.string.orbit_packages_required_locked)
+        else -> resources.getString(fallback)
     }
 
     fun toggle(name: String, on: Boolean, before: Boolean) {
@@ -400,7 +402,7 @@ internal fun OrbitPackagesPage(orbit: OrbitProfile, onBack: () -> Unit) {
                         Toast.makeText(
                             context,
                             if (failed != null) reason(failed, R.string.orbit_packages_import_failed)
-                            else context.getString(R.string.orbit_packages_imported, result.added.size),
+                            else resources.getString(R.string.orbit_packages_imported, result.added.size),
                             Toast.LENGTH_SHORT,
                         ).show()
                         picking = false
@@ -445,6 +447,7 @@ private fun OrbitPackageDetailPage(
     onRemove: () -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val pkg by produceState<ToolPackage?>(null, row.name) {
         value = withContext(Dispatchers.IO) { runCatching { packageManager.resolvePackageForDisplay(row.name) }.getOrNull() }
     }
@@ -457,7 +460,7 @@ private fun OrbitPackageDetailPage(
             OrbitPageHeader(row.title, onBack)
             Text(
                 row.name + (pkg?.version?.takeIf { it.isNotBlank() }?.let {
-                    " · " + context.getString(R.string.orbit_packages_detail_meta, it)
+                    " · " + resources.getString(R.string.orbit_packages_detail_meta, it)
                 }.orEmpty()),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,

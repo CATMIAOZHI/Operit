@@ -131,7 +131,9 @@ internal fun VirtualTranscript(
     }
     val nearbyByGrouping = remember(chatId) { HashMap<Pair<ToolCollapseMode, Boolean>, Set<Long>>() }
     val grouping = toolMode to showThinking
-    val documents = documentsByGrouping.getOrPut(grouping) { mutableStateMapOf() }
+    val documents = remember(grouping, documentsByGrouping) {
+        documentsByGrouping.getOrPut(grouping) { mutableStateMapOf() }
+    }
     LaunchedEffect(chatId, grouping) {
         documentsByGrouping.forEach { (other, cached) ->
             if (other == grouping) return@forEach

@@ -12,6 +12,7 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
@@ -33,6 +34,7 @@ import kotlinx.coroutines.launch
 internal fun OrbitModelsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val preferences = remember(context) { OrbitModelPreferences(context) }
     val configs = remember(context) { ModelConfigManager(context) }
@@ -168,6 +170,7 @@ private fun ModelRow(title: String, ref: OrbitModelRef?, summaries: List<ModelCo
 private fun OrbitModelPicker(title: String, summaries: List<ModelConfigSummary>, allowFollow: Boolean,
     imageOnly: Boolean, onDismiss: () -> Unit, onSelect: (OrbitModelRef?) -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val manager = remember(context) { ModelConfigManager(context) }
     val pluginDefaultName = stringResource(R.string.orbit_model_plugin_default)
     var query by rememberSaveable { mutableStateOf("") }
@@ -232,6 +235,7 @@ private fun modelFunctionTitle(function: FunctionType): String = stringResource(
 internal fun OrbitTaskModelCard(task: com.ai.assistance.operit.data.model.OrbitTaskEntity,
     onDraft: (String) -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val name = rememberOrbitName(task.orbitId)
     var picker by rememberSaveable(task.id) { mutableStateOf(false) }
     val preferences = remember(context) { OrbitModelPreferences(context) }
@@ -267,7 +271,7 @@ internal fun OrbitTaskModelCard(task: com.ai.assistance.operit.data.model.OrbitT
                 val label = stringResource(labelId)
                 Text(label, Modifier.fillMaxWidth().clickable(role = Role.Button) {
                     picker = false
-                    onDraft(context.getString(R.string.orbit_task_model_draft, task.title, task.id, label,
+                    onDraft(resources.getString(R.string.orbit_task_model_draft, task.title, task.id, label,
                         value.lowercase(java.util.Locale.ROOT)))
                 }.padding(vertical = 16.dp), color = MaterialTheme.colorScheme.onSurface)
             }

@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.RectangleShape
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -100,6 +101,7 @@ internal fun OrbitTasksPage(
     onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val repository = remember(context) { OrbitTaskRepository(context) }
     val scope = rememberCoroutineScope()
     var selected by rememberSaveable(orbitId) { mutableStateOf(initialTaskId) }
@@ -212,7 +214,7 @@ internal fun OrbitTasksPage(
                 onNotice = { notice = it },
                 // Pausing, resuming and cancelling go through Orbit: the request waits in the main
                 // chat's input box for the user to send.
-                onCancel = { onDraft(context.getString(R.string.orbit_task_cancel_draft, it.title)) },
+                onCancel = { onDraft(resources.getString(R.string.orbit_task_cancel_draft, it.title)) },
                 onResolve = { id, completed -> resolveReceipt = Triple(shown, id, completed) },
                 onRecord = { id -> historyTask = id },
                 onDraft = onDraft,
@@ -296,6 +298,7 @@ internal fun OrbitTasksPage(
 @Composable
 private fun runOutcome(run: OrbitRunEntity, task: OrbitTaskEntity): String {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val text = when {
         run.state == "RUNNING" -> stringResource(R.string.orbit_task_running)
         run.state == "CANCELLED" -> stringResource(R.string.orbit_run_cancelled)
@@ -328,6 +331,7 @@ private fun runIcon(run: OrbitRunEntity): String = when {
 @Composable
 private fun RunHistorySheet(orbitId: String, task: OrbitTaskEntity, repository: OrbitTaskRepository, onDismiss: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     // A read that fails says so with a retry; it is never shown as "no runs" or "no record".
     var reload by remember { mutableIntStateOf(0) }
     var listFailed by remember { mutableStateOf<String?>(null) }
@@ -599,6 +603,7 @@ private fun TaskDetail(
     onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val task = tasks?.firstOrNull { it.id == taskId }
     var userNote by rememberSaveable(taskId) { mutableStateOf("") }
     val lastRun by produceState<OrbitRunEntity?>(null, taskId, retry) {
@@ -816,7 +821,7 @@ private fun TaskDetail(
                             enabled = !busy && !blocked,
                             modifier = modifier,
                         ) {
-                            onDraft(context.getString(
+                            onDraft(resources.getString(
                                 if (active) R.string.orbit_task_pause_draft else R.string.orbit_task_resume_draft, task.title))
                         }
                     }
@@ -825,7 +830,7 @@ private fun TaskDetail(
                         // user to send, so a tap only to see what happens runs nothing.
                         TaskButton(stringResource(R.string.orbit_run_now), "zap", primary = true,
                             enabled = !busy, modifier = modifier) {
-                            onDraft(context.getString(R.string.orbit_task_run_now_draft, task.title))
+                            onDraft(resources.getString(R.string.orbit_task_run_now_draft, task.title))
                         }
                     }
                     // Two pills side by side; with large text or a narrow screen they stack so
@@ -1067,6 +1072,7 @@ internal fun geofenceSchedule(task: OrbitTaskEntity): String {
 @Composable
 private fun GeofenceStatus(task: OrbitTaskEntity) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var problem by remember(task.id, task.version) { mutableStateOf(OrbitGeofence.status(context, task)) }
     LaunchedEffect(context, task.id, task.version) {
@@ -1078,14 +1084,14 @@ private fun GeofenceStatus(task: OrbitTaskEntity) {
                 OrbitTaskScheduler.reschedule(context)
                 problem = OrbitGeofence.status(context, task)
             } catch (e: CancellationException) { throw e }
-            catch (e: Exception) { problem = context.getString(R.string.orbit_geofence_unavailable) }
+            catch (e: Exception) { problem = resources.getString(R.string.orbit_geofence_unavailable) }
         }
     }
     TaskCard {
         Text(problem ?: stringResource(R.string.orbit_geofence_help), style = MaterialTheme.typography.bodyMedium)
         if (task.state == "ACTIVE" && OrbitGeofence.permissionProblem(context) != null) {
             TaskButton(stringResource(R.string.orbit_watch_open_settings), "settings", primary = true) {
-                openWatchPermission(context, if (problem == context.getString(R.string.orbit_geofence_needs_location)) "location" else "app")
+                openWatchPermission(context, if (problem == resources.getString(R.string.orbit_geofence_needs_location)) "location" else "app")
             }
         }
     }
@@ -1097,6 +1103,7 @@ private val SCRIPT_SUFFIX = Regex("-[0-9a-f]{8}(?=\\.sh$)")
 @Composable
 private fun appNames(packages: String): String {
     val context = LocalContext.current
+    val resources = LocalResources.current
     return remember(packages) {
         packages.split(',').map { it.trim() }.filter { it.isNotEmpty() }.joinToString(", ") { name ->
             runCatching {

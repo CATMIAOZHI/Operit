@@ -52,7 +52,8 @@ object OrbitDocs {
         check(target.toRealPath().startsWith(root.toPath().toRealPath())) { "docs/ is outside Orbit's folder" }
         // Anything that is not one of the built-in files goes, so the folder matches the app.
         Files.list(target).use { children ->
-            children.toList().forEach { child ->
+            // Snapshot first: deleting while the directory stream is open would skip entries.
+            children.collect(java.util.stream.Collectors.toList()).forEach { child ->
                 if (child.fileName.toString() !in names || !Files.isRegularFile(child, NOFOLLOW)) deleteNoFollow(child)
             }
         }

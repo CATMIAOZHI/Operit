@@ -48,6 +48,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.style.TextOverflow
@@ -91,6 +92,7 @@ internal fun OrbitFilePage(
     measure: ((String) -> Int)? = null,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var reload by remember { mutableIntStateOf(0) }
     var content by remember { mutableStateOf<String?>(null) }
@@ -115,7 +117,7 @@ internal fun OrbitFilePage(
     }
     // Back from a page opened over this one: read the file again, keeping an edit in progress as it is.
     OrbitOnPageReturn { if (!editing) reload++ }
-    fun toast(id: Int) = android.widget.Toast.makeText(context, context.getString(id), android.widget.Toast.LENGTH_SHORT).show()
+    fun toast(id: Int) = android.widget.Toast.makeText(context, resources.getString(id), android.widget.Toast.LENGTH_SHORT).show()
     fun leaveEditor() { editing = false; draft = "" }
     fun back() {
         if (busy) return
@@ -293,6 +295,7 @@ internal fun OrbitFilePage(
 @Composable
 internal fun OrbitIdentityFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     OrbitFilePage(
         title = OrbitPromptFiles.IDENTITY_FILE,
         note = stringResource(R.string.orbit_identity_note, rememberOrbitName(orbitId)),
@@ -305,6 +308,7 @@ internal fun OrbitIdentityFilePage(orbitId: String, onBack: () -> Unit) {
 @Composable
 internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     OrbitFilePage(
         title = OrbitPromptFiles.PROMPT_FILE,
         note = stringResource(R.string.orbit_prompt_note),
@@ -318,6 +322,7 @@ internal fun OrbitPromptFilePage(orbitId: String, onBack: () -> Unit) {
 @Composable
 internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val files = remember(orbitId) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId) }
     val editor = rememberOrbitFileEditor(files, com.ai.assistance.operit.features.orbit.OrbitFiles.ALIGNMENT)
     OrbitFilePage(
@@ -338,6 +343,7 @@ internal fun OrbitAlignmentFilePage(orbitId: String, onBack: () -> Unit) {
 @Composable
 internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     var loaded by remember(orbit.id) { mutableStateOf<String?>(null) }
     // The text the editor opened, saved with the draft: a restored draft must not take the
     // re-read file as its base and overwrite what Orbit wrote meanwhile.
@@ -374,6 +380,7 @@ internal fun OrbitUserFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
 @Composable
 internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val reason = stringResource(R.string.memory_review_manual_edit)
     var loaded by remember(orbit.id) {
         mutableStateOf<com.ai.assistance.operit.data.preferences.MemoryNotesRepository.Snapshot?>(null)
@@ -422,6 +429,7 @@ internal fun OrbitMemoryFilePage(orbit: OrbitProfile, onBack: () -> Unit) {
 @Composable
 internal fun OrbitSoulFilePage(orbitId: String, onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val repository = remember(orbitId) { OrbitSoulRepository(context, orbitId) }
     var loaded by remember(orbitId) { mutableStateOf<OrbitSoulRepository.Version?>(null) }
     var editVersion by rememberSaveable(orbitId) { mutableStateOf<String?>(null) }

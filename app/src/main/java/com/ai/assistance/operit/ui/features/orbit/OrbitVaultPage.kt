@@ -45,6 +45,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.AnnotatedString
@@ -64,6 +65,7 @@ import kotlinx.coroutines.launch
 @Composable
 private fun vaultEntries(orbitId: String, reload: Int): Result<List<OrbitVault.Entry>>? {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val saved by OrbitVault.version.collectAsState()
     val entries by produceState<Result<List<OrbitVault.Entry>>?>(null, orbitId, reload, saved) {
         value = runCatching { OrbitVault.entries(context, orbitId) }
@@ -190,6 +192,7 @@ internal fun OrbitVaultEntryPage(
     onDraft: (String) -> Unit,
 ) {
     val context = LocalContext.current
+    val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     val clipboard = LocalClipboardManager.current
     var reload by remember { mutableStateOf(0) }
@@ -364,7 +367,7 @@ internal fun OrbitVaultEntryPage(
                     deleting = false
                     confirming = false
                     if (ok) onBack()
-                    else Toast.makeText(context, context.getString(R.string.orbit_vault_delete_failed), Toast.LENGTH_SHORT).show()
+                    else Toast.makeText(context, resources.getString(R.string.orbit_vault_delete_failed), Toast.LENGTH_SHORT).show()
                 }
             },
         )
