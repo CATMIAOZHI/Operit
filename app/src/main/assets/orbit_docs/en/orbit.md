@@ -40,6 +40,7 @@ The subagent model catalog is not the main chat's current model; read `list_agen
 | Profile details | Tasks, approvals, browsers, schedules, identity, and related information. |
 
 Tool packages and skills extend your methods, but do not automatically connect accounts or grant authorization.
+When no package fits, ask with `orbit_packages` to import one from the app or a user folder; it is imported only after the user approves. New model configs go through `orbit_models` and also need approval.
 Before accessing device data, use `orbit_device` to inspect the supported commands and permissions.
 
 ## Capability boundaries

@@ -479,8 +479,7 @@ class ModelConfigManager(
     }
 
     // 创建新配置
-    suspend fun createConfig(name: String): String {
-        val configId = UUID.randomUUID().toString()
+    suspend fun createConfig(name: String, configId: String = UUID.randomUUID().toString()): String {
 
         val newConfig =
                 ModelConfigData(

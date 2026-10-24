@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.api.CodexDeviceCode
 import com.ai.assistance.operit.data.preferences.CodexAuthState
 import com.ai.assistance.operit.util.AppLogger
 import kotlinx.coroutines.CancellationException
@@ -42,10 +43,28 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 
+/**
+ * What a ChatGPT login shows while it runs, for screens that draw it in their own style
+ * (Orbit draws it as a sheet). [code] is set for the device-code login once it has one.
+ */
+class CodexLoginView(
+    val title: String,
+    val status: String,
+    val working: Boolean,
+    val code: CodexDeviceCode? = null,
+    val instructions: String? = null,
+    val safety: String? = null,
+    val onCopy: (() -> Unit)? = null,
+    val onOpen: (() -> Unit)? = null,
+    val canCancel: Boolean = true,
+    val onCancel: () -> Unit,
+)
+
 @Composable
 fun CodexLoginDialog(
     onDismissRequest: () -> Unit,
     onLoginSuccess: ((CodexAuthState) -> Unit)? = null,
+    presenter: (@Composable (CodexLoginView) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val loginSuccessText = stringResource(R.string.codex_login_success)
@@ -109,6 +128,19 @@ fun CodexLoginDialog(
         cancelRequested = true
         session?.callbackServer?.close()
         onDismissRequest()
+    }
+
+    if (presenter != null) {
+        presenter(
+            CodexLoginView(
+                title = stringResource(R.string.codex_login_title),
+                status = stringResource(if (isLaunching) R.string.codex_login_starting else R.string.codex_login_waiting),
+                working = true,
+                canCancel = !isCompleting,
+                onCancel = { if (!isCompleting) cancelLogin() },
+            )
+        )
+        return
     }
 
     AlertDialog(

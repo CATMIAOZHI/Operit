@@ -26,6 +26,8 @@ internal object OrbitChatCards {
     const val APPROVAL = "approval"
     /** A phone setting Orbit needs, turned on from the card ([OrbitPermissionCards]). */
     const val PERMISSION = "permission"
+    /** The app's ChatGPT (Codex) login, which Codex models and the Codex Draw package use. */
+    const val CHATGPT_LOGIN = "chatgpt_login"
 
     val imageTypes = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
     /** Which bubble a card is, set when the chat moves cards to the end of a turn (see OrbitSpeech.history). */
@@ -46,6 +48,7 @@ internal object OrbitChatCards {
             VAULT_LOGIN -> (if (english) "Vault login card" else "登录保险箱卡片") to field("site")
             VAULT_KEY -> (if (english) "API key card" else "API 密钥卡片") to field("site")
             VAULT_OAUTH -> (if (english) "OAuth login card" else "OAuth 登录卡片") to field("site")
+            CHATGPT_LOGIN -> (if (english) "ChatGPT login card" else "ChatGPT 登录卡片") to ""
             IMAGE -> (if (english) "Picture" else "图片") to field("name")
             FILE -> (if (english) "File" else "文件") to field("name")
             else -> (if (english) "Card" else "卡片") to ""
@@ -84,6 +87,7 @@ internal object OrbitChatCards {
         .put("new_password", request.newPassword)
         .put("requested_at", request.requestedAt)
         .apply { if (request.envName.isNotEmpty()) put("env_name", request.envName).put("env_reason", request.envReason) }
+        .apply { if (request.packageName.isNotEmpty()) put("package_name", request.packageName) }
         .apply { if (request.updateId.isNotEmpty()) put("update_id", request.updateId) }
         .apply { if (request.kind == OrbitVault.OAUTH) {
             put("authorization_url", request.authorizationUrl).put("token_url", request.tokenUrl)
@@ -115,6 +119,13 @@ internal object OrbitChatCards {
         .put("permission", permission)
         .put("card_id", cardId)
 
+    /** A card that signs in to ChatGPT; [requestedAt] tells a login made from it from an older one. */
+    fun chatGptLogin(orbitId: String, chatId: String, requestedAt: Long): JSONObject = JSONObject()
+        .put("kind", CHATGPT_LOGIN)
+        .put("orbit_id", orbitId)
+        .put("chat_id", chatId)
+        .put("requested_at", requestedAt)
+
     /** The entry sheet a vault card opens, or null when [card] is not a complete vault card. */
     fun vaultRequest(card: JSONObject): OrbitVault.Request? {
         val kind = when (card.optString("kind")) {
@@ -128,9 +139,13 @@ internal object OrbitChatCards {
         val hosts = card.optJSONArray("api_hosts")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()
             .filter { it.isNotBlank() }
         val updateId = card.optString("update_id").takeIf { kind != OrbitVault.OAUTH }.orEmpty()
+        // A package's key: the variable the package reads, and no terminal.
+        val packageName = card.optString("package_name")
+            .takeIf { kind == OrbitVault.API_KEY && it.matches(OrbitVault.PACKAGE_NAME) }.orEmpty()
         // An update card offers the terminal for a login too; an adding card only for a key.
         val envName = card.optString("env_name")
             .takeIf { (kind == OrbitVault.API_KEY || updateId.isNotEmpty()) && it.matches(OrbitVault.ENV_NAME) }.orEmpty()
+        if (packageName.isNotEmpty() && envName.isEmpty()) return null
         // A key that only goes into the terminal may have no hosts for the proxy.
         if (kind == OrbitVault.API_KEY && hosts.isEmpty() && envName.isEmpty()) return null
         return OrbitVault.Request(
@@ -139,10 +154,11 @@ internal object OrbitChatCards {
             newPassword = kind == OrbitVault.LOGIN && card.optBoolean("new_password"),
             requestedAt = card.optLong("requested_at"),
             envName = envName,
-            envReason = if (envName.isEmpty()) "" else card.optString("env_reason").take(200),
+            envReason = if (envName.isEmpty() || packageName.isNotEmpty()) "" else card.optString("env_reason").take(200),
             updateId = updateId,
             authorizationUrl = card.optString("authorization_url"), tokenUrl = card.optString("token_url"),
             clientId = card.optString("client_id"), scope = card.optString("scope"),
+            packageName = packageName,
         ).takeIf { kind != OrbitVault.OAUTH || runCatching { OrbitOAuthProtocol.validate(it) }.isSuccess }
     }
 }
@@ -171,22 +187,30 @@ internal object OrbitVaultNotice {
         val fresh = login && request.newPassword
         val hostsEn = request.apiHosts.takeIf { it.isNotEmpty() }?.let { " (sent only to ${it.joinToString()})" }.orEmpty()
         val hostsZh = request.apiHosts.takeIf { it.isNotEmpty() }?.let { "（只发往 ${it.joinToString()}）" }.orEmpty()
+        val pkg = request.packageName.takeIf { it.isNotEmpty() }
         val envEn = when {
+            pkg != null -> "The tool package $pkg now reads it as \$${request.envName} whenever you run its tools; " +
+                "nothing else gets it. If you have not loaded $pkg yet, use_package it first.\n"
             request.envName.isEmpty() -> ""
             envName.isNotEmpty() -> "The user allowed loading this key into the terminal as \$$envName; get the command with orbit_vault env.\n"
             else -> "The user did not allow loading this key into the terminal; use it through http_request or the terminal " +
                 "proxy, or tell the user plainly what cannot be done without it.\n"
         }
         val envZh = when {
+            pkg != null -> "工具包 $pkg 以后运行时会以环境变量 \$${request.envName} 读到它，别的地方拿不到。" +
+                "还没加载 $pkg 的话先 use_package。\n"
             request.envName.isEmpty() -> ""
             envName.isNotEmpty() -> "用户允许把这把密钥载入终端，变量名 \$$envName；用 orbit_vault 的 env 拿载入命令。\n"
             else -> "用户没有允许把这把密钥载入终端；用 http_request 或终端代理来用它，做不到的就跟用户直说。\n"
         }
         val nextEn = when {
+            pkg != null -> "$pkg"
             login -> "fill"
             envName.isNotEmpty() -> "env"
             else -> "http_request"
         }
+        val nextToolEn = if (pkg != null) "the tools of " else "orbit_vault "
+        val nextToolZh = if (pkg != null) "工具包 " else "orbit_vault 的 "
         return if (english) {
             val title = when {
                 fresh -> "New password for ${request.site} saved"
@@ -212,7 +236,7 @@ internal object OrbitVaultNotice {
                     "Earlier new passwords for this user are saved too (credential_id ${it.joinToString()}). Go by what the site " +
                         "said: one it took is the current password; delete the ones it did not take.\n"
                 }.orEmpty()) +
-                "If you were in the middle of something that needed it, carry on now with orbit_vault " +
+                "If you were in the middle of something that needed it, carry on now with " + nextToolEn +
                 nextEn +
                 ". Otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO} if nothing needs saying. " +
                 "Never repeat a saved value, and do not mention hidden notes."
@@ -239,7 +263,7 @@ internal object OrbitVaultNotice {
                 (untried.takeIf { it.isNotEmpty() }?.let {
                     "之前设过的新密码也还在（credential_id ${it.joinToString()}）。按网站刚才的结果判断：网站采用了的就是当前密码，没采用的删掉。\n"
                 }.orEmpty()) +
-                "如果刚才有事情正等着它，现在就用 orbit_vault 的 " + nextEn +
+                "如果刚才有事情正等着它，现在就用 " + nextToolZh + nextEn +
                 " 接着做；没有的话简短回一句，没什么要说就调用 ${OrbitReactionNotice.NOTHING_TO_DO}。" +
                 "绝不复述保存的值，也不要提“隐藏消息”这些内部说法。"
         }
@@ -278,6 +302,34 @@ internal object OrbitVaultNotice {
             val told = OrbitWake.tell(app, orbit, chatId, notice, left, left)
             if (told != OrbitWake.Told.BUSY) break
             kotlinx.coroutines.delay(1_500)
+        }
+    }
+
+    /** The user signed in to ChatGPT from a card in [chatId]; Orbit hears it once the chat is free. */
+    fun sendChatGptLogin(context: Context, orbit: OrbitProfile, chatId: String) {
+        val target = chatId.ifBlank { orbit.chatId }
+        if (target.isBlank()) return
+        val app = context.applicationContext
+        val notice = if (LocaleUtils.usesEnglishPrompt(app)) {
+            "$MARKER ChatGPT login done\n" +
+                "The user signed in to ChatGPT from your card. This is not a message from the user and they cannot see this note.\n" +
+                "Codex models and the codex_draw package can be used now. If you were in the middle of something that needed it, " +
+                "carry on now; otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO}. " +
+                "Do not mention hidden notes."
+        } else {
+            "$MARKER 已登录 ChatGPT\n" +
+                "用户用你放的卡片登录了 ChatGPT。这不是用户发的消息，用户也看不到这段话。\n" +
+                "Codex 模型和 codex_draw 工具包现在可以用了。刚才有事情正等着它的话现在接着做；没有就简短回一句，" +
+                "或者调用 ${OrbitReactionNotice.NOTHING_TO_DO}。不要提“隐藏消息”这些内部说法。"
+        }
+        scope.launch {
+            try {
+                deliver(app, orbit, target, notice)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about the ChatGPT login: ${e.message}")
+            }
         }
     }
 

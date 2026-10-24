@@ -2523,6 +2523,9 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         return "Android/data/${context.packageName}/files/packages"
     }
 
+    /** Where imported package files are kept, by file name. */
+    fun externalPackagesFolder(): File = externalPackagesDir
+
     fun getPluginConfigDirPath(pluginId: String): String {
         val candidate = pluginId.trim()
         if (candidate.isBlank()) {
@@ -3238,6 +3241,8 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
 
             // Validate required environment variables, if any
             if (toolPackage.env.isNotEmpty()) {
+                // An Orbit chat also has the keys the user saved for this package in its vault.
+                val orbitEnv = if (orbitPackages != null) orbitPackageEnvFor(callerChatId, normalizedPackageName) else emptyMap()
                 val missingRequiredEnv = mutableListOf<String>()
                 val missingOptionalEnv = mutableListOf<Pair<String, String>>() // env name, default value
 
@@ -3246,7 +3251,7 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                     if (envName.isEmpty()) return@forEach
 
                     val value = try {
-                        envPreferences.getEnv(envName)
+                        orbitEnv[envName]?.takeIf { it.isNotEmpty() } ?: envPreferences.getEnv(envName)
                     } catch (e: Exception) {
                         AppLogger.e(
                             TAG,
@@ -3293,6 +3298,11 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
                             append(": ")
                             append(missingRequiredEnv.joinToString(", "))
                             append(". Please set them before using this package.")
+                            if (orbitPackages != null) {
+                                append(" Ask the user for it with orbit_vault request_api_key, package_name '")
+                                append(normalizedPackageName)
+                                append("' and env_name set to the variable above; never ask for the value in chat.")
+                            }
                         }
                     AppLogger.w(TAG, msg)
                     return msg
@@ -3874,6 +3884,18 @@ private constructor(private val context: Context, private val aiToolHandler: AIT
         return kotlinx.coroutines.runBlocking {
             com.ai.assistance.operit.features.orbit.OrbitPackages.scopeFor(context, this@PackageManager, chatId)
         }
+    }
+
+    /** The keys an Orbit's vault holds for [packageName], when [chatId] is that Orbit's chat. */
+    private fun orbitPackageEnvFor(chatId: String?, packageName: String): Map<String, String> {
+        if (chatId.isNullOrBlank()) return emptyMap()
+        return runCatching {
+            kotlinx.coroutines.runBlocking {
+                com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId)?.let {
+                    com.ai.assistance.operit.features.orbit.OrbitVault.packageEnv(context, it.id, packageName)
+                }.orEmpty()
+            }
+        }.getOrDefault(emptyMap())
     }
 
     /** Whether a package is on in [chatId]: an Orbit chat's own list, any other chat the main app's. */

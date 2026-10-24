@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
+import com.ai.assistance.operit.features.orbit.OrbitApprovalActions
 import com.ai.assistance.operit.features.orbit.OrbitApprovals
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
@@ -63,6 +64,8 @@ internal fun approvalIcon(a: OrbitApprovals.Approval?): String = when {
     a.kind == OrbitApprovals.VAULT_SAVED -> "lock-keyhole"
     a.state == OrbitApprovals.APPROVED -> "shield-check"
     a.state == OrbitApprovals.DENIED -> "shield-x"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.IMPORT_PACKAGES -> "package-plus"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.CREATE_MODEL -> "cpu"
     else -> "shield-question"
 }
 
@@ -165,8 +168,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                     onClick = {
                         val target = a ?: return@Surface
                         val owner = orbit ?: return@Surface
-                        // Part of the request is hidden: read it all before saying yes.
-                        if (cut) { sheet = true; return@Surface }
+                        // Part of the request is hidden, or a key is to be typed: that is done in the sheet.
+                        if (cut || OrbitApprovalActions.needsSecret(target.action)) { sheet = true; return@Surface }
                         busy = true
                         scope.launch {
                             val result = runCatching { OrbitApprovals.decide(context, owner, target.id, true, "") }
@@ -174,6 +177,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
                             when {
                                 result.isFailure -> Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
                                 result.getOrNull() == null -> Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
+                                // The app just did something for Orbit: show what came of it.
+                                target.action.isNotEmpty() -> sheet = true
                             }
                         }
                     },
@@ -228,6 +233,11 @@ internal fun OrbitApprovalSheet(
     var note by remember(approval.id) { mutableStateOf("") }
     var declining by remember(approval.id) { mutableStateOf(startDeclining) }
     var busy by remember(approval.id) { mutableStateOf(false) }
+    // A model's API key, typed here and handed straight to the app's model settings.
+    val needsKey = approval.pending && OrbitApprovalActions.needsSecret(approval.action)
+    var key by remember(approval.id) { mutableStateOf("") }
+    var keyVisible by remember(approval.id) { mutableStateOf(false) }
+    if (needsKey) SecureWindow()
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = remember(approval.id) {
@@ -243,15 +253,22 @@ internal fun OrbitApprovalSheet(
     fun answer(approve: Boolean) {
         busy = true
         scope.launch {
-            val result = runCatching { OrbitApprovals.decide(context, orbit, approval.id, approve, note) }
+            val result = runCatching {
+                OrbitApprovals.decide(context, orbit, approval.id, approve, note,
+                    secret = if (approve && needsKey) key else null)
+            }
             busy = false
             if (result.isFailure) {
+                if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) return@launch
                 // Nothing was saved: keep the sheet and what the user wrote, so they can try again.
                 Toast.makeText(context, R.string.orbit_approval_failed, Toast.LENGTH_SHORT).show()
                 return@launch
             }
-            if (result.getOrNull() == null) Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
-            close()
+            key = ""
+            val decided = result.getOrNull()
+            if (decided == null) Toast.makeText(context, R.string.orbit_approval_already, Toast.LENGTH_SHORT).show()
+            // When the app carried something out, stay open so the result can be read here.
+            if (decided == null || !approve || approval.action.isEmpty()) close()
         }
     }
     OrbitModalBottomSheet(
@@ -310,6 +327,49 @@ internal fun OrbitApprovalSheet(
                     }
                 }
             }
+            if (!approval.pending && approval.result.isNotBlank()) {
+                Spacer(Modifier.height(12.dp))
+                Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = 18.dp, vertical = 14.dp)) {
+                        Text(stringResource(R.string.orbit_approval_result), style = MaterialTheme.typography.labelMedium,
+                            color = colors.onSurfaceVariant)
+                        Spacer(Modifier.height(4.dp))
+                        Text(approval.result, style = MaterialTheme.typography.bodyLarge)
+                    }
+                }
+            }
+            if (needsKey && !declining) {
+                Spacer(Modifier.height(12.dp))
+                Surface(shape = RoundedCornerShape(22.dp), color = colors.surface, modifier = Modifier.fillMaxWidth()) {
+                    TextField(
+                        key, { if (it.length <= 4000) key = it }, singleLine = true, enabled = !busy,
+                        label = { Text(stringResource(R.string.orbit_vault_api_key)) },
+                        visualTransformation = if (keyVisible) androidx.compose.ui.text.input.VisualTransformation.None
+                            else androidx.compose.ui.text.input.PasswordVisualTransformation(),
+                        keyboardOptions = androidx.compose.foundation.text.KeyboardOptions(
+                            keyboardType = androidx.compose.ui.text.input.KeyboardType.Password, autoCorrect = false),
+                        trailingIcon = {
+                            androidx.compose.material3.IconButton(onClick = { keyVisible = !keyVisible }) {
+                                Icon(orbitIcon(if (keyVisible) "eye-off" else "eye"),
+                                    stringResource(if (keyVisible) R.string.orbit_vault_hide else R.string.orbit_vault_show))
+                            }
+                        },
+                        colors = TextFieldDefaults.colors(
+                            focusedContainerColor = Color.Transparent, unfocusedContainerColor = Color.Transparent,
+                            disabledContainerColor = Color.Transparent, focusedIndicatorColor = Color.Transparent,
+                            unfocusedIndicatorColor = Color.Transparent, disabledIndicatorColor = Color.Transparent,
+                        ),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 4.dp),
+                    )
+                }
+                Spacer(Modifier.height(10.dp))
+                Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.Top) {
+                    Icon(orbitIcon("shield-check"), null, Modifier.size(16.dp).padding(top = 2.dp), tint = colors.primary)
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.orbit_approval_model_key_promise, orbit.name.ifBlank { stringResource(R.string.nav_orbit) }),
+                        style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                }
+            }
             if (approval.pending) {
                 if (declining) {
                     Spacer(Modifier.height(12.dp))
@@ -341,7 +401,7 @@ internal fun OrbitApprovalSheet(
                     }
                 } else {
                     Button(
-                        onClick = { answer(true) }, enabled = !busy, shape = RoundedCornerShape(50),
+                        onClick = { answer(true) }, enabled = !busy && (!needsKey || key.isNotBlank()), shape = RoundedCornerShape(50),
                         modifier = Modifier.fillMaxWidth().height(52.dp),
                     ) {
                         if (busy) {

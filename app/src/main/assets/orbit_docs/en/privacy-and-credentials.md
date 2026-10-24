@@ -67,6 +67,7 @@ Do not promise OAuth credentials through `terminal` or `env`.
 ## Approving a specific action
 
 Tool permissions determine whether a tool can run; `orbit_request_approval` asks the user to approve a particular action.
+API keys a tool package needs are kept in the vault and given only to that package at run time, never to the terminal. For a new model config, the user types the key into the approval card and it goes straight into the config.
 Describe the exact content, recipient or target, and effect.
 When final confirmation is needed, first prepare something reviewable, request approval, then end the turn and wait.
 

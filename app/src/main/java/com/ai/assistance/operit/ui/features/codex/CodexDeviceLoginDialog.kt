@@ -42,6 +42,7 @@ import kotlinx.coroutines.TimeoutCancellationException
 fun CodexDeviceLoginDialog(
     onDismissRequest: () -> Unit,
     onLoginSuccess: (CodexAuthState) -> Unit,
+    presenter: (@Composable (CodexLoginView) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -86,6 +87,39 @@ fun CodexDeviceLoginDialog(
     val dismiss = {
         cancelRequested = true
         onDismissRequest()
+    }
+    if (presenter != null) {
+        val current = code
+        presenter(
+            CodexLoginView(
+                title = stringResource(R.string.codex_device_login_title),
+                status = stringResource(if (current == null) R.string.codex_device_login_starting else R.string.codex_device_login_waiting),
+                working = true,
+                code = current,
+                instructions = current?.let { stringResource(R.string.codex_device_login_instructions) },
+                safety = current?.let { stringResource(R.string.codex_device_login_safety) },
+                onCopy = current?.let { c ->
+                    {
+                        context.getSystemService(ClipboardManager::class.java)
+                            ?.setPrimaryClip(ClipData.newPlainText("Codex device code", c.userCode))
+                        Unit
+                    }
+                },
+                onOpen = current?.let { c ->
+                    {
+                        try {
+                            context.startActivity(
+                                Intent(Intent.ACTION_VIEW, Uri.parse(c.verificationUrl)).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                            )
+                        } catch (_: Exception) {
+                            Toast.makeText(context, R.string.codex_device_login_open_elsewhere, Toast.LENGTH_LONG).show()
+                        }
+                    }
+                },
+                onCancel = dismiss,
+            )
+        )
+        return
     }
     AlertDialog(
         onDismissRequest = dismiss,

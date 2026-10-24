@@ -348,7 +348,32 @@ class JsToolManager private constructor(
         }
     }
 
-    fun executeScript(script: String, tool: AITool): Flow<ToolResult> = channelFlow {
+    fun executeScript(script: String, tool: AITool): Flow<ToolResult> {
+        // Read now: the flow may be collected where the tool's runtime context is no longer set.
+        val callerChatId = com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
+            .currentToolRuntimeContext()?.callerChatId
+        return executeScript(script, tool, callerChatId)
+    }
+
+    /**
+     * Keys the user saved in an Orbit's vault for [packageName]: the package reads them as its
+     * environment when that Orbit runs it, ahead of the main app's values.
+     */
+    private suspend fun orbitPackageEnv(callerChatId: String?, packageName: String): Map<String, String> {
+        if (callerChatId.isNullOrBlank()) return emptyMap()
+        return try {
+            val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, callerChatId)
+                ?: return emptyMap()
+            com.ai.assistance.operit.features.orbit.OrbitVault.packageEnv(context, orbit.id, packageName)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not read Orbit package keys for $packageName: ${e.message}")
+            emptyMap()
+        }
+    }
+
+    private fun executeScript(script: String, tool: AITool, callerChatId: String?): Flow<ToolResult> = channelFlow {
         val parsed = parsePackageToolName(tool.name)
         if (parsed == null) {
             send(failure(tool.name, "Invalid tool name format. Expected 'packageName:toolName'"))
@@ -363,6 +388,7 @@ class JsToolManager private constructor(
             send(failure(tool.name, e.message ?: "Invalid tool parameters"))
             return@channelFlow
         }
+        val envOverrides = orbitPackageEnv(callerChatId, packageName)
         withExecutionEngineForPackage(packageName) { engine ->
             val traceListener =
                 object : JsExecutionListener {
@@ -394,7 +420,9 @@ class JsToolManager private constructor(
                     val result = engine.executeScriptFunction(
                         script = script,
                         functionName = functionName,
-                        params = runtimeParams,
+                        params = if (envOverrides.isEmpty()) runtimeParams
+                            else runtimeParams + ("__operit_isolated_modules" to "true"),
+                        envOverrides = envOverrides,
                         toolPkgApiVersion = toolPkgApiVersion,
                         executionListener = traceListener
                     )

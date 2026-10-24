@@ -82,6 +82,8 @@ class JsEngine(private val context: Context) {
     companion object {
         private const val TAG = "JsEngine"
         private const val TOOLPKG_TAG = "ToolPkg"
+        /** How many finished calls keep their keys for masking late log lines. */
+        private const val MAX_ENDED_ENV = 32
         private const val BINARY_DATA_THRESHOLD = 32 * 1024
         private const val BINARY_HANDLE_PREFIX = "@binary_handle:"
         private const val DIRECT_SCRIPT_EXECUTION_FUNCTION = "__operit_run_inline_code__"
@@ -406,8 +408,18 @@ class JsEngine(private val context: Context) {
         val normalizedCallId = callId.trim()
         readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
         codexDrawBridgeJobs.remove(normalizedCallId)?.cancel()
-        return activeExecutionSessions.remove(normalizedCallId)
+        return activeExecutionSessions.remove(normalizedCallId)?.also { ended ->
+            // A script can still log after it finished; its keys stay masked for those late lines.
+            val values = ended.envOverrides.values.filter { it.length >= 4 }
+            if (values.isNotEmpty()) synchronized(endedEnv) {
+                endedEnv[normalizedCallId] = values
+                while (endedEnv.size > MAX_ENDED_ENV) endedEnv.remove(endedEnv.keys.first())
+            }
+        }
     }
+
+    /** Keys of the last few finished calls that had any, by call id; see [maskEnv]. */
+    private val endedEnv = LinkedHashMap<String, List<String>>()
 
     private fun clearPendingJsBridgeCallbacks(reason: String) {
         val pending = pendingJsBridgeCallbackMap.values.toList()
@@ -2999,9 +3011,9 @@ class JsEngine(private val context: Context) {
                 }
 
                 val logMessage = extractErrorLogMessage(error)
-                val enrichedLogMessage = withToolPkgCodeContext(session, logMessage)
+                val enrichedLogMessage = maskEnv(session, withToolPkgCodeContext(session, logMessage)).orEmpty()
                 AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(session, "JS ERROR: $enrichedLogMessage"))
-                session.executionListener?.onFailed(callId, logMessage)
+                session.executionListener?.onFailed(callId, maskEnv(session, logMessage).orEmpty())
 
                 completeCallFuture(
                     session = session,
@@ -3053,31 +3065,34 @@ class JsEngine(private val context: Context) {
 
         @JavascriptInterface
         fun logInfo(message: String) {
-            AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(message))
+            AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(maskAllEnv(message)))
         }
 
         @JavascriptInterface
-        fun logWarnForCall(callId: String, message: String) {
+        fun logWarnForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "warn", message)
             AppLogger.w(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
 
         @JavascriptInterface
-        fun logInfoForCall(callId: String, message: String) {
+        fun logInfoForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "info", message)
             AppLogger.i(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
 
         @JavascriptInterface
         fun logError(message: String) {
-            AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(message))
+            AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(maskAllEnv(message)))
         }
 
         @JavascriptInterface
-        fun logErrorForCall(callId: String, message: String) {
+        fun logErrorForCall(callId: String, raw: String) {
             val session = resolveExecutionSession(callId)
+            val message = maskEnv(session, raw, callId) ?: return
             session?.executionListener?.onCallLog(callId, "error", message)
             AppLogger.e(TOOLPKG_TAG, withToolPkgPluginTag(session, message))
         }
@@ -3096,7 +3111,7 @@ class JsEngine(private val context: Context) {
             AppLogger.e(
                     TOOLPKG_TAG,
                     withToolPkgPluginTag(
-                        "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack"
+                        maskAllEnv("DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack")
                     )
             )
         }
@@ -3110,15 +3125,43 @@ class JsEngine(private val context: Context) {
                 errorStack: String
         ) {
             val session = resolveExecutionSession(callId)
+            val masked = maskEnv(session, "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack", callId)
+                ?: return
             AppLogger.e(
                     TOOLPKG_TAG,
                     withToolPkgPluginTag(
                         session,
-                        "DETAILED JS ERROR: \nType: $errorType\nMessage: $errorMessage\nLine: $errorLine\nStack: $errorStack"
+                        masked
                     )
             )
         }
     }
+
+    /**
+     * Keys handed to this call as its environment (an Orbit's saved package keys) never reach the
+     * log or the trace as they are.
+     */
+    /**
+     * [message] with the call's keys masked. A line from a call that is no longer known (it ended
+     * long ago) gives null and is dropped, since its keys can no longer be told apart.
+     */
+    private fun maskEnv(session: ExecutionSession?, message: String, callId: String? = null): String? {
+        val values = session?.envOverrides?.values?.filter { it.length >= 4 }
+            ?: callId?.let { id -> synchronized(endedEnv) { endedEnv[id.trim()] } }
+            ?: return null
+        return mask(values, message)
+    }
+
+    /** For lines not tied to a call: every key a running or just finished call holds. */
+    private fun maskAllEnv(message: String): String {
+        val values = activeExecutionSessions.values.flatMap { it.envOverrides.values } +
+            synchronized(endedEnv) { endedEnv.values.flatten() }
+        return mask(values.filter { it.length >= 4 }, message)
+    }
+
+    private fun mask(values: List<String>, message: String): String =
+        if (values.isEmpty()) message
+        else values.distinct().sortedByDescending { it.length }.fold(message) { text, value -> text.replace(value, "***") }
 
     /** 销毁引擎资源 */
     fun destroy() {

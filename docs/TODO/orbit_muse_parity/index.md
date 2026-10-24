@@ -74,6 +74,7 @@ status: in-progress
 | 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
 | 发送前检查 | `orbit_presend_check`：对外发消息前核对草稿已定稿、没有密码和已忘内容、收件人明确、用户看过并同意 [DONE batch5] |
 | 从别的 AI 导入记忆 | 设置「隐私与数据」→ 复制提示词给别的 AI，粘贴回答后交给 Orbit 整理进记忆 [DONE batch5] |
+| 自己申请工具包和模型 | `orbit_packages` 的 request_import 一次申请导入多个主程序包或文件夹里的包，`orbit_models` 的 request_create 申请新建模型配置；都弹批准卡片，用户同意后 App 直接执行并把结果隐藏通知给 Orbit；模型密钥在卡片里填。包要的 API 密钥用 `orbit_vault` 的 request_api_key + package_name 存进保险箱，只给该包运行时读；codex_draw 用 request_chatgpt_login 放 ChatGPT 登录卡 [DONE] |
 | 分享到 Operit | 从别的 App 分享文字或文件时可选「发给 Orbit」，文件存进 `files/shared/`；Orbit 通知点开直接进 Orbit 聊天 [DONE batch5] |
 | 专项技能 | 预装 8 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息），按 Operit 真实工具改写，付款一律交给用户；每个 Orbit 只装一次，删了不装回 [DONE batch5] |
 ## 部分有，需要接进 Orbit

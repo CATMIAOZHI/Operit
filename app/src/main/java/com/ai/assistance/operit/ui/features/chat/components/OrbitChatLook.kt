@@ -312,7 +312,7 @@ object OrbitSpeech {
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
     private val cardToolResult = Regex(
-        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval|orbit_permission_card)\"[^>]*\\bstatus=\"success\"",
+        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval|orbit_permission_card|orbit_packages|orbit_models)\"[^>]*\\bstatus=\"success\"",
         RegexOption.IGNORE_CASE,
     )
     private val placeholder = Regex("\uE000(\\d+)\uE001")

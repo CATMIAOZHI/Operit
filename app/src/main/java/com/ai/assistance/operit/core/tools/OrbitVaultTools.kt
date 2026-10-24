@@ -34,11 +34,11 @@ internal object OrbitVaultTools {
         name = NAME,
         description = "密码凭据保险箱：保存和使用登录密码、API 密钥、公开客户端 OAuth 登录。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/request_update/list/fill/http_request/terminal/env/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/request_update/request_chatgpt_login/list/fill/http_request/terminal/env/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
             ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather", required = false),
-            ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。API 密钥给了 env_name 时可以不填", required = false),
+            ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。API 密钥给了 env_name 或 package_name 时可以不填", required = false),
             ToolParameterSchema("authorization_url", description = "request_oauth：服务商官方 https 授权地址，可含 access_type 等公开参数", required = false),
             ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址", required = false),
             ToolParameterSchema("client_id", description = "request_oauth：已注册的公开客户端 ID；回调 URI 必须登记为 ${com.ai.assistance.operit.BuildConfig.APPLICATION_ID}.orbit-oauth://callback/oauth2", required = false),
@@ -46,7 +46,8 @@ internal object OrbitVaultTools {
             ToolParameterSchema("oauth_flow", description = "request_oauth：只支持 authorization_code_pkce（默认）；device flow 不支持，改用 request_api_key", required = false),
             ToolParameterSchema("client_auth", description = "request_oauth：只支持 none（默认）。需要 client_secret 的服务不支持，改用 request_api_key，绝不向用户要 client_secret", required = false),
             ToolParameterSchema("placement", description = "request_api_key：bearer（默认）、header:<名字> 或 query:<参数名>", required = false),
-            ToolParameterSchema("env_name", description = "request_api_key / request_update：可选，代理做不到时（要签名、SDK、多把密钥、脚本登录）请求载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许", required = false),
+            ToolParameterSchema("package_name", description = "request_api_key：可选，要这把密钥的工具包名（比如 tavily）。给了它就必须给 env_name，填这个包要的环境变量名；密钥只交给这个包，不进终端", required = false),
+            ToolParameterSchema("env_name", description = "request_api_key / request_update：可选，代理做不到时（要签名、SDK、多把密钥、脚本登录）请求载入终端的变量名，大写，比如 ALIYUN_ACCESS_KEY_SECRET；用户在卡片上决定是否允许。配 package_name 时是那个工具包读的环境变量名", required = false),
             ToolParameterSchema("env_reason", description = "request_api_key：给了 env_name 时必填；request_update：可选。一句话告诉用户为什么需要在终端里用", required = false),
             ToolParameterSchema("domain", description = "list：可选，只列这个网站的", required = false),
             ToolParameterSchema("credential_id", description = "request_update/fill/http_request/terminal/env/delete：保险箱条目编号（来自 list）", required = false),
@@ -72,6 +73,8 @@ internal object OrbitVaultTools {
   - 终端里用 API 密钥（脚本、curl、python）：先 terminal 拿这个密钥的替身值（surrogate）和本机代理地址。脚本把替身值放在密钥原本的位置：Authorization 头、Basic 认证的“用户名:密钥”（比如 curl -u 'api:<替身值>'）、自定义头、查询参数或网址路径（比如 Telegram 的 /bot<替身值>/sendMessage），再把请求地址里的 https:// 换成代理地址，比如 https://api.github.com/user 改成 <proxy_base>api.github.com/user。代理核对替身值和主机，只在请求发出的那一刻换成真密钥，返回里的密钥会被打码。替身值不是密钥，可以写进脚本；密钥重新保存或删除后它就失效，代理地址在 App 重启后也可能变，连不上或提示过期就再调一次 terminal。只支持 API 密钥，登录密码不能在终端用。
   - 用户允许载入终端的密钥或密码（list 里有 env_name）：调 env 拿一行载入命令，在同一条终端命令里先执行它再跑脚本，比如 `<命令> && python sign.py`，脚本从环境变量读取。登录密码还会把用户名载入成 <env_name>_USERNAME。不要 echo、打印、写进文件或记忆，也不要把值放进命令行参数；工具输出里出现会被打码。值更新后旧命令会失效，再调一次 env。
   - 汇报时只说用没用成，不要说出任何保存的值。
+  - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
+  - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
 """,
     )
 
@@ -84,6 +87,27 @@ internal object OrbitVaultTools {
             suspend fun entry() = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == arg("credential_id") }
                 ?: error("No vault entry with that credential_id; use list")
             val result: Any = when (arg("action")) {
+                "request_chatgpt_login" -> {
+                    check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
+                        "The login card only works in a chat with the user; ask the user in chat"
+                    }
+                    val signedIn = com.ai.assistance.operit.data.preferences.CodexAuthPreferences
+                        .getInstance(context).currentState() != null
+                    val key = "${caller.orEmpty()}|chatgpt_login"
+                    val now = System.currentTimeMillis()
+                    sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
+                    when {
+                        signedIn -> JSONObject().put("already_logged_in", true)
+                            .put("note", "ChatGPT is already signed in in this app; go ahead with what needed it.")
+                        sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)
+                            .put("note", "The login card is already in the chat above. Do not send another. End this turn now.")
+                        else -> JSONObject().put("card_sent", true)
+                            .put("note", "A ChatGPT login card is now in the chat. The user signs in whenever they like; you get a " +
+                                "hidden note once it is done, and nothing if they skip it. End this turn now.")
+                            .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
+                                com.ai.assistance.operit.features.orbit.OrbitChatCards.chatGptLogin(orbit.id, caller.orEmpty(), now))
+                    }
+                }
                 "request_login", "request_new_password", "request_api_key", "request_oauth", "request_update" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
                         "The secure entry card only works in a chat with the user; ask the user in chat"
@@ -94,8 +118,10 @@ internal object OrbitVaultTools {
                         check(e.kind == OrbitVault.LOGIN || e.kind == OrbitVault.API_KEY) {
                             "An OAuth login cannot be updated; use request_oauth to connect it again"
                         }
-                        val envName = arg("env_name").uppercase().ifEmpty { e.envName.ifEmpty { e.slot } }
-                            .ifEmpty { OrbitVault.defaultEnvName(e) }
+                        // A package's key keeps its variable and stays out of the terminal.
+                        val envName = if (e.packageName.isNotEmpty()) e.slot
+                            else arg("env_name").uppercase().ifEmpty { e.envName.ifEmpty { e.slot } }
+                                .ifEmpty { OrbitVault.defaultEnvName(e) }
                         require(envName.matches(OrbitVault.ENV_NAME)) {
                             "env_name must be a shell variable name in capitals, such as GITHUB_TOKEN"
                         }
@@ -103,7 +129,8 @@ internal object OrbitVaultTools {
                         OrbitVault.Request(orbit.id, chatId, e.kind, e.site,
                             if (e.kind == OrbitVault.LOGIN) "https://${e.site}" else "", "", e.apiHosts, e.placement,
                             requestedAt = System.currentTimeMillis(), envName = envName,
-                            envReason = arg("env_reason").take(200), updateId = e.id)
+                            envReason = if (e.packageName.isNotEmpty()) "" else arg("env_reason").take(200), updateId = e.id,
+                            packageName = e.packageName)
                     } else if (arg("action") == "request_oauth") {
                         require(arg("oauth_flow").ifEmpty { "authorization_code_pkce" } == "authorization_code_pkce" &&
                             arg("client_auth").ifEmpty { "none" } == "none" && arg("client_secret").isEmpty()) {
@@ -125,17 +152,22 @@ internal object OrbitVaultTools {
                     } else {
                         val provider = arg("provider").take(60)
                         require(provider.isNotEmpty()) { "Missing provider" }
+                        val packageName = arg("package_name")
+                        val envName = arg("env_name").uppercase()
+                        if (packageName.isNotEmpty()) checkPackageEnv(context, packageName, envName)
                         val hosts = arg("api_hosts").split(',', ' ', '\n').map { it.trim().lowercase() }.filter { it.isNotEmpty() }.distinct()
-                        require((hosts.isNotEmpty() || arg("env_name").isNotEmpty()) && hosts.size <= 5 &&
+                        require(packageName.isEmpty() || hosts.isEmpty()) {
+                            "A package key is only for that package; leave out api_hosts with package_name"
+                        }
+                        require((hosts.isNotEmpty() || envName.isNotEmpty()) && hosts.size <= 5 &&
                             hosts.all { it.matches(Regex("[a-z0-9.-]{3,120}")) && it.contains('.') }) {
-                            "api_hosts must list 1-5 host names (it may be left out only with env_name)"
+                            "api_hosts must list 1-5 host names (it may be left out only with env_name or package_name)"
                         }
                         val placement = arg("placement").ifEmpty { "bearer" }
                         require(placement == "bearer" || placement.matches(Regex("(header|query):[A-Za-z0-9_-]{1,60}"))) {
                             "placement must be bearer, header:<name> or query:<name>"
                         }
-                        val envName = arg("env_name").uppercase()
-                        if (envName.isNotEmpty()) {
+                        if (envName.isNotEmpty() && packageName.isEmpty()) {
                             require(envName.matches(OrbitVault.ENV_NAME)) {
                                 "env_name must be a shell variable name in capitals, such as ALIYUN_ACCESS_KEY_SECRET"
                             }
@@ -144,12 +176,15 @@ internal object OrbitVaultTools {
                             }
                         }
                         OrbitVault.Request(orbit.id, chatId, OrbitVault.API_KEY, provider, "", "", hosts, placement,
-                            envName = envName, envReason = if (envName.isEmpty()) "" else arg("env_reason").take(200))
+                            envName = envName,
+                            envReason = if (envName.isEmpty() || packageName.isNotEmpty()) "" else arg("env_reason").take(200),
+                            packageName = packageName)
                     }
                     // A key card asked again with other hosts or placement corrects the first one, so it is a new card.
                     val key = listOf(chatId, request.kind, request.newPassword, request.site.lowercase(),
                         request.apiHosts.sorted().joinToString(","), request.placement, request.envName,
-                        request.authorizationUrl, request.tokenUrl, request.clientId, request.scope, request.updateId).joinToString("|")
+                        request.authorizationUrl, request.tokenUrl, request.clientId, request.scope, request.updateId,
+                        request.packageName).joinToString("|")
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     // The card goes into the chat and the turn moves on; a save sends a hidden note.
@@ -183,6 +218,7 @@ internal object OrbitVaultTools {
                                         .put("can_refresh", auth.refreshToken.isNotEmpty())
                                 } }
                                 .apply { if (it.envName.isNotEmpty()) put("env_name", it.envName) }
+                                .apply { if (it.packageName.isNotEmpty()) put("package_name", it.packageName).put("package_env", it.slot) }
                                 // A password set from a new-password card, which the site may not have taken yet.
                                 .apply { if (it.kind == OrbitVault.LOGIN && it.card != 0L) put("new_password", true) }
                                 .put("saved_at", it.savedAt)
@@ -253,6 +289,29 @@ internal object OrbitVaultTools {
         }
     }
 
+    private fun noHosts(e: OrbitVault.Entry) =
+        if (e.packageName.isNotEmpty()) "This key was saved for the tool package ${e.packageName}; use that package's tools"
+        else "This key was saved without API hosts, so it only works through env"
+
+    /**
+     * A package key card must name a package Orbit can use and a variable it reads: one it declares
+     * when it declares any (some packages read variables they never list).
+     */
+    private fun checkPackageEnv(context: Context, packageName: String, envName: String) {
+        require(packageName.matches(OrbitVault.PACKAGE_NAME)) { "package_name is not a package name" }
+        require(envName.matches(OrbitVault.ENV_NAME)) {
+            "With package_name, env_name must be the variable the package reads, in capitals, such as TAVILY_API_KEY"
+        }
+        val manager = com.ai.assistance.operit.core.tools.packTool.PackageManager.getInstance(
+            context, AIToolHandler.getInstance(context))
+        val pkg = manager.getAvailablePackages()[packageName]
+            ?: error("No tool package named $packageName; see orbit_packages list")
+        val declared = pkg.env.map { it.name.trim() }.filter { it.isNotEmpty() }
+        require(declared.isEmpty() || envName in declared) {
+            "$packageName reads ${declared.joinToString()}; use one of these as env_name"
+        }
+    }
+
     private val client by lazy {
         // Redirects could carry a key in the query to another host, so they are reported, not followed.
         OkHttpClient.Builder().followRedirects(false).followSslRedirects(false)
@@ -262,7 +321,8 @@ internal object OrbitVaultTools {
     /** A surrogate and the loopback proxy for using an API key from terminal scripts; see [OrbitVaultBroker]. */
     private fun terminal(context: Context, orbitId: String, e: OrbitVault.Entry): JSONObject {
         check(e.kind == OrbitVault.API_KEY) { "terminal only works with a saved API key; OAuth uses http_request and logins use fill" }
-        check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
+        check(e.packageName.isEmpty()) { noHosts(e) }
+        check(e.apiHosts.isNotEmpty()) { noHosts(e) }
         val base = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.base(context)
         val surrogate = com.ai.assistance.operit.features.orbit.OrbitVaultBroker.surrogate(context, orbitId, e)
         val host = e.apiHosts.first()
@@ -284,7 +344,8 @@ internal object OrbitVaultTools {
 
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
         check(e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.OAUTH) { "http_request only works with a saved API key or OAuth login" }
-        check(e.apiHosts.isNotEmpty()) { "This key was saved without API hosts, so it only works through env" }
+        check(e.packageName.isEmpty()) { noHosts(e) }
+        check(e.apiHosts.isNotEmpty()) { noHosts(e) }
         require(method in setOf("GET", "POST", "PUT", "PATCH", "DELETE")) { "Unsupported method $method; use GET, POST, PUT, PATCH or DELETE" }
         var parsed = url.toHttpUrlOrNull() ?: error("url \"${url.take(200)}\" is not a valid https address")
         require(parsed.isHttps) { "url must be https" }
