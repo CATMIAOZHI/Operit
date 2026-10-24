@@ -28,7 +28,11 @@ import org.json.JSONObject
  */
 internal object OrbitApprovalActions {
     const val IMPORT_PACKAGES = "import_packages"
+    const val TOGGLE_PACKAGES = "toggle_packages"
     const val CREATE_MODEL = "create_model"
+    const val USE_MODEL = "use_model"
+    const val INSTALL_COMPONENTS = "install_components"
+    const val CHANGE_SETTINGS = "change_settings"
 
     /** At most this many packages, and this many files, in one request. */
     const val MAX_ITEMS = 20
@@ -54,6 +58,23 @@ internal object OrbitApprovalActions {
     fun needsSecret(action: String): Boolean =
         runCatching { JSONObject(action).let { it.optString("type") == CREATE_MODEL && it.optBoolean("needs_key") } }
             .getOrDefault(false)
+
+    /** The user picks the models on the sheet, from the provider's own list, before approving. */
+    fun picksModels(action: String): Boolean = type(action) == CREATE_MODEL
+
+    /** The model request inside [action], for the sheet; null for any other action. */
+    fun modelRequestOf(action: String): ModelRequest? =
+        runCatching { JSONObject(action).takeIf { it.optString("type") == CREATE_MODEL }?.let(::modelRequest) }.getOrNull()
+
+    /**
+     * The provider's model names, asked with [key] (empty for a server without one). Only the app
+     * holds the key; it never reaches Orbit.
+     */
+    suspend fun fetchModels(context: Context, provider: ApiProviderType, endpoint: String, key: String,
+        customHeaders: Map<String, String> = emptyMap()): List<String> =
+        com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
+            .getModelsList(context, key.trim(), endpoint, provider, customHeaders = customHeaders)
+            .getOrThrow().map { it.id.trim() }.filter { it.isNotEmpty() }.distinct()
 
     fun packageManager(context: Context): PackageManager =
         PackageManager.getInstance(context, AIToolHandler.getInstance(context))
@@ -140,6 +161,28 @@ internal object OrbitApprovalActions {
             if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
         }
 
+    fun toggleAction(on: List<String>, off: List<String>): String = JSONObject()
+        .put("type", TOGGLE_PACKAGES)
+        .put("on", JSONArray(on))
+        .put("off", JSONArray(off))
+        .toString()
+
+    /** Includes dependencies that also need switching on, so the card covers every change. */
+    fun toggleDetail(context: Context, on: List<Pair<String, String>>, off: List<Pair<String, String>>,
+        reason: String): String = buildString {
+        fun section(label: Int, packages: List<Pair<String, String>>) {
+            if (packages.isEmpty()) return
+            if (isNotEmpty()) append("\n\n")
+            append(context.getString(label))
+            packages.forEach { (name, title) ->
+                append("\n• ").append(if (title.isBlank() || title == name) name else "$title ($name)")
+            }
+        }
+        section(R.string.orbit_approval_toggle_on, on)
+        section(R.string.orbit_approval_toggle_off, off)
+        if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
+    }
+
     data class ModelRequest(
         val name: String,
         val provider: ApiProviderType,
@@ -176,18 +219,39 @@ internal object OrbitApprovalActions {
         }
         append("\n").append(context.getString(R.string.orbit_approval_model_provider, m.provider.name))
         append("\n").append(context.getString(R.string.orbit_approval_model_endpoint, m.endpoint))
-        append("\n").append(context.getString(R.string.orbit_approval_model_models, m.models.joinToString(", ")))
+        append("\n").append(
+            if (m.models.isEmpty()) context.getString(R.string.orbit_approval_model_models_pick)
+            else context.getString(R.string.orbit_approval_model_models_suggested, m.models.joinToString(", "))
+        )
         if (m.needsKey) append("\n").append(context.getString(R.string.orbit_approval_model_key))
         if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
     }
 
-    /** Carries out an approved [approval]'s action and says what happened. */
-    suspend fun run(context: Context, orbit: OrbitProfile, approval: OrbitApprovals.Approval, secret: String?): String {
+    /** At most this many models the user can pick for one configuration. */
+    const val MAX_PICKED_MODELS = 50
+
+    /**
+     * Carries out an approved [approval]'s action and says what happened. [models] are the models
+     * the user picked on the sheet for a new model configuration.
+     */
+    suspend fun run(context: Context, orbit: OrbitProfile, approval: OrbitApprovals.Approval, secret: String?,
+        models: List<String>? = null): String {
         val action = JSONObject(approval.action)
         val english = LocaleUtils.usesEnglishPrompt(context)
         return when (action.optString("type")) {
             IMPORT_PACKAGES -> importPackages(context, orbit, action, english)
-            CREATE_MODEL -> createModel(context, orbit, approval.id, modelRequest(action), secret, english)
+            TOGGLE_PACKAGES -> togglePackages(context, orbit, action, english)
+            USE_MODEL -> OrbitModelSwitch.run(context, orbit, action, english)
+            INSTALL_COMPONENTS -> OrbitComponents.start(context, orbit, approval.chatId, action, english)
+            CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
+            CREATE_MODEL -> {
+                val asked = modelRequest(action)
+                val picked = models.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+                require(picked.size <= MAX_PICKED_MODELS && picked.all { it.length <= 120 }) { "Too many models picked" }
+                val request = if (picked.isNotEmpty()) asked.copy(models = picked) else asked
+                require(request.models.isNotEmpty()) { "No model picked" }
+                createModel(context, orbit, approval.id, request, secret, english)
+            }
             else -> error("Unknown approval action")
         }
     }
@@ -276,6 +340,79 @@ internal object OrbitApprovalActions {
             if (needKeys.isNotEmpty()) parts += "还缺密钥：${needKeys.joinToString("；")}。"
             if (needLogin.isNotEmpty() && !signedIn) parts += "需要登录 ChatGPT：${needLogin.joinToString("、")}。"
             if (parts.isEmpty()) parts += "什么都没导入。"
+        }
+        return parts.joinToString("\n")
+    }
+
+    private suspend fun togglePackages(context: Context, orbit: OrbitProfile, action: JSONObject, english: Boolean): String {
+        fun list(key: String) = action.optJSONArray(key)?.let { a ->
+            (0 until a.length()).map { a.getString(it) }.distinct()
+        }.orEmpty()
+        val on = list("on")
+        val off = list("off")
+        val allowedEnabled = on.toSet()
+        require(on.isNotEmpty() || off.isNotEmpty()) { "No packages to switch" }
+        require(on.size + off.size <= MAX_ITEMS && on.intersect(off.toSet()).isEmpty()) { "Invalid package switch request" }
+        val manager = packageManager(context)
+        val opened = linkedSetOf<String>()
+        val closed = linkedSetOf<String>()
+        val unchanged = linkedMapOf<String, String>()
+        fun why(e: Exception): String = when (e) {
+            is OrbitPackages.RequiredException -> if (english) "always on; cannot switch off" else "始终开着，不能关闭"
+            is OrbitPackages.NotImportedException -> if (english) "no longer imported" else "已不在导入列表里"
+            is OrbitPackages.StillNeededException -> if (english) "still needed by ${e.dependents.joinToString()}"
+                else "仍被这些包依赖：${e.dependents.joinToString("、")}"
+            else -> e.message.orEmpty().take(160)
+        }
+        // A dependency requested off with its dependents is retried after they have been switched off.
+        suspend fun switch(name: String, enable: Boolean, waiting: Set<String> = emptySet()): Boolean {
+            try {
+                val before = OrbitPackages.state(context, orbit.id)
+                when {
+                    !enable && name in OrbitPackages.REQUIRED -> throw OrbitPackages.RequiredException(name)
+                    name !in before.imported -> throw OrbitPackages.NotImportedException(name)
+                    (name in before.enabled) == enable -> if (name !in opened && name !in closed) {
+                        unchanged[name] = if (english) "already ${if (enable) "on" else "off"}"
+                            else "原本就${if (enable) "开着" else "关着"}"
+                    }
+                    name !in manager.getAvailablePackages() -> unchanged[name] =
+                        if (english) "package is no longer available" else "工具包已不可用"
+                    else -> {
+                        val added = OrbitPackages.setEnabled(context, orbit.id, manager, name, enable, allowedEnabled)
+                        if (enable) opened += added - before.enabled else closed += name
+                    }
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (e is OrbitPackages.StillNeededException && e.dependents.any { it in waiting }) return false
+                unchanged[name] = why(e)
+            }
+            return true
+        }
+        try {
+            val waiting = off.toMutableSet()
+            while (waiting.isNotEmpty()) {
+                val completed = waiting.filter { switch(it, false, waiting - it) }
+                if (completed.isEmpty()) {
+                    waiting.forEach { switch(it, false) }
+                    break
+                }
+                waiting.removeAll(completed.toSet())
+            }
+            on.forEach { switch(it, true) }
+        } finally {
+            if (opened.isNotEmpty() || closed.isNotEmpty()) OrbitPackages.refreshPromptWhenIdle(context, orbit)
+        }
+        val parts = mutableListOf<String>()
+        if (english) {
+            if (opened.isNotEmpty()) parts += "Switched on: ${opened.joinToString()}. Load the packages you need with use_package."
+            if (closed.isNotEmpty()) parts += "Switched off: ${closed.joinToString()}. Do not use these packages any more."
+            unchanged.forEach { (name, reason) -> parts += "Unchanged $name: $reason." }
+        } else {
+            if (opened.isNotEmpty()) parts += "已打开：${opened.joinToString("、")}。需要使用的包先用 use_package 加载。"
+            if (closed.isNotEmpty()) parts += "已关闭：${closed.joinToString("、")}。不要再使用这些包。"
+            unchanged.forEach { (name, reason) -> parts += "$name 没变：$reason。" }
         }
         return parts.joinToString("\n")
     }

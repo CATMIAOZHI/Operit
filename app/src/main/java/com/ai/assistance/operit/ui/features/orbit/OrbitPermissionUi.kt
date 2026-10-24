@@ -75,7 +75,21 @@ internal fun OrbitPermissionCard(card: JSONObject) {
     }
     val orbit = orbitFlow.collectAsState(initial = null).value
     val name = orbit?.name.orEmpty().ifBlank { stringResource(R.string.nav_orbit) }
-    var tick by remember { mutableIntStateOf(0) }
+    var tick by rememberSaveable(cardId) { mutableIntStateOf(0) }
+    // Only a tap while this card was off starts an attempt. Restoring or revisiting an old card does not.
+    var grantPending by rememberSaveable(cardId) { mutableStateOf(false) }
+    var grantAfterTick by rememberSaveable(cardId) { mutableIntStateOf(0) }
+    val onBeginGrant: (Boolean) -> Unit = { wasOff ->
+        grantPending = wasOff
+        grantAfterTick = tick
+    }
+    val onChecked: (Boolean, Int) -> Unit = { on, checkedTick ->
+        // An older read may finish after the tap. Only a read started after the result/return counts.
+        if (grantPending && checkedTick > grantAfterTick) {
+            grantPending = false
+            if (on) OrbitPermissionCards.grantedFromCard(context, orbitId, card.optString("chat_id"), permission, cardId)
+        }
+    }
     val lifecycle = LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) tick++ }
@@ -88,9 +102,9 @@ internal fun OrbitPermissionCard(card: JSONObject) {
     }
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
         val on = if (permission == OrbitPermissionCards.KEEP_ALIVE) {
-            KeepAliveBody(name, tick, onRefresh = { tick++ })
+            KeepAliveBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
         } else {
-            PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ })
+            PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
         }
         if (!on) DismissFooter(cardId, name, enabled = orbit != null, onDismiss)
     }
@@ -98,13 +112,15 @@ internal fun OrbitPermissionCard(card: JSONObject) {
 
 /** Background keep-alive and the battery exemption; returns whether both are on. */
 @Composable
-private fun KeepAliveBody(name: String, tick: Int, onRefresh: () -> Unit): Boolean {
+private fun KeepAliveBody(name: String, tick: Int, onRefresh: () -> Unit,
+    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit): Boolean {
     val context = LocalContext.current
     val colors = MaterialTheme.colorScheme
     val status by produceState(OrbitPermissionCards.lastStatus, tick) {
         val read = runCatching { OrbitTaskBlock.status(context) }.getOrNull()
         if (read != null) OrbitPermissionCards.lastStatus = read
         value = read ?: value
+        if (read != null) onChecked(read.allOn, tick)
     }
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
@@ -121,6 +137,7 @@ private fun KeepAliveBody(name: String, tick: Int, onRefresh: () -> Unit): Boole
     ) {
         busy = true
         scope.launch {
+            onBeginGrant(!OrbitTaskBlock.status(context).allOn)
             runCatching { OrbitPermissionCards.enableKeepAlive(context) }
                 .onFailure { Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show() }
             busy = false
@@ -132,10 +149,16 @@ private fun KeepAliveBody(name: String, tick: Int, onRefresh: () -> Unit): Boole
         label = stringResource(R.string.orbit_permission_battery),
         on = s?.battery,
         action = stringResource(R.string.orbit_permission_allow),
-        enabled = true,
+        enabled = !busy,
     ) {
-        if (!OrbitPermissionCards.openBatteryExemption(context)) {
-            Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
+        busy = true
+        scope.launch {
+            onBeginGrant(!OrbitTaskBlock.status(context).allOn)
+            if (!OrbitPermissionCards.openBatteryExemption(context)) {
+                onBeginGrant(false)
+                Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
+            }
+            busy = false
         }
     }
     return allOn
@@ -150,7 +173,9 @@ private fun phoneLook(permission: String) = when (permission) {
     OrbitPermissionCards.SMS -> PhoneLook("message-square", R.string.orbit_phone_sms, R.string.orbit_phone_sms_note)
     OrbitPermissionCards.CONTACTS -> PhoneLook("contact", R.string.orbit_phone_contacts, R.string.orbit_phone_contacts_note)
     OrbitPermissionCards.CALENDAR -> PhoneLook("calendar-days", R.string.orbit_phone_calendar, R.string.orbit_phone_calendar_note)
-    else -> PhoneLook("map-pin", R.string.orbit_phone_location, R.string.orbit_phone_location_note)
+    OrbitPermissionCards.MICROPHONE -> PhoneLook("mic", R.string.orbit_phone_microphone, R.string.orbit_phone_microphone_note)
+    OrbitPermissionCards.GEOFENCE -> PhoneLook("map-pin", R.string.orbit_tool_geofence_title, R.string.orbit_tool_geofence_note)
+    else -> PhoneLook("map-pin", R.string.orbit_tool_current_location_title, R.string.orbit_tool_current_location_note)
 }
 
 /**
@@ -159,40 +184,37 @@ private fun phoneLook(permission: String) = when (permission) {
  * Returns whether the permission is on.
  */
 @Composable
-private fun PhoneBody(permission: String, cardId: String, name: String, tick: Int, onRefresh: () -> Unit): Boolean {
+private fun PhoneBody(permission: String, cardId: String, name: String, tick: Int, onRefresh: () -> Unit,
+    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit): Boolean {
     val context = LocalContext.current
     val look = phoneLook(permission)
     val activity = remember(context) { context.findActivity() }
+    var asking by rememberSaveable(cardId) { mutableStateOf(false) }
     val status by produceState(OrbitPermissionCards.lastPhoneStatus[permission], permission, tick) {
-        value = withContext(Dispatchers.IO) {
+        val read = withContext(Dispatchers.IO) {
             runCatching { OrbitPermissionCards.phoneStatus(context.applicationContext, permission) }.getOrNull()
-        } ?: value
+        }
+        value = read ?: value
+        // ON_RESUME can arrive before the runtime-permission result; wait for that result first.
+        if (!asking && read != null) onChecked(read.on, tick)
     }
     // Denied with "don't ask again": the system no longer shows the dialog, so the button opens settings.
     var settingsOnly by rememberSaveable(cardId) { mutableStateOf(false) }
-    var asking by remember { mutableStateOf(false) }
     // Whether the system would explain the request before asking; with the answer after, this tells
     // a refusal with no dialog (refused for good earlier) from the user denying in the dialog now.
     var rationaleBefore by rememberSaveable(cardId) { mutableStateOf(false) }
     val title = stringResource(look.title)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         asking = false
-        // On as a whole (location with only the approximate one is enough): nothing more to do.
         val nowOn = runCatching { OrbitPermissionCards.isOn(context, permission) }.getOrDefault(false)
-        val rationaleAfter = activity != null && OrbitPermissionCards.runtimePermissions(permission)
+        val wanted = grants.keys
+        val rationaleAfter = activity != null && wanted
             .any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
-        if (!nowOn && grants.isNotEmpty() && activity != null && !rationaleAfter) {
+        if (!nowOn && grants.isNotEmpty() && !grants.values.all { it } && activity != null && !rationaleAfter) {
             settingsOnly = true
             if (!rationaleBefore) {
-                // Neither before nor after: the system answered without a dialog, because it was refused
-                // for good earlier (here, in the device tool or on the settings page). Go on to settings
-                // in the same tap and say what to turn on there.
-                if (OrbitPermissionCards.openSettings(context, permission)) {
-                    Toast.makeText(context, context.getString(R.string.orbit_permission_in_settings, title),
-                        Toast.LENGTH_LONG).show()
-                } else {
-                    Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
-                }
+                Toast.makeText(context, context.getString(R.string.orbit_permission_in_settings, title),
+                    Toast.LENGTH_LONG).show()
             }
         }
         onRefresh()
@@ -200,8 +222,14 @@ private fun PhoneBody(permission: String, cardId: String, name: String, tick: In
     val s = status
     val on = s?.on == true
     val viaSettings = settingsOnly || activity == null || s?.canAsk == false
+    val geofenceBackground = permission == OrbitPermissionCards.GEOFENCE && s?.location?.optBoolean("fine") == true
+    val needsLocationService = geofenceBackground && s?.location?.optBoolean("background") == true &&
+        s?.location?.optBoolean("location_services") == false
     CardHeader(look.icon, stringResource(R.string.orbit_permission_phone_title, name, title),
-        if (on) stringResource(R.string.orbit_permission_phone_on, name) else stringResource(look.note),
+        if (on) stringResource(R.string.orbit_permission_phone_on, name)
+        else if (needsLocationService) stringResource(R.string.orbit_tool_geofence_services_note)
+        else if (geofenceBackground) stringResource(R.string.orbit_tool_geofence_background_note)
+        else stringResource(look.note),
         subMaxLines = Int.MAX_VALUE)
     Spacer(Modifier.height(14.dp))
     PermissionRow(
@@ -210,15 +238,17 @@ private fun PhoneBody(permission: String, cardId: String, name: String, tick: In
         action = stringResource(if (viaSettings) R.string.orbit_permission_open_settings else R.string.orbit_permission_turn_on),
         enabled = !asking,
     ) {
+        onBeginGrant(!OrbitPermissionCards.isOn(context, permission))
         val asked = !viaSettings && runCatching {
             asking = true
-            val wanted = OrbitPermissionCards.runtimePermissions(permission)
+            val wanted = OrbitPermissionCards.requestPermissions(context, permission)
             rationaleBefore = activity != null && wanted.any { ActivityCompat.shouldShowRequestPermissionRationale(activity, it) }
             launcher.launch(wanted.toTypedArray())
         }.isSuccess
         if (!asked) {
             asking = false
             if (!OrbitPermissionCards.openSettings(context, permission)) {
+                onBeginGrant(false)
                 Toast.makeText(context, R.string.orbit_permission_failed, Toast.LENGTH_SHORT).show()
             }
         }

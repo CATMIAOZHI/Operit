@@ -317,6 +317,17 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
             )
         }
 
+        // Orbit's switches require an approval, including calls through operit_editor.
+        if (callerOrbit() != null) {
+            return ToolResult(
+                toolName = tool.name,
+                success = false,
+                result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
+                error = "Switching Orbit packages needs user approval. Use orbit_packages action=request_toggle " +
+                    "with on/off package names instead. Orbit 工具包开关需要用户批准，请改用 orbit_packages 的 request_toggle。",
+            )
+        }
+
         val availablePackages = packageManager.getAvailablePackages(forceRefresh = true)
         if (!availablePackages.containsKey(packageName)) {
             return ToolResult(
@@ -331,48 +342,6 @@ class StandardSoftwareSettingsModifyTools(private val context: Context) {
                         message = ""
                     ),
                 error = "Sandbox package not found: $packageName"
-            )
-        }
-
-        // An Orbit switches packages on its own list; the main app's switches stay as they are.
-        callerOrbit()?.let { orbit ->
-            val packages = com.ai.assistance.operit.features.orbit.OrbitPackages
-            if (packageManager.isToolPkgContainer(packageName)) {
-                return ToolResult(
-                    toolName = tool.name,
-                    success = false,
-                    result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
-                    error = "'$packageName' is a ToolPkg container; turn it on or off in the main app.",
-                )
-            }
-            val outcome = runCatching {
-                kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO) {
-                    val previous = packageName in packages.enabled(context, orbit.id, packageManager)
-                    previous to packages.setEnabled(context, orbit.id, packageManager, packageName, enabled)
-                }
-            }
-            val (before, added) = outcome.getOrElse { error ->
-                return ToolResult(
-                    toolName = tool.name,
-                    success = false,
-                    result = SandboxPackageUpdateResultData(packageName, enabled, false, false, ""),
-                    error = error.message ?: "Could not switch '$packageName' for this Orbit.",
-                )
-            }
-            val alsoOn = added - packageName
-            // Orbit is mid-reply here, so its prompt is rebuilt once this reply ends.
-            packages.refreshPromptWhenIdle(context, orbit)
-            return ToolResult(
-                toolName = tool.name,
-                success = true,
-                result = SandboxPackageUpdateResultData(
-                    packageName = packageName,
-                    requestedEnabled = enabled,
-                    previousEnabled = before,
-                    currentEnabled = enabled,
-                    message = "Switched ${if (enabled) "on" else "off"} for this Orbit only; the main app is unchanged." +
-                        if (alsoOn.isNotEmpty()) " Also switched on what it requires: ${alsoOn.joinToString(", ")}." else "",
-                ),
             )
         }
 

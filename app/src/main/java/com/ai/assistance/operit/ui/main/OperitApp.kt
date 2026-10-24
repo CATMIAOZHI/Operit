@@ -21,6 +21,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.res.stringResource
 import androidx.navigation.compose.rememberNavController
+import androidx.lifecycle.viewmodel.compose.viewModel
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.core.config.DistributionConfig
@@ -36,7 +37,7 @@ import com.ai.assistance.operit.ui.main.navigation.AppNavigationModel
 import com.ai.assistance.operit.ui.main.navigation.AppRouteCatalog
 import com.ai.assistance.operit.ui.main.screens.Screen
 import com.ai.assistance.operit.ui.main.navigation.AppRouterGateway
-import com.ai.assistance.operit.ui.main.navigation.AppRouterState
+import com.ai.assistance.operit.ui.main.navigation.AppNavigationViewModel
 import com.ai.assistance.operit.ui.main.navigation.AppRouteDiscoveryGateway
 import com.ai.assistance.operit.ui.main.navigation.screenKeysAliveOnStack
 import com.ai.assistance.operit.ui.main.navigation.NavigationEntrySpec
@@ -118,8 +119,22 @@ fun OperitApp(
     val configuration = LocalConfiguration.current
     val navigationModel = remember(context, configuration, navigationRevision) { AppRouteCatalog.build(context) }
 
-    val routerState = remember {
-        AppRouterState(AppRouteCatalog.initialEntry(initialNavItem))
+    val navigationViewModel: AppNavigationViewModel = viewModel()
+    val routerState = navigationViewModel.getOrCreateRouter {
+        // Resolve a targeted launch before rendering its first frame.
+        val restoredEntry = navigationViewModel.restoredEntry
+        if (routeNavRequest != null && navigationModel.routesById.containsKey(routeNavRequest)) {
+            com.ai.assistance.operit.ui.main.navigation.RouteEntry(
+                routeId = routeNavRequest,
+                args = routeNavArgs,
+            )
+        } else if (shortcutNavRequest != null) {
+            AppRouteCatalog.initialEntry(shortcutNavRequest)
+        } else if (restoredEntry != null && AppRouteCatalog.resolveScreen(navigationModel, restoredEntry) != null) {
+            restoredEntry
+        } else {
+            AppRouteCatalog.initialEntry(initialNavItem)
+        }
     }
     val routeBackGuardRegistry = remember { RouteBackGuardRegistry() }
     val currentRouteEntry = routerState.currentEntry

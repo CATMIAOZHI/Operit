@@ -25,7 +25,7 @@ internal object OrbitTaskTools {
             ToolParameterSchema("goal_id", description = "可选，orbit_goal 返回的当前 Orbit 目标编号", required = false),
             ToolParameterSchema("trigger_task_id", description = "EVENT 必填：成功后触发本任务的同 Orbit 任务编号", required = false),
             ToolParameterSchema("source_artifact_version_id", description = "可选，继续修改的成果版本编号，由 orbit_artifact 获取", required = false),
-            ToolParameterSchema("task_id", description = "list 返回的 task_id；detail/update/pause/resume/cancel/run 必填", required = false),
+            ToolParameterSchema("task_id", description = "list 返回的 task_id；detail/update/pause/resume/cancel/run/dry_run 必填", required = false),
             ToolParameterSchema("user_note", description = "resume：用户对待办问题的答复，最多4000字符；仅转达实际答复，不代替用户授权", required = false),
             ToolParameterSchema("title", description = "create 必填、update 可改：任务名称，最多80字符", required = false),
             ToolParameterSchema("instruction", description = "create 必填、update 可改：要做什么、关注什么变化、怎么汇报，最多4000字符", required = false),

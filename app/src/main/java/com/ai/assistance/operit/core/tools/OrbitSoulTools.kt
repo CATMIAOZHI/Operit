@@ -14,8 +14,9 @@ internal object OrbitSoulTools {
             ToolParameterSchema("action", description = "read/update", required = true),
             ToolParameterSchema("file", description = "soul（默认）或 identity", required = false),
             ToolParameterSchema("body", description = "update：完整文件内容，最多24000字符", required = false),
-            ToolParameterSchema("reason", description = "soul update：解释为什么修改，最多2000字符", required = false),
-            ToolParameterSchema("version", description = "soul update：read返回的当前version", required = false)))
+            ToolParameterSchema("reason", description = "soul update 必填：解释为什么修改，最多2000字符；identity 不需要", required = false),
+            ToolParameterSchema("version", description = "soul update 必填：先 read，再原样传入 read 返回的当前 version；identity 不需要", required = false)),
+        details = "修改 SOUL.md 前必须先 action=read；action=update 必须带完整 body、read 返回的 version 和修改理由 reason。IDENTITY.md 的 update 只需完整 body。")
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller)) { "orbit_soul works only inside an Orbit chat" }

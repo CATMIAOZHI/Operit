@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_component_title">安装组件</string>
+    <string name="orbit_component_detail_head">要下载并安装这些组件：</string>
+    <string name="orbit_component_detail_item">· %1$s（%2$s）</string>
+    <string name="orbit_component_detail_total">合计约 %1$s，建议连着 Wi-Fi。</string>
+
+    <string name="orbit_setup_title">先给 Orbit 接上模型</string>
+    <string name="orbit_setup_subtitle">填一个 API 密钥就行。接好后，剩下的事都可以直接跟 Orbit 说。</string>
+    <string name="orbit_setup_provider">服务商</string>
+    <string name="orbit_setup_recommended">推荐</string>
+    <string name="orbit_setup_endpoint">接口地址</string>
+    <string name="orbit_setup_change_endpoint">改地址</string>
+    <string name="orbit_setup_get_key">获取密钥</string>
+    <string name="orbit_setup_key_promise">密钥只保存在这台手机上。</string>
+    <string name="orbit_setup_main">主模型</string>
+    <string name="orbit_setup_main_note">用来聊天，选聪明一点的。</string>
+    <string name="orbit_setup_assistant">辅助模型</string>
+    <string name="orbit_setup_assistant_note">用来起标题、整理记忆等后台小事，选便宜一点的。</string>
+    <string name="orbit_setup_pick_model">选择模型</string>
+    <string name="orbit_setup_check">验证并获取模型</string>
+    <string name="orbit_setup_testing">正在测试…</string>
+    <string name="orbit_setup_start">开始</string>
+    <string name="orbit_setup_skip">稍后再说</string>
+    <string name="orbit_setup_no_models">服务商没有返回模型，请检查地址和密钥。</string>
+    <string name="orbit_setup_fetch_failed">获取模型失败，请检查网络、地址和密钥。</string>
+    <string name="orbit_setup_test_failed">测试没通过：%1$s</string>
+    <string name="orbit_setup_unknown">未知错误</string>
+    <string name="orbit_setup_entry">用 API 密钥快速开始</string>
+    <string name="orbit_setup_entry_note">填一个密钥，自动建好 Orbit 和模型</string>
+    <string name="orbit_setup_no_match">没有匹配的模型</string>
+</resources>

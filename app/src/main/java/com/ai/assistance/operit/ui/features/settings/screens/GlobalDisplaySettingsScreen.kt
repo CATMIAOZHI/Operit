@@ -30,6 +30,7 @@ import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
 import com.ai.assistance.operit.services.floating.StatusIndicatorStyle
 import com.ai.assistance.operit.ui.components.CustomScaffold
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
+import com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow
 import com.ai.assistance.operit.ui.features.settings.components.settingsSearchTarget
 import com.ai.assistance.operit.ui.features.settings.components.SettingsRowDivider
 import com.ai.assistance.operit.ui.features.settings.components.SettingsSectionTitle
@@ -181,6 +182,11 @@ fun GlobalDisplaySettingsScreen(
                 .padding(horizontal = 16.dp, vertical = 8.dp)
                 .verticalScroll(scrollState)
         ) {
+            SettingsCard(backgroundColor = componentBackgroundColor) {
+                LaunchModeSettingsRow()
+            }
+            Spacer(Modifier.height(16.dp))
+
             SettingsSectionTitle(
                 text = stringResource(R.string.message_display_settings),
                 icon = Icons.Default.Message

@@ -54,14 +54,19 @@ object OrbitCompanion {
      * Starts the Orbit made from [roleCardId], making it the first time, and pauses the one that
      * was running.
      */
-    suspend fun startFromRoleCard(context: Context, roleCardId: String): OrbitProfile {
+    suspend fun startFromRoleCard(
+        context: Context,
+        roleCardId: String,
+        /** Told the id as soon as a new Orbit is saved, so a caller can undo a start that fails later. */
+        onCreated: (String) -> Unit = {},
+    ): OrbitProfile {
         val appContext = context.applicationContext
         val profile = chatMutex.withLock {
             val preferences = OrbitPreferences.getInstance(appContext)
             val existing = preferences.current().orbitFromRoleCard(roleCardId)
             val profile =
                 if (existing != null) ensureChatLocked(appContext, existing)
-                else createLocked(appContext, roleCardId)
+                else createLocked(appContext, roleCardId, onCreated)
             preferences.setActive(profile.id)
             profile
         }
@@ -84,8 +89,8 @@ object OrbitCompanion {
     }
 
     /** Pauses the running Orbit. It keeps everything and can be started again later. */
-    suspend fun pause(context: Context) {
-        OrbitPreferences.getInstance(context.applicationContext).setActive(null)
+    suspend fun pause(context: Context, expectedOrbitId: String? = null) {
+        OrbitPreferences.getInstance(context.applicationContext).setActive(null, expectedOrbitId)
         stopInFlightUnlessActive(context)
         applySchedule(context)
     }
@@ -253,7 +258,7 @@ object OrbitCompanion {
     }
 
     /** Makes a new Orbit from a role card: its persona becomes Soul.md, its avatar is copied. */
-    private suspend fun createLocked(context: Context, roleCardId: String): OrbitProfile {
+    private suspend fun createLocked(context: Context, roleCardId: String, onCreated: (String) -> Unit = {}): OrbitProfile {
         val cardManager = CharacterCardManager.getInstance(context)
         require(roleCardId in cardManager.characterCardListFlow.first()) {
             "Role card not found: $roleCardId"
@@ -275,6 +280,7 @@ object OrbitCompanion {
                 createdAt = System.currentTimeMillis(),
             )
         preferences.putOrbit(profile)
+        onCreated(orbitId)
         val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
         return profile.copy(memorySpaceId = memorySpaceId)
     }

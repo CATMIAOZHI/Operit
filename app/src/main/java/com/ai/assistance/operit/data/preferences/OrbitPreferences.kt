@@ -456,8 +456,12 @@ class OrbitPreferences private constructor(context: Context) {
     }
 
     /** Starts the Orbit [orbitId], or pauses every Orbit when it is null. */
-    suspend fun setActive(orbitId: String?) = com.ai.assistance.operit.features.orbit.OrbitExecutionGate.serialized {
+    suspend fun setActive(orbitId: String?, expectedActiveOrbitId: String? = null) = com.ai.assistance.operit.features.orbit.OrbitExecutionGate.serialized {
         val previous = dataStore.data.first()[ACTIVE_ORBIT_ID]
+        // A deferred approval to pause one Orbit must not stop a newly selected Orbit.
+        if (expectedActiveOrbitId != null && previous != expectedActiveOrbitId) {
+            throw java.util.ConcurrentModificationException("Active Orbit changed")
+        }
         if (previous != null && previous != orbitId) {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
             val now = System.currentTimeMillis()

@@ -180,11 +180,32 @@ fun OrbitScreen(
     val loadedSettings = settings ?: return
     val activeOrbitId = loadedSettings.activeOrbitId
 
+    // A fresh install with no Orbit yet starts with the quick setup (provider + key + models).
+    // It stays up while setup runs, even after the new Orbit is saved, until every step is done.
+    val setupRunning by com.ai.assistance.operit.features.orbit.OrbitSetup.inProgress.collectAsState()
+    var showSetup by rememberSaveable { mutableStateOf(!com.ai.assistance.operit.features.orbit.OrbitSetup.skipped(context)) }
+    if (setupRunning || (activeOrbitId == null && showSetup && loadedSettings.orbits.isEmpty())) {
+        val setupBack = rememberOrbitBackMotion()
+        // Opened again from the list: back returns to the list. On first start it leaves the app.
+        val fromList = com.ai.assistance.operit.features.orbit.OrbitSetup.skipped(context)
+        OrbitBackHandler(setupBack, enabled = fromList || setupRunning, canDismiss = !setupRunning) {
+            showSetup = false
+        }
+        Box(Modifier.orbitDismissLayer(setupBack)) {
+            OrbitSetupPage(onSkip = {
+                com.ai.assistance.operit.features.orbit.OrbitSetup.skip(context)
+                showSetup = false
+            })
+        }
+        return
+    }
+
     if (activeOrbitId == null) {
         OrbitHome(
             settings = loadedSettings,
             hasBackgroundImage = hasBackgroundImage,
             onManageRoleCards = onManageRoleCards,
+            onOpenSetup = { showSetup = true },
         )
         return
     }
@@ -1330,7 +1351,7 @@ private fun OrbitSettingsPage(
         ) {
             OrbitPageHeader(stringResource(R.string.orbit_settings), onBack, Modifier.padding(start = 4.dp))
 
-            // Like Muse's plan card: how much of the week's and the extra allowance is spent.
+            // Show the weekly and extra allowance together.
             OrbitQuotaCard(orbit = orbit, cardColor = cardColor, onOpenUsage = onOpenUsage)
 
             SettingsCard(backgroundColor = cardColor) {
@@ -1344,6 +1365,8 @@ private fun OrbitSettingsPage(
             }
 
             SettingsCard(backgroundColor = cardColor) {
+                com.ai.assistance.operit.ui.features.settings.components.LaunchModeSettingsRow(searchable = false)
+                SettingsRowDivider(inset = false)
                 SettingsNavRow(
                     title = stringResource(R.string.orbit_notification_settings),
                     subtitle = stringResource(R.string.orbit_phone_notify_note),
@@ -1528,6 +1551,7 @@ private fun OrbitHome(
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
     onManageRoleCards: () -> Unit,
+    onOpenSetup: () -> Unit,
 ) {
     val context = LocalContext.current
     val resources = LocalResources.current
@@ -1579,6 +1603,18 @@ private fun OrbitHome(
             onClick = openDrawer,
         )
         OrbitHeroCard(cardColor = cardColor)
+
+        if (settings.orbits.isEmpty()) {
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_setup_entry),
+                    subtitle = stringResource(R.string.orbit_setup_entry_note),
+                    icon = lucide("key-round"),
+                    searchable = false,
+                    onClick = onOpenSetup,
+                )
+            }
+        }
 
         if (settings.orbits.isNotEmpty()) {
             Column {

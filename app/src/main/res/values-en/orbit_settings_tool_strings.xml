@@ -1,0 +1,53 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_settings_title">Change settings</string>
+    <string name="orbit_settings_palette">Chat palette</string>
+    <string name="orbit_settings_avatar">Avatar size</string>
+    <string name="orbit_settings_color">Color mode</string>
+    <string name="orbit_settings_weekly">Weekly allowance</string>
+    <string name="orbit_settings_extra">Extra allowance</string>
+    <string name="orbit_settings_extra_weekly">Reset extra allowance weekly</string>
+    <string name="orbit_settings_refill">Refill extra allowance</string>
+    <string name="orbit_settings_login">Browser account environment</string>
+    <string name="orbit_settings_memory">Memory review interval</string>
+    <string name="orbit_settings_skills">Skill review interval</string>
+    <string name="orbit_settings_delay">Learning delay</string>
+    <string name="orbit_settings_developer">Developer mode</string>
+    <string name="orbit_settings_launch">Default app mode</string>
+    <string name="orbit_settings_pause">Pause Orbit</string>
+    <string name="orbit_settings_missing">This Orbit has been removed or is being removed.</string>
+    <string name="orbit_settings_unknown">Unsupported setting name; use get first.</string>
+    <string name="orbit_settings_unchanged">Already set to this value; no change needed.</string>
+    <string name="orbit_settings_integer">Use a JSON integer without decimals or quotes.</string>
+    <string name="orbit_settings_boolean">Use a JSON boolean: true or false.</string>
+    <string name="orbit_settings_true_only">This action accepts only true.</string>
+    <string name="orbit_settings_options">Allowed values: %1$s.</string>
+    <string name="orbit_settings_range">Range: %1$s to %2$s tokens.</string>
+    <string name="orbit_settings_refill_unchanged">No extra allowance has been used; nothing to refill.</string>
+    <string name="orbit_settings_pause_only">Only pausing (true) can be requested; the user must resume manually.</string>
+    <string name="orbit_settings_not_active">This Orbit is no longer active, or is already paused; this request cannot pause another Orbit.</string>
+    <string name="orbit_settings_login_unsupported">This phone\'s WebView cannot keep logins apart. Orbit must share the app\'s environment and cannot switch.</string>
+    <string name="orbit_settings_login_note">Turning this on uses the main app browser\'s account environment; turning it off returns to this Orbit\'s own environment. Existing logins are kept. Cookies are never read or returned.</string>
+    <string name="orbit_settings_pause_note">Approval stops the current Orbit and pauses its background work. Only you can resume it manually.</string>
+    <string name="orbit_settings_refill_note">current is extra tokens used; true clears the counter at execution time without deleting usage history or resetting weekly usage.</string>
+    <string name="orbit_settings_get_note">Allowances use raw tokens; shared_by_all_orbits=true means every Orbit shares this setting. Use request_change and wait for the user to approve the card.</string>
+    <string name="orbit_settings_requested">An approval card is now in the chat. End this turn with one short line. After approval the app changes the settings and sends a hidden note with each result.</string>
+    <string name="orbit_settings_change_line">%1$s: %2$s → %3$s%4$s</string>
+    <string name="orbit_settings_shared">\u0020(shared by all Orbits)</string>
+    <string name="orbit_settings_main_login">Main app\'s account environment</string>
+    <string name="orbit_settings_own_login">This Orbit\'s separate account environment</string>
+    <string name="orbit_settings_running">Running</string>
+    <string name="orbit_settings_paused">Paused</string>
+    <string name="orbit_settings_on">On</string>
+    <string name="orbit_settings_off">Off</string>
+    <string name="orbit_settings_tokens">%1$s tokens</string>
+    <string name="orbit_settings_turns">%1$s turns</string>
+    <string name="orbit_settings_iterations">%1$s iterations</string>
+    <string name="orbit_settings_minutes">%1$s minutes</string>
+    <string name="orbit_settings_extra_used">%1$s extra tokens used</string>
+    <string name="orbit_settings_refilled">Zero extra tokens used</string>
+    <string name="orbit_settings_applied">%1$s: changed to %2$s.</string>
+    <string name="orbit_settings_skipped">%1$s: unchanged — %2$s</string>
+    <string name="orbit_settings_stale">Value changed since this request; read it and ask again.</string>
+    <string name="orbit_settings_failed">Could not save; please try again.</string>
+</resources>

@@ -13,6 +13,7 @@ import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.compose.setContent
+import androidx.activity.viewModels
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.Box
@@ -46,8 +47,11 @@ import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.data.preferences.AgreementPreferences
+import com.ai.assistance.operit.data.preferences.AppLaunchMode
+import com.ai.assistance.operit.data.preferences.LaunchModePreferences
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.androidPermissionPreferences
+import com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel
 import com.ai.assistance.operit.data.repository.ChatHistoryManager
 import com.ai.assistance.operit.data.updates.UpdateManager
 import com.ai.assistance.operit.data.updates.UpdateStatus
@@ -58,6 +62,12 @@ import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingScreenW
 import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingState
 import com.ai.assistance.operit.ui.features.startup.screens.LocalPluginLoadingState
 import com.ai.assistance.operit.ui.features.startup.screens.PluginLoadingStateRegistry
+import com.ai.assistance.operit.ui.features.startup.screens.LaunchModeSelectionScreen
+import com.ai.assistance.operit.ui.main.navigation.AppRouteCatalog
+import com.ai.assistance.operit.ui.main.navigation.AppNavigationViewModel
+import com.ai.assistance.operit.ui.main.navigation.RouteEntry
+import com.ai.assistance.operit.ui.main.screens.Screen
+import com.ai.assistance.operit.ui.main.screens.ScreenRouteRegistry
 import com.ai.assistance.operit.ui.theme.OperitTheme
 import com.ai.assistance.operit.ui.common.displays.VirtualDisplayOverlay
 import com.ai.assistance.operit.util.AnrMonitor
@@ -140,6 +150,16 @@ internal class MainProcessStartupGate {
 class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components.ResourceDownloadDialogHost {
     companion object {
         const val ACTION_OPEN_SETTINGS_SHORTCUT = "com.ai.assistance.operit.action.OPEN_SETTINGS_SHORTCUT"
+        private const val STATE_MAIN_ROUTE = "main_route"
+        private const val STATE_SHORTCUT_ROUTE = "pending_shortcut_route"
+        private const val STATE_WIDGET_ROUTE = "pending_widget_route"
+        private const val STATE_WIDGET_ARGS = "pending_widget_args"
+        private const val STATE_SHARED_URIS = "pending_shared_uris"
+        private const val STATE_SHARED_TEXT = "pending_shared_text"
+        private const val STATE_EXPLICIT_TARGET = "explicit_launch_target"
+        private const val STATE_CURRENT_ROUTE = "current_route"
+        private const val STATE_CURRENT_ARGS = "current_route_args"
+        private const val STATE_CURRENT_INSTANCE = "current_route_instance"
         private val processStartupGate = MainProcessStartupGate()
         private val processStartupScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
         private val processPluginLoadingState = PluginLoadingState()
@@ -153,6 +173,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     // ======== 工具和管理器 ========
     private lateinit var toolHandler: AIToolHandler
     private lateinit var agreementPreferences: AgreementPreferences
+    private lateinit var launchModePreferences: LaunchModePreferences
     private lateinit var anrMonitor: AnrMonitor
     private lateinit var mcpRepository: MCPRepository
 
@@ -171,6 +192,11 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
 
     // 是否显示权限引导界面
     private var showPermissionGuide by mutableStateOf(false)
+    private var showModeSelection by mutableStateOf(false)
+    private var isSavingModeSelection by mutableStateOf(false)
+    private var appContentReady = false
+    private var hasExplicitLaunchTarget = false
+    private val navigationViewModel: AppNavigationViewModel by viewModels()
 
     // 存储待处理的分享文件URIs
     private var pendingSharedFileUris: List<Uri>? = null
@@ -350,13 +376,19 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         AppLogger.d(TAG, "MainActivity应用语言设置: ${LocaleUtils.getCurrentLanguage(this)}")
         AppLogger.d(TAG, "onCreate: Android SDK version: ${Build.VERSION.SDK_INT}")
 
-        // Intent processing can touch repositories, so it runs only after the migration gate.
-        handleIntent(intent)
         restoreRuntimeTaskViewVisibilityIfNeeded()
 
         // 语言设置已在Application中初始化，这里无需重复
 
         initializeComponents()
+        launchModePreferences.initializeModeSelection(agreementPreferences.hasAcceptedAnyAgreement())
+        showModeSelection = !launchModePreferences.hasCompletedModeSelection
+        restoreLaunchNavigation(savedInstanceState)
+        // A restored Activity already consumed its original Intent. Only restore pending requests;
+        // replaying a notification here would replace a page the user navigated to afterward.
+        if (savedInstanceState == null) {
+            hasExplicitLaunchTarget = handleIntent(intent)
+        }
         anrMonitor.start()
         configureDisplaySettings()
 
@@ -375,9 +407,6 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
             ).show()
         }
 
-        // 设置初始界面
-        setAppContent()
-
         // 初始化并设置更新管理器
         setupUpdateManager()
 
@@ -385,12 +414,17 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         // skips configuration-change recreation while still running startup after process death.
         processStartupLease = processStartupGate.claim()
         val isFreshActivityLaunch = savedInstanceState == null
-        if (shouldRunActivityStartupChecks(
-                isFreshActivityLaunch = isFreshActivityLaunch,
-                hasProcessStartupLease = processStartupLease != null,
-            )
-        ) {
-            performActivityStartupChecks(prepareStartupChat = isFreshActivityLaunch)
+        lifecycleScope.launch {
+            // Resolve onboarding and the permission level before composing any home page.
+            checkPermissionLevelSet()
+            setAppContent()
+            if (shouldRunActivityStartupChecks(
+                    isFreshActivityLaunch = isFreshActivityLaunch,
+                    hasProcessStartupLease = processStartupLease != null,
+                )
+            ) {
+                performActivityStartupChecks(prepareStartupChat = isFreshActivityLaunch)
+            }
         }
 
         // 设置双击返回退出
@@ -573,7 +607,8 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         val handledShortcutIntent = handleIntent(intent)
 
         if (handledShortcutIntent) {
-            setAppContent()
+            hasExplicitLaunchTarget = true
+            if (appContentReady) setAppContent()
             return
         }
         
@@ -598,9 +633,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                 }.getOrNull()
                 if (orbitOwner != null) {
                     com.ai.assistance.operit.features.orbit.OrbitNavigation.openChat(chatId)
-                    pendingShortcutNavItem = NavItem.Orbit
-                    pendingShortcutRequestId = System.currentTimeMillis()
-                    currentMainNavItem = NavItem.Orbit
+                    requestMainNavItem(NavItem.Orbit)
                     return true
                 }
                 lifecycleScope.launch {
@@ -608,16 +641,12 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                         .getCore(com.ai.assistance.operit.api.chat.ChatRuntimeSlot.MAIN)
                     if (core.chatExists(chatId)) core.switchChat(chatId)
                 }
-                pendingShortcutNavItem = NavItem.AiChat
-                pendingShortcutRequestId = System.currentTimeMillis()
-                currentMainNavItem = NavItem.AiChat
+                requestMainNavItem(NavItem.AiChat)
                 return true
             }
         }
         if (intent?.action == ACTION_OPEN_SETTINGS_SHORTCUT) {
-            pendingShortcutNavItem = NavItem.Settings
-            pendingShortcutRequestId = System.currentTimeMillis()
-            currentMainNavItem = NavItem.Settings
+            requestMainNavItem(NavItem.Settings)
             AppLogger.d(TAG, "Shortcut requested opening settings")
             return true
         }
@@ -625,6 +654,8 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
         val pendingWidgetRouteId =
             intent?.getStringExtra(ToolPkgDesktopWidgetHost.EXTRA_OPEN_ROUTE_ID)?.trim().orEmpty()
         if (pendingWidgetRouteId.isNotBlank()) {
+            pendingShortcutNavItem = null
+            pendingShortcutRequestId = 0L
             pendingRouteId = pendingWidgetRouteId
             pendingRouteArgs =
                 parseRouteArgsJson(
@@ -687,7 +718,75 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                 }
             }
         }
+        if (pendingSharedFileUris != null || !pendingSharedText.isNullOrBlank()) {
+            requestMainNavItem(NavItem.AiChat)
+            return true
+        }
         return false
+    }
+
+    private fun requestMainNavItem(navItem: NavItem) {
+        pendingRouteId = null
+        pendingRouteArgs = emptyMap()
+        pendingRouteRequestId = 0L
+        pendingShortcutNavItem = navItem
+        pendingShortcutRequestId = System.currentTimeMillis()
+        currentMainNavItem = navItem
+    }
+
+    private fun defaultLaunchNavItem(): NavItem =
+        if (launchModePreferences.mode == AppLaunchMode.ORBIT) NavItem.Orbit else NavItem.AiChat
+
+    private fun navItemFromSavedRoute(routeId: String?): NavItem? =
+        routeId?.let { ScreenRouteRegistry.screenFromEntry(RouteEntry(routeId = it))?.navItem }
+
+    private fun restoreLaunchNavigation(state: Bundle?) {
+        currentMainNavItem =
+            navItemFromSavedRoute(state?.getString(STATE_MAIN_ROUTE)) ?: defaultLaunchNavItem()
+        if (state == null) return
+        hasExplicitLaunchTarget = state.getBoolean(STATE_EXPLICIT_TARGET)
+        pendingShortcutNavItem = navItemFromSavedRoute(state.getString(STATE_SHORTCUT_ROUTE))
+        if (pendingShortcutNavItem != null) pendingShortcutRequestId = System.currentTimeMillis()
+        pendingRouteId = state.getString(STATE_WIDGET_ROUTE)
+        pendingRouteArgs = parseRouteArgsJson(state.getString(STATE_WIDGET_ARGS))
+        if (pendingRouteId != null) pendingRouteRequestId = System.currentTimeMillis()
+        pendingSharedFileUris = state.getStringArrayList(STATE_SHARED_URIS)?.map(Uri::parse)
+        pendingSharedText = state.getString(STATE_SHARED_TEXT)
+        state.getString(STATE_CURRENT_ROUTE)?.let { routeId ->
+            navigationViewModel.restoreCurrentEntry(
+                RouteEntry(
+                    instanceId = state.getString(STATE_CURRENT_INSTANCE) ?: UUID.randomUUID().toString(),
+                    routeId = routeId,
+                    args = parseRouteArgsJson(state.getString(STATE_CURRENT_ARGS)),
+                )
+            )
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::launchModePreferences.isInitialized) {
+            outState.putString(STATE_MAIN_ROUTE, AppRouteCatalog.initialEntry(currentMainNavItem).routeId)
+            outState.putBoolean(STATE_EXPLICIT_TARGET, hasExplicitLaunchTarget)
+            pendingShortcutNavItem?.let {
+                outState.putString(STATE_SHORTCUT_ROUTE, AppRouteCatalog.initialEntry(it).routeId)
+            }
+            outState.putString(STATE_WIDGET_ROUTE, pendingRouteId)
+            outState.putString(STATE_WIDGET_ARGS, JSONObject(pendingRouteArgs).toString())
+            pendingSharedFileUris?.let {
+                outState.putStringArrayList(STATE_SHARED_URIS, ArrayList(it.map(Uri::toString)))
+            }
+            outState.putString(STATE_SHARED_TEXT, pendingSharedText)
+            navigationViewModel.currentEntry?.let { entry ->
+                outState.putString(STATE_CURRENT_ROUTE, entry.routeId)
+                outState.putString(STATE_CURRENT_INSTANCE, entry.instanceId)
+                // The registry can reconstruct native screens from their primitive arguments;
+                // the cached Screen instance itself must never go into an Android saved-state Bundle.
+                val args = entry.args.filterValues { it !is Screen }
+                    .mapValues { (_, value) -> if (value is Enum<*>) value.name else value }
+                outState.putString(STATE_CURRENT_ARGS, JSONObject(args).toString())
+            }
+        }
+        super.onSaveInstanceState(outState)
     }
 
     private suspend fun prepareStartupChatIfNeeded() {
@@ -735,13 +834,13 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     // ======== 执行初始化检查 ========
     private fun performActivityStartupChecks(prepareStartupChat: Boolean) {
         lifecycleScope.launch {
+            if (!agreementPreferences.isAgreementAccepted() || showModeSelection) return@launch
             // 1. 检查通知权限（Android 13+）
-            checkNotificationPermission()
+            if (launchModePreferences.mode == AppLaunchMode.STANDARD) checkNotificationPermission()
 
-            // 2. 检查权限级别设置
-            checkPermissionLevelSet()
-
-            if (prepareStartupChat) prepareStartupChatIfNeeded()
+            if (prepareStartupChat && !hasExplicitLaunchTarget && currentMainNavItem == NavItem.AiChat) {
+                prepareStartupChatIfNeeded()
+            }
 
             // 3. 在协议已接受且无需权限引导时，启动插件加载
             if (shouldStartProcessOwnedInitialization(
@@ -922,6 +1021,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
 
         // 初始化协议偏好管理器
         agreementPreferences = AgreementPreferences(this)
+        launchModePreferences = LaunchModePreferences.getInstance(this)
 
     }
 
@@ -957,9 +1057,19 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
     }
 
     // ======== 检查权限级别设置 ========
-    private fun checkPermissionLevelSet() {
-        // 检查是否已设置权限级别
-        val permissionLevel = androidPermissionPreferences.getPreferredPermissionLevel()
+    private suspend fun checkPermissionLevelSet() {
+        var permissionLevel = withContext(Dispatchers.IO) {
+            androidPermissionPreferences.preferredPermissionLevelFlow.first()
+        }
+        if (permissionLevel == null &&
+            agreementPreferences.isAgreementAccepted() &&
+            launchModePreferences.hasCompletedModeSelection &&
+            launchModePreferences.mode == AppLaunchMode.ORBIT
+        ) {
+            // STANDARD needs no elevated access. Orbit asks for system permissions in context.
+            androidPermissionPreferences.savePreferredPermissionLevel(AndroidPermissionLevel.STANDARD)
+            permissionLevel = AndroidPermissionLevel.STANDARD
+        }
         AppLogger.d(TAG, "当前权限级别: $permissionLevel")
         showPermissionGuide = permissionLevel == null
         AppLogger.d(
@@ -1009,6 +1119,7 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
 
     // ======== 设置应用内容 ========
     private fun setAppContent() {
+        appContentReady = true
         setContent {
             OperitTheme {
                 Box {
@@ -1017,18 +1128,44 @@ class MainActivity : ComponentActivity(), com.ai.assistance.operit.ui.components
                             AgreementScreen(
                                     onAgreementAccepted = {
                                         agreementPreferences.acceptCurrentAgreement()
-                                        // 协议接受后，检查权限级别设置
                                         lifecycleScope.launch {
-                                            // 确保使用非阻塞方式更新UI
-                                            delay(300) // 短暂延迟确保UI状态更新
                                             checkPermissionLevelSet()
-                                            if (!showPermissionGuide) {
+                                            if (!showModeSelection && !showPermissionGuide) {
                                                 startPluginLoading()
                                             }
                                             // 重新设置应用内容
                                             setAppContent()
+                                            if (!showModeSelection && launchModePreferences.mode == AppLaunchMode.STANDARD) {
+                                                checkNotificationPermission()
+                                            }
                                         }
                                     }
+                            )
+                        }
+                        else if (showModeSelection) {
+                            LaunchModeSelectionScreen(
+                                isSaving = isSavingModeSelection,
+                                onModeSelected = { mode ->
+                                    if (!isSavingModeSelection) lifecycleScope.launch {
+                                        isSavingModeSelection = true
+                                        try {
+                                            launchModePreferences.setMode(mode)
+                                            if (!hasExplicitLaunchTarget) currentMainNavItem = defaultLaunchNavItem()
+                                            checkPermissionLevelSet()
+                                            showModeSelection = false
+                                            if (!showPermissionGuide) startPluginLoading()
+                                            setAppContent()
+                                            if (mode == AppLaunchMode.STANDARD) checkNotificationPermission()
+                                        } catch (e: kotlinx.coroutines.CancellationException) {
+                                            throw e
+                                        } catch (e: Exception) {
+                                            AppLogger.e(TAG, "Could not complete launch mode selection", e)
+                                            Toast.makeText(this@MainActivity, R.string.launch_mode_save_failed, Toast.LENGTH_SHORT).show()
+                                        } finally {
+                                            isSavingModeSelection = false
+                                        }
+                                    }
+                                },
                             )
                         }
                         // 检查是否需要显示权限引导界面

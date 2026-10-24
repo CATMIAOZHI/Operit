@@ -27,13 +27,16 @@ internal object OrbitPermissionTools {
             ToolParameterSchema("permission", description = "One of: keep_alive (Operit's background keep-alive plus the " +
                 "battery-optimization exemption, so background tasks start on time while Operit is closed); notify (send " +
                 "phone notifications); notification_read (read other apps' notifications, for watching deliveries and the " +
-                "like); sms (read text messages); contacts (read contacts); calendar (read calendar events); location " +
-                "(the phone's current location)", required = true),
+                "like); sms (read text messages); contacts (read contacts); calendar (read calendar events); " +
+                "microphone (record audio); location (current location, approximate is enough); " +
+                "geofence (arrival/departure reminders: precise and background location)", required = true),
         ),
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
-  - The user turns things on from the card; you are not told when they do. If they tap "Don't remind me" you get a hidden note.
+  - After the user opens permission controls from the card and returns, the app checks again. Only an off-to-on change sends a hidden note to this original chat, so you can continue the work. A denial or unchanged setting sends nothing. "Don't remind me" also sends a hidden note.
+  - location is only for the current position; coarse location is enough. geofence requires fine location, background location on Android 10+, and the phone's location service. Check coarse/fine/background/location_services separately in the result. Do not continue a geofence while can_continue=false.
+  - For geofence, first ask for foreground precise location (coarse + fine together). Once granted, ask separately for background access: Android 10 has another system dialog; Android 11+ requires choosing "Allow all the time" on the app's system location-permission page. The card handles these steps; never request foreground and background together.
   - Offer it when something the user wants needs it: a tool said the permission is off, a watch needs SMS or notifications, background tasks ran late. Say in one line why you need it. One card per turn; do not offer it again after they ignored or declined it.
   - 先检查当前状态，开着就不放卡。用户要做的事需要某个权限（工具报没权限、盯短信/通知、后台任务被延后）时才放，并用一句话说明为什么要它。卡片放出后用一句话结束这一轮；用户没理或拒绝过，就别再放。
 """,
@@ -66,7 +69,7 @@ internal object OrbitPermissionTools {
             } else {
                 result.put("card", "placed")
                     .put("note", "A card is now in the chat with a button for each setting that is off. End this turn with one " +
-                        "short line. You are not told when the user turns them on; do not ask again if they ignore it.")
+                        "short line. You will hear when both settings actually turn on through the card; do not ask again if they ignore it.")
                     .put(OrbitChatCards.KEY, OrbitChatCards.permission(orbit.id, caller.orEmpty(), permission,
                         UUID.randomUUID().toString()))
             }
@@ -81,15 +84,38 @@ internal object OrbitPermissionTools {
     /** A card for one phone permission, unless it is on already. */
     private fun phoneCard(context: Context, orbitId: String, chatId: String, permission: String): ToolResult {
         val result = JSONObject().put("permission", permission)
-        if (OrbitPermissionCards.isOn(context, permission)) {
+        val location = if (permission == OrbitPermissionCards.LOCATION || permission == OrbitPermissionCards.GEOFENCE)
+            OrbitPermissionCards.locationStatus(context) else null
+        if (location != null) {
+            for (key in listOf("coarse", "fine", "background", "background_required", "location_services"))
+                result.put(key, location.get(key))
+        }
+        val on = OrbitPermissionCards.isOn(context, permission)
+        val ready = on && (location == null || location.optBoolean("location_services"))
+        result.put("can_continue", ready)
+        if (on) {
             result.put("status", "on").put("card", "none")
-                .put("note", "It is on already, so no card was placed. Go ahead with what needed it.")
+                .put("note", if (ready) "It is on already, so no card was placed. Go ahead with what needed it."
+                    else "The permission is granted, but the phone's location service is off. Ask the user to enable Location in system settings before continuing.")
         } else {
             result.put("status", "off").put("card", "placed")
                 .put("note", "A card is now in the chat with a button to turn it on. End this turn with one short line " +
-                    "saying why you need it. You are not told when the user turns it on; carry on when they come back to it, " +
-                    "and do not offer the card again if they ignore it.")
+                    "saying why you need it. Do not continue the work that needs this permission yet. " +
+                    "You will hear in this chat only after the card's off-to-on change is verified; " +
+                    "do not offer the card again if they ignore or decline it.")
                 .put(OrbitChatCards.KEY, OrbitChatCards.permission(orbitId, chatId, permission, UUID.randomUUID().toString()))
+            if (permission == OrbitPermissionCards.GEOFENCE) {
+                result.put("required", "fine + background (Android 10+) + location_services")
+                    .put("next_permission_step", when {
+                        location?.optBoolean("fine") != true ->
+                            "Tap the card to grant foreground precise location first (coarse and fine together). Then return and tap again for background access."
+                        location.optBoolean("background") != true && android.os.Build.VERSION.SDK_INT == 29 ->
+                            "Tap the card again for the separate background-location dialog, and choose Allow all the time."
+                        location.optBoolean("background") != true ->
+                            "Tap the card to open this app's system settings, choose Permissions > Location > Allow all the time, then return."
+                        else -> "Tap the card to enable the phone's Location service, then return."
+                    })
+            }
         }
         return ToolResult(NAME, true, StringResultData(result.toString()))
     }

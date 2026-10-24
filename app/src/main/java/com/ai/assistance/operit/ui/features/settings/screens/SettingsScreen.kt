@@ -393,6 +393,7 @@ private fun settingsOptionEntries(pageOf: (String) -> SettingsEntry): List<Setti
 
         return listOf(
                 page(R.string.settings_global_display) to listOf(
+                        R.string.launch_mode_setting_title,
                         R.string.collapse_completed_process_title,
                         R.string.tool_collapse_mode_title,
                         R.string.global_user_name,

@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_component_title">Install components</string>
+    <string name="orbit_component_detail_head">Download and install these components:</string>
+    <string name="orbit_component_detail_item">· %1$s (%2$s)</string>
+    <string name="orbit_component_detail_total">About %1$s in total. Wi-Fi is recommended.</string>
+
+    <string name="orbit_setup_title">Connect a model to Orbit</string>
+    <string name="orbit_setup_subtitle">One API key is enough. After that, just tell Orbit what else you need.</string>
+    <string name="orbit_setup_provider">Provider</string>
+    <string name="orbit_setup_recommended">Recommended</string>
+    <string name="orbit_setup_endpoint">Endpoint</string>
+    <string name="orbit_setup_change_endpoint">Change</string>
+    <string name="orbit_setup_get_key">Get a key</string>
+    <string name="orbit_setup_key_promise">The key stays on this phone.</string>
+    <string name="orbit_setup_main">Main model</string>
+    <string name="orbit_setup_main_note">Used for chatting. Pick a smart one.</string>
+    <string name="orbit_setup_assistant">Helper model</string>
+    <string name="orbit_setup_assistant_note">Used for titles, memory and other background work. Pick a cheap one.</string>
+    <string name="orbit_setup_pick_model">Choose a model</string>
+    <string name="orbit_setup_check">Check and load models</string>
+    <string name="orbit_setup_testing">Testing…</string>
+    <string name="orbit_setup_start">Start</string>
+    <string name="orbit_setup_skip">Later</string>
+    <string name="orbit_setup_no_models">The provider returned no models. Check the endpoint and key.</string>
+    <string name="orbit_setup_fetch_failed">Could not load models. Check the network, endpoint and key.</string>
+    <string name="orbit_setup_test_failed">The test failed: %1$s</string>
+    <string name="orbit_setup_unknown">Unknown error</string>
+    <string name="orbit_setup_entry">Quick start with an API key</string>
+    <string name="orbit_setup_entry_note">One key sets up Orbit and its models</string>
+    <string name="orbit_setup_no_match">No matching model</string>
+</resources>

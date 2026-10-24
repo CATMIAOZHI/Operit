@@ -9771,12 +9771,14 @@
     <string name="orbit_approval_import_title">导入工具包</string>
     <string name="orbit_approval_import_from_app">从主程序导入：</string>
     <string name="orbit_approval_import_from_files">从文件导入：</string>
+    <string name="orbit_approval_toggle_title">开关工具包</string>
+    <string name="orbit_approval_toggle_on">打开这些工具包（含所需依赖）：</string>
+    <string name="orbit_approval_toggle_off">关闭这些工具包：</string>
     <string name="orbit_approval_reason">原因：%1$s</string>
     <string name="orbit_approval_model_title">新建模型配置：%1$s</string>
     <string name="orbit_approval_model_name">名称：%1$s</string>
     <string name="orbit_approval_model_provider">服务商：%1$s</string>
     <string name="orbit_approval_model_endpoint">地址：%1$s</string>
-    <string name="orbit_approval_model_models">模型：%1$s</string>
     <string name="orbit_approval_model_use_main">同时设为主聊天模型</string>
     <string name="orbit_approval_model_use_assistant">同时设为辅助模型</string>
     <string name="orbit_approval_model_key">同意时需要你填 API 密钥</string>

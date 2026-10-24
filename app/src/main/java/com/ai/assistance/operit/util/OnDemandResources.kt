@@ -137,6 +137,9 @@ object OnDemandResources {
             listOf(DownloadItem(File(context.filesDir, "downloaded_resources/templates-v1/${windowsTemplate.id}"), windowsTemplate))),
     )
 
+    /** The id of the terminal environment in [componentGroups]. */
+    internal val terminalComponentId: String get() = ubuntu.id
+
     internal fun terminalInstalled(context: Context): Boolean {
         val root = File(context.filesDir, "usr/var/lib/proot-distro/installed-rootfs/ubuntu")
         return File(root, ".operit_installed_ok").isFile || File(root, "etc/issue.net").isFile

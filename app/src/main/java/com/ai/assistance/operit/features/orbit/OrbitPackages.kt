@@ -225,7 +225,8 @@ object OrbitPackages {
      * Switches the imported package [name] for this Orbit. Switching on also imports and switches on
      * the plugins it requires, and returns every name that got switched on. A package that was not
      * imported, a missing requirement, or switching off something another switched-on package
-     * needs, throws with the reason and changes nothing.
+     * needs, throws with the reason and changes nothing. An approval can restrict [allowedEnabled]
+     * so a dependency that changed while the user was deciding is not silently switched on.
      */
     suspend fun setEnabled(
         context: Context,
@@ -233,6 +234,7 @@ object OrbitPackages {
         packageManager: PackageManager,
         name: String,
         on: Boolean,
+        allowedEnabled: Set<String>? = null,
     ): Set<String> =
         withContext(Dispatchers.IO) {
             val file = file(context, orbitId)
@@ -242,6 +244,14 @@ object OrbitPackages {
                 if (name !in current.imported) throw NotImportedException(name)
                 if (on) {
                     val added = linkedSetOf(name) + needs(packageManager, name)
+                    if (allowedEnabled != null) {
+                        val missing = added - current.imported
+                        require(missing.isEmpty()) { "No longer imported: ${missing.joinToString()}; request import first" }
+                        val unapproved = added - current.enabled - allowedEnabled
+                        require(unapproved.isEmpty()) {
+                            "Dependencies changed; request approval to switch on: ${unapproved.joinToString()}"
+                        }
+                    }
                     write(file, State(current.imported + added, current.enabled + added))
                     added
                 } else {
