@@ -7,10 +7,8 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -647,8 +645,6 @@ private fun OrbitFeedPage(
             else -> items(list, key = { it.id }) { post ->
                 FeedPostRow(
                     post = post,
-                    isFirst = post.id == list.first().id,
-                    isLast = post.id == list.last().id,
                     // Tapping the chosen answer again takes it back.
                     onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
                     onDiscuss = {
@@ -668,8 +664,6 @@ private fun OrbitFeedPage(
                         }
                     },
                     cardOwner = "orbit-feed:" + orbit.id,
-                    onMove = { up -> action { repository.move(post.id, up) } },
-                    onDelete = { action { repository.delete(post.id) } },
                 )
             }
         }
@@ -756,12 +750,9 @@ private fun BriefDialog(who: String, initial: String, onDismiss: () -> Unit, onS
     )
 }
 
-@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun FeedPostRow(
     post: OrbitBoardRepository.Item,
-    isFirst: Boolean,
-    isLast: Boolean,
     onVote: (Int) -> Unit,
     onDiscuss: () -> Unit,
     /** Reads the post's Dynamic UI card (only called when it has one). */
@@ -770,37 +761,42 @@ private fun FeedPostRow(
     onCardSubmit: (String) -> Boolean,
     /** Groups the card's saved state (what the user ticked or typed) under this Orbit's feed. */
     cardOwner: String,
-    onMove: (Boolean) -> Unit,
-    onDelete: () -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
     var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
-    var menu by remember { mutableStateOf(false) }
     val body = remember(post.body, colors.primary) { linkify(post.body, colors.primary) }
     Column(Modifier.bleed(20.dp)) {
         Box {
             Row(
                 Modifier.fillMaxWidth()
-                    .combinedClickable(onClick = { expanded = !expanded }, onLongClick = { menu = true })
+                    .clickable { expanded = !expanded }
                     .padding(start = 16.dp, end = 20.dp, top = 16.dp, bottom = 4.dp),
             ) {
                 BoardEmoji(post.emoji, "📰")
                 Spacer(Modifier.width(12.dp))
                 Column(Modifier.weight(1f).animateContentSize()) {
-                    Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        body, style = MaterialTheme.typography.bodyLarge,
-                        maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
-                    )
+                    // Text owns the long press; links and the row's normal expand tap still work.
+                    // Keep interactive cards and action buttons outside the selection area.
+                    SelectionContainer {
+                        Column {
+                            Text(post.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Medium)
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                body, style = MaterialTheme.typography.bodyLarge,
+                                maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     if (post.card) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
                     if (showWhy && post.extra.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Surface(shape = RoundedCornerShape(16.dp), color = colors.onSurface.copy(alpha = 0.05f)) {
-                            Column(Modifier.padding(12.dp)) {
-                                Text(stringResource(R.string.orbit_feed_why), style = MaterialTheme.typography.labelLarge)
-                                Text(post.extra, style = MaterialTheme.typography.bodyMedium)
+                            SelectionContainer {
+                                Column(Modifier.padding(12.dp)) {
+                                    Text(stringResource(R.string.orbit_feed_why), style = MaterialTheme.typography.labelLarge)
+                                    Text(post.extra, style = MaterialTheme.typography.bodyMedium)
+                                }
                             }
                         }
                     }
@@ -833,18 +829,6 @@ private fun FeedPostRow(
                         }
                     }
                 }
-            }
-            OrbitDropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
-                if (!isFirst) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_up)) }, onClick = { menu = false; onMove(true) })
-                }
-                if (!isLast) {
-                    DropdownMenuItem(text = { Text(stringResource(R.string.orbit_move_down)) }, onClick = { menu = false; onMove(false) })
-                }
-                DropdownMenuItem(
-                    text = { Text(stringResource(R.string.delete), color = colors.error) },
-                    onClick = { menu = false; onDelete() },
-                )
             }
         }
         HorizontalDivider(Modifier.padding(top = 8.dp), color = colors.outlineVariant.copy(alpha = 0.5f))

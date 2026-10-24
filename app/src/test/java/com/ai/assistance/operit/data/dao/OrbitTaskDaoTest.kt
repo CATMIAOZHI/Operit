@@ -34,7 +34,7 @@ class OrbitTaskDaoTest {
         whenever(context.getDatabasePath(any())).thenAnswer { File(dir, it.getArgument<String>(0)) }
         return Room.databaseBuilder(context, AppDatabase::class.java, "orbit-test")
             .setDriver(JdbcSQLiteDriver()).addMigrations(AppDatabase.MIGRATION_35_36, AppDatabase.MIGRATION_36_37,
-                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44)
+                AppDatabase.MIGRATION_37_38, AppDatabase.MIGRATION_38_39, AppDatabase.MIGRATION_39_40, AppDatabase.MIGRATION_40_41, AppDatabase.MIGRATION_41_42, AppDatabase.MIGRATION_42_43, AppDatabase.MIGRATION_43_44, AppDatabase.MIGRATION_44_45)
             .allowMainThreadQueries().build()
     }
     @Before fun setUp() {
@@ -512,6 +512,23 @@ class OrbitTaskDaoTest {
         assertEquals(recovered, dao.artifact(recovered.id))
         dao.removeOrbit("orbit")
         assertNull(dao.artifact("version"))
+    }
+
+    @Test fun `version 44 migration preserves tasks and defaults their model role`() = runBlocking {
+        dao.insertTask(definition().copy(useSubagent = true))
+        database.close()
+        DriverManager.getConnection("jdbc:sqlite:${File(dir, "orbit-test").absolutePath}").use { connection ->
+            connection.createStatement().use { statement ->
+                statement.execute("ALTER TABLE orbit_tasks DROP COLUMN modelRole")
+                statement.execute("PRAGMA user_version=44")
+            }
+        }
+        database = open()
+        assertEquals("DEFAULT", dao.task("task")?.modelRole)
+        assertEquals(true, dao.task("task")?.useSubagent)
+        val task = checkNotNull(dao.task("task"))
+        assertTrue(dao.replaceDefinition(task.copy(modelRole = "MAIN"), task.version))
+        assertEquals("MAIN", dao.task("task")?.modelRole)
     }
 
     @Test fun `version 35 migration preserves existing messages and creates validated task schema`() = runBlocking {

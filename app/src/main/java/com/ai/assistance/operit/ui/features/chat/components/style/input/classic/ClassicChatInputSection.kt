@@ -271,7 +271,9 @@ fun ClassicChatInputSection(
     val holdArea = remember { HoldToTalkArea() }
     val keyboardDown = rememberKeyboardDown()
 
-    val showQueueAction = isProcessing && canSendMessage
+    val modelPreparingChatIds by actualViewModel.modelPreparingChatIds.collectAsState()
+    val isPreparingModel = currentChatIdForPermission in modelPreparingChatIds
+    val showQueueAction = isProcessing && canSendMessage && !isPreparingModel
     val userWaitingChatIds by actualViewModel.userWaitingChatIds.collectAsState()
     val showCancelAction = isProcessing && !showQueueAction && (!isOrbitChat || currentChatIdForPermission in userWaitingChatIds)
     // Orbit has no voice conversation (it would open the floating window and show its tool calls).
@@ -317,7 +319,7 @@ fun ClassicChatInputSection(
         onAttachmentPanelStateChange?.invoke(showAttachmentPanel)
     }
     fun handleEnterSendAction() {
-        if (!canSendMessage) return
+        if (!canSendMessage || isPreparingModel) return
         if (showQueueAction) {
             onQueueMessage()
             setShowAttachmentPanel(false)

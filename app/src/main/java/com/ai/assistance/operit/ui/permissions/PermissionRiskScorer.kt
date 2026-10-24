@@ -290,7 +290,9 @@ internal class PermissionRiskScorer private constructor(context: Context) {
             )
         val modelSelection =
             runCatching {
-                    functionalConfigManager.getEffectiveConfigMappingForFunction(
+                    com.ai.assistance.operit.features.orbit.OrbitModels.mapping(
+                        appContext, FunctionType.PERMISSION_RISK_SCORER, callerChatId)
+                    ?: functionalConfigManager.getEffectiveConfigMappingForFunction(
                         FunctionType.PERMISSION_RISK_SCORER
                     )
                 }

@@ -110,6 +110,7 @@ internal object OrbitDataExport {
     private fun taskJson(context: Context, task: OrbitTaskEntity) = JSONObject().put("id", task.id).put("title", task.title)
         .put("instruction", OrbitRoutines.runningInstruction(context, task)).put("kind", task.kind).put("source", task.source)
         .put("schedule", task.scheduleMode).put("state", task.state).put("notify", task.notifyPolicy)
+        .put("model", task.modelRole).put("effectiveModelRole", OrbitModels.taskRole(task))
         .put("lastObservation", task.lastObservation).put("goalId", task.goalId)
         .put("createdAt", time(task.createdAt)).put("updatedAt", time(task.updatedAt))
 

@@ -203,6 +203,14 @@ class EnhancedAIService private constructor(
             allInstances.forEach { it.multiServiceManager.refreshServiceForFunction(functionType) }
         }
 
+        suspend fun refreshOrbitServices(orbitId: String) {
+            val allInstances = buildList {
+                INSTANCE?.let { add(it) }
+                addAll(CHAT_INSTANCES.values)
+            }.distinct()
+            allInstances.forEach { it.multiServiceManager.refreshOrbitServices(orbitId) }
+        }
+
         /**
          * 刷新所有 AIService 实例（非实例化方式）
          * @param context 应用上下文
@@ -404,7 +412,7 @@ class EnhancedAIService private constructor(
     )
 
     // MultiServiceManager 管理不同功能的 AIService 实例
-    private val multiServiceManager = MultiServiceManager(context)
+    private val multiServiceManager = MultiServiceManager(context, providerSessionId)
 
     private val initScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val initMutex = Mutex()

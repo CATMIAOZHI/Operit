@@ -23,6 +23,8 @@
     <string name="orbit_tasks_group_active">Active</string>
     <string name="orbit_tasks_group_paused">Paused</string>
     <string name="orbit_tasks_group_finished">Finished</string>
+    <string name="orbit_tasks_show_all">View all</string>
+    <string name="orbit_tasks_group_empty">No tasks in this group right now.</string>
     <string name="skill_detail_files">Files</string>
     <string name="skill_detail_location">Location</string>
     <string name="skill_detail_entry_file">Entry file: %1$s</string>

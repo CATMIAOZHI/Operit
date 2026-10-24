@@ -209,6 +209,7 @@ object OrbitWake {
         announce: Boolean = true,
         /** Builds the notice once the chat is held, for a notice that says how things are right now. */
         noticeNow: (suspend () -> String)? = null,
+        modelRole: String? = null,
     ): Told {
         val app = context.applicationContext
         val holder = ChatRuntimeHolder.getInstance(app)
@@ -256,6 +257,7 @@ object OrbitWake {
                             turnOptions = ChatTurnOptions(
                                 hideUserMessage = true, useComposerReply = false, deliveredByTool = true,
                                 notifyReply = false, disableSummary = true, turnId = turnId,
+                                orbitModelRole = modelRole,
                             ),
                         )
                     }

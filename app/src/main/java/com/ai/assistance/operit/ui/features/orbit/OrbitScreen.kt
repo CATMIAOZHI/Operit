@@ -832,11 +832,13 @@ private fun OrbitChatPage(
                     onOpenImport = { showImport = true },
                     onOpenUsage = { push(OrbitSubPage.USAGE) },
                     onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
+                    onOpenModels = { push(OrbitSubPage.MODELS) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
                     onPause = back,
                 )
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
+                OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
@@ -959,7 +961,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1295,6 +1297,7 @@ private fun OrbitSettingsPage(
     onOpenImport: () -> Unit,
     onOpenUsage: () -> Unit,
     onOpenAppearance: () -> Unit,
+    onOpenModels: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onPause: () -> Unit,
@@ -1321,6 +1324,16 @@ private fun OrbitSettingsPage(
 
             // Like Muse's plan card: how much of the week's and the extra allowance is spent.
             OrbitQuotaCard(orbit = orbit, cardColor = cardColor, onOpenUsage = onOpenUsage)
+
+            SettingsCard(backgroundColor = cardColor) {
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_models_title),
+                    subtitle = stringResource(R.string.orbit_models_entry_note),
+                    icon = lucide("brain"),
+                    searchable = false,
+                    onClick = onOpenModels,
+                )
+            }
 
             SettingsCard(backgroundColor = cardColor) {
                 SettingsNavRow(
