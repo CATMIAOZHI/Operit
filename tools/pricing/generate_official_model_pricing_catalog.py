@@ -14,6 +14,11 @@ MODELS_URL = "https://models.dev/models.json"
 PRICES_URL = "https://models.dev/api.json"
 SOURCES = ROOT / "app/src/main/assets/pricing/official_price_sources_v1.json"
 OUTPUT = ROOT / "app/src/main/assets/pricing/official_model_pricing_v1.json"
+# Official API names that models.dev only lists as a provider alias of another official model.
+# Mirrors OfficialModelAliases.kt; change both together.
+OFFICIAL_ALIASES = {
+    "deepseek/deepseek-flash": "deepseek/deepseek-v4.1-flash-1017",
+}
 
 
 def read(source):
@@ -54,9 +59,14 @@ def build_entries(models, providers, sources):
         source = sources.get(owner)
         if source is None:
             continue
+        match_names = {normalize(short)} | {
+            normalize(alias.rsplit("/", 1)[-1])
+            for alias, target in OFFICIAL_ALIASES.items()
+            if normalize(target) == normalize(official_id)
+        }
         candidates = [
             row for key, row in providers.get(source, {}).get("models", {}).items()
-            if normalize(short) in {
+            if match_names & {
                 normalize(key), normalize(row.get("id", key)),
                 normalize(row.get("id", key).rsplit("/", 1)[-1]),
             }

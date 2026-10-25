@@ -42,3 +42,7 @@ python tools/pricing/generate_official_model_pricing_catalog.py --models models.
 Commit the resulting asset when publishing so timeout fallback can download it.
 The old `generate_model_pricing_catalog.py` and `model_pricing_v1.json` belong to the
 previous provider-specific contract; their caches are not interpreted as official prices.
+
+A few official API names exist only as provider aliases of another official ID (for example
+`deepseek-flash` -> `deepseek/deepseek-v4.1-flash-1017`). They are listed in the generator's
+`OFFICIAL_ALIASES` and mirrored in `OfficialModelAliases.kt`; capability and price lookups both use them.

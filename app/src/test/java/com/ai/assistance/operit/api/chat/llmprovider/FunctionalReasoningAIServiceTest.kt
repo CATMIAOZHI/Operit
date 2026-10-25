@@ -211,7 +211,7 @@ class FunctionalReasoningAIServiceTest {
         val expectedByLevel = mapOf(1 to "low", 2 to "high", 3 to "high", 4 to "max", 5 to "max")
 
         expectedByLevel.forEach { (level, expectedEffort) ->
-            listOf("deepseek-v4-flash", "deepseek-v4-pro").forEach { modelName ->
+            listOf("deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro").forEach { modelName ->
                 val request =
                     buildFunctionalReasoningRequest(
                         providerType = ApiProviderType.DEEPSEEK,

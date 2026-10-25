@@ -34,10 +34,10 @@ internal object OrbitVaultTools {
         name = NAME,
         description = "密码凭据保险箱：保存和使用登录密码、API 密钥、公开客户端 OAuth 登录。你永远看不到保存的值。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/request_update/request_chatgpt_login/list/fill/http_request/terminal/env/delete", required = true),
+            ToolParameterSchema("action", description = "request_login/request_new_password/request_api_key/request_oauth/request_update/request_chatgpt_login/request_account_login/list/fill/http_request/terminal/env/delete", required = true),
             ToolParameterSchema("page_url", description = "request_login / request_new_password：网站登录页（或注册、重设密码页）的 https 地址", required = false),
             ToolParameterSchema("username_hint", description = "request_login / request_new_password：可选，预填的用户名", required = false),
-            ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather", required = false),
+            ToolParameterSchema("provider", description = "request_api_key / request_oauth：服务名，比如 OpenWeather。request_account_login：claude / grok / antigravity / command_code", required = false),
             ToolParameterSchema("api_hosts", description = "request_api_key / request_oauth：凭据只能发往的主机，逗号分隔。终端密钥给了 env_name 时可不填；工具包密钥给了 package_name 时禁止填", required = false),
             ToolParameterSchema("authorization_url", description = "request_oauth：服务商官方 https 授权地址，可含 access_type 等公开参数", required = false),
             ToolParameterSchema("token_url", description = "request_oauth：服务商官方 https token 地址", required = false),
@@ -75,6 +75,7 @@ internal object OrbitVaultTools {
   - 汇报时只说用没用成，不要说出任何保存的值。
   - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名，不传 api_hosts，不需要 env_reason。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
   - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
+  - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：用户点卡片上的「添加模型」去加，再用 orbit_models 的 request_use 申请切换。
 """,
     )
 
@@ -87,6 +88,32 @@ internal object OrbitVaultTools {
             suspend fun entry() = OrbitVault.entries(context, orbit.id).firstOrNull { it.id == arg("credential_id") }
                 ?: error("No vault entry with that credential_id; use list")
             val result: Any = when (arg("action")) {
+                "request_account_login" -> {
+                    check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
+                        "The login card only works in a chat with the user; ask the user in chat"
+                    }
+                    val id = arg("provider").lowercase().replace(' ', '_')
+                    val provider = com.ai.assistance.operit.features.orbit.OrbitChatCards.accountProviders[id]
+                        ?: error("provider must be claude, grok, antigravity or command_code. For ChatGPT use request_chatgpt_login; " +
+                            "for an API key use request_api_key.")
+                    val label = com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLabel(provider)
+                    val signedIn = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, provider).account.value != null
+                    val key = "${caller.orEmpty()}|account_login|$id"
+                    val now = System.currentTimeMillis()
+                    sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
+                    when {
+                        signedIn -> JSONObject().put("already_logged_in", true)
+                            .put("note", "The $label account is already signed in in this app. To use it as a model, check orbit_models list " +
+                                "for a configuration with provider ${provider.type.name}.")
+                        sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)
+                            .put("note", "The $label login card is already in the chat above. Do not send another. End this turn now.")
+                        else -> JSONObject().put("card_sent", true)
+                            .put("note", "A $label account login card is now in the chat. The user signs in whenever they like; you get a " +
+                                "hidden note once it is done, and nothing if they skip it. End this turn now.")
+                            .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
+                                com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLogin(orbit.id, caller.orEmpty(), id))
+                    }
+                }
                 "request_chatgpt_login" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller) != null) {
                         "The login card only works in a chat with the user; ask the user in chat"
@@ -279,7 +306,7 @@ internal object OrbitVaultTools {
                         .apply { e?.let { put("kind", it.kind).put("site", it.site) } }
                         .apply { if (!deleted) put("note", "No vault entry with that credential_id; nothing was deleted. Use list.") }
                 }
-                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, request_update, request_chatgpt_login, list, fill, http_request, terminal, env or delete.")
+                else -> error("Unknown action \"${arg("action")}\". Use request_login, request_new_password, request_api_key, request_oauth, request_update, request_chatgpt_login, request_account_login, list, fill, http_request, terminal, env or delete.")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -1154,26 +1154,10 @@ private fun IdentitySection(
 private fun OrbitExportRow(orbit: OrbitProfile) {
     val context = LocalContext.current
     val resources = LocalResources.current
-    val scope = rememberCoroutineScope()
-    var exporting by remember { mutableStateOf(false) }
+    val exporting by com.ai.assistance.operit.features.orbit.OrbitDataExport.running.collectAsState()
     // The zip holds every chat and memory, so a tap only asks first.
     var confirming by remember { mutableStateOf(false) }
-    fun startExport() {
-        if (exporting) return
-        exporting = true
-        scope.launch {
-            try {
-                val zip = com.ai.assistance.operit.features.orbit.OrbitDataExport.export(context.applicationContext, orbit)
-                shareOrbitFile(context) { zip }
-            } catch (e: kotlinx.coroutines.CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                android.widget.Toast.makeText(context, R.string.orbit_export_failed, android.widget.Toast.LENGTH_SHORT).show()
-            } finally {
-                exporting = false
-            }
-        }
-    }
+    fun startExport() = startOrbitExport(context, orbit)
     IdentityNavRow(
         if (exporting) "loader" else "archive",
         stringResource(if (exporting) R.string.orbit_export_running else R.string.orbit_export_row),

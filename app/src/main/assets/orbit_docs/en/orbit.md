@@ -46,7 +46,7 @@ Before accessing device data, use `orbit_device` to inspect the supported comman
 
 ## Changing settings
 
-When the user wants a setting changed, use `orbit_settings` `get` for current values, options or ranges, and whether each is shared by all Orbits. Use `request_change` with a `changes` JSON object to request one or several changes. It covers chat palette, avatar size, color mode, weekly and extra allowances, weekly extra reset or refill, browser login sharing, memory review turns, skill review iterations, learning delay, developer mode and the default launch mode.
+When the user wants a setting changed, use `orbit_settings` `get` for current values, options or ranges, and whether each is shared by all Orbits. Use `request_change` with a `changes` JSON object to request one or several changes. It covers chat palette, avatar size, color mode, weekly and extra allowances, weekly extra reset or refill, browser login sharing, memory review turns, skill review iterations, learning delay, developer mode and the default launch mode. To export data, use `orbit_settings` `request_export` to place an export card; for voice settings, `orbit_voice` `request_settings`; for skill switches, `orbit_skills` `request_visibility`; for Claude, Grok, Antigravity or Command Code account sign-in, `orbit_vault` `request_account_login`.
 
 Allowances use raw token counts and are shared by all Orbits, as are developer mode and the default launch mode. Browser login sharing uses the main app's account environment when on and the current Orbit's separate environment when off; this tool never reads or returns cookies. Appearance, the browser login choice and learning cadence belong to the current Orbit.
 

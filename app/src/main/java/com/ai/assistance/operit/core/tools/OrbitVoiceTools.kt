@@ -25,7 +25,7 @@ internal object OrbitVoiceTools {
         name = NAME,
         description = "用手机自带的语音合成把文字做成语音消息，或把多人台词做成一段播客式对话，存进 files/voice/，返回可以直接放进回复的 markdown（聊天里会显示成播放器）。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "voices（列出可用声音）/ speak（一段语音）/ podcast（多人对话）", required = true),
+            ToolParameterSchema("action", description = "voices（列出可用声音）/ speak（一段语音）/ podcast（多人对话）/ request_settings（放一张语音设置卡片）", required = true),
             ToolParameterSchema("text", description = "speak：要读的文字，最多6000字（约20分钟）", required = false),
             ToolParameterSchema("voice", description = "speak：声音名（来自 voices，可省略；写了不存在的名字会报错）", required = false),
             ToolParameterSchema("script", description = "podcast：JSON 数组，如 [{\"speaker\":\"A\",\"text\":\"…\"},{\"speaker\":\"B\",\"text\":\"…\"}]", required = false),
@@ -38,6 +38,7 @@ internal object OrbitVoiceTools {
   - 一个文件最多6000字（podcast 是所有台词加起来）。更长就拆成几段分别生成。
   - 生成后把返回的 markdown 放进回复，用户就能在聊天里直接播放；文件也会出现在构建页的文件里。
   - podcast 的台词要像真人对话：短句、有来有回，每人一段不要太长。
+  - 用户想改 App 的语音设置（朗读用哪个服务和声音、语音输入怎么识别、语速音调、语音服务的密钥）时，用 request_settings 在聊天里放一张语音设置卡片，用户点它打开设置页自己改。你不能替用户改这些设置，也看不到里面的密钥。放完用一句话结束这一轮。
 """,
     )
 
@@ -47,6 +48,17 @@ internal object OrbitVoiceTools {
             val orbit = checkNotNull(OrbitMemoryScope.owner(context, runtime?.callerChatId)) { "This is not an Orbit chat" }
             val args = tool.parameters.associate { it.name to it.value }
             val result = when (args["action"]) {
+                "request_settings" -> {
+                    check(com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+                        .orbitForChat(runtime?.callerChatId)?.id == orbit.id) {
+                        "The settings card only works in a chat with the user"
+                    }
+                    JSONObject().put("card_sent", true)
+                        .put("note", "A voice settings card is now in the chat; the user opens it and changes the settings there. " +
+                            "You are not told what they change. End this turn now with one short line.")
+                        .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
+                            com.ai.assistance.operit.features.orbit.OrbitChatCards.speechSettings(orbit.id)).toString()
+                }
                 "voices" -> JSONArray(OrbitVoice.voices(context).map {
                     JSONObject().put("name", it.name).put("locale", it.locale).put("needs_network", it.needsNetwork)
                 }).toString()
@@ -90,7 +102,7 @@ internal object OrbitVoiceTools {
                         temp.delete()
                     }
                 }
-                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use voices, speak or podcast.")
+                else -> error("Unknown action \"${args["action"].orEmpty()}\". Use voices, speak, podcast or request_settings.")
             }
             ToolResult(tool.name, true, StringResultData(result))
         } catch (e: kotlinx.coroutines.CancellationException) {

@@ -53,6 +53,10 @@ class OfficialModelCapabilitiesCatalog private constructor(
         val routedModelId = normalizedQuery.substringAfterLast('/')
         uniqueOrCandidates(modelsByShortId[routedModelId])?.let { return it }
 
+        OfficialModelAliases.resolve(normalizedQuery)?.let { officialId ->
+            uniqueOrCandidates(modelsById[normalize(officialId)])?.let { return it }
+        }
+
         // Zen's free-lane IDs name the same base model with a pricing suffix.
         // Only use this alias for an exact base ID, never for a fuzzy capability guess.
         val freeBaseId = routedModelId.removeSuffix("-contributor-free").removeSuffix("-free")

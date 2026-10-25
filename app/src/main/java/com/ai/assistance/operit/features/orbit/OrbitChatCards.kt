@@ -28,6 +28,27 @@ internal object OrbitChatCards {
     const val PERMISSION = "permission"
     /** The app's ChatGPT (Codex) login, which Codex models and the Codex Draw package use. */
     const val CHATGPT_LOGIN = "chatgpt_login"
+    /** A provider account the app signs in to instead of using an API key (Claude, Grok, …). */
+    const val ACCOUNT_LOGIN = "account_login"
+    /** Opens the app's speech settings (read aloud and voice input) inside Orbit. */
+    const val SPEECH_SETTINGS = "speech_settings"
+    /** Exports this Orbit's data as one zip and hands it to the share sheet. */
+    const val DATA_EXPORT = "data_export"
+
+    /** Account sign-ins a card can offer: the id Orbit passes, and the account it stands for. */
+    val accountProviders: Map<String, com.ai.assistance.operit.data.api.AccountProvider> = mapOf(
+        "claude" to com.ai.assistance.operit.data.api.AccountProvider.CLAUDE,
+        "grok" to com.ai.assistance.operit.data.api.AccountProvider.GROK,
+        "antigravity" to com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY,
+        "command_code" to com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE,
+    )
+
+    fun accountLabel(provider: com.ai.assistance.operit.data.api.AccountProvider): String = when (provider) {
+        com.ai.assistance.operit.data.api.AccountProvider.CLAUDE -> "Claude"
+        com.ai.assistance.operit.data.api.AccountProvider.GROK -> "Grok"
+        com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY -> "Antigravity"
+        com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE -> "Command Code"
+    }
 
     val imageTypes = setOf("png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif")
     /** Which bubble a card is, set when the chat moves cards to the end of a turn (see OrbitSpeech.history). */
@@ -49,6 +70,10 @@ internal object OrbitChatCards {
             VAULT_KEY -> (if (english) "API key card" else "API 密钥卡片") to field("site")
             VAULT_OAUTH -> (if (english) "OAuth login card" else "OAuth 登录卡片") to field("site")
             CHATGPT_LOGIN -> (if (english) "ChatGPT login card" else "ChatGPT 登录卡片") to ""
+            ACCOUNT_LOGIN -> (if (english) "Account login card" else "账号登录卡片") to
+                (accountProviders[o?.optString("provider")]?.let(::accountLabel).orEmpty())
+            SPEECH_SETTINGS -> (if (english) "Voice settings card" else "语音设置卡片") to ""
+            DATA_EXPORT -> (if (english) "Data export card" else "数据导出卡片") to ""
             IMAGE -> (if (english) "Picture" else "图片") to field("name")
             FILE -> (if (english) "File" else "文件") to field("name")
             else -> (if (english) "Card" else "卡片") to ""
@@ -125,6 +150,21 @@ internal object OrbitChatCards {
         .put("orbit_id", orbitId)
         .put("chat_id", chatId)
         .put("requested_at", requestedAt)
+
+    /** A card that signs in to the account [provider] (a key of [accountProviders]). */
+    fun accountLogin(orbitId: String, chatId: String, provider: String): JSONObject = JSONObject()
+        .put("kind", ACCOUNT_LOGIN)
+        .put("orbit_id", orbitId)
+        .put("chat_id", chatId)
+        .put("provider", provider)
+
+    fun speechSettings(orbitId: String): JSONObject = JSONObject()
+        .put("kind", SPEECH_SETTINGS)
+        .put("orbit_id", orbitId)
+
+    fun dataExport(orbitId: String): JSONObject = JSONObject()
+        .put("kind", DATA_EXPORT)
+        .put("orbit_id", orbitId)
 
     /** The entry sheet a vault card opens, or null when [card] is not a complete vault card. */
     fun vaultRequest(card: JSONObject): OrbitVault.Request? {
@@ -329,6 +369,36 @@ internal object OrbitVaultNotice {
                 throw e
             } catch (e: Exception) {
                 AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about the ChatGPT login: ${e.message}")
+            }
+        }
+    }
+
+    /** The user signed in to the account [label] from a card in [chatId]; Orbit hears it once the chat is free. */
+    fun sendAccountLogin(context: Context, orbit: OrbitProfile, chatId: String, label: String, providerType: String) {
+        val target = chatId.ifBlank { orbit.chatId }
+        if (target.isBlank()) return
+        val app = context.applicationContext
+        val notice = if (LocaleUtils.usesEnglishPrompt(app)) {
+            "$MARKER $label account signed in\n" +
+                "The user signed in to their $label account from your card. This is not a message from the user and they cannot see this note.\n" +
+                "Signing in alone does not make it a model you use. A model configuration with provider $providerType is needed: " +
+                "check orbit_models list; if there is none, the user adds it from the card's \"Add model\" button (Orbit settings > Models > Model configs), " +
+                "then you can ask to switch with orbit_models request_use. If you were in the middle of something that needed it, carry on now; " +
+                "otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO}. Do not mention hidden notes."
+        } else {
+            "$MARKER 已登录 $label 账号\n" +
+                "用户用你放的卡片登录了 $label 账号。这不是用户发的消息，用户也看不到这段话。\n" +
+                "光登录还不能直接当模型用，需要一个服务商为 $providerType 的模型配置：先用 orbit_models 的 list 看有没有；" +
+                "没有的话，用户点卡片上的「添加模型」（Orbit 设置 > 模型 > 模型配置）去加，加好后你可以用 orbit_models 的 request_use 申请切换。" +
+                "刚才有事情正等着它的话现在接着做；没有就简短回一句，或者调用 ${OrbitReactionNotice.NOTHING_TO_DO}。不要提“隐藏消息”这些内部说法。"
+        }
+        scope.launch {
+            try {
+                deliver(app, orbit, target, notice)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about the account login: ${e.message}")
             }
         }
     }
