@@ -265,35 +265,61 @@ fun OrbitPieceFrame(piece: OrbitPiece, content: @Composable () -> Unit) {
 @Composable
 private fun OrbitPieceGestures(piece: OrbitPiece, content: @Composable () -> Unit) {
     val actions = LocalOrbitPieceActions.current
-    if (actions == null) {
-        content()
-        return
-    }
-    val like = actions.like?.let { { it(piece) } }
-    val menu = actions.menu?.let { { it(piece) } }
+    val byMessage = LocalOrbitUserReactions.current?.byMessage
+    val reaction = if (piece.showsBadge || piece.fallbackBadgeKey != null) byMessage?.get(piece.reactionKey(byMessage)) else null
+    // One fixed layout whether or not gestures are on (multi-select, still being written): only the
+    // handlers change, so a card inside is never rebuilt and a tapback never blinks off.
+    val like = actions?.like?.let { { it(piece) } }
+    val menu = actions?.menu?.let { { it(piece) } }
+    val gestures = if (actions != null) OrbitMessageGestures(like, menu) else LocalOrbitMessageGestures.current
     val source = androidx.compose.runtime.remember { androidx.compose.foundation.interaction.MutableInteractionSource() }
-    OrbitSwipeToReply(enabled = actions.reply != null, onReply = { actions.reply?.invoke(piece) }) {
+    OrbitSwipeToReply(enabled = actions?.reply != null, onReply = { actions?.reply?.invoke(piece) }) {
         Column(Modifier.fillMaxWidth()) {
             Box(
-                Modifier.fillMaxWidth().combinedClickable(
-                    interactionSource = source, indication = null,
-                    onClick = {}, onLongClick = menu, onDoubleClick = like,
+                Modifier.fillMaxWidth().then(
+                    if (actions != null) Modifier.combinedClickable(
+                        interactionSource = source, indication = null,
+                        onClick = {}, onLongClick = menu, onDoubleClick = like,
+                    ) else Modifier,
                 ),
             ) {
                 androidx.compose.runtime.CompositionLocalProvider(
-                    LocalOrbitMessageGestures provides OrbitMessageGestures(like, menu),
+                    LocalOrbitMessageGestures provides gestures,
                 ) {
                     content()
                 }
             }
-            val byMessage = LocalOrbitUserReactions.current?.byMessage
-            val reaction = if (piece.showsBadge || piece.fallbackBadgeKey != null) byMessage?.get(piece.reactionKey(byMessage)) else null
             if (reaction != null) {
                 ReactionBadge(reaction, stringResource(R.string.orbit_user_reaction_label, reaction), Alignment.CenterStart, start = 16.dp)
             }
         }
     }
 }
+
+/**
+ * The newest message time when the current reply began, in [chatId]: rows after it belong to that
+ * reply. A reply starts loading before any row of its own exists (a hidden turn's prompt is still
+ * being prepared), and until then the last reply on screen is an old, finished one. The time is the
+ * newest one shown while idle, never read from the first loading frame (that frame may already hold
+ * the new reply), and only from a [ready] history of [chatId]. Null when not loading, or when the
+ * chat was opened mid-reply and that start is unknown.
+ */
+@Composable
+fun rememberOrbitTurnFloor(chatId: String?, isLoading: Boolean, messages: List<ChatMessage>, ready: Boolean): Long? {
+    val idleNewest = androidx.compose.runtime.remember(chatId) { arrayOfNulls<Long>(1) }
+    val newest = androidx.compose.runtime.remember(messages, isLoading, ready) {
+        if (isLoading || !ready) null else messages.maxOfOrNull { it.timestamp } ?: Long.MIN_VALUE
+    }
+    if (newest != null) idleNewest[0] = newest
+    return androidx.compose.runtime.remember(chatId, isLoading) { if (isLoading) idleNewest[0] else null }
+}
+
+/** Where the Orbit reply now loading starts (see [rememberOrbitTurnFloor]), for the rows drawn below. */
+val LocalOrbitTurnFloor = compositionLocalOf<Long?> { null }
+
+/** Whether [message] can be part of the reply now loading, given [floor] from [rememberOrbitTurnFloor]. */
+fun orbitInCurrentTurn(message: ChatMessage?, floor: Long?): Boolean =
+    floor == null || (message != null && message.timestamp > floor)
 
 /**
  * The message's own double-tap (like) and long-press (menu), for a card inside it that takes
@@ -765,7 +791,9 @@ fun OrbitSwipeToReply(
     rightAligned: Boolean = false,
     content: @Composable () -> Unit,
 ) {
-    if (!enabled) {
+    // Outside an Orbit chat a disabled swipe adds nothing. Inside one the layout stays the same
+    // either way, so switching the swipe on or off never rebuilds the bubble's cards.
+    if (!enabled && !LocalOrbitChatLook.current) {
         content()
         return
     }
@@ -793,8 +821,14 @@ fun OrbitSwipeToReply(
             ) { value, _ -> offset.floatValue = value }
         }
     }
+    androidx.compose.runtime.LaunchedEffect(enabled) {
+        if (!enabled) {
+            settle[0]?.cancel()
+            offset.floatValue = 0f
+        }
+    }
     Box(
-        Modifier.fillMaxWidth().pointerInput(Unit) {
+        Modifier.fillMaxWidth().then(if (!enabled) Modifier else Modifier.pointerInput(Unit) {
             var passed = false
             var dragged = 0f
             detectHorizontalDragGestures(
@@ -825,7 +859,7 @@ fun OrbitSwipeToReply(
                 }
                 offset.floatValue = next
             }
-        },
+        }),
     ) {
         val showIcon = offset.floatValue > 0f
         if (showIcon) {

@@ -607,7 +607,18 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
     } else null
     val orbitLiveSpeech by com.ai.assistance.operit.ui.features.chat.components.rememberOrbitLiveSpeech(orbitStreaming)
     // Only the newest turn can still be in progress; an older page of the chat is never held back.
-    val orbitTurnBusy = isLoading && !hasNewerDisplayHistory
+    // Until the reply now loading has a row of its own, the last turn on screen is a finished one
+    // and keeps its cards.
+    val orbitTurnFloor = if (orbitLook) {
+        com.ai.assistance.operit.ui.features.chat.components.rememberOrbitTurnFloor(
+            currentChatId, isLoading, displayedChatHistory,
+            // While switching chats the id changes first and the history follows; only a settled
+            // history of this chat may set where its next reply starts.
+            ready = displayedChatId == currentChatId && !isLoadingDisplayWindow,
+        )
+    } else null
+    val orbitTurnBusy = isLoading && !hasNewerDisplayHistory &&
+        com.ai.assistance.operit.ui.features.chat.components.orbitInCurrentTurn(displayedChatHistory.lastOrNull(), orbitTurnFloor)
     val orbitSpokenHistory = remember(displayedChatHistory, orbitLook, orbitTurnBusy) {
         // Cards from Orbit's tools wait until its reply is done, then follow it as their own message.
         if (orbitLook) com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.history(displayedChatHistory, busy = orbitTurnBusy)
@@ -1003,6 +1014,9 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 .matchParentSize()
                                 .graphicsLayer { translationY = -chatViewportTranslationYPx }
                     ) {
+                        androidx.compose.runtime.CompositionLocalProvider(
+                            com.ai.assistance.operit.ui.features.chat.components.LocalOrbitTurnFloor provides orbitTurnFloor,
+                        ) {
                         ChatScreenContent(
                                 modifier = Modifier.fillMaxSize(),
                                 expectedChatId = chatIdOverride,
@@ -1080,6 +1094,7 @@ val actualViewModel: ChatViewModel = viewModel ?: viewModel { ChatViewModel(cont
                                 bubbleAiContentPaddingRight = bubbleAiContentPaddingRight,
                                 showChatFloatingDotsAnimation = showChatFloatingDotsAnimation,
                         )
+                        }
 
                         if (
                             !isReadOnlyTranscript && !orbitDevView &&
