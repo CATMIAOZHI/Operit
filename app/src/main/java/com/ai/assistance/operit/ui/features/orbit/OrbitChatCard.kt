@@ -539,7 +539,7 @@ private fun imageSize(ratio: Float?): Modifier {
 }
 
 /** Copies one of Orbit's pictures into the gallery (Pictures/Operit). */
-private suspend fun saveToGallery(context: Context, file: File): Boolean = withContext(Dispatchers.IO) {
+internal suspend fun saveToGallery(context: Context, file: File): Boolean = withContext(Dispatchers.IO) {
     runCatching {
         val mime = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.extension.lowercase()) ?: "image/png"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {

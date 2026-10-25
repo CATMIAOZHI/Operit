@@ -539,6 +539,9 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             runCatching {
                 com.ai.assistance.operit.features.orbit.OrbitComponents.restore(applicationContext)
             }.onFailure { AppLogger.e(TAG, "Failed to resume Orbit component installs", it) }
+            runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitWeixin.restore(applicationContext)
+            }.onFailure { AppLogger.e(TAG, "Failed to restore the Orbit WeChat link", it) }
         }
 
         // The subagent store is read from disk when first used; read it here, off the main thread,

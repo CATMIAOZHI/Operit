@@ -871,8 +871,17 @@ private fun OrbitChatPage(
                     onOpenModels = { push(OrbitSubPage.MODELS) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
+                    onOpenChannels = { push(OrbitSubPage.CHANNELS) },
                     onPause = back,
                 )
+                OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
+                    onOpenWeixin = { push(OrbitSubPage.WEIXIN) })
+                OrbitSubPage.WEIXIN -> OrbitWeixinPage(orbit, onBack = back, onOpenChat = { chat ->
+                    talkChatId = chat
+                    tab = OrbitTab.CHAT
+                    showProfile = false
+                    stackNames = ""
+                })
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
                 OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
@@ -1000,7 +1009,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1341,6 +1350,7 @@ private fun OrbitSettingsPage(
     onOpenModels: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
+    onOpenChannels: () -> Unit,
     onPause: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
@@ -1402,6 +1412,14 @@ private fun OrbitSettingsPage(
                     icon = lucide("hand"),
                     searchable = false,
                     onClick = onOpenPhonePermissions,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_channels_title),
+                    subtitle = stringResource(R.string.orbit_channels_row),
+                    icon = lucide("message-circle"),
+                    searchable = false,
+                    onClick = onOpenChannels,
                 )
             }
 

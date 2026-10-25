@@ -19,6 +19,7 @@ internal object OrbitExtraTools {
             Spec(OrbitVoiceTools.prompt, true, OrbitVoiceTools::execute),
             Spec(OrbitGoalNoteTools.prompt, true, OrbitGoalNoteTools::execute),
             Spec(OrbitDeviceTools.prompt, true, OrbitDeviceTools::execute),
+            Spec(OrbitChannelTools.prompt, true, OrbitChannelTools::execute),
             Spec(OrbitChatTools.chatPrompt, false, OrbitChatTools::executeChat),
             Spec(OrbitChatTools.reactPrompt, false, OrbitChatTools::executeReact),
             Spec(OrbitChatTools.nothingToDoPrompt, false, OrbitChatTools::executeNothingToDo),

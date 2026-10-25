@@ -497,11 +497,17 @@ class ChatServiceCore(
      * Sends a message to an existing chat and says whether it was taken. A refused send (the chat
      * is busy or summarizing) returns false and touches nothing else.
      */
-    fun trySendUserMessageToExistingChat(chatId: String, messageText: String, turnOptions: ChatTurnOptions): Boolean =
+    fun trySendUserMessageToExistingChat(
+        chatId: String,
+        messageText: String,
+        turnOptions: ChatTurnOptions,
+        attachments: List<AttachmentInfo> = emptyList(),
+    ): Boolean =
         messageCoordinationDelegate.trySendUserMessageToExistingChat(
             promptFunctionType = PromptFunctionType.CHAT,
             chatId = chatId,
             messageText = messageText,
+            attachments = attachments,
             turnOptions = turnOptions,
         )
 

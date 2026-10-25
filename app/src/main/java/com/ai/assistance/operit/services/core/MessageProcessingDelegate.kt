@@ -1035,6 +1035,7 @@ class MessageProcessingDelegate(
             var userMessage = ChatMessage(
                 sender = "user",
                 content = finalMessageContent,
+                timestamp = turnOptions.userMessageTimestamp ?: ChatMessageTimestampAllocator.next(),
                 roleName =
                     resolveTranscriptRoleName(
                         override = turnOptions.userRoleNameOverride,
