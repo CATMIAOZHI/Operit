@@ -12,7 +12,6 @@ import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.ui.features.orbit.OrbitLogoDefaults
-import com.ai.assistance.operit.ui.features.orbit.orbitLogoShownHex
 import java.io.File
 import org.json.JSONObject
 
@@ -41,7 +40,7 @@ internal object OrbitAvatarTools {
   - 图片附件不用先读，直接把它的 id 填进 image_path。
   - 默认 logo 的含义：中间的核心是用户，外圈和两颗卫星是你，你始终围绕着用户转。两种颜色都可以自己挑，也可以按用户的要求填，颜色是头像的一部分，只能由你改。默认色：中间 ${OrbitLogoDefaults.USER_HEX}，外圈 ${OrbitLogoDefaults.ORBIT_HEX}。
   - logo 就是你的头像，聊天配色选「从头像取色」（默认）时，会从外圈颜色取色，所以改外圈颜色也会改变聊天配色。
-  - logo_colors 至少填 user_color、orbit_color 之一。正在用图片或宠物头像时 logo 不显示，颜色会先存着，换回 source=default 后生效。logo 画在白底上，太浅的颜色会自动压深，结果里的 shown_as 是实际显示的颜色。
+  - logo_colors 至少填 user_color、orbit_color 之一。正在用图片或宠物头像时 logo 不显示，颜色会先存着，换回 source=default 后生效。颜色按你填的原样显示；logo 画在白底上，很浅的颜色会看不清。
   - 换好后简单告诉用户就行。
 """,
     )
@@ -145,8 +144,7 @@ internal object OrbitAvatarTools {
         return requireNotNull(OrbitAppearance.normalizeColor(raw)) { "$key=$raw is not a color; use #RRGGBB, #RGB or default" }
     }
 
-    /** before/after as saved ("default" for the logo's own color); shown_as is the color actually drawn. */
+    /** before/after as saved; the logo's own color reads "default (#RRGGBB)". */
     private fun colorChange(before: String?, after: String?, defaultHex: String): JSONObject = JSONObject()
-        .put("before", before ?: DEFAULT).put("after", after ?: DEFAULT)
-        .put("shown_as", orbitLogoShownHex(after ?: defaultHex))
+        .put("before", before ?: "$DEFAULT ($defaultHex)").put("after", after ?: "$DEFAULT ($defaultHex)")
 }

@@ -55,7 +55,7 @@ internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -
     val avatar = orbitPictureUri(orbit)
     val logoRing = orbit.appearance.logoOrbitColor
     val logoColor = if (avatar == null) {
-        remember(logoRing) { orbitAvatarTone(orbitLogoDrawnColor(orbitLogoColor(logoRing), OrbitLogoDefaults.orbit)) }
+        remember(logoRing) { orbitAvatarTone(orbitLogoColor(logoRing) ?: OrbitLogoDefaults.orbit) }
     } else null
     // Each extracted color is tied to the picture it came from, so a new picture never borrows the
     // last one's color; until it is ready the theme keeps the color it already shows.

@@ -18,9 +18,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
-import androidx.compose.ui.graphics.lerp
-import androidx.compose.ui.graphics.luminance
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
@@ -62,9 +59,9 @@ internal fun OrbitLogoAvatar(
     userColor: Color? = null,
     orbitColor: Color? = null,
 ) {
-    // The picture sits on white; a pale chosen color is darkened until it reads on white.
-    val core = remember(userColor) { orbitLogoDrawnColor(userColor, OrbitLogoDefaults.user) }
-    val ring = remember(orbitColor) { orbitLogoDrawnColor(orbitColor, OrbitLogoDefaults.orbit) }
+    // Chosen colors are drawn exactly as chosen.
+    val core = userColor ?: OrbitLogoDefaults.user
+    val ring = orbitColor ?: OrbitLogoDefaults.orbit
     val angle = remember { mutableFloatStateOf(0f) }
     val breath = remember { mutableFloatStateOf(0f) }
     val start = remember { motionOf(activity) }
@@ -143,13 +140,6 @@ internal fun OrbitLogoAvatar(
     })
 }
 
-/** Darkens a color step by step until it stands out on the picture's white background. */
-private fun readableOnWhite(color: Color): Color {
-    var c = color
-    repeat(8) { if (c.luminance() > 0.22f) c = lerp(c, Color(0xFF1C1B1F), 0.25f) }
-    return c
-}
-
 /**
  * The logo's own colors when Orbit has not chosen any: a warm core like a sun for the user, and a
  * calm blue ring for Orbit going round it.
@@ -164,12 +154,3 @@ internal object OrbitLogoDefaults {
 /** A saved "#RRGGBB" logo color, or null for the default. */
 internal fun orbitLogoColor(hex: String?): Color? =
     hex?.takeIf { it.isNotBlank() }?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
-
-/** The color a logo part is really drawn in: the chosen one or [default], darkened to read on white. */
-internal fun orbitLogoDrawnColor(chosen: Color?, default: Color): Color = readableOnWhite(chosen ?: default)
-
-/** How a saved "#RRGGBB" logo color is actually drawn: very light colors are darkened to read on white. */
-internal fun orbitLogoShownHex(hex: String): String {
-    val shown = readableOnWhite(orbitLogoColor(hex) ?: return hex)
-    return String.format(java.util.Locale.ROOT, "#%06X", shown.toArgb() and 0xFFFFFF)
-}
