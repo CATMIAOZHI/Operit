@@ -39,17 +39,17 @@ enum class OrbitRunOutcome {
 /**
  * One companion with its own chat, name, look and Soul.md.
  *
- * A role card only seeds a new Orbit: its persona is copied into Soul.md once. Editing or deleting
- * the role card later does not change the Orbit.
+ * A new Orbit starts as "Orbit" with the starting Soul.md; a role card's character can later be
+ * written into Soul.md by Orbit itself. Editing or deleting a role card does not change the Orbit.
  */
 data class OrbitProfile(
     val id: String,
-    /** The role card this Orbit was made from, kept so each card makes at most one Orbit. */
+    /** The role card its chat runs under (the default one for new Orbits); older Orbits keep their own. */
     val sourceRoleCardId: String,
     val chatId: String,
     /** The name Orbit chose for itself; only Orbit changes it, through its tool. */
     val name: String,
-    /** Orbit's picture: copied from the role card at creation, or one the user picked. */
+    /** Orbit's picture: the default card's at creation, or one picked later. */
     val avatarUri: String? = null,
     val createdAt: Long = 0L,
     val memorySpaceId: String? = null,
@@ -123,9 +123,6 @@ data class OrbitSettings(
         chatId?.takeIf { it.isNotBlank() }?.let { id ->
             orbits.firstOrNull { it.chatId == id || it.sideChats.any { side -> side.chatId == id } }
         }
-
-    fun orbitFromRoleCard(roleCardId: String): OrbitProfile? =
-        orbits.firstOrNull { it.sourceRoleCardId == roleCardId }
 
     fun ownerForChat(chatId: String?): OrbitProfile? =
         chatId?.let { id -> orbits.firstOrNull {

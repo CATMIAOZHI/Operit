@@ -58,6 +58,7 @@ import com.ai.assistance.operit.util.LocaleUtils
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.emitAll
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.first
 import org.json.JSONObject
@@ -780,7 +781,9 @@ object ToolExecutionManager {
             }
         }
 
-        return executor.invokeAndStream(invocation.tool).catch { e ->
+        // Built lazily: an executor's default invokeAndStream runs the tool while building the flow,
+        // so an error it throws would otherwise escape this catch and crash the chat.
+        return flow { emitAll(executor.invokeAndStream(invocation.tool)) }.catch { e ->
             AppLogger.e(TAG, "Tool execution error: ${invocation.tool.name}", e)
             toolHandler?.notifyToolExecutionError(invocation.tool, e)
             emit(

@@ -5,7 +5,6 @@ import com.ai.assistance.operit.api.chat.llmprovider.ModelConfigConnectionTester
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConnectionTestType
 import com.ai.assistance.operit.data.model.ApiProviderType
 import com.ai.assistance.operit.data.model.FunctionType
-import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.preferences.FunctionalConfigManager
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.OrbitModelPreferences
@@ -62,23 +61,32 @@ internal object OrbitSetup {
     suspend fun fetchModels(context: Context, provider: ApiProviderType, endpoint: String, key: String): List<String> =
         OrbitApprovalActions.fetchModels(context, provider, endpoint, key)
 
-    private val CHEAP = listOf("flash", "mini", "lite", "haiku", "nano", "small", "chat", "turbo")
+    /** The recommended model for both roles: a fast, capable "flash" model, DeepSeek's first. */
+    private val RECOMMENDED = listOf("v4.1-flash", "deepseek-flash", "flash")
+    private val CHEAP = listOf("mini", "lite", "haiku", "nano", "small", "chat", "turbo")
     private val STRONG = listOf("pro", "reasoner", "opus", "sonnet", "max", "plus", "large")
     private val NOT_CHAT = listOf("embed", "rerank", "tts", "whisper", "audio", "image", "vision-preview", "moderation", "ocr")
 
     private fun chatModels(models: List<String>) =
         models.filter { m -> NOT_CHAT.none { m.contains(it, ignoreCase = true) } }.ifEmpty { models }
 
-    /** A sensible main model: a strong one the provider offers, else the first chat model. */
+    private fun recommended(chat: List<String>): String? =
+        RECOMMENDED.firstNotNullOfOrNull { word -> chat.firstOrNull { it.contains(word, ignoreCase = true) } }
+
+    /** A sensible main model: the recommended flash model, else a strong one, else the first chat model. */
     fun suggestMain(models: List<String>): String? {
         val chat = chatModels(models)
-        return STRONG.firstNotNullOfOrNull { word -> chat.firstOrNull { it.contains(word, ignoreCase = true) } } ?: chat.firstOrNull()
+        return recommended(chat)
+            ?: STRONG.firstNotNullOfOrNull { word -> chat.firstOrNull { it.contains(word, ignoreCase = true) } }
+            ?: chat.firstOrNull()
     }
 
-    /** A sensible assistant model: a cheap, fast one, else the main model. */
+    /** A sensible assistant model: the recommended flash model (it may be the main one too), else a cheap one, else the main model. */
     fun suggestAssistant(models: List<String>, main: String?): String? {
         val chat = chatModels(models)
-        return CHEAP.firstNotNullOfOrNull { word -> chat.firstOrNull { it.contains(word, ignoreCase = true) && it != main } } ?: main
+        return recommended(chat)
+            ?: CHEAP.firstNotNullOfOrNull { word -> chat.firstOrNull { it.contains(word, ignoreCase = true) && it != main } }
+            ?: main
     }
 
     /** Why the key or model did not work, for the user, with the key never shown. */
@@ -90,6 +98,10 @@ internal object OrbitSetup {
     val inProgress: StateFlow<Boolean> = running.asStateFlow()
 
     private const val TEST_TIMEOUT_MS = 60_000L
+    /** "high" in low, medium, high, xhigh, max. */
+    private val THINKING_HIGH =
+        com.ai.assistance.operit.data.preferences.ApiPreferences.THINKING_QUALITY_EFFORTS.indexOf("high") +
+            com.ai.assistance.operit.data.preferences.ApiPreferences.MIN_THINKING_QUALITY_LEVEL
 
     /**
      * Adds the configuration, checks the main model answers, starts Orbit with it, and has Orbit
@@ -175,8 +187,7 @@ internal object OrbitSetup {
             // Only the Orbit this setup made is undone, even if the start fails after saving it.
             var createdId: String? = null
             val started = try {
-                val orbit = OrbitCompanion.startFromRoleCard(app, CharacterCardManager.DEFAULT_CHARACTER_CARD_ID,
-                    onCreated = { createdId = it })
+                val orbit = OrbitCompanion.start(app, onCreated = { createdId = it })
                 OrbitModelPreferences(app).update(orbit.id) {
                     it.copy(main = OrbitModelRef(id, main), assistant = OrbitModelRef(id, assistant))
                 }
@@ -187,6 +198,11 @@ internal object OrbitSetup {
                 runCatching { configs.deleteConfig(id) }
                 throw SetupException(hide(e.message.orEmpty()))
             }
+            // A fresh install talks with thinking on, at high strength; the chat's slider can change it.
+            runCatching {
+                com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(app)
+                    .updateThinkingSettings(enableThinkingMode = true, thinkingQualityLevel = THINKING_HIGH)
+            }.onFailure { AppLogger.w("OrbitSetup", "Could not turn thinking on: ${it.message}") }
             // The main app gets the key too when it has none yet, so normal mode works right away.
             runCatching {
                 val functions = FunctionalConfigManager(app)

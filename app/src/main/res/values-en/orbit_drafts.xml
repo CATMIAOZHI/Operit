@@ -2,7 +2,11 @@
 <resources>
     <string name="orbit_avatar_draft_image">Please use this picture as your avatar.</string>
     <string name="orbit_avatar_draft_pet">Please use my pet "%1$s" as your avatar (pet id: %2$s).</string>
-    <string name="orbit_avatar_draft_reset">Please change your avatar back to the role card\'s picture.</string>
+    <string name="orbit_avatar_draft_role_card">Please use the picture of the role card "%1$s" as your avatar (role card id: %2$s).</string>
+    <string name="orbit_rename_draft">I\'d like to give you a new name: </string>
+    <string name="orbit_avatar_pick_role_card">Pick a role card</string>
+    <string name="orbit_avatar_no_role_cards">No role cards yet</string>
+    <string name="orbit_rename">Rename</string>
     <string name="orbit_avatar_sheet_note">Your choice goes into the chat box for %1$s, who changes it.</string>
     <string name="orbit_avatar_crop_title">Adjust avatar</string>
     <string name="orbit_avatar_crop_hint">Pinch to zoom and drag to move. Zoom out to fit the whole picture in the circle.</string>

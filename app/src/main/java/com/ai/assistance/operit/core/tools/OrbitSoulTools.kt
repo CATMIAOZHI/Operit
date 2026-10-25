@@ -4,19 +4,22 @@ import android.content.Context
 import com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager
 import com.ai.assistance.operit.data.model.*
 import com.ai.assistance.operit.features.orbit.*
+import kotlinx.coroutines.flow.first
 import org.json.JSONObject
 
 internal object OrbitSoulTools {
     const val NAME = "orbit_soul"
     val prompt = ToolPrompt(name = NAME,
-        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份。更新直接生效，只保留当前内容；不改变工具权限。",
+        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份；也能列出、读取用户的角色卡，用来参考性格。更新直接生效，只保留当前内容；不改变工具权限。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "read/update", required = true),
+            ToolParameterSchema("action", description = "read/update/list_role_cards/read_role_card", required = true),
             ToolParameterSchema("file", description = "soul（默认）或 identity", required = false),
             ToolParameterSchema("body", description = "update：完整文件内容，最多24000字符", required = false),
             ToolParameterSchema("reason", description = "soul update 必填：解释为什么修改，最多2000字符；identity 不需要", required = false),
-            ToolParameterSchema("version", description = "soul update 必填：先 read，再原样传入 read 返回的当前 version；identity 不需要", required = false)),
-        details = "修改 SOUL.md 前必须先 action=read；action=update 必须带完整 body、read 返回的 version 和修改理由 reason。IDENTITY.md 的 update 只需完整 body。")
+            ToolParameterSchema("version", description = "soul update 必填：先 read，再原样传入 read 返回的当前 version；identity 不需要", required = false),
+            ToolParameterSchema("role_card_id", description = "read_role_card 必填：list_role_cards 返回的 id", required = false)),
+        details = "修改 SOUL.md 前必须先 action=read；action=update 必须带完整 body、read 返回的 version 和修改理由 reason。IDENTITY.md 的 update 只需完整 body。\n" +
+            "list_role_cards 列出用户的角色卡（id、名字、简介）；read_role_card 读一张卡的人设全文。读角色卡不会改变你自己，要参考它就再 update SOUL.md。")
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller)) { "orbit_soul works only inside an Orbit chat" }
@@ -26,9 +29,37 @@ internal object OrbitSoulTools {
         }
         val repository = OrbitSoulRepository(context, orbit.id)
         val args = tool.parameters.associate { it.name to it.value }
+        val action = args["action"]?.trim()?.lowercase().orEmpty()
+        if (action == "list_role_cards" || action == "read_role_card") {
+            val cards = com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context)
+            val result = if (action == "list_role_cards") {
+                val all = cards.getAllCharacterCards()
+                JSONObject().put("count", all.size).put("role_cards", org.json.JSONArray().apply {
+                    all.forEach { card ->
+                        put(JSONObject().put("id", card.id).put("name", card.name)
+                            .put("description", card.description.trim().take(200)))
+                    }
+                }).put("note", "Read one with action=read_role_card and its id.")
+            } else {
+                val id = args["role_card_id"]?.trim().orEmpty()
+                require(id.isNotEmpty()) { "read_role_card needs role_card_id, an id from action=list_role_cards" }
+                require(id in cards.characterCardListFlow.first()) {
+                    "No role card with id $id; list them with action=list_role_cards"
+                }
+                val card = cards.getCharacterCard(id)
+                val persona = cards.combinePrompts(id).trim()
+                JSONObject().put("id", card.id).put("name", card.name)
+                    .put("description", card.description.trim().take(MAX_ROLE_CARD_DESCRIPTION_CHARS))
+                    .put("persona", persona.take(MAX_ROLE_CARD_CHARS))
+                    .apply {
+                        if (persona.length > MAX_ROLE_CARD_CHARS) put("note",
+                            "persona shows the first $MAX_ROLE_CARD_CHARS of ${persona.length} characters.")
+                    }
+            }
+            return@runBlockingIoPreservingToolRuntimeContext ToolResult(tool.name, true, StringResultData(result.toString()))
+        }
         val file = args["file"]?.trim()?.lowercase()?.removeSuffix(".md")?.takeIf { it.isNotEmpty() } ?: "soul"
         require(file == "soul" || file == "identity") { "Unknown file \"${args["file"]}\". Use soul (SOUL.md) or identity (IDENTITY.md)." }
-        val action = args["action"]?.trim()?.lowercase().orEmpty()
         if (file == "identity") {
             val identity: Any = when (action) {
                 "read" -> OrbitPromptFiles.identity(context, orbit.id).let {
@@ -60,8 +91,11 @@ internal object OrbitSoulTools {
                         .put("note", "The whole file was replaced with body; it takes effect in the next turn. Only the current content is retained.")
                 }
             }
-            else -> error("Unknown action \"$action\". Use read or update; SOUL.md history is no longer available.")
+            else -> error("Unknown action \"$action\". Use read, update, list_role_cards or read_role_card; SOUL.md history is no longer available.")
         }
         ToolResult(tool.name, true, StringResultData(result.toString()))
     }
+
+    private const val MAX_ROLE_CARD_CHARS = 20_000
+    private const val MAX_ROLE_CARD_DESCRIPTION_CHARS = 2_000
 }

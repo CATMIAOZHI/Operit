@@ -16,6 +16,9 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -356,6 +359,7 @@ private fun OrbitAvatarSheet(
     val resources = LocalResources.current
     val scope = rememberCoroutineScope()
     var busy by remember { mutableStateOf(false) }
+    var pickRoleCard by remember { mutableStateOf(false) }
     val sheetState = rememberModalBottomSheetState(
         skipPartiallyExpanded = true,
         confirmValueChange = remember {
@@ -398,7 +402,8 @@ private fun OrbitAvatarSheet(
 
     OrbitModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState, dismissEnabled = !busy) {
         Column(
-            Modifier.fillMaxWidth().navigationBarsPadding().padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState()).navigationBarsPadding()
+                .padding(start = 20.dp, end = 20.dp, bottom = 24.dp),
         ) {
             Text(
                 stringResource(R.string.orbit_change_avatar),
@@ -421,12 +426,60 @@ private fun OrbitAvatarSheet(
                     modifier = Modifier.weight(1f),
                 )
                 AvatarSourceTile(
-                    icon = orbitIcon("rotate-ccw"),
+                    icon = orbitIcon("square-user"),
                     label = stringResource(R.string.orbit_reset_avatar),
                     enabled = !busy,
-                    onClick = { ask { resources.getString(R.string.orbit_avatar_draft_reset) } },
+                    onClick = { pickRoleCard = !pickRoleCard },
                     modifier = Modifier.weight(1f),
                 )
+                AvatarSourceTile(
+                    icon = orbitIcon("pencil"),
+                    label = stringResource(R.string.orbit_rename),
+                    enabled = !busy,
+                    onClick = { ask { resources.getString(R.string.orbit_rename_draft) } },
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            if (pickRoleCard) {
+                val cards by produceState<List<com.ai.assistance.operit.data.model.CharacterCard>?>(null) {
+                    value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        runCatching {
+                            com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context).getAllCharacterCards()
+                        }.getOrDefault(emptyList())
+                    }
+                }
+                Text(
+                    stringResource(R.string.orbit_avatar_pick_role_card),
+                    style = MaterialTheme.typography.titleSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(top = 20.dp, bottom = 8.dp, start = 4.dp),
+                )
+                when {
+                    cards == null -> Unit
+                    cards!!.isEmpty() -> Text(
+                        stringResource(R.string.orbit_avatar_no_role_cards),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(start = 4.dp),
+                    )
+                    else -> Surface(shape = RoundedCornerShape(18.dp), color = MaterialTheme.colorScheme.surfaceContainerHigh) {
+                        androidx.compose.foundation.lazy.LazyColumn(Modifier.fillMaxWidth().heightIn(max = 280.dp)) {
+                            items(cards!!, key = { it.id }) { card ->
+                                Text(
+                                    card.name,
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 1,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    modifier = Modifier.fillMaxWidth()
+                                        .clickable(enabled = !busy) {
+                                            ask { resources.getString(R.string.orbit_avatar_draft_role_card, card.name, card.id) }
+                                        }
+                                        .padding(horizontal = 18.dp, vertical = 14.dp),
+                                )
+                            }
+                        }
+                    }
+                }
             }
             if (pets.isNotEmpty()) {
                 Text(

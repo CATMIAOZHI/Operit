@@ -9043,7 +9043,7 @@
     <string name="orbit_pillar_task_desc">持续执行计划、提醒与检查</string>
     <string name="orbit_choose_companion">选择陪伴角色</string>
     <string name="orbit_manage_role_cards">管理角色卡</string>
-    <string name="orbit_manage_role_cards_desc">角色卡只用来给新 Orbit 起个人设，之后改它不会影响已有的 Orbit</string>
+    <string name="orbit_manage_role_cards_desc">Orbit 可以参考角色卡来定性格、换头像，改角色卡不会影响已有的 Orbit</string>
     <string name="orbit_memory_row">技能与学习</string>
     <string name="orbit_memory_row_desc">它学到的技能、学习记录和记忆改动历史</string>
     <string name="orbit_memory_unavailable">暂时无法打开这个 Orbit 的记忆，请重试。不会改用全局记忆。</string>
@@ -9102,9 +9102,9 @@
     <string name="orbit_notification_channel_desc">Orbit 主动找你时的通知</string>
     <string name="orbit_run_paused">Orbit 已暂停</string>
     <string name="orbit_section_my_orbits">我的 Orbit</string>
-    <string name="orbit_paused_hint">同一时间只能运行一个 Orbit。换角色时，原来的 Orbit 会暂停，聊天记录、名字和形象都会保留。</string>
+    <string name="orbit_paused_hint">只能有一个 Orbit。想重新开始，先删掉现在这个，再新建一个。</string>
     <string name="orbit_resume">继续</string>
-    <string name="orbit_create">选择角色，开始 Orbit</string>
+    <string name="orbit_create">开始 Orbit</string>
     <string name="orbit_card_has_orbit">已有 Orbit，选它会继续</string>
     <string name="orbit_role_label">由「%1$s」创建</string>
     <string name="orbit_delete">删除</string>
@@ -9224,7 +9224,7 @@
     <string name="orbit_usage_footer">只算 Orbit 自己用掉的 token（输入含缓存 + 输出），主应用不算；所有 Orbit 共用这份额度。叫醒主聊天去做的任务算在「聊天」里。</string>
     <string name="orbit_run_quota_paused">额度用完了，这次先停下；额度恢复后会按计划接着做。</string>
     <string name="orbit_change_avatar">更换头像</string>
-    <string name="orbit_reset_avatar">角色卡头像</string>
+    <string name="orbit_reset_avatar">用角色卡头像</string>
     <string name="orbit_avatar_save_failed">没能保存这张图片</string>
     <string name="orbit_name_hint">名字由 Orbit 自己决定，可以在聊天里和它商量</string>
     <string name="orbit_permission_locked">Orbit 固定使用「%1$s」权限，不能更改</string>

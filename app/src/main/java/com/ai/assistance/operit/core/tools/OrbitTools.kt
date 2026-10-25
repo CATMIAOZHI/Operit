@@ -185,7 +185,6 @@ internal object OrbitTools {
                         context.getString(R.string.orbit_tool_not_orbit_chat)
                     )
             preferences.setName(orbit.id, name)
-            runCatching { com.ai.assistance.operit.features.orbit.OrbitOnboarding.markDone(context, orbit.id) }
             runCatching { com.ai.assistance.operit.features.orbit.OrbitPromptFiles.syncIdentityName(context, orbit.id, name) }
             // Keep the chat list and notifications in step with the new name.
             runCatching {

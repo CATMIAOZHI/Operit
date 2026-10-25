@@ -1597,7 +1597,6 @@ private fun OrbitHome(
             value = cardManager.getAllCharacterCards()
         }
     val cardColor = settingsCardColor(hasBackgroundImage)
-    var showPicker by remember { mutableStateOf(false) }
     var pendingDelete by remember { mutableStateOf<OrbitProfile?>(null) }
     var starting by remember { mutableStateOf(false) }
     var removingId by remember { mutableStateOf<String?>(null) }
@@ -1659,7 +1658,8 @@ private fun OrbitHome(
                         val card = cards.firstOrNull { it.id == orbit.sourceRoleCardId }
                         OrbitRow(
                             orbit = orbit,
-                            roleName = card?.name,
+                            // New Orbits run under the default card; only older ones made from a role show it.
+                            roleName = card?.name?.takeIf { orbit.sourceRoleCardId != CharacterCardManager.DEFAULT_CHARACTER_CARD_ID },
                             enabled = !starting && removingId == null,
                             removing = removingId == orbit.id,
                             onResume = { start { OrbitCompanion.resume(context, orbit.id) } },
@@ -1685,9 +1685,10 @@ private fun OrbitHome(
             )
         }
 
-        Button(
+        // There is one Orbit: a new one can be made only when there is none.
+        if (settings.orbits.isEmpty()) Button(
             enabled = !starting && removingId == null,
-            onClick = { showPicker = true },
+            onClick = { start { OrbitCompanion.start(context) } },
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
             if (starting) {
@@ -1703,18 +1704,6 @@ private fun OrbitHome(
             Text(stringResource(R.string.orbit_create))
         }
         Spacer(modifier = Modifier.height(8.dp))
-    }
-
-    if (showPicker) {
-        CompanionPickerDialog(
-            cards = cards,
-            orbitRoleCardIds = settings.orbits.map { it.sourceRoleCardId }.toSet(),
-            onDismiss = { showPicker = false },
-            onSelect = { card ->
-                showPicker = false
-                start { OrbitCompanion.startFromRoleCard(context, card.id) }
-            },
-        )
     }
 
     pendingDelete?.let { orbit ->
@@ -1897,53 +1886,6 @@ private fun PillarTile(icon: ImageVector, title: String, description: String, mo
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
-}
-
-@Composable
-private fun CompanionPickerDialog(
-    cards: List<CharacterCard>,
-    orbitRoleCardIds: Set<String>,
-    onDismiss: () -> Unit,
-    onSelect: (CharacterCard) -> Unit,
-) {
-    OrbitDialog(
-        onDismissRequest = onDismiss,
-        title = stringResource(R.string.orbit_choose_companion),
-        scrollable = false,
-        text = {
-            LazyColumn(modifier = Modifier.heightIn(max = 420.dp)) {
-                items(cards, key = { it.id }) { card ->
-                    Row(
-                        modifier =
-                            Modifier.fillMaxWidth()
-                                .clip(RoundedCornerShape(14.dp))
-                                .clickable { onSelect(card) }
-                                .padding(horizontal = 4.dp, vertical = 8.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        OrbitAvatar(orbit = null, card = card, size = 36)
-                        Spacer(modifier = Modifier.width(12.dp))
-                        Column(modifier = Modifier.weight(1f)) {
-                            Text(
-                                text = card.name,
-                                style = MaterialTheme.typography.bodyLarge,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                            )
-                            if (card.id in orbitRoleCardIds) {
-                                Text(
-                                    text = stringResource(R.string.orbit_card_has_orbit),
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.primary,
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        },
-        dismissButton = { OrbitDialogAction(onClick = onDismiss, secondary = true) { Text(stringResource(R.string.cancel)) } },
-    )
 }
 
 /** The chat each Orbit last had ready, so opening it again need not wait on a spinner. */
