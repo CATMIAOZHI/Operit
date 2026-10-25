@@ -277,6 +277,10 @@ fun ChatArea(
     // While a reply is being written it is the newest of the assistant's rows. The rows an Orbit
     // chat shows are cleaned copies without a stream, so this is the only way to tell.
     val lastAiIndex = remember(chatHistory) { chatHistory.indexOfLast { it.sender == "ai" } }
+    // In an Orbit chat a reply loads before its own row exists; the finished reply above it must
+    // not count as being written meanwhile (its gestures and tapbacks would blink off).
+    val orbitTurnFloor = if (orbitLook) LocalOrbitTurnFloor.current else null
+    val lastAiWritable = !orbitLook || orbitInCurrentTurn(chatHistory.getOrNull(lastAiIndex), orbitTurnFloor)
     var hasLastAiMessageStartedStreaming by remember(lastMessage?.timestamp) {
         mutableStateOf(lastMessage?.run { sender == "ai" && content.isNotBlank() } == true)
     }
@@ -425,7 +429,7 @@ fun ChatArea(
                             bubbleAiBubbleLiquidGlass = bubbleAiBubbleLiquidGlass,
                             bubbleAiBubbleWaterGlass = bubbleAiBubbleWaterGlass,
                             isHidden = shouldHideLastAiMessage && renderIndex == messagesCount - 1,
-                            isWriting = isLoading && renderIndex == lastAiIndex,
+                            isWriting = isLoading && renderIndex == lastAiIndex && lastAiWritable,
                             isMultiSelectMode = isMultiSelectMode,
                             isSelected = selectedMessageIndices.contains(renderIndex),
                             onToggleSelection = { onToggleMessageSelection?.invoke(renderIndex) },

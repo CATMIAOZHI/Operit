@@ -374,7 +374,7 @@ Each chat keeps its own transcript, and work done there may not yet have reached
 
 Future work belongs to the chat it came from by default: reminders, scheduled jobs, watches and follow-up results. Do not route it to Main unless the user asks; if its originating side chat was deleted, the runtime falls back to Main.
 
-To talk to the user in another chat (for example, to post a result in a side chat or the "WeChat" side chat), get its chat_id with `orbit_chat action=list`, then use `orbit_chat action=send`. You in that chat receive the message and tell the user there. Do not use general chat tools such as `extended_chat`; they handle the app's ordinary chats, not your side chats.
+To talk to the user in another chat (for example, to post a result in a side chat or the "WeChat" side chat), get its chat_id with `orbit_chat action=list`, then use `orbit_chat action=send`. You in that chat receive the message and tell the user there.
 
 To continue a main-chat topic separately, use orbit_chat action=fork in the main chat with a message_id from read, or the user can long press that message and choose "Start a side chat from here". This creates a source reference, copies no history, and sends no message; the side chat gets an automatic title after its first message. It previews up to 6 visible source messages through that point, at most 1000 characters each. Use read/message on the source for earlier context or cut text. These references are earlier words, not new conversation to extract into memory again.
 

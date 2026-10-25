@@ -45,6 +45,13 @@ object OrbitPackages {
      */
     val REQUIRED: Set<String> = linkedSetOf("super_admin", "various_search", "memory_review", "dynamic_ui", "browser")
 
+    /**
+     * Main-app packages Orbit never gets. extended_chat manages the app's ordinary chats (character
+     * cards, and inside Orbit its subagent and review chats too); Orbit's own chats go through
+     * orbit_chat.
+     */
+    val NOT_FOR_ORBIT: Set<String> = setOf("extended_chat")
+
     private val locks = ConcurrentHashMap<String, Mutex>()
     private val refreshScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pendingRefresh = ConcurrentHashMap<String, Job>()
@@ -90,7 +97,7 @@ object OrbitPackages {
     fun candidates(packageManager: PackageManager, kept: Set<String> = emptySet()): Map<String, ToolPackage> {
         val archived = packageManager.getArchivedBuiltInPackageNames()
         return packageManager.getAvailablePackages().filterKeys { name ->
-            !packageManager.isToolPkgContainer(name) &&
+            name !in NOT_FOR_ORBIT && !packageManager.isToolPkgContainer(name) &&
                 (name in REQUIRED || name in kept || !packageManager.isArchivedBuiltInPackageOrSubpackage(name, archived))
         }
     }
@@ -116,8 +123,8 @@ object OrbitPackages {
         file.takeIf { it.isFile }?.let { stored ->
             runCatching {
                 val json = JSONObject(stored.readText())
-                val enabled = names(json, "enabled").orEmpty()
-                val imported = names(json, "imported") ?: enabled
+                val enabled = names(json, "enabled").orEmpty() - NOT_FOR_ORBIT
+                val imported = (names(json, "imported") ?: enabled) - NOT_FOR_ORBIT
                 State(imported, enabled.filterTo(LinkedHashSet()) { it in imported }).withRequired()
             }.getOrNull()
         }
