@@ -116,6 +116,8 @@ internal fun OrbitSideMenu(
     val scope = rememberCoroutineScope()
     var renaming by remember { mutableStateOf<OrbitSideChat?>(null) }
     var deleting by remember { mutableStateOf<OrbitSideChat?>(null) }
+    // A side chat linked to WeChat cannot be deleted; this explains why instead.
+    var weixinLinked by remember { mutableStateOf<OrbitSideChat?>(null) }
     var busy by remember { mutableStateOf(false) }
     var searching by remember { mutableStateOf(false) }
     var archiveOpen by remember { mutableStateOf(false) }
@@ -180,11 +182,24 @@ internal fun OrbitSideMenu(
                 block()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (e: com.ai.assistance.operit.features.orbit.OrbitWeixin.ChatBoundException) {
+                weixinLinked = deleting
+                deleting = null
             } catch (e: Exception) {
                 Toast.makeText(context, resources.getString(R.string.orbit_chats_failed), Toast.LENGTH_SHORT).show()
             } finally {
                 busy = false
             }
+        }
+    }
+
+    /** Asks to delete [side], or explains why not when WeChat is linked to it. */
+    fun askDelete(side: OrbitSideChat) {
+        scope.launch {
+            val linked = runCatching {
+                com.ai.assistance.operit.features.orbit.OrbitWeixin.boundChatId(context, orbit.id)
+            }.getOrNull() == side.chatId
+            if (linked) weixinLinked = side else deleting = side
         }
     }
 
@@ -270,7 +285,7 @@ internal fun OrbitSideMenu(
                         onRename = { renaming = it },
                         onTogglePin = { side -> act { OrbitCompanion.setSideChatPinned(context, orbit.id, side.chatId, !side.pinned) } },
                         onArchive = { setArchived(it, true) },
-                        onDelete = { deleting = it },
+                        onDelete = ::askDelete,
                         onNew = ::newSideChat,
                         onSearch = { searching = true },
                         onOpenArchive = { archiveOpen = true },
@@ -292,7 +307,7 @@ internal fun OrbitSideMenu(
                         onBack = { archiveOpen = false },
                         onOpen = ::open,
                         onUnarchive = { setArchived(it, false) },
-                        onDelete = { deleting = it },
+                        onDelete = ::askDelete,
                     )
                 }
             }
@@ -345,6 +360,23 @@ internal fun OrbitSideMenu(
                 }
             },
             dismissButton = { OrbitDialogAction(enabled = !busy, secondary = true, onClick = { deleting = null }) { Text(stringResource(R.string.cancel)) } },
+        )
+    }
+    weixinLinked?.let { side ->
+        OrbitDialog(
+            onDismissRequest = { weixinLinked = null },
+            title = stringResource(R.string.orbit_chats_delete_weixin_title),
+            text = { Text(stringResource(R.string.orbit_chats_delete_weixin_text, side.title)) },
+            confirmButton = {
+                OrbitDialogAction(onClick = {
+                    weixinLinked = null
+                    onDismiss()
+                    onOpenSettings()
+                }) { Text(stringResource(R.string.orbit_chats_delete_weixin_settings)) }
+            },
+            dismissButton = {
+                OrbitDialogAction(secondary = true, onClick = { weixinLinked = null }) { Text(stringResource(R.string.orbit_chats_delete_weixin_ok)) }
+            },
         )
     }
 }

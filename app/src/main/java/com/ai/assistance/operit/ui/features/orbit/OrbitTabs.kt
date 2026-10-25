@@ -205,6 +205,11 @@ internal fun OrbitTabPage(
      * so the picture (a pet's animation especially) is not loaded again on every tab switch.
      */
     visible: Boolean = true,
+    /**
+     * The back swipe's look for the page under the header. The header itself stays put, in the
+     * same place as the chat's, so only one picture of Orbit ever shows.
+     */
+    contentLayer: Modifier = Modifier,
 ) {
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Keeps the task on screen while its page slides away.
@@ -219,7 +224,7 @@ internal fun OrbitTabPage(
     var headerHeight by remember { mutableStateOf(statusBarTop + 120.dp) }
     Box(Modifier.fillMaxSize().then(if (visible) Modifier else Modifier.orbitKeptUnplaced())) {
         if (visible) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            Surface(Modifier.fillMaxSize().then(contentLayer), color = MaterialTheme.colorScheme.background) {
                 // A task page over the tab hides the tab from screen readers.
                 Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
                     CompositionLocalProvider(LocalOrbitTabHeaderHeight provides if (header != null) headerHeight else null) {

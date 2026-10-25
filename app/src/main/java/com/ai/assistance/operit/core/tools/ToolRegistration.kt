@@ -1798,28 +1798,28 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     handler.registerTool(
             name = "start_chat_service",
             descriptionGenerator = { _ -> s(R.string.toolreg_start_chat_service_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.startChatService(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.startChatService(tool) } }
     )
 
     // 停止聊天服务
     handler.registerTool(
             name = "stop_chat_service",
             descriptionGenerator = { _ -> s(R.string.toolreg_stop_chat_service_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.stopChatService(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.stopChatService(tool) } }
     )
 
     // 新建对话
     handler.registerTool(
             name = "create_new_chat",
             descriptionGenerator = { _ -> s(R.string.toolreg_create_new_chat_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.createNewChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.createNewChat(tool) } }
     )
 
     // 列出所有对话
     handler.registerTool(
             name = "list_chats",
             descriptionGenerator = { _ -> s(R.string.toolreg_list_chats_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.listChats(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.listChats(tool) } }
     )
 
     // 查找对话
@@ -1829,7 +1829,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val query = tool.parameters.find { it.name == "query" }?.value ?: ""
                 s(R.string.toolreg_find_chat_desc, query)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.findChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.findChat(tool) } }
     )
 
     // 查询对话输入状态
@@ -1839,7 +1839,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_agent_status_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.agentStatus(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.agentStatus(tool) } }
     )
 
     // 切换对话
@@ -1849,7 +1849,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_switch_chat_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.switchChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.switchChat(tool) } }
     )
 
     // 更新对话标题
@@ -1859,7 +1859,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_update_chat_title_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.updateChatTitle(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.updateChatTitle(tool) } }
     )
 
     // 删除对话
@@ -1869,7 +1869,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val chatId = tool.parameters.find { it.name == "chat_id" }?.value ?: ""
                 s(R.string.toolreg_delete_chat_desc, chatId)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.deleteChat(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.deleteChat(tool) } }
     )
 
     // 发送消息给AI
@@ -1880,7 +1880,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val preview = if (message.length > 30) "${message.take(30)}..." else message
                 s(R.string.toolreg_send_message_to_ai_desc, preview)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.sendMessageToAI(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.sendMessageToAI(tool) } }
     )
 
     handler.registerTool(
@@ -1893,7 +1893,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
             executor =
                     object : ToolExecutor {
                         override fun invoke(tool: AITool): ToolResult {
-                            return runBlocking(Dispatchers.IO) { chatManagerTool.sendMessageToAI(tool) }
+                            return runBlockingIoPreservingToolRuntimeContext { chatManagerTool.sendMessageToAI(tool) }
                         }
 
                         override fun invokeAndStream(
@@ -1910,7 +1910,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val functionType = tool.parameters.find { it.name == "function_type" }?.value ?: ""
                 s(R.string.toolreg_call_chat_model_desc, functionType)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.callChatModel(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.callChatModel(tool) } }
     )
 
 
@@ -1918,7 +1918,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     handler.registerTool(
             name = "list_character_cards",
             descriptionGenerator = { _ -> s(R.string. toolreg_list_character_cards_desc) },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.listCharacterCards(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.listCharacterCards(tool) } }
     )
 
     handler.registerTool(
@@ -1931,7 +1931,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val limitInfo = if (!limit.isNullOrBlank()) " ($limit)" else ""
                 s(R.string.toolreg_get_chat_messages_desc, chatId, orderInfo, limitInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.getChatMessages(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.getChatMessages(tool) } }
     )
 
     handler.registerTool(
@@ -1945,7 +1945,7 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
                 val rangeInfo = if (!start.isNullOrBlank() && !end.isNullOrBlank()) " ($start-$end)" else ""
                 s(R.string.toolreg_get_chat_messages_desc, chatId, orderInfo, rangeInfo)
             },
-            executor = { tool -> runBlocking(Dispatchers.IO) { chatManagerTool.getChatMessagesRange(tool) } }
+            executor = { tool -> runBlockingIoPreservingToolRuntimeContext { chatManagerTool.getChatMessagesRange(tool) } }
     )
 
     // 文件系统工具

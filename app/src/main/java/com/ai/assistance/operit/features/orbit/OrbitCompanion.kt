@@ -239,6 +239,8 @@ object OrbitCompanion {
         val preferences = OrbitPreferences.getInstance(appContext)
         val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return@withContext
         if (orbit.sideChats.none { it.chatId == chatId }) return@withContext
+        // WeChat messages land in this chat; it stays until the user disconnects WeChat.
+        if (OrbitWeixin.boundChatId(appContext, orbitId) == chatId) throw OrbitWeixin.ChatBoundException()
         val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao()
         OrbitExecutionGate.serialized {
             dao.moveTaskChat(orbitId, chatId, orbit.chatId)

@@ -10,7 +10,11 @@ import org.json.JSONArray
 
 class QuickJsNativeHostDispatcher(
     private val dispatchTimer: (Int) -> Unit,
-    private val forwardCall: (String, String?) -> String?
+    private val forwardCall: (String, String?) -> String?,
+    /** A timer was scheduled (id, repeats); runs on the thread that scheduled it. */
+    private val onTimerScheduled: (Int, Boolean) -> Unit = { _, _ -> },
+    /** A timer was cancelled. */
+    private val onTimerCancelled: (Int) -> Unit = {},
 ) : QuickJsNativeRuntime.HostBridge, Closeable {
 
     private val scheduler = Executors.newSingleThreadScheduledExecutor { runnable ->
@@ -46,6 +50,7 @@ class QuickJsNativeHostDispatcher(
         val repeat = args.getOrNull(2)?.let(::parseBoolean) ?: false
 
         timerTasks.remove(timerId)?.cancel(false)
+        onTimerScheduled(timerId, repeat)
         val task =
             if (repeat) {
                 val safePeriod = max(1L, delayMs)
@@ -71,6 +76,7 @@ class QuickJsNativeHostDispatcher(
     private fun cancel(argsJson: String?) {
         val timerId = parseArgs(argsJson).firstOrNull()?.toIntOrNull() ?: return
         timerTasks.remove(timerId)?.cancel(false)
+        onTimerCancelled(timerId)
     }
 
     private fun parseArgs(argsJson: String?): List<String> {

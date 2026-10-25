@@ -3316,6 +3316,16 @@ class ChatHistoryManager private constructor(private val context: Context) {
 
     // 删除聊天历史
     suspend fun deleteChatHistory(chatId: String): Boolean {
+        // WeChat messages land in this Orbit side chat; every delete path keeps it until the user
+        // disconnects WeChat (a whole Orbit being deleted is already gone from the list here).
+        val linkedOrbit = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+            .current().orbitForChat(chatId)?.takeUnless { it.deleting }
+        if (linkedOrbit != null &&
+            com.ai.assistance.operit.features.orbit.OrbitWeixin.boundChatId(context, linkedOrbit.id) == chatId
+        ) {
+            AppLogger.w(TAG, "Chat $chatId is linked to WeChat; skip deletion")
+            return false
+        }
         chatMutex(chatId).withLock {
             try {
                 val chat = chatDao.getChatById(chatId)

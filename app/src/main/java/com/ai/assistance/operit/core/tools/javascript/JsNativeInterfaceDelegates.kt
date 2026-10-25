@@ -710,6 +710,7 @@ internal object JsNativeInterfaceDelegates {
         toolType: String,
         toolName: String,
         paramsJson: String,
+        runtimeContext: com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.ToolRuntimeContext? = null,
         binaryDataRegistry: ConcurrentHashMap<String, ByteArray>,
         binaryHandlePrefix: String,
         binaryDataThreshold: Int,
@@ -730,7 +731,10 @@ internal object JsNativeInterfaceDelegates {
 
         Thread {
             try {
-                val result = toolHandler.executeTool(parsed.aiTool)
+                // Runs as the chat whose script made the call, so chat-scoped tools see its space.
+                val result = runBlocking(
+                    com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+                ) { toolHandler.executeTool(parsed.aiTool) }
 
                 if (!result.success) {
                     AppLogger.e(TAG, "[Async] Tool execution failed: ${result.error}")
@@ -762,6 +766,7 @@ internal object JsNativeInterfaceDelegates {
         toolType: String,
         toolName: String,
         paramsJson: String,
+        runtimeContext: com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.ToolRuntimeContext? = null,
         binaryDataRegistry: ConcurrentHashMap<String, ByteArray>,
         binaryHandlePrefix: String,
         binaryDataThreshold: Int,
@@ -784,7 +789,9 @@ internal object JsNativeInterfaceDelegates {
         Thread {
             try {
                 var pendingFinalResult: ToolResult? = null
-                runBlocking {
+                runBlocking(
+                    com.ai.assistance.operit.api.chat.enhance.ToolExecutionManager.toolRuntimeContextElement(runtimeContext)
+                ) {
                     toolHandler.executeToolAndStream(parsed.aiTool).collect { result ->
                         val previous = pendingFinalResult
                         pendingFinalResult = result

@@ -726,9 +726,9 @@ private fun OrbitChatPage(
                             )
                         }
                     }
-                    Box(Modifier.orbitDismissLayer(tabBack)) {
                     CompositionLocalProvider(LocalOrbitTabHeader provides tabHeader) {
                         OrbitTabPage(orbit, pageTab, visible = onTab,
+                            contentLayer = Modifier.orbitDismissLayer(tabBack),
                             onDraft = { text ->
                                 // The prompt waits in the main chat's input box for the user to finish.
                                 draftToOrbit(context, orbit, text)
@@ -742,7 +742,6 @@ private fun OrbitChatPage(
                                 tab = OrbitTab.CHAT
                             },
                             filesVersion = filesVersion, onOpenFile = { editingFile = it })
-                    }
                     }
                 }
             }
@@ -1066,9 +1065,17 @@ internal fun OrbitHeader(
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val avatarSize = orbit.appearance.avatarSize.dp
+    // In the main chat the activity line appears only while Orbit works. The name block then
+    // reports its height without that line, so the header (and the chat's top padding, which
+    // follows it) does not change and the messages never jump; the extra line just draws a
+    // little lower. The line's own measured height is taken off, so no earlier idle frame is
+    // needed, and the header still takes the taller of the name block and the menu button.
+    val growsWithActivity = sideTitle == null && activity != null
+    val activityLineHeight = remember { intArrayOf(0) }
     Box(
         modifier =
-            Modifier.fillMaxWidth()
+            Modifier
+                .fillMaxWidth()
                 .background(
                     Brush.verticalGradient(
                         0f to pageColor,
@@ -1104,7 +1111,15 @@ internal fun OrbitHeader(
             }
         }
         Box(
-            modifier = Modifier.align(Alignment.TopCenter).then(
+            modifier = Modifier.align(Alignment.TopCenter)
+                .layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints)
+                    val reported = if (growsWithActivity) {
+                        (placeable.height - activityLineHeight[0]).coerceAtLeast(0)
+                    } else placeable.height
+                    layout(placeable.width, reported) { placeable.placeRelative(0, 0) }
+                }
+                .then(
                 if (avatarSize == 0) Modifier.fillMaxWidth().padding(horizontal = 60.dp) else Modifier
             ),
             contentAlignment = Alignment.TopCenter,
@@ -1139,7 +1154,7 @@ internal fun OrbitHeader(
             ) {
                 Column(
                     horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.animateContentSize(androidx.compose.animation.core.tween(180))
+                    modifier = (if (sideTitle != null) Modifier.animateContentSize(androidx.compose.animation.core.tween(180)) else Modifier)
                         .padding(start = 16.dp, end = 16.dp, top = if (avatarSize > 0) 10.dp else 6.dp, bottom = 6.dp),
                 ) {
                     Text(
@@ -1149,8 +1164,8 @@ internal fun OrbitHeader(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    // While Orbit works, what it does sits under the name, like Muse; otherwise in a
-                    // side chat its topic does, so the user knows where they are.
+                    // While Orbit works, what it does sits under the name; otherwise in a side chat
+                    // its topic does, so the user knows where they are.
                     val subtitle = activity ?: sideTitle
                     if (subtitle != null) {
                         Text(
@@ -1159,6 +1174,11 @@ internal fun OrbitHeader(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.layout { measurable, constraints ->
+                                val line = measurable.measure(constraints)
+                                activityLineHeight[0] = line.height
+                                layout(line.width, line.height) { line.placeRelative(0, 0) }
+                            },
                         )
                     }
                 }

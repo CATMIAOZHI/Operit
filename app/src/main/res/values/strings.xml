@@ -5919,7 +5919,7 @@
     <string name="delete_selected_chats">删除选中的聊天记录 (%1$d)</string>
     <string name="delete_selected_chats_confirmation">确定要删除选中的 %1$d 条聊天记录吗？\n\n已锁定的对话会被跳过，此操作不可撤销。</string>
     <string name="deleted_selected_chats_count">已删除 %1$d 条聊天记录</string>
-    <string name="deleted_selected_chats_with_skipped_locked">已删除 %1$d 条聊天记录，跳过 %2$d 条锁定对话</string>
+    <string name="deleted_selected_chats_with_skipped_locked">已删除 %1$d 条聊天记录，跳过 %2$d 条锁定或受保护的对话（例如连着微信的 Orbit 侧聊）</string>
     <string name="unbound_workspaces_title">无绑定工作区</string>
     <string name="unbound_workspaces_subtitle">管理未被任何对话使用的工作区文件夹</string>
     <string name="no_unbound_workspaces">暂无绑定的工作区文件夹</string>
@@ -6253,7 +6253,7 @@
     <string name="backup_import_failed_unreadable_file">导入失败：无法读取文件</string>
     <string name="backup_import_failed_with_reason">导入失败：%1$s</string>
     <string name="backup_clear_failed_with_reason">清除失败：%1$s</string>
-    <string name="backup_delete_skipped_locked">\n已跳过 %1$d 条锁定聊天</string>
+    <string name="backup_delete_skipped_locked">\n已跳过 %1$d 条锁定或受保护的聊天（例如连着微信的 Orbit 侧聊）</string>
 
     <string name="backup_open_file_failed">无法打开文件</string>
     <string name="backup_import_file_empty">导入的文件为空</string>
@@ -9639,6 +9639,10 @@
     <string name="orbit_chats_title_hint">比如：旅行计划</string>
     <string name="orbit_chats_delete">删除侧聊</string>
     <string name="orbit_chats_delete_confirm">删除「%1$s」和它的全部聊天记录？这个侧聊里安排的提醒，以后会发到主聊天。</string>
+    <string name="orbit_chats_delete_weixin_title">这个聊天连着微信</string>
+    <string name="orbit_chats_delete_weixin_text">微信发来的消息都会进「%1$s」，所以现在不能删除。想删的话，先到「设置 → 消息频道 → 微信」断开连接。</string>
+    <string name="orbit_chats_delete_weixin_settings">去设置</string>
+    <string name="orbit_chats_delete_weixin_ok">知道了</string>
     <string name="orbit_chats_limit">最多只能有 %1$d 个侧聊，归档或删掉一个再新建。</string>
     <string name="orbit_chats_failed">没成功，请稍后再试</string>
     <string name="orbit_chats_long_press">长按侧聊可以重命名、置顶、归档或删除</string>

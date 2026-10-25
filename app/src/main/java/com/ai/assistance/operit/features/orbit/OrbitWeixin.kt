@@ -469,6 +469,16 @@ internal object OrbitWeixin {
         update(context.applicationContext, orbitId) { if (it.chatId == chatId) it.copy(chatId = null, inbox = it.inbox) else null }
     }
 
+    /**
+     * The side chat WeChat is linked to, or null when WeChat is not connected. It is found by chat
+     * id, so renaming the chat keeps the link; it cannot be deleted until WeChat is disconnected.
+     */
+    suspend fun boundChatId(context: Context, orbitId: String): String? =
+        load(context.applicationContext, orbitId)?.chatId
+
+    /** Thrown when deleting the side chat WeChat is linked to. */
+    class ChatBoundException : IllegalStateException("This side chat is linked to WeChat; disconnect WeChat in settings first")
+
     /** The Orbit was deleted (its stores are already gone): stop and drop what is held in memory. */
     suspend fun forget(context: Context, orbitId: String) {
         val app = context.applicationContext

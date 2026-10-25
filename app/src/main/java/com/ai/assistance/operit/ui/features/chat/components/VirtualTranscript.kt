@@ -34,6 +34,7 @@ import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
+import androidx.compose.foundation.gestures.stopScroll
 import kotlinx.coroutines.withTimeoutOrNull
 import androidx.compose.ui.platform.LocalContext
 import com.ai.assistance.operit.ui.common.markdown.LocalTranscriptMarkdownSlice
@@ -217,10 +218,14 @@ internal fun VirtualTranscript(
     var direction by remember(chatId) { mutableStateOf(0) }
     var lastPageRequest by remember(chatId) { mutableStateOf<Pair<Int, Long>?>(null) }
     var pagesWithoutMovement by remember(chatId) { mutableStateOf(0) }
+    // Each new drag may ask for a page again, even when the list already rests at the edge and
+    // nothing else the page request watches has changed.
+    var pageRetry by remember(chatId) { mutableStateOf(0) }
     LaunchedEffect(dragging) {
         if (dragging) {
             lastPageRequest = null
             pagesWithoutMovement = 0
+            pageRetry++
         }
     }
     var pendingJump by remember(chatId) { mutableStateOf<Long?>(null) }
@@ -308,6 +313,8 @@ internal fun VirtualTranscript(
             }
             override fun onPostScroll(consumed: Offset, available: Offset, source: NestedScrollSource): Offset {
                 val after = listState.firstVisibleItemIndex to listState.firstVisibleItemScrollOffset
+                // The list really moved (a drag or its fling), so loaded pages were not wasted.
+                if (consumed.y != 0f) pagesWithoutMovement = 0
                 // A drag or its fling that moved the list back past the tolerance ends following.
                 if (consumed.y > 0f && followingForLook && distanceFromEnd() > followTolerancePx) {
                     currentFollowingChange?.invoke(false)
@@ -381,7 +388,7 @@ internal fun VirtualTranscript(
     LaunchedEffect(processPrefetchKey, messages.size) {
         processPrefetchKey?.let { process.loadMore(it) }
     }
-    LaunchedEffect(direction, nearStart, nearEnd, atEnd, loadingPage, hasOlder, hasNewer,
+    LaunchedEffect(direction, nearStart, nearEnd, atEnd, loadingPage, hasOlder, hasNewer, pageRetry,
         restoring, messages.firstOrNull()?.timestamp, messages.lastOrNull()?.timestamp) {
         if (loadingPage || restoring) return@LaunchedEffect
         val cursor = if (direction < 0) messages.firstOrNull()?.timestamp else messages.lastOrNull()?.timestamp
@@ -401,6 +408,20 @@ internal fun VirtualTranscript(
     }
     LaunchedEffect(following, hasNewer, loadingPage, restoring) {
         if (following && hasNewer && !loadingPage && !restoring) onLatest?.invoke()
+    }
+    /**
+     * The jump-to-latest button. A fling still running would keep following waiting (and could
+     * turn it off again), so it is stopped first; then following takes the list to the end.
+     */
+    fun jumpToLatest() {
+        scope.launch {
+            listState.stopScroll(androidx.compose.foundation.MutatePriority.PreventUserInput)
+            direction = 0
+            restoring = false
+            pendingJump = null
+            onFollowingChange?.invoke(true)
+            onLatest?.invoke()
+        }
     }
     LaunchedEffect(chatId, following, hasNewer, loadingPage, restoring) {
         if (following && !hasNewer && !loadingPage && !restoring) {
@@ -637,12 +658,12 @@ internal fun VirtualTranscript(
             )
             }
             if (!look && (!following || hasNewer)) {
-                IconButton(onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() }) {
+                IconButton(onClick = ::jumpToLatest) {
                     Icon(Icons.Default.KeyboardArrowDown, stringResource(R.string.history_scroll_to_bottom))
                 }
             }
         }
-        // Orbit, like Muse: a round button just above the message box, in the middle.
+        // Orbit: a round button just above the message box, in the middle.
         if (look) androidx.compose.animation.AnimatedVisibility(
             visible = !following || hasNewer,
             modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = bottomPadding + 12.dp),
@@ -652,7 +673,7 @@ internal fun VirtualTranscript(
                 androidx.compose.animation.scaleOut(androidx.compose.animation.core.tween(120), targetScale = 0.8f),
         ) {
             androidx.compose.material3.Surface(
-                onClick = { onFollowingChange?.invoke(true); onLatest?.invoke() },
+                onClick = ::jumpToLatest,
                 shape = androidx.compose.foundation.shape.CircleShape,
                 color = MaterialTheme.colorScheme.surfaceContainerHigh,
                 shadowElevation = 3.dp,
