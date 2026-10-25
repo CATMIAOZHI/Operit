@@ -22,6 +22,7 @@ workflow.js
 xai_draw.js
 openai_draw.js
 ollama_search.js
+deepseek_search.js
 operit_editor.js
 browser.js
 windows_control

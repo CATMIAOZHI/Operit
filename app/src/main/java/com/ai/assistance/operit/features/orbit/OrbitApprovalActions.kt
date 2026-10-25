@@ -33,6 +33,7 @@ internal object OrbitApprovalActions {
     const val USE_MODEL = "use_model"
     const val INSTALL_COMPONENTS = "install_components"
     const val CHANGE_SETTINGS = "change_settings"
+    const val TOGGLE_SKILLS = "toggle_skills"
 
     /** At most this many packages, and this many files, in one request. */
     const val MAX_ITEMS = 20
@@ -192,6 +193,66 @@ internal object OrbitApprovalActions {
         val needsKey: Boolean,
     )
 
+    fun skillsAction(show: List<String>, hide: List<String>): String = JSONObject()
+        .put("type", TOGGLE_SKILLS)
+        .put("show", JSONArray(show))
+        .put("hide", JSONArray(hide))
+        .toString()
+
+    fun skillsDetail(context: Context, show: List<String>, hide: List<String>, reason: String): String = buildString {
+        fun section(label: Int, skills: List<String>) {
+            if (skills.isEmpty()) return
+            if (isNotEmpty()) append("\n\n")
+            append(context.getString(label))
+            skills.forEach { append("\n• ").append(it) }
+        }
+        section(R.string.orbit_approval_skills_show, show)
+        section(R.string.orbit_approval_skills_hide, hide)
+        if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
+    }
+
+    /** Shows or hides this Orbit's own skills for itself; a skill gone since the request is skipped. */
+    private suspend fun toggleSkills(context: Context, orbit: OrbitProfile, action: JSONObject, english: Boolean): String =
+        withContext(kotlinx.coroutines.Dispatchers.IO) {
+        fun list(key: String) = action.optJSONArray(key)?.let { a -> (0 until a.length()).map { a.getString(it) }.distinct() }.orEmpty()
+        val show = list("show")
+        val hide = list("hide")
+        require(show.isNotEmpty() || hide.isNotEmpty()) { "No skills to switch" }
+        require(show.size + hide.size <= MAX_ITEMS && show.intersect(hide.toSet()).isEmpty()) { "Invalid skill switch request" }
+        val space = OrbitMemoryScope.ensureInitialized(context, orbit)
+        val repository = com.ai.assistance.operit.data.skill.SkillRepository.forMemorySpace(context, space)
+        val available = repository.getAvailableSkillPackages().keys
+        val visibility = repository.skillVisibilityPreferences
+        val shown = mutableListOf<String>()
+        val hidden = mutableListOf<String>()
+        val unchanged = linkedMapOf<String, String>()
+        fun apply(name: String, visible: Boolean) {
+            when {
+                name !in available -> unchanged[name] = if (english) "no such skill any more" else "这个技能已经不在了"
+                visibility.isSkillVisibleToAi(name) == visible -> unchanged[name] =
+                    if (english) "already ${if (visible) "shown" else "hidden"}" else "原本就${if (visible) "显示" else "隐藏"}"
+                else -> {
+                    visibility.setSkillVisibleToAi(name, visible)
+                    if (visible) shown += name else hidden += name
+                }
+            }
+        }
+        show.forEach { apply(it, true) }
+        hide.forEach { apply(it, false) }
+        if (shown.isNotEmpty() || hidden.isNotEmpty()) OrbitPackages.refreshPromptWhenIdle(context, orbit)
+        val parts = mutableListOf<String>()
+        if (english) {
+            if (shown.isNotEmpty()) parts += "Now shown to you: ${shown.joinToString()}. Find them with orbit_skills and load with use_package."
+            if (hidden.isNotEmpty()) parts += "Now hidden from you: ${hidden.joinToString()}. Do not load them any more."
+            unchanged.forEach { (name, why) -> parts += "Unchanged $name: $why." }
+        } else {
+            if (shown.isNotEmpty()) parts += "已对你显示：${shown.joinToString("、")}。用 orbit_skills 找到后用 use_package 加载。"
+            if (hidden.isNotEmpty()) parts += "已对你隐藏：${hidden.joinToString("、")}。不要再加载它们。"
+            unchanged.forEach { (name, why) -> parts += "$name 没变：$why。" }
+        }
+        parts.joinToString("\n")
+        }
+
     fun modelAction(m: ModelRequest): String = JSONObject()
         .put("type", CREATE_MODEL)
         .put("name", m.name)
@@ -244,6 +305,7 @@ internal object OrbitApprovalActions {
             USE_MODEL -> OrbitModelSwitch.run(context, orbit, action, english)
             INSTALL_COMPONENTS -> OrbitComponents.start(context, orbit, approval.chatId, action, english)
             CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
+            TOGGLE_SKILLS -> toggleSkills(context, orbit, action, english)
             CREATE_MODEL -> {
                 val asked = modelRequest(action)
                 val picked = models.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct()

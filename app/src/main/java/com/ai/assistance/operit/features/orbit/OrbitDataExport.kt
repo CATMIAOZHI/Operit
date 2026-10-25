@@ -10,6 +10,8 @@ import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -28,12 +30,42 @@ import java.util.zip.ZipOutputStream
  */
 internal object OrbitDataExport {
     private const val FOLDER = "orbit_export"
+    // Every export shares one output folder, so only one runs at a time, app-wide.
+    private val lock = kotlinx.coroutines.sync.Mutex()
+    private val scope = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.SupervisorJob() + Dispatchers.Main.immediate)
+    private val runningState = kotlinx.coroutines.flow.MutableStateFlow(false)
+    /** Whether an export started with [start] is running, for every export button to show. */
+    val running: kotlinx.coroutines.flow.StateFlow<Boolean> = runningState
 
-    suspend fun export(context: Context, orbit: OrbitProfile): File = withContext(Dispatchers.IO) {
+    /**
+     * Exports outside any screen, so scrolling a card away does not stop it; [onDone] gets the zip,
+     * or null when it failed. False when an export is already running.
+     */
+    fun start(context: Context, orbit: OrbitProfile, onDone: (File?) -> Unit): Boolean {
+        if (!runningState.compareAndSet(false, true)) return false
+        val app = context.applicationContext
+        scope.launch {
+            val zip = try {
+                export(app, orbit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            } finally {
+                runningState.value = false
+            }
+            onDone(zip)
+        }
+        return true
+    }
+
+    suspend fun export(context: Context, orbit: OrbitProfile): File = lock.withLock { withContext(Dispatchers.IO) {
         val outDir = File(context.cacheDir, FOLDER)
-        outDir.listFiles()?.forEach { it.delete() }
+        // An earlier zip may still be read by the app it was shared to; only old ones go.
+        val cutoff = System.currentTimeMillis() - 60 * 60_000L
+        outDir.listFiles()?.filter { it.lastModified() < cutoff }?.forEach { it.delete() }
         check(outDir.mkdirs() || outDir.isDirectory)
-        val stamp = SimpleDateFormat("yyyyMMdd-HHmm", Locale.ROOT).format(Date())
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.ROOT).format(Date())
         val safeName = orbit.name.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_').ifEmpty { "Orbit" }.take(40)
         val zip = File(outDir, "Orbit-$safeName-$stamp.zip")
         val dao = OrbitTaskRepository(context).dao
@@ -92,7 +124,7 @@ internal object OrbitDataExport {
             }
         }
         zip
-    }
+    } }
 
     private fun time(millis: Long) =
         if (millis <= 0) "" else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(millis))

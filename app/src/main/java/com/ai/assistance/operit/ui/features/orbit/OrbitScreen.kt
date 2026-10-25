@@ -301,6 +301,17 @@ private fun OrbitChatPage(
     val subPage = stack.lastOrNull()
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
+    // Chat cards open pages over the chat; this reads the stack when tapped, so it can be kept.
+    val openCardPage: (OrbitCardPage) -> Unit = remember(orbit.id) {
+        { page ->
+            val sub = when (page) {
+                OrbitCardPage.SPEECH_SETTINGS -> OrbitSubPage.SPEECH_SETTINGS
+                OrbitCardPage.MODEL_CONFIG -> OrbitSubPage.MODEL_CONFIG
+            }
+            val current = stackNames.split(',').filter { it.isNotEmpty() }
+            if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
+        }
+    }
     // Answers the user gave while Orbit could not hear them (the app closed while it was busy).
     LaunchedEffect(orbit.id) {
         runCatching { com.ai.assistance.operit.features.orbit.OrbitApprovals.deliverPending(context.applicationContext, orbit) }
@@ -630,6 +641,7 @@ private fun OrbitChatPage(
                 // view the same way the top-left button does, with the same slide.
                 CompositionLocalProvider(
                     LocalOrbitChatLook provides !devView,
+                    LocalOrbitOpenPage provides openCardPage,
                     LocalOrbitForkMessage provides
                         if (!devView && currentChatId == orbit.chatId && !forkingMessage && orbit.canAddSideChat)
                             ::forkMessage else null,
@@ -865,6 +877,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
                 OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
+                OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
@@ -987,7 +1000,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {

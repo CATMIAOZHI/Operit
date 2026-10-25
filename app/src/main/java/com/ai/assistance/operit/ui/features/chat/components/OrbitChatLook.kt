@@ -311,8 +311,13 @@ object OrbitSpeech {
     // Orbit's own words can never draw an Orbit card; only a tool's result can (see [cards]).
     // The renderer reads the tag after trimming, so "``` orbit-card" counts as the same fence.
     private val writtenOrbitCard = Regex("```[ \\t]*${ORBIT_CARD_FENCE}[^\\n]*(?:\\n[\\s\\S]*?```|[\\s\\S]*$)")
+    /** Tools whose results may carry an Orbit card; a tool that sends a card must be listed here. */
+    val CARD_TOOLS = listOf(
+        "orbit_vault", "orbit_file", "orbit_request_approval", "orbit_permission_card", "orbit_packages",
+        "orbit_models", "orbit_components", "orbit_settings", "orbit_skills", "orbit_voice",
+    )
     private val cardToolResult = Regex(
-        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:orbit_vault|orbit_file|orbit_request_approval|orbit_permission_card|orbit_packages|orbit_models)\"[^>]*\\bstatus=\"success\"",
+        "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"[^>]*\\bstatus=\"success\"",
         RegexOption.IGNORE_CASE,
     )
     private val placeholder = Regex("\uE000(\\d+)\uE001")

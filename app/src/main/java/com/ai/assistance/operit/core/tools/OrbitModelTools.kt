@@ -54,12 +54,12 @@ internal object OrbitModelTools {
             ToolParameterSchema("reason", description = "request_create: one sentence telling the user why", required = false),
         ),
         details = """
-  - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, and the provider ids you may use.
+  - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
   - request_create: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. It returns at once; end the turn with one short line. You get a hidden note with what was added.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
-  - Accounts that sign in instead of using a key (ChatGPT/Codex, Claude, Grok accounts) are added in the app's model settings, not here.
+  - Accounts that sign in instead of using a key are not added here. Put a sign-in card with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). After signing in, the user adds the model configuration from that card's "Add model" button; then request_use can switch to it.
   - 模型名别靠猜：已有配置用 discover 查；新建时让用户在卡片里填密钥后从服务商列表里勾。用户在卡片里填密钥，你看不到。
 """,
     )
@@ -99,6 +99,7 @@ internal object OrbitModelTools {
                         .put("your_multimodal", label(mine.multimodal))
                         .put("assistant_thinking", OrbitModelSwitch.effort(mine.assistantThinkingLevel))
                         .put("providers", JSONArray(OrbitApprovalActions.providers()))
+                        .put("accounts", accounts(context))
                 }
                 "discover" -> {
                     val configName = arg("config")
@@ -210,6 +211,24 @@ internal object OrbitModelTools {
         } catch (e: Exception) {
             ToolResult(NAME, false, StringResultData(""), error = e.message ?: e.toString())
         }
+    }
+
+    /** Whether each sign-in account is signed in; never a token or an email. */
+    private fun accounts(context: Context): JSONArray {
+        val list = JSONArray()
+        val chatGpt = runCatching {
+            com.ai.assistance.operit.data.preferences.CodexAuthPreferences.getInstance(context).currentState() != null
+        }.getOrDefault(false)
+        list.put(JSONObject().put("account", "chatgpt").put("provider", ApiProviderType.OPENAI_CODEX.name)
+            .put("signed_in", chatGpt).put("sign_in_with", "orbit_vault request_chatgpt_login"))
+        OrbitChatCards.accountProviders.forEach { (id, provider) ->
+            val signedIn = runCatching {
+                com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, provider).account.value != null
+            }.getOrDefault(false)
+            list.put(JSONObject().put("account", id).put("provider", provider.type.name).put("signed_in", signedIn)
+                .put("sign_in_with", "orbit_vault request_account_login provider=$id"))
+        }
+        return list
     }
 
     private fun provider(id: String): ApiProviderType =

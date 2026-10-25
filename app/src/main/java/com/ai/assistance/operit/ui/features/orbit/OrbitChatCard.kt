@@ -81,6 +81,9 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.APPROVAL -> OrbitApprovalCard(card)
         OrbitChatCards.PERMISSION -> OrbitPermissionCard(card)
         OrbitChatCards.CHATGPT_LOGIN -> ChatGptLoginCard(card)
+        OrbitChatCards.ACCOUNT_LOGIN -> OrbitAccountLoginCard(card)
+        OrbitChatCards.SPEECH_SETTINGS -> OrbitSpeechSettingsCard()
+        OrbitChatCards.DATA_EXPORT -> OrbitDataExportCard(card)
     }
 }
 
@@ -188,7 +191,7 @@ private fun VaultCard(request: OrbitVault.Request) {
 }
 
 @Composable
-private fun CardTile(icon: String, label: String? = null) {
+internal fun CardTile(icon: String, label: String? = null) {
     Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface, modifier = Modifier.size(52.dp)) {
         Column(horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.Center) {
             Icon(orbitIcon(icon), null, Modifier.size(if (label == null) 26.dp else 22.dp), tint = MaterialTheme.colorScheme.onSurface)

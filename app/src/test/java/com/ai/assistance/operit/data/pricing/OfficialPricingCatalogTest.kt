@@ -34,4 +34,16 @@ class OfficialPricingCatalogTest {
         assertNotNull(index.lookup("a/model"))
         assertNull(index.lookup("proxy/model"))
     }
+
+    @Test fun `official alias row prices its official model and resolves by the alias`() {
+        val doc = ModelsDevPricingCatalog.build(
+            """{"deepseek/deepseek-v4.1-flash-1017":{"name":"DeepSeek V4.1 Flash 1017"}}""",
+            """{"deepseek":{"models":{"deepseek-flash":{"cost":{"input":0.15,"output":0.6}}}}}""",
+            """{"deepseek":"deepseek"}""",
+        )
+        assertEquals("deepseek/deepseek-v4.1-flash-1017", doc.entries.single().model)
+        val index = OfficialPricingIndex(doc.entries)
+        assertEquals(0.15, index.lookup("deepseek-flash")!!.inputPricePerMillion, 0.0)
+        assertNotNull(index.lookup("deepseek/deepseek-flash"))
+    }
 }

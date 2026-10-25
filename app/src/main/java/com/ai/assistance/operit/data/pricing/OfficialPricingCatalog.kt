@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.data.pricing
 
 import com.ai.assistance.operit.data.collects.ModelPricingDefaults
+import com.ai.assistance.operit.data.model.OfficialModelAliases
 import java.security.MessageDigest
 import java.time.Instant
 import kotlinx.serialization.encodeToString
@@ -27,6 +28,9 @@ class OfficialPricingIndex(entries: List<PricingCatalogEntry>) {
         byId[query]?.let { return unique(it) }
         val short = query.substringAfterLast('/')
         byShortId[short]?.let { return unique(it) }
+        OfficialModelAliases.resolve(query)?.let { officialId ->
+            byId[normalize(officialId)]?.let { return unique(it) }
+        }
         val routed = routes.filterKeys { short == it || short.endsWith("-$it") }
             .values.flatten()
         if (routed.isNotEmpty()) return unique(routed)
@@ -68,11 +72,13 @@ object ModelsDevPricingCatalog {
             val rows = (providers[source] as? JsonObject)?.get("models") as? JsonObject
                 ?: return@mapNotNull null
             val short = OfficialPricingIndex.normalize(officialId.substringAfterLast('/'))
+            val matchNames = setOf(short) +
+                OfficialModelAliases.shortAliasesOf(officialId).map(OfficialPricingIndex::normalize)
             val candidates = rows.mapNotNull candidate@{ (key, element) ->
                 val row = element as? JsonObject ?: return@candidate null
                 val id = row["id"]?.jsonPrimitive?.contentOrNull ?: key
                 if (listOf(key, id, id.substringAfterLast('/')).none {
-                        OfficialPricingIndex.normalize(it) == short
+                        OfficialPricingIndex.normalize(it) in matchNames
                     }) return@candidate null
                 row
             }

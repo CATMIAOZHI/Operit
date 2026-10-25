@@ -540,7 +540,7 @@ private fun deepSeekFunctionalEffort(modelName: String, qualityLevel: Int): Stri
     val normalized = modelName.trim().lowercase().substringAfterLast('/')
     if (
         !normalized.matches(
-            Regex("deepseek-v4-(?:flash|pro)(?:$|[-_].*)")
+            Regex("deepseek-(?:flash|v4-(?:flash|pro))(?:$|[-_].*)")
         )
     ) {
         return null

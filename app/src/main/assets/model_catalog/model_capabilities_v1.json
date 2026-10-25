@@ -1,7 +1,80 @@
 {
+  "abacusai/dracarys-llama-3.1-70b-instruct": {
+    "name": "Dracarys Llama 3.1 70B Instruct",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "ai21/jamba-large": {
+    "name": "Jamba Large",
+    "family": "jamba",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "ai21/jamba-mini": {
+    "name": "Jamba Mini",
+    "family": "jamba",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "aion-labs/aion-2.0": {
+    "name": "Aion-2.0",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "aion-labs/aion-3.0": {
+    "name": "Aion-3.0",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "aion-labs/aion-3.0-mini": {
+    "name": "Aion-3.0-Mini",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "aion-labs/aion-rp-llama-3.1-8b": {
+    "name": "Aion-RP 1.0 (8B)",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "aisingapore/gemma-sea-lion-v4-27b-it": {
     "name": "Gemma-SEA-LION-v4-27B-IT",
     "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "aleph-alpha/kolibri-1": {
+    "name": "Kolibri 1",
+    "family": "",
     "modalities": {
       "input": [
         "text"
@@ -17,8 +90,27 @@
       ]
     }
   },
+  "alibaba/qwen-image-2.1": {
+    "name": "Qwen-Image-2.1",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen-max": {
     "name": "Qwen Max",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "alibaba/qwen-mt-plus": {
+    "name": "Qwen MT Plus",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -86,6 +178,15 @@
       ]
     }
   },
+  "alibaba/qwen2.5-7b-instruct": {
+    "name": "Qwen2.5 7B Instruct",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen2.5-coder-0.5b": {
     "name": "Qwen2.5-Coder-0.5B",
     "family": "qwen",
@@ -122,6 +223,15 @@
       ]
     }
   },
+  "alibaba/qwen3-235b-a22b-thinking-2507": {
+    "name": "Qwen3 235B-A22B Thinking 2507",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen3-30b-a3b": {
     "name": "Qwen3 30B A3B",
     "family": "qwen",
@@ -131,8 +241,26 @@
       ]
     }
   },
+  "alibaba/qwen3-30b-a3b-instruct-2507": {
+    "name": "Qwen3 30B-A3B Instruct 2507",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen3-32b": {
     "name": "Qwen3 32B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "alibaba/qwen3-8b": {
+    "name": "Qwen3 8B",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -185,8 +313,26 @@
       ]
     }
   },
+  "alibaba/qwen3-embedding-8b": {
+    "name": "Qwen3 Embedding 8B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen3-max": {
     "name": "Qwen3 Max",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "alibaba/qwen3-max-preview": {
+    "name": "Qwen3 Max Preview",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -205,6 +351,27 @@
   },
   "alibaba/qwen3-next-80b-a3b-thinking": {
     "name": "Qwen3-Next 80B-A3B (Thinking)",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "alibaba/qwen3-omni-30b-a3b-thinking": {
+    "name": "Qwen3 Omni 30B A3B Thinking",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3-reranker-8b": {
+    "name": "Qwen3 Reranker 8B",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -232,6 +399,27 @@
       ]
     }
   },
+  "alibaba/qwen3-vl-30b-a3b-instruct": {
+    "name": "Qwen3 VL 30B A3B Instruct",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3-vl-flash": {
+    "name": "Qwen3 VL Flash (Alibaba Cloud)",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "alibaba/qwen3-vl-plus": {
     "name": "Qwen3-VL Plus",
     "family": "qwen",
@@ -242,12 +430,22 @@
       ]
     }
   },
+  "alibaba/qwen3.5-0.8b": {
+    "name": "Qwen3.5 0.8B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "alibaba/qwen3.5-122b-a10b": {
     "name": "Qwen3.5 122B-A10B",
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
         "image",
         "text",
         "video"
@@ -259,7 +457,17 @@
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.5-2b": {
+    "name": "Qwen3.5 2B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
         "image",
         "text",
         "video"
@@ -271,7 +479,17 @@
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.5-35b-a3b-base": {
+    "name": "Qwen3.5 35B-A3B Base",
+    "family": "qwen",
+    "modalities": {
+      "input": [
         "image",
         "text",
         "video"
@@ -283,7 +501,17 @@
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.5-4b": {
+    "name": "Qwen3.5 4B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
         "image",
         "text",
         "video"
@@ -292,6 +520,17 @@
   },
   "alibaba/qwen3.5-9b": {
     "name": "Qwen3.5 9B",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.5-9b-base": {
+    "name": "Qwen3.5 9B Base",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -328,7 +567,6 @@
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
         "image",
         "text",
         "video"
@@ -340,7 +578,6 @@
     "family": "qwen",
     "modalities": {
       "input": [
-        "audio",
         "image",
         "text",
         "video"
@@ -440,8 +677,31 @@
       ]
     }
   },
+  "alibaba/qwen3.8-flash-next": {
+    "name": "Qwen3.8 Flash Next",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "alibaba/qwen3.8-max": {
     "name": "Qwen3.8 Max",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.8-max-0902": {
+    "name": "Qwen3.8 Max 0902",
     "family": "qwen",
     "modalities": {
       "input": [
@@ -463,6 +723,29 @@
       ]
     }
   },
+  "alibaba/qwen3.8-max-prime": {
+    "name": "Qwen 3.8 Max Prime",
+    "family": "qwen3.8-max",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "alibaba/qwen3.8-omni-flash": {
+    "name": "Qwen3.8 Omni Flash",
+    "family": "qwen",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "alibaba/qwq-32b": {
     "name": "QwQ 32B",
     "family": "qwen",
@@ -475,6 +758,113 @@
   "alibaba/qwq-plus": {
     "name": "QwQ Plus",
     "family": "qwen",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "amazon/nova-2-lite": {
+    "name": "Nova 2 Lite",
+    "family": "nova",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "amazon/nova-2-lite-v1": {
+    "name": "Nova 2 Lite",
+    "family": "nova",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "amazon/nova-lite": {
+    "name": "Nova Lite",
+    "family": "nova-lite",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "amazon/nova-lite-v1": {
+    "name": "Nova Lite 1.0",
+    "family": "nova-lite",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "amazon/nova-micro": {
+    "name": "Nova Micro",
+    "family": "nova-micro",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "amazon/nova-micro-v1": {
+    "name": "Nova Micro 1.0",
+    "family": "nova-micro",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "amazon/nova-premier": {
+    "name": "Nova Premier",
+    "family": "nova",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "amazon/nova-pro": {
+    "name": "Nova Pro",
+    "family": "nova-pro",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "amazon/nova-pro-v1": {
+    "name": "Nova Pro 1.0",
+    "family": "nova-pro",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "anthracite-org/magnum-v4-72b": {
+    "name": "Magnum v4 72B",
+    "family": "",
     "modalities": {
       "input": [
         "text"
@@ -536,6 +926,17 @@
       ]
     }
   },
+  "anthropic/claude-fable-5-1": {
+    "name": "Claude Fable 5.1",
+    "family": "claude-fable",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "anthropic/claude-haiku-4-5": {
     "name": "Claude Haiku 4.5 (latest)",
     "family": "claude-haiku",
@@ -558,8 +959,30 @@
       ]
     }
   },
+  "anthropic/claude-haiku-5-5": {
+    "name": "Claude Haiku 5.5",
+    "family": "claude-haiku",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "anthropic/claude-mythos-5": {
     "name": "Claude Mythos 5",
+    "family": "claude-mythos",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "anthropic/claude-mythos-5-1": {
+    "name": "Claude Mythos 5.1",
     "family": "claude-mythos",
     "modalities": {
       "input": [
@@ -679,6 +1102,17 @@
       ]
     }
   },
+  "anthropic/claude-opus-5-5": {
+    "name": "Claude Opus 5.5",
+    "family": "claude-opus",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "anthropic/claude-sonnet-4-0": {
     "name": "Claude Sonnet 4 (latest)",
     "family": "claude-sonnet",
@@ -745,6 +1179,26 @@
       ]
     }
   },
+  "anthropic/claude-sonnet-5-5": {
+    "name": "Claude Sonnet 5.5",
+    "family": "claude-sonnet",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "apodex/apodex-1.1-mini": {
+    "name": "Apodex 1.1 Mini",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "arcee-ai/trinity-large-preview": {
     "name": "Trinity Large Preview",
     "family": "trinity",
@@ -781,12 +1235,115 @@
       ]
     }
   },
+  "baai/bge-m3": {
+    "name": "BGE M3",
+    "family": "bge",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baai/bge-multilingual-gemma2": {
+    "name": "BGE Multilingual Gemma2",
+    "family": "bge",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baai/bge-reranker-v2-m3": {
+    "name": "BGE Reranker V2 M3",
+    "family": "bge",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baichuan/baichuan-m2-32b": {
+    "name": "Baichuan M2 32B",
+    "family": "baichuan",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baidu/cobuddy": {
+    "name": "CoBuddy",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baidu/ernie-4.5-21b-a3b": {
+    "name": "ERNIE 4.5 21B A3B",
+    "family": "ernie",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baidu/ernie-4.5-300b-a47b": {
+    "name": "ERNIE 4.5 300B A47B",
+    "family": "ernie",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "baidu/ernie-4.5-vl-424b-a47b": {
+    "name": "ERNIE 4.5 VL 424B A47B ",
+    "family": "ernie",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "black-forest-labs/flux-1-dev": {
+    "name": "FLUX.1 [dev]",
+    "family": "flux",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "black-forest-labs/flux-1-kontext-dev": {
+    "name": "FLUX.1 Kontext [dev]",
+    "family": "flux",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "black-forest-labs/flux-1-schnell": {
+    "name": "FLUX.1 [schnell]",
+    "family": "flux",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "bytedance-seed/seed-1-6": {
     "name": "Seed 1.6",
     "family": "seed",
     "modalities": {
       "input": [
-        "text"
+        "image",
+        "text",
+        "video"
       ]
     }
   },
@@ -796,7 +1353,8 @@
     "modalities": {
       "input": [
         "image",
-        "text"
+        "text",
+        "video"
       ]
     }
   },
@@ -908,6 +1466,66 @@
       ]
     }
   },
+  "bytedance-seed/seed-oss-36b-instruct": {
+    "name": "Seed-OSS-36B-Instruct",
+    "family": "seed",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "bytedance-seed/seedance-2.0": {
+    "name": "Seedance 2.0",
+    "family": "seed",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "bytedance-seed/seedance-2.5": {
+    "name": "Seedance 2.5",
+    "family": "seed",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "canopylabs/orpheus-arabic-saudi": {
+    "name": "Orpheus Arabic Saudi",
+    "family": "canopylabs",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "canopylabs/orpheus-v1-english": {
+    "name": "Orpheus V1 English",
+    "family": "canopylabs",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "cognitivecomputations/dolphin-mistral-24b-venice-edition": {
+    "name": "Uncensored",
+    "family": "mistral",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "cohere/c4ai-aya-expanse-32b": {
     "name": "Aya Expanse 32B",
     "family": "",
@@ -942,6 +1560,15 @@
     "modalities": {
       "input": [
         "image",
+        "text"
+      ]
+    }
+  },
+  "cohere/command-a": {
+    "name": "Command A",
+    "family": "command-a",
+    "modalities": {
+      "input": [
         "text"
       ]
     }
@@ -1038,6 +1665,51 @@
       ]
     }
   },
+  "cohere/north-small-translate-1-0": {
+    "name": "North Small Translate",
+    "family": "north",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "cohere/tiny-aya-earth": {
+    "name": "Tiny Aya Earth",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "cohere/tiny-aya-fire": {
+    "name": "Tiny Aya Fire",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "cohere/tiny-aya-global": {
+    "name": "Tiny Aya Global",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "cohere/tiny-aya-water": {
+    "name": "Tiny Aya Water",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "deepreinforce/ornith-1.0-31b": {
     "name": "Ornith 1.0 31B",
     "family": "ornith",
@@ -1097,6 +1769,24 @@
       ]
     }
   },
+  "deepseek/deepseek-chat-v3-0324": {
+    "name": "DeepSeek V3 0324",
+    "family": "deepseek",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "deepseek/deepseek-chat-v3.1": {
+    "name": "DeepSeek V3.1",
+    "family": "deepseek",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "deepseek/deepseek-ocr-2": {
     "name": "DeepSeek OCR 2",
     "family": "",
@@ -1109,6 +1799,24 @@
   },
   "deepseek/deepseek-r1": {
     "name": "DeepSeek-R1",
+    "family": "deepseek-thinking",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "deepseek/deepseek-r1-0528": {
+    "name": "DeepSeek R1 0528",
+    "family": "deepseek-thinking",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "deepseek/deepseek-r1-0528-qwen3-8b": {
+    "name": "DeepSeek R1 0528 Qwen3 8B",
     "family": "deepseek-thinking",
     "modalities": {
       "input": [
@@ -1179,6 +1887,15 @@
       ]
     }
   },
+  "deepseek/deepseek-v4-flash-0423": {
+    "name": "DeepSeek V4 Flash 0423",
+    "family": "deepseek-flash",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "deepseek/deepseek-v4-flash-0731": {
     "name": "DeepSeek V4 Flash 0731",
     "family": "deepseek-flash",
@@ -1225,6 +1942,45 @@
       ]
     }
   },
+  "deepseek/deepseek-v4.1-flash": {
+    "name": "DeepSeek V4.1 Flash",
+    "family": "deepseek-flash",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "deepseek/deepseek-v4.1-flash-1017": {
+    "name": "DeepSeek V4.1 Flash 1017",
+    "family": "deepseek-flash",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "essentialai/rnj-1-instruct": {
+    "name": "Rnj-1 Instruct",
+    "family": "rnj",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "fireworks/ember-1": {
+    "name": "Ember-1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "google/deep-research-max-preview-04-2026": {
     "name": "Deep Research Max Preview",
     "family": "gemini-pro",
@@ -1248,6 +2004,16 @@
         "pdf",
         "text",
         "video"
+      ]
+    }
+  },
+  "google/diffusiongemma-26b-a4b-it": {
+    "name": "DiffusionGemma 26B A4B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
       ]
     }
   },
@@ -1323,6 +2089,45 @@
       ]
     }
   },
+  "google/gemini-2.5-flash-lite-preview-06-17": {
+    "name": "Gemini 2.5 Flash-Lite Preview 06-17",
+    "family": "gemini-flash-lite",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "google/gemini-2.5-flash-lite-preview-09-2025": {
+    "name": "Gemini 2.5 Flash-Lite Preview 09-2025",
+    "family": "gemini-flash-lite",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "google/gemini-2.5-flash-preview-05-20": {
+    "name": "Gemini 2.5 Flash Preview 05-20",
+    "family": "gemini-flash",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
   "google/gemini-2.5-flash-tts": {
     "name": "Gemini 2.5 Flash TTS",
     "family": "gemini-flash",
@@ -1342,6 +2147,18 @@
         "pdf",
         "text",
         "video"
+      ]
+    }
+  },
+  "google/gemini-2.5-pro-preview": {
+    "name": "Gemini 2.5 Pro Preview 06-05",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text"
       ]
     }
   },
@@ -1378,7 +2195,7 @@
     }
   },
   "google/gemini-3-pro-image-preview": {
-    "name": "Nano Banana Pro",
+    "name": "Nano Banana Pro Preview",
     "family": "gemini-pro",
     "modalities": {
       "input": [
@@ -1413,7 +2230,7 @@
     }
   },
   "google/gemini-3.1-flash-image-preview": {
-    "name": "Nano Banana 2",
+    "name": "Nano Banana 2 Preview",
     "family": "gemini-flash",
     "modalities": {
       "input": [
@@ -1576,6 +2393,32 @@
       ]
     }
   },
+  "google/gemini-3.8-flash": {
+    "name": "Gemini 3.8 Flash",
+    "family": "gemini-flash",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "google/gemini-4-argon": {
+    "name": "Gemini 4 Argon",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
   "google/gemini-embedding-001": {
     "name": "Gemini Embedding 001",
     "family": "gemini",
@@ -1624,6 +2467,28 @@
       ]
     }
   },
+  "google/gemini-nano-banana-2.1": {
+    "name": "Nano Banana 2.1",
+    "family": "gemini-flash",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "google/gemini-omni-1.1-flash": {
+    "name": "Gemini Omni 1.1 Flash",
+    "family": "gemini",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "google/gemini-omni-flash-preview": {
     "name": "Gemini Omni Flash Preview",
     "family": "gemini",
@@ -1644,6 +2509,86 @@
         "image",
         "text",
         "video"
+      ]
+    }
+  },
+  "google/gemma-2-27b-it": {
+    "name": "Gemma 2 27B",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "google/gemma-2-2b-it": {
+    "name": "Gemma 2 2B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "google/gemma-3-12b-it": {
+    "name": "Gemma 3 12B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "google/gemma-3-27b-it": {
+    "name": "Gemma 3 27B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "google/gemma-3-4b-it": {
+    "name": "Gemma 3 4B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "google/gemma-3n-e2b-it": {
+    "name": "Gemma 3n E2B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text"
+      ]
+    }
+  },
+  "google/gemma-3n-e4b-it": {
+    "name": "Gemma 3n E4B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text"
+      ]
+    }
+  },
+  "google/gemma-4-12b-it": {
+    "name": "Gemma 4 12B IT",
+    "family": "gemma",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
       ]
     }
   },
@@ -1740,6 +2685,15 @@
       ]
     }
   },
+  "gryphe/mythomax-l2-13b": {
+    "name": "MythoMax L2 13B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "ibm/granite-4-h-micro": {
     "name": "Granite-4.0-H-Micro",
     "family": "granite",
@@ -1758,6 +2712,60 @@
       ]
     }
   },
+  "ibm/granite-4.2-8b": {
+    "name": "Granite 4.2 8B",
+    "family": "granite",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inception/mercury-2": {
+    "name": "Mercury 2",
+    "family": "mercury",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inception/mercury-2.5": {
+    "name": "Mercury 2.5",
+    "family": "mercury",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inception/mercury-3": {
+    "name": "Mercury 3",
+    "family": "mercury",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inception/mercury-edit-2": {
+    "name": "Mercury Edit 2",
+    "family": "mercury",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inclusionai/ling-3.0-flash": {
+    "name": "Ling 3.0 Flash",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "inclusionai/ling-3.0-flash-fin": {
     "name": "Ling 3.0 Flash Fin",
     "family": "ling",
@@ -1767,9 +2775,103 @@
       ]
     }
   },
+  "inclusionai/ling-3.0-flash-sante": {
+    "name": "Ling 3.0 Flash Sante",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inclusionai/ling-3.0-flash-vl": {
+    "name": "Ling 3.0 Flash VL",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "inclusionai/ling-3.1-flash": {
+    "name": "Ling 3.1 Flash",
+    "family": "ling",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inference-net/schematron-v2-small": {
+    "name": "Schematron V2 Small",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "inference-net/schematron-v2-turbo": {
+    "name": "Schematron V2 Turbo",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "lightonai/lightonocr-3-0.8b": {
+    "name": "LightOnOCR-3 0.8B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "liquid/lfm2-24b-a2b": {
+    "name": "LFM2 24B A2B",
+    "family": "liquid",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mancer/weaver": {
+    "name": "Weaver (alpha)",
+    "family": "alpha",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "meituan/longcat-2.0": {
     "name": "LongCat-2.0",
     "family": "longcat",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "meituan/longcat-2.5-preview": {
+    "name": "LongCat-2.5-Preview",
+    "family": "longcat",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "meta/llama-3.1-70b-instruct": {
+    "name": "Llama-3.1-70B-Instruct",
+    "family": "llama",
     "modalities": {
       "input": [
         "text"
@@ -1804,11 +2906,39 @@
       ]
     }
   },
+  "meta/llama-3.2-1b-instruct": {
+    "name": "Llama 3.2 1B Instruct",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "meta/llama-3.2-3b": {
     "name": "Llama-3.2-3B",
     "family": "llama",
     "modalities": {
       "input": [
+        "text"
+      ]
+    }
+  },
+  "meta/llama-3.2-3b-instruct": {
+    "name": "Llama 3.2 3B Instruct",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "meta/llama-3.2-90b-vision-instruct": {
+    "name": "Llama-3.2-90B-Vision-Instruct",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "image",
         "text"
       ]
     }
@@ -1844,6 +2974,34 @@
   },
   "meta/llama-guard-3-8b": {
     "name": "Llama-Guard-3-8B",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "meta/llama-guard-4-12b": {
+    "name": "Llama Guard 4 12B",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "meta/llama-prompt-guard-2-22m": {
+    "name": "Llama Prompt Guard 2 22M",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "meta/llama-prompt-guard-2-86m": {
+    "name": "Llama Prompt Guard 2 86M",
     "family": "llama",
     "modalities": {
       "input": [
@@ -1899,6 +3057,43 @@
       ]
     }
   },
+  "meta/muse-spark-open": {
+    "name": "Muse Spark Open",
+    "family": "muse",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "meta/muse-wonder-1.0": {
+    "name": "Muse Wonder",
+    "family": "muse",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "meta/muse-wonder-full": {
+    "name": "Muse Wonder Full",
+    "family": "muse",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "microsoft/mai-code-1-flash": {
     "name": "MAI-Code-1-Flash",
     "family": "mai",
@@ -1924,6 +3119,57 @@
     "modalities": {
       "input": [
         "text"
+      ]
+    }
+  },
+  "microsoft/phi-4-multimodal-instruct": {
+    "name": "Phi-4-multimodal-instruct",
+    "family": "phi",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text"
+      ]
+    }
+  },
+  "microsoft/wizardlm-2-8x22b": {
+    "name": "WizardLM 2 8x22B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mindlab/macaron-v1-tall": {
+    "name": "Macaron V1 Tall",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mindlab/macaron-v1-venti": {
+    "name": "Macaron V1 Venti",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "minimax/MiniMax-H3": {
+    "name": "MiniMax H3",
+    "family": "minimax",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
       ]
     }
   },
@@ -2001,6 +3247,37 @@
       ]
     }
   },
+  "minimax/MiniMax-M3.1-Flash": {
+    "name": "MiniMax-M3.1-Flash",
+    "family": "minimax",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "minimax/MiniMax-M3.1-Flash-Preview": {
+    "name": "MiniMax-M3.1-Flash-Preview",
+    "family": "minimax",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "minimax/MiniMax-Text-01": {
+    "name": "MiniMax Text 01 (MiniMax)",
+    "family": "minimax",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "minimax/image-01": {
     "name": "MiniMax image-01",
     "family": "minimax",
@@ -2011,8 +3288,26 @@
       ]
     }
   },
+  "minimax/minimax-m1-80k": {
+    "name": "MiniMax M1 80K",
+    "family": "minimax",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "mistral/codestral-22b-v0.1": {
     "name": "Codestral-22B-v0.1",
+    "family": "codestral",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/codestral-2508": {
+    "name": "Codestral 25.08",
     "family": "codestral",
     "modalities": {
       "input": [
@@ -2056,6 +3351,16 @@
       ]
     }
   },
+  "mistral/devstral-small-2": {
+    "name": "Devstral Small 2",
+    "family": "devstral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "mistral/devstral-small-2507": {
     "name": "Devstral Small",
     "family": "devstral",
@@ -2083,11 +3388,138 @@
       ]
     }
   },
+  "mistral/magistral-small-2509": {
+    "name": "Magistral Small 1.2",
+    "family": "magistral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-14b": {
+    "name": "Ministral 14B",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-14b-2512": {
+    "name": "Ministral 3 14B 2512",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-3-14b-instruct-2512": {
+    "name": "Ministral 3 14B",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-3-3b-instruct-2512": {
+    "name": "Ministral 3 3B",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-3-8b-instruct-2512": {
+    "name": "Ministral 3 8B",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-3b": {
+    "name": "Ministral 3B",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-3b-2512": {
+    "name": "Ministral 3 3B 2512",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/ministral-8b-2512": {
+    "name": "Ministral 3 8B 2512",
+    "family": "ministral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "mistral/ministral-8b-instruct-2410": {
     "name": "Ministral 8B Instruct",
     "family": "ministral",
     "modalities": {
       "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-7b-instruct-v0.3": {
+    "name": "Mistral 7B Instruct v0.3",
+    "family": "mistral",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-embed": {
+    "name": "Mistral Embed",
+    "family": "mistral-embed",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-large": {
+    "name": "Mistral Large",
+    "family": "mistral-large",
+    "modalities": {
+      "input": [
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-large-2407": {
+    "name": "Mistral Large 2407",
+    "family": "mistral-large",
+    "modalities": {
+      "input": [
+        "pdf",
         "text"
       ]
     }
@@ -2103,6 +3535,16 @@
   },
   "mistral/mistral-large-2512": {
     "name": "Mistral Large 3",
+    "family": "mistral-large",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-large-4": {
+    "name": "Mistral Large 4",
     "family": "mistral-large",
     "modalities": {
       "input": [
@@ -2141,6 +3583,39 @@
       ]
     }
   },
+  "mistral/mistral-medium-3": {
+    "name": "Mistral Medium 3",
+    "family": "mistral-medium",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-medium-3-5": {
+    "name": "Mistral Medium 3.5",
+    "family": "mistral-medium",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-medium-3.1": {
+    "name": "Mistral Medium 3.1",
+    "family": "mistral-medium",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "mistral/mistral-medium-latest": {
     "name": "Mistral Medium (latest)",
     "family": "mistral-medium",
@@ -2154,6 +3629,25 @@
   "mistral/mistral-nemo": {
     "name": "Mistral Nemo",
     "family": "mistral-nemo",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-saba": {
+    "name": "Saba",
+    "family": "mistral",
+    "modalities": {
+      "input": [
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-small-24b-instruct-2501": {
+    "name": "Mistral Small 3",
+    "family": "mistral-small",
     "modalities": {
       "input": [
         "text"
@@ -2190,6 +3684,26 @@
       ]
     }
   },
+  "mistral/mistral-small-3.1-24b-instruct": {
+    "name": "Mistral Small 3.1 24B",
+    "family": "mistral-small",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/mistral-small-3.2-24b-instruct": {
+    "name": "Mistral Small 3.2 24B",
+    "family": "mistral-small",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "mistral/mistral-small-latest": {
     "name": "Mistral Small (latest)",
     "family": "mistral-small",
@@ -2200,8 +3714,37 @@
       ]
     }
   },
+  "mistral/mixtral-8x22b-instruct": {
+    "name": "Mixtral 8x22B Instruct",
+    "family": "mistral",
+    "modalities": {
+      "input": [
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "mistral/mixtral-8x7b-instruct-v0.1": {
+    "name": "Mixtral 8x7B Instruct v0.1",
+    "family": "mistral",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "mistral/pixtral-12b": {
     "name": "Pixtral 12B",
+    "family": "pixtral",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "mistral/pixtral-large-2502": {
+    "name": "Pixtral Large (25.02)",
     "family": "pixtral",
     "modalities": {
       "input": [
@@ -2220,12 +3763,68 @@
       ]
     }
   },
+  "mistral/voxtral-mini-3b-2507": {
+    "name": "Voxtral Mini 3B 2507",
+    "family": "voxtral",
+    "modalities": {
+      "input": [
+        "audio",
+        "text"
+      ]
+    }
+  },
+  "mistral/voxtral-small-24b-2507": {
+    "name": "Voxtral Small 24B 2507",
+    "family": "voxtral",
+    "modalities": {
+      "input": [
+        "audio",
+        "text"
+      ]
+    }
+  },
   "mistral/voxtral-small-latest": {
     "name": "Voxtral Small (latest)",
     "family": "voxtral",
     "modalities": {
       "input": [
         "audio",
+        "text"
+      ]
+    }
+  },
+  "mixedbread/toast-1": {
+    "name": "Toast 1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "moonshotai/kimi-k2": {
+    "name": "Kimi K2 0711",
+    "family": "kimi-k2",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "moonshotai/kimi-k2-0905": {
+    "name": "Kimi K2 Instruct 0905",
+    "family": "kimi-k2",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "moonshotai/kimi-k2-instruct": {
+    "name": "Kimi K2 Instruct",
+    "family": "kimi-k2",
+    "modalities": {
+      "input": [
         "text"
       ]
     }
@@ -2292,6 +3891,17 @@
       ]
     }
   },
+  "moonshotai/kimi-k2.8-preview": {
+    "name": "Kimi K2.8 Preview",
+    "family": "kimi-k2",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "moonshotai/kimi-k3": {
     "name": "Kimi K3",
     "family": "kimi-k3",
@@ -2300,6 +3910,90 @@
         "image",
         "text",
         "video"
+      ]
+    }
+  },
+  "moonshotai/kimi-k3.1-pro": {
+    "name": "Kimi K3.1 Pro",
+    "family": "kimi-k3",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "morph/morph-v3-fast": {
+    "name": "Morph V3 Fast",
+    "family": "morph",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "morph/morph-v3-large": {
+    "name": "Morph V3 Large",
+    "family": "morph",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "motif-technologies/motif-3": {
+    "name": "Motif 3",
+    "family": "motif",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nex-agi/nex-n2-pro": {
+    "name": "Nex-N2-Pro",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "nousresearch/hermes-2-pro-llama-3-8b": {
+    "name": "Hermes 2 Pro Llama 3 8B",
+    "family": "hermes",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nousresearch/hermes-3-llama-3.1-405b": {
+    "name": "Hermes 3 405B Instruct",
+    "family": "nousresearch",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nousresearch/hermes-3-llama-3.1-70b": {
+    "name": "Hermes 3 70B Instruct",
+    "family": "nousresearch",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nousresearch/hermes-4-405b": {
+    "name": "Hermes 4 405B",
+    "family": "hermes",
+    "modalities": {
+      "input": [
+        "text"
       ]
     }
   },
@@ -2341,6 +4035,15 @@
   },
   "nvidia/llama-3.3-nemotron-super-49b-v1.5": {
     "name": "Llama 3.3 Nemotron Super 49B v1.5",
+    "family": "nemotron",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nvidia/llama-nemotron-embed-1b-v2": {
+    "name": "Llama Nemotron Embed 1B v2",
     "family": "nemotron",
     "modalities": {
       "input": [
@@ -2441,6 +4144,26 @@
     "modalities": {
       "input": [
         "text"
+      ]
+    }
+  },
+  "nvidia/nemotron-3.5-super-120b-a12b": {
+    "name": "Nemotron 3.5 Super 120B A12B",
+    "family": "nemotron",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "nvidia/nemotron-3.5-super-vl-120b-a12b": {
+    "name": "Nemotron 3.5 Super VL 120B A12B",
+    "family": "nemotron",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
       ]
     }
   },
@@ -2625,7 +4348,7 @@
   },
   "openai/gpt-5-chat-latest": {
     "name": "GPT-5 Chat (latest)",
-    "family": "gpt-codex",
+    "family": "gpt",
     "modalities": {
       "input": [
         "image",
@@ -2639,6 +4362,28 @@
     "modalities": {
       "input": [
         "image",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-5-image": {
+    "name": "GPT-5 Image",
+    "family": "gpt",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-5-image-mini": {
+    "name": "GPT-5 Image Mini",
+    "family": "gpt",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
         "text"
       ]
     }
@@ -2685,7 +4430,7 @@
   },
   "openai/gpt-5.1-chat-latest": {
     "name": "GPT-5.1 Chat",
-    "family": "gpt-codex",
+    "family": "gpt",
     "modalities": {
       "input": [
         "image",
@@ -2735,7 +4480,7 @@
   },
   "openai/gpt-5.2-chat-latest": {
     "name": "GPT-5.2 Chat",
-    "family": "gpt-codex",
+    "family": "gpt",
     "modalities": {
       "input": [
         "image",
@@ -2798,6 +4543,17 @@
   },
   "openai/gpt-5.4": {
     "name": "GPT-5.4",
+    "family": "gpt",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-5.4-image-2": {
+    "name": "GPT-5.4 Image 2",
     "family": "gpt",
     "modalities": {
       "input": [
@@ -2870,6 +4626,16 @@
       ]
     }
   },
+  "openai/gpt-5.6-cyber": {
+    "name": "GPT-5.6 Cyber",
+    "family": "gpt",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "openai/gpt-5.6-luna": {
     "name": "GPT-5.6 Luna",
     "family": "gpt-luna",
@@ -2895,6 +4661,61 @@
   "openai/gpt-5.6-terra": {
     "name": "GPT-5.6 Terra",
     "family": "gpt-terra",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-6-astra": {
+    "name": "GPT-6 Astra",
+    "family": "gpt-astra",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-6-astra-fast": {
+    "name": "GPT-6 Astra (Fast)",
+    "family": "gpt-astra",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-6-luna": {
+    "name": "GPT-6 Luna",
+    "family": "gpt-luna",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-6-sol": {
+    "name": "GPT-6 Sol",
+    "family": "gpt-sol",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-6.1-sol": {
+    "name": "GPT-6.1 Sol",
+    "family": "gpt-sol",
     "modalities": {
       "input": [
         "image",
@@ -2933,6 +4754,26 @@
       ]
     }
   },
+  "openai/gpt-image-2.5-flare": {
+    "name": "GPT Image 2.5 Flare",
+    "family": "gpt-image",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-image-2.5-sunburst": {
+    "name": "GPT Image 2.5 Sunburst",
+    "family": "gpt-image",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "openai/gpt-oss-120b": {
     "name": "GPT OSS 120B",
     "family": "gpt-oss",
@@ -2953,6 +4794,15 @@
   },
   "openai/gpt-oss-safeguard-120b": {
     "name": "GPT OSS Safeguard 120B",
+    "family": "gpt-oss",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "openai/gpt-oss-safeguard-20b": {
+    "name": "GPT OSS Safeguard 20B",
     "family": "gpt-oss",
     "modalities": {
       "input": [
@@ -3079,6 +4929,67 @@
       ]
     }
   },
+  "openbmb/minicpm-v-4.7-1b": {
+    "name": "MiniCPM-V 4.7 1B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "openbmb/minicpm-v-4.7-35b-a3b": {
+    "name": "MiniCPM-V 4.7 35B-A3B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "openbmb/minicpm5-1b": {
+    "name": "MiniCPM5-1B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "openbmb/minicpm5-2b": {
+    "name": "MiniCPM5-2B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "paddlepaddle/paddleocr-vl": {
+    "name": "PaddleOCR VL",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "perceptron/perceptron-mk1": {
+    "name": "Perceptron Mk1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "perplexity/sonar": {
     "name": "Sonar",
     "family": "sonar",
@@ -3153,12 +5064,99 @@
       ]
     }
   },
+  "quiverai/arrow-2": {
+    "name": "Arrow 2",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "quiverai/arrow-2-telos": {
+    "name": "Arrow 2 Telos",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "recursive/flint": {
+    "name": "Flint",
+    "family": "flint",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "reflection/beam-1.0-501b-a23b": {
+    "name": "Beam 1.0 501B A23B",
+    "family": "beam",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "rekaai/reka-edge": {
+    "name": "Reka Edge",
+    "family": "reka",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "rekaai/reka-flash-3": {
+    "name": "Reka Flash 3",
+    "family": "reka",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "relace/relace-apply-3": {
+    "name": "Relace Apply 3",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "relace/relace-search": {
+    "name": "Relace Search",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "sakana/fugu": {
     "name": "Fugu",
     "family": "fugu",
     "modalities": {
       "input": [
         "image",
+        "text"
+      ]
+    }
+  },
+  "sakana/fugu-max": {
+    "name": "Fugu Max",
+    "family": "fugu",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
         "text"
       ]
     }
@@ -3173,6 +5171,17 @@
       ]
     }
   },
+  "sakana/fugu-ultra-v2": {
+    "name": "Fugu Ultra v2",
+    "family": "fugu",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "sakana/sakana-namazu": {
     "name": "Sakana Namazu",
     "family": "sakana-namazu",
@@ -3180,6 +5189,33 @@
       "input": [
         "image",
         "pdf",
+        "text"
+      ]
+    }
+  },
+  "sao10k/l3-lunaris-8b": {
+    "name": "Llama 3 8B Lunaris",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "sao10k/l3.1-euryale-70b": {
+    "name": "Llama 3.1 Euryale 70B v2.2",
+    "family": "llama",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "sao10k/l3.3-euryale-70b": {
+    "name": "Llama 3.3 Euryale 70B",
+    "family": "llama",
+    "modalities": {
+      "input": [
         "text"
       ]
     }
@@ -3202,6 +5238,15 @@
       ]
     }
   },
+  "sarvam/sarvam-m": {
+    "name": "Sarvam-M",
+    "family": "sarvam",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "sdaia/allam-2-7b": {
     "name": "ALLaM-2-7b",
     "family": "",
@@ -3213,7 +5258,7 @@
   },
   "stepfun/step-3.5-flash": {
     "name": "Step 3.5 Flash",
-    "family": "",
+    "family": "step",
     "modalities": {
       "input": [
         "text"
@@ -3222,7 +5267,7 @@
   },
   "stepfun/step-3.5-flash-2603": {
     "name": "Step 3.5 Flash 2603",
-    "family": "",
+    "family": "step",
     "modalities": {
       "input": [
         "text"
@@ -3231,6 +5276,17 @@
   },
   "stepfun/step-3.7-flash": {
     "name": "Step 3.7 Flash",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "stepfun/step-5-preview": {
+    "name": "Step 5 Preview",
     "family": "",
     "modalities": {
       "input": [
@@ -3258,6 +5314,33 @@
       ]
     }
   },
+  "tencent/hy-mt2-1.8b": {
+    "name": "Hy-MT2-1.8B",
+    "family": "Hy",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "tencent/hy-mt2-30b-a3b": {
+    "name": "Hy-MT2-30B-A3B",
+    "family": "Hy",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "tencent/hy-mt2-7b": {
+    "name": "Hy-MT2-7B",
+    "family": "Hy",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "tencent/hy3": {
     "name": "Hy3",
     "family": "Hy",
@@ -3279,6 +5362,33 @@
   "tencent/hy4-preview": {
     "name": "Hy4 preview",
     "family": "Hy",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "thedrummer/cydonia-24b-v4.1": {
+    "name": "Cydonia 24B V4.1",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "thedrummer/skyfall-36b-v2": {
+    "name": "Skyfall 36B V2",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "thedrummer/unslopnemo-12b": {
+    "name": "UnslopNemo 12B",
+    "family": "",
     "modalities": {
       "input": [
         "text"
@@ -3317,6 +5427,43 @@
       ]
     }
   },
+  "unbiased/pareto": {
+    "name": "Pareto",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "undi95/remm-slerp-l2-13b": {
+    "name": "ReMM SLERP 13B",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "upstage/solar-10.7b-instruct-v1.0": {
+    "name": "SOLAR 10.7B Instruct v1.0",
+    "family": "solar",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "upstage/solar-mini4": {
+    "name": "Solar Mini 4",
+    "family": "solar-mini",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "upstage/solar-pro2": {
     "name": "Solar Pro 2",
     "family": "solar-pro",
@@ -3344,8 +5491,110 @@
       ]
     }
   },
+  "vispark/vision-large": {
+    "name": "Vision Large",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "vispark/vision-medium": {
+    "name": "Vision Medium",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "vispark/vision-small": {
+    "name": "Vision Small",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "pdf",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "vivgrid/viv-fast": {
+    "name": "Viv Fast",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "writer/palmyra-x4": {
+    "name": "Palmyra X4",
+    "family": "palmyra",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "writer/palmyra-x5": {
+    "name": "Palmyra X5",
+    "family": "palmyra",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "xai/grok-4-fast-non-reasoning": {
+    "name": "X-Ai/Grok-4-Fast-Non-Reasoning",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "xai/grok-4-fast-reasoning": {
+    "name": "X-Ai/Grok-4-Fast-Reasoning",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "xai/grok-4.1-fast": {
     "name": "Grok 4.1 Fast",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "xai/grok-4.1-fast-reasoning": {
+    "name": "Grok 4.1 Fast (Reasoning)",
     "family": "grok",
     "modalities": {
       "input": [
@@ -3407,6 +5656,17 @@
       ]
     }
   },
+  "xai/grok-4.7": {
+    "name": "Grok 4.7",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "image",
+        "pdf",
+        "text"
+      ]
+    }
+  },
   "xai/grok-build-0.1": {
     "name": "Grok Build 0.1",
     "family": "grok-build",
@@ -3414,6 +5674,25 @@
       "input": [
         "image",
         "pdf",
+        "text"
+      ]
+    }
+  },
+  "xai/grok-code-fast-1": {
+    "name": "x-AI/Grok-Code-Fast 1",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "xai/grok-imagine-image": {
+    "name": "Grok Imagine Image",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "image",
         "text"
       ]
     }
@@ -3428,14 +5707,52 @@
       ]
     }
   },
+  "xai/grok-imagine-image-quality": {
+    "name": "Grok Imagine Image Quality",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
   "xai/grok-imagine-video-1.5": {
     "name": "Grok Imagine Video 1.5",
     "family": "grok",
     "modalities": {
       "input": [
+        "audio",
         "image",
-        "text",
-        "video"
+        "text"
+      ]
+    }
+  },
+  "xai/grok-imagine-video-1.5-lite": {
+    "name": "Grok Imagine Video 1.5 Lite",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
+      ]
+    }
+  },
+  "xai/grok-tts": {
+    "name": "Grok TTS",
+    "family": "",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "xai/grok-voice-transcribe-2.0": {
+    "name": "Grok Voice Transcribe 2.0",
+    "family": "grok",
+    "modalities": {
+      "input": [
+        "audio"
       ]
     }
   },
@@ -3470,6 +5787,15 @@
       ]
     }
   },
+  "xiaomi/mimo-v2-tts": {
+    "name": "MiMo-V2-TTS",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
   "xiaomi/mimo-v2.5": {
     "name": "MiMo-V2.5",
     "family": "mimo",
@@ -3496,6 +5822,79 @@
     "family": "mimo",
     "modalities": {
       "input": [
+        "text"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.5-tts": {
+    "name": "MiMo-V2.5-TTS",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.5-tts-voiceclone": {
+    "name": "MiMo-V2.5-TTS-VoiceClone",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.5-tts-voicedesign": {
+    "name": "MiMo-V2.5-TTS-VoiceDesign",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "text"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.6-flash": {
+    "name": "MiMo-V2.6-Flash",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.6-pro": {
+    "name": "MiMo-V2.6-Pro",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "xiaomi/mimo-v2.6-pro-ultraspeed": {
+    "name": "MiMo-V2.6-Pro-UltraSpeed",
+    "family": "mimo",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
+  "zhipuai/autoglm-phone-9b-multilingual": {
+    "name": "AutoGLM Phone 9B Multilingual",
+    "family": "glm",
+    "modalities": {
+      "input": [
+        "image",
         "text"
       ]
     }
@@ -3560,7 +5959,7 @@
   },
   "zhipuai/glm-4.6v-flash": {
     "name": "GLM-4.6V-Flash",
-    "family": "glm",
+    "family": "glm-flash",
     "modalities": {
       "input": [
         "image",
@@ -3643,7 +6042,7 @@
   },
   "zhipuai/glm-5.3-flash": {
     "name": "GLM-5.3-Flash",
-    "family": "glm",
+    "family": "glm-flash",
     "modalities": {
       "input": [
         "image",
@@ -3662,6 +6061,16 @@
         "pdf",
         "text",
         "video"
+      ]
+    }
+  },
+  "zhipuai/glm-image": {
+    "name": "GLM-Image",
+    "family": "",
+    "modalities": {
+      "input": [
+        "image",
+        "text"
       ]
     }
   }

@@ -99,8 +99,9 @@ import androidx.compose.runtime.LaunchedEffect
 @Composable
 fun SpeechServicesSettingsScreen(
     onBackPressed: () -> Unit,
-    onNavigateToTextToSpeech: () -> Unit = {},
-    onNavigateToSpeechToText: () -> Unit = {},
+    // Null hides the test button, where there is no test page to go to (inside Orbit).
+    onNavigateToTextToSpeech: (() -> Unit)? = null,
+    onNavigateToSpeechToText: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2168,7 +2169,7 @@ fun SpeechServicesSettingsScreen(
                     }
                 }
 
-                if (selectedTabIndex == 0) item {
+                if (selectedTabIndex == 0 && onNavigateToTextToSpeech != null) item {
                     OutlinedButton(
                         onClick = onNavigateToTextToSpeech,
                         enabled = !hasPendingChanges,
@@ -2183,7 +2184,7 @@ fun SpeechServicesSettingsScreen(
                         Text(stringResource(R.string.speech_services_test_tts))
                     }
                 }
-                if (selectedTabIndex == 1) item {
+                if (selectedTabIndex == 1 && onNavigateToSpeechToText != null) item {
                     OutlinedButton(onClick = onNavigateToSpeechToText,
                         enabled = !hasPendingChanges, modifier = Modifier.fillMaxWidth()) {
                         Text(stringResource(R.string.voice_test_current))

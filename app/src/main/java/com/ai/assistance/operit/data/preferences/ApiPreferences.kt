@@ -229,7 +229,7 @@ class ApiPreferences private constructor(private val context: Context) {
 
         // API 配置默认值
         const val DEFAULT_API_ENDPOINT = "https://api.deepseek.com/v1/chat/completions"
-        const val DEFAULT_MODEL_NAME = "deepseek-v4-flash"
+        const val DEFAULT_MODEL_NAME = "deepseek-flash"
 
         // legacy cleanup applied marker 键前缀（P1 闭环）：marker 与累计键清理在
         // 同一次 DataStore.edit 内原子完成；marker 已存在时同 operation 重试为
