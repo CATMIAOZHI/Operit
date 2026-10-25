@@ -142,9 +142,13 @@ class AIForegroundService : Service() {
             "com.ai.assistance.operit.action.STOP_EXTERNAL_HTTP"
         private const val ACTION_ORBIT_TASKS =
             "com.ai.assistance.operit.action.ORBIT_TASKS"
+        private const val ACTION_ORBIT_CHANNELS =
+            "com.ai.assistance.operit.action.ORBIT_CHANNELS"
 
         /** True while Orbit runs background tasks in this service; it keeps the service up. */
         private val orbitTasksBusy = java.util.concurrent.atomic.AtomicBoolean(false)
+        /** True while an Orbit message channel (WeChat) is linked; separate from [orbitTasksBusy]. */
+        private val orbitChannelsBusy = java.util.concurrent.atomic.AtomicBoolean(false)
 
         @Volatile
         private var lastRequestedImeVisible: Boolean = false
@@ -502,6 +506,41 @@ class AIForegroundService : Service() {
                     Intent(context.applicationContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_TASKS }
                 )
             }.onFailure { AppLogger.w(TAG, "Orbit tasks: release not delivered", it) }
+        }
+
+        /**
+         * Keeps this service up while an Orbit message channel is linked, so the channel keeps
+         * receiving with the app in the background. False when Android refuses the start now.
+         */
+        fun holdForOrbitChannels(context: Context): Boolean {
+            val appContext = context.applicationContext
+            orbitChannelsBusy.set(true)
+            val intent = Intent(appContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_CHANNELS }
+            if (isRunning.get()) {
+                try {
+                    appContext.startService(intent)
+                    return true
+                } catch (e: Exception) {
+                    AppLogger.w(TAG, "Orbit channels: running service not reachable, starting it again", e)
+                }
+            }
+            return try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) appContext.startForegroundService(intent)
+                else appContext.startService(intent)
+                true
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Orbit channels: foreground service start refused: ${e.message}")
+                false
+            }
+        }
+
+        fun releaseForOrbitChannels(context: Context) {
+            if (!orbitChannelsBusy.getAndSet(false) || !isRunning.get()) return
+            runCatching {
+                context.applicationContext.startService(
+                    Intent(context.applicationContext, AIForegroundService::class.java).apply { action = ACTION_ORBIT_CHANNELS }
+                )
+            }.onFailure { AppLogger.w(TAG, "Orbit channels: release not delivered", it) }
         }
 
         fun refreshBackgroundKeepAlive(context: Context) {
@@ -969,7 +1008,8 @@ class AIForegroundService : Service() {
         if (!backgroundKeepAliveLoaded) return
         val alwaysListeningEnabled = wakeListeningEnabled || isAlwaysListeningEnabledNow()
         val externalHttpEnabled = externalHttpStateFlow.value.isRunning || isExternalHttpEnabledNow()
-        if (isAiBusy || orbitTasksBusy.get() || alwaysListeningEnabled || backgroundKeepAliveEnabled || externalHttpEnabled) {
+        if (isAiBusy || orbitTasksBusy.get() || orbitChannelsBusy.get() || alwaysListeningEnabled ||
+            backgroundKeepAliveEnabled || externalHttpEnabled) {
             return
         }
         if (!ignoreAppForeground && ActivityLifecycleManager.getCurrentActivity() != null) {
@@ -1281,6 +1321,12 @@ class AIForegroundService : Service() {
         if (intent?.action == ACTION_ORBIT_TASKS) {
             if (!orbitTasksBusy.get()) stopSelfIfIdle(ignoreAppForeground = true)
             return if (isExternalHttpEnabledNow()) START_STICKY else START_NOT_STICKY
+        }
+
+        if (intent?.action == ACTION_ORBIT_CHANNELS) {
+            if (!orbitChannelsBusy.get()) stopSelfIfIdle(ignoreAppForeground = true)
+            // A linked channel wants the service back if the system stops it; the app reconnects on start.
+            return if (orbitChannelsBusy.get() || isExternalHttpEnabledNow()) START_STICKY else START_NOT_STICKY
         }
 
         if (intent?.action == ACTION_START_OR_REFRESH_EXTERNAL_HTTP || intent == null) {

@@ -61,6 +61,12 @@ data class ChatTurnOptions(
      * way a report steered into a running turn is shown.
      */
     val collaborationEvent: Boolean = false,
+    /**
+     * The timestamp the stored user row gets, when the caller needs to find exactly that row later
+     * (a message relayed from another app confirms it was saved this way). Taken from
+     * [ChatMessageTimestampAllocator] just before the send, so it still sorts after earlier rows.
+     */
+    val userMessageTimestamp: Long? = null,
 )
 
 /**

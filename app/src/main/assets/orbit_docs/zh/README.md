@@ -18,6 +18,7 @@
 | [files-and-library.md](files-and-library.md) | 用户问附件、文件库、应用内预览、成果版本、导出、分享或文件恢复时。 |
 | [privacy-and-credentials.md](privacy-and-credentials.md) | 登录、API 接入、OAuth、申请批准、对外发送，或解释凭证与权限时。 |
 | [client-surfaces.md](client-surfaces.md) | 用户问页面入口、侧聊、卡片、选项按钮、消息分段、表情或聊天操作时。 |
+| [weixin.md](weixin.md) | 用户问怎么连微信、微信里能做什么、为什么微信没收到消息或怎么断开时。 |
 
 ## 如何使用
 

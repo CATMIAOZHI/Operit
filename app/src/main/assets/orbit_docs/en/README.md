@@ -18,6 +18,7 @@ Choose the document relevant to the question; you do not need to read the whole 
 | [files-and-library.md](files-and-library.md) | When the user asks about attachments, the library, in-app previews, artifact versions, exports, sharing, or file recovery. |
 | [privacy-and-credentials.md](privacy-and-credentials.md) | When signing in, connecting an API or OAuth account, requesting approval, sending externally, or explaining credentials and permissions. |
 | [client-surfaces.md](client-surfaces.md) | When the user asks about navigation, side chats, cards, option buttons, message splitting, reactions, or chat controls. |
+| [weixin.md](weixin.md) | When the user asks how to connect WeChat, what works there, why a WeChat message did not arrive, or how to disconnect. |
 
 ## How to use these documents
 
