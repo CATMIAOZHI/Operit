@@ -4,10 +4,6 @@
     <string name="orbit_settings_palette">聊天主题配色</string>
     <string name="orbit_settings_avatar">头像大小</string>
     <string name="orbit_settings_color">明暗模式</string>
-    <string name="orbit_settings_logo_user">标志中间颜色</string>
-    <string name="orbit_settings_logo_orbit">标志外圈颜色</string>
-    <string name="orbit_settings_logo_theme">跟随主题</string>
-    <string name="orbit_settings_logo_invalid">请填 #RRGGBB 格式的颜色，或 theme 表示跟随主题</string>
     <string name="orbit_settings_weekly">每周额度</string>
     <string name="orbit_settings_extra">额外额度</string>
     <string name="orbit_settings_extra_weekly">额外额度每周重置</string>

@@ -5,11 +5,6 @@
     <string name="orbit_appearance_palette">聊天主题</string>
     <string name="orbit_appearance_avatar_size">头像大小</string>
     <string name="orbit_appearance_mode">模式</string>
-    <string name="orbit_appearance_logo">标志颜色</string>
-    <string name="orbit_appearance_logo_hint">没有头像图片时会显示这个标志。中间代表你，外圈代表 %1$s，它始终围绕着你。</string>
-    <string name="orbit_appearance_logo_user">中间 · 你</string>
-    <string name="orbit_appearance_logo_orbit">外圈 · %1$s</string>
-    <string name="orbit_appearance_logo_theme">跟随主题</string>
     <string name="orbit_appearance_save_failed">保存外观失败，请重试</string>
     <string name="orbit_palette_avatar">从头像提取颜色</string>
     <string name="orbit_palette_sky">晴空</string>
