@@ -76,6 +76,7 @@ status: in-progress
 | 从别的 AI 导入记忆 | 设置「隐私与数据」→ 复制提示词给别的 AI，粘贴回答后交给 Orbit 整理进记忆 [DONE batch5] |
 | 自己申请工具包和模型 | `orbit_packages` 的 request_import 一次申请导入多个主程序包或文件夹里的包，`orbit_models` 的 request_create 申请新建模型配置；都弹批准卡片，用户同意后 App 直接执行并把结果隐藏通知给 Orbit；模型密钥在卡片里填。包要的 API 密钥用 `orbit_vault` 的 request_api_key + package_name 存进保险箱，只给该包运行时读；codex_draw 用 request_chatgpt_login 放 ChatGPT 登录卡 [DONE] |
 | 分享到 Operit | 从别的 App 分享文字或文件时可选「发给 Orbit」，文件存进 `files/shared/`；Orbit 通知点开直接进 Orbit 聊天 [DONE batch5] |
+| 消息频道（微信） | 对应 Muse 的 WhatsApp：设置「消息频道 → 微信」扫码连一个专属微信机器人；微信里的话进「微信」侧聊，Orbit 在那里说的话、图片和文件自动发回微信，分段逐条发；只收绑定用户的消息，读不到其他微信聊天；`orbit_channel` 查看状态；微信太久没互动时消息先存着，用户下次说话后补发 [DONE 7d322e6f8，分段修复 776072753] |
 | 专项技能 | 预装 8 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息），按 Operit 真实工具改写，付款一律交给用户；每个 Orbit 只装一次，删了不装回 [DONE batch5] |
 ## 部分有，需要接进 Orbit
 
@@ -97,7 +98,7 @@ status: in-progress
 | - | - |
 | 支付、钱包、退款 | 需要支付牌照和支付平台商户接入，个人 App 接不了 |
 | 订阅、邀请返利 | 依赖 Muse 的账号和计费后台，Operit 没有 |
-| WhatsApp 等官方消息渠道 | 需要平台官方商业接口和审核 |
+| WhatsApp 等海外官方消息渠道 | 需要平台官方商业接口和审核；国内用微信频道代替（见「已有」） |
 | 7×24 云端常驻（systemd 服务） | Orbit 跑在手机上，会被系统回收、断网、关机 |
 | 视频生成 | 需要云端视频模型服务 |
 | 实时语音通话 | 需要实时语音模型和通话后台 |
