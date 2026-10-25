@@ -78,8 +78,6 @@ object OrbitQuota {
     const val DEFAULT_EXTRA = 1_000_000_000L
     /** Far above any real use; only keeps a typo from becoming a number that overflows. */
     const val MAX_LIMIT = 1_000_000_000_000L
-    /** How far back the usage page can look. */
-    const val KEEP_DAYS = 90
     /** How far back the day totals for the activity heatmap go: a year, as the main app's shows. */
     const val HEATMAP_DAYS = 366
     const val MARKER = "[orbit-quota]"
@@ -168,9 +166,20 @@ object OrbitQuota {
     private val WEEKLY_USED = longPreferencesKey("weekly_used")
     private val EXTRA_USED = longPreferencesKey("extra_used")
     private val WARNED_WEEK = longPreferencesKey("warned_week")
+    /**
+     * Where earlier versions kept every day's use in one value. At the next call counted it moves
+     * into the month files ([UsageFiles]) and is dropped from here.
+     */
     private val DAYS = stringPreferencesKey("days")
     private val HOURS = stringPreferencesKey("hours")
-    /** Day to [tokens, calls] of every Orbit, kept a year for the heatmap; [DAYS] only keeps 90 days. */
+    /** Calls counted but not yet in their month file; see [UsageFiles]. */
+    private val PENDING = stringPreferencesKey("pending_detail")
+    /** The number the last queued call got; it only grows. */
+    private val PENDING_SEQ = longPreferencesKey("pending_seq")
+    /**
+     * Day to [tokens, calls] of every Orbit, kept a year for the heatmap. Older versions kept only 90
+     * days in detail, so these totals still cover the days before; the detail now keeps every day.
+     */
     private val TOTALS = stringPreferencesKey("totals")
     /** The Orbit told its week's allowance ran out, so the same one hears when it starts over. */
     private val WARNED_ORBIT = stringPreferencesKey("warned_orbit")
@@ -210,13 +219,20 @@ object OrbitQuota {
             .distinctUntilChanged()
             .flowOn(Dispatchers.Default)
 
-    /** The usage by day and by hour, read off the main thread and only when it changed. */
-    fun usageFlow(context: Context): Flow<UsageData> =
-        context.applicationContext.orbitQuotaStore.data
-            .map { p -> Triple(p[DAYS], p[HOURS], p[TOTALS]) }
-            .distinctUntilChanged()
-            .map { (days, hours, totals) -> UsageData(parseDays(days), parseHours(hours), parseTotals(totals)) }
-            .flowOn(Dispatchers.Default)
+    /**
+     * The usage by day and by hour, read off the main thread and only when it changed. Month files
+     * already read come from memory, so a new call only reads its own month again.
+     */
+    fun usageFlow(context: Context): Flow<UsageData> {
+        val app = context.applicationContext
+        return kotlinx.coroutines.flow.combine(
+            app.orbitQuotaStore.data.map { p -> Triple(p[DAYS], p[HOURS], p[TOTALS]) }.distinctUntilChanged(),
+            UsageFiles.version,
+        ) { (days, hours, totals), _ ->
+            val (rows, byHour) = UsageFiles.readAll(app)
+            UsageData(rows, byHour, parseTotals(totals))
+        }.flowOn(Dispatchers.IO)
+    }
 
     suspend fun state(context: Context): State =
         read(context.applicationContext.orbitQuotaStore.data.first()).at(System.currentTimeMillis())
@@ -272,7 +288,6 @@ object OrbitQuota {
         val now = System.currentTimeMillis()
         val day = dayKey(now)
         val hour = Calendar.getInstance().apply { timeInMillis = now }.get(Calendar.HOUR_OF_DAY)
-        val oldest = dayKey(now - KEEP_DAYS * 86_400_000L)
         var after = State()
         app.orbitQuotaStore.edit { p ->
             val s = read(p).at(now)
@@ -280,15 +295,22 @@ object OrbitQuota {
             p[WEEK_START] = s.weekStart
             p[WEEKLY_USED] = s.weeklyUsed + toWeekly
             p[EXTRA_USED] = s.extraUsed + (total - toWeekly)
-            // A day leaving the 90-day detail keeps its whole total in the year's heatmap; this
-            // also carries over days spent before the year's totals were kept.
-            val dropped = HashMap<String, LongArray>()
-            p[DAYS] = addDay(p[DAYS], day, tag, inTokens, outTokens, oldest) { d, tokens, calls ->
-                dropped.getOrPut(d) { LongArray(2) }.let { it[0] += tokens; it[1] += calls }
-            }
-            p[HOURS] = addHour(p[HOURS], day, tag.orbitId, hour, oldest)
-            p[TOTALS] = addTotal(p[TOTALS], day, total, dayKey(now - HEATMAP_DAYS * 86_400_000L), dropped)
+            p[TOTALS] = addTotal(p[TOTALS], day, total, dayKey(now - HEATMAP_DAYS * 86_400_000L))
+            // Queued in this same save, so the detail by day is never lost once the call is counted.
+            val seq = (p[PENDING_SEQ] ?: 0L) + 1
+            p[PENDING_SEQ] = seq
+            p[PENDING] = UsageFiles.enqueue(p[PENDING], seq, day, hour, tag, inTokens, outTokens)
             after = read(p)
+        }
+        // The use by day and by hour is kept for all time, so "all time" on the usage page is
+        // complete; it sits in a file per month, so a call only rewrites its own month. What fails
+        // here stays queued for the next call or page read.
+        try {
+            UsageFiles.flush(app)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            AppLogger.w(TAG, "Could not save the use by day: ${e.message}")
         }
         if (after.weeklyExhausted && after.warnedWeek != after.weekStart && !after.paused) warn(app, tag.orbitId)
     }
@@ -563,22 +585,184 @@ object OrbitQuota {
 
     // ---- usage by day ----
 
-    private fun addDay(
-        raw: String?, day: String, tag: OrbitUsageTag, input: Long, output: Long, oldest: String,
-        onDrop: (day: String, tokens: Long, calls: Long) -> Unit = { _, _, _ -> },
-    ): String {
-        val days = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
-        days.keys().asSequence().toList().filter { it < oldest }.forEach { d ->
-            val byOrbit = days.optJSONObject(d)
-            if (byOrbit != null) for (orbitId in byOrbit.keys()) {
-                val byPurpose = byOrbit.optJSONObject(orbitId) ?: continue
-                for (purpose in byPurpose.keys()) {
-                    val v = byPurpose.optJSONArray(purpose) ?: continue
-                    onDrop(d, v.optLong(0) + v.optLong(1), v.optLong(2))
-                }
-            }
-            days.remove(d)
+    /**
+     * The use by day and by hour, one file per month (`usage-yyyy-MM.json`: `days` and `hours` in the
+     * same day-keyed shape the single value had, and `seq`, the last call applied), so a call
+     * rewrites one small file and history never grows the cost of a call.
+     *
+     * A call is first queued in the allowance's own save ([PENDING], with a number from
+     * [PENDING_SEQ]) and then applied to its month's file, which keeps the highest number applied.
+     * A write cut short, or the app closing in between, is applied at the next call or page read,
+     * and a call already in its file is never added twice. Only this object writes the files, one
+     * at a time.
+     */
+    private object UsageFiles {
+        private val lock = kotlinx.coroutines.sync.Mutex()
+        /** Bumped after each write, so open usage pages read again. */
+        val version = kotlinx.coroutines.flow.MutableStateFlow(0L)
+        /** Parsed month files by name; a file's entry is dropped when it is written. */
+        private val parsed = java.util.concurrent.ConcurrentHashMap<String, Pair<List<Usage>, List<Hours>>>()
+        private class Pending(val seq: Long, val day: String, val hour: Int, val orbitId: String,
+            val purpose: String, val input: Long, val output: Long)
+
+        private fun dir(app: Context) = java.io.File(app.filesDir, "orbit_usage").apply { mkdirs() }
+        private fun monthFile(app: Context, month: String) = java.io.File(dir(app), "usage-$month.json")
+
+        /** Null when the month has no file yet; a write cut short is recovered from its backup by AtomicFile. */
+        private fun readText(file: java.io.File): String? = try {
+            android.util.AtomicFile(file).readFully().toString(Charsets.UTF_8)
+        } catch (e: java.io.FileNotFoundException) {
+            null
         }
+
+        private fun readJson(file: java.io.File): JSONObject =
+            readText(file)?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
+
+        private fun writeText(file: java.io.File, text: String) {
+            val atomic = android.util.AtomicFile(file)
+            val out = atomic.startWrite()
+            try {
+                out.write(text.toByteArray(Charsets.UTF_8))
+                atomic.finishWrite(out)
+            } catch (e: Exception) {
+                atomic.failWrite(out)
+                throw e
+            }
+        }
+
+        /**
+         * [raw] with one more call queued; called inside the allowance's save. Nothing queued is
+         * ever dropped: each item is a call already counted in the allowance.
+         */
+        fun enqueue(raw: String?, seq: Long, day: String, hour: Int, tag: OrbitUsageTag, input: Long, output: Long): String {
+            val list = raw?.let { runCatching { JSONArray(it) }.getOrNull() } ?: JSONArray()
+            list.put(JSONObject().put("s", seq).put("d", day).put("h", hour).put("o", tag.orbitId)
+                .put("p", tag.purpose.name).put("i", input).put("u", output))
+            return list.toString()
+        }
+
+        private fun parsePending(raw: String?): List<Pending> {
+            val list = raw?.let { runCatching { JSONArray(it) }.getOrNull() } ?: return emptyList()
+            return (0 until list.length()).mapNotNull { i ->
+                val o = list.optJSONObject(i) ?: return@mapNotNull null
+                val day = o.optString("d").takeIf { it.length >= 7 } ?: return@mapNotNull null
+                Pending(o.optLong("s"), day, o.optInt("h"), o.optString("o"), o.optString("p"),
+                    o.optLong("i"), o.optLong("u"))
+            }
+        }
+
+        /** Applies the queued calls to their month files. */
+        suspend fun flush(app: Context) {
+            try {
+                lock.withLockIo { flushLocked(app) }
+            } finally {
+                version.value = version.value + 1
+            }
+        }
+
+        private suspend fun flushLocked(app: Context) {
+            moveLegacy(app)
+            val pending = parsePending(app.orbitQuotaStore.data.first()[PENDING])
+            if (pending.isEmpty()) return
+            pending.groupBy { it.day.take(7) }.forEach { (month, calls) ->
+                val file = monthFile(app, month)
+                val json = readJson(file)
+                val applied = json.optLong("seq", 0L)
+                val fresh = calls.filter { it.seq > applied }.sortedBy { it.seq }
+                if (fresh.isEmpty()) return@forEach
+                // The month is parsed once and every call added in place, however many are waiting.
+                val days = json.optJSONObject("days") ?: JSONObject()
+                val hours = json.optJSONObject("hours") ?: JSONObject()
+                fresh.forEach { c ->
+                    addDay(days, c.day, OrbitUsageTag(c.orbitId, Purpose.of(c.purpose)), c.input, c.output)
+                    addHour(hours, c.day, c.orbitId, c.hour)
+                }
+                // Days and hours are written together, with the last call they include.
+                writeText(file, JSONObject().put("seq", fresh.last().seq).put("days", days).put("hours", hours).toString())
+                parsed.remove(file.name)
+            }
+            val done = pending.maxOf { it.seq }
+            app.orbitQuotaStore.edit { q ->
+                val left = JSONArray()
+                q[PENDING]?.let { runCatching { JSONArray(it) }.getOrNull() }?.let { list ->
+                    for (i in 0 until list.length()) {
+                        val o = list.optJSONObject(i) ?: continue
+                        if (o.optLong("s") > done) left.put(o)
+                    }
+                }
+                if (left.length() == 0) q.remove(PENDING) else q[PENDING] = left.toString()
+            }
+        }
+
+        /**
+         * Moves an older version's single values into the month files, then drops them. Files are
+         * written first: if that is cut short, it is done again, and a day already in its month
+         * file is kept as it is, so nothing is counted twice.
+         */
+        private suspend fun moveLegacy(app: Context) {
+            val p = app.orbitQuotaStore.data.first()
+            val legacyDays = p[DAYS]?.let { runCatching { JSONObject(it) }.getOrNull() }
+            val legacyHours = p[HOURS]?.let { runCatching { JSONObject(it) }.getOrNull() }
+            if (p[DAYS] == null && p[HOURS] == null) return
+            val months = (legacyDays?.keys()?.asSequence().orEmpty() + legacyHours?.keys()?.asSequence().orEmpty())
+                .map { it.take(7) }.toSortedSet()
+            months.forEach { month ->
+                val file = monthFile(app, month)
+                val json = readJson(file)
+                fun merge(field: String, from: JSONObject?) {
+                    from ?: return
+                    val into = json.optJSONObject(field) ?: JSONObject().also { json.put(field, it) }
+                    from.keys().asSequence().filter { it.take(7) == month }.toList()
+                        .forEach { d -> if (!into.has(d)) into.put(d, from.get(d)) }
+                }
+                merge("days", legacyDays)
+                merge("hours", legacyHours)
+                writeText(file, json.toString())
+                parsed.remove(file.name)
+            }
+            app.orbitQuotaStore.edit { it.remove(DAYS); it.remove(HOURS) }
+        }
+
+        /**
+         * Every month's use by day and by hour, after applying what is queued. Should that fail,
+         * detail still in the old single values fills in the days no month file has, so a day is
+         * never counted twice. Read under the lock, so a write in progress is never half seen.
+         */
+        suspend fun readAll(app: Context): Pair<List<Usage>, List<Hours>> = lock.withLockIo {
+            try {
+                flushLocked(app)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Could not apply the queued use by day: ${e.message}")
+            }
+            val rows = ArrayList<Usage>()
+            val hours = ArrayList<Hours>()
+            // A write cut short on older Android can leave only "<name>.bak"; it still names the month.
+            val names = dir(app).list().orEmpty().map { it.removeSuffix(".bak") }.distinct().sorted()
+                .filter { it.startsWith("usage-") && it.endsWith(".json") }
+            names.forEach { name ->
+                val (r, h) = parsed.getOrPut(name) {
+                    val json = readJson(java.io.File(dir(app), name))
+                    parseDays(json.optJSONObject("days")?.toString()) to parseHours(json.optJSONObject("hours")?.toString())
+                }
+                rows += r
+                hours += h
+            }
+            val p = app.orbitQuotaStore.data.first()
+            val fileDays = rows.mapTo(HashSet()) { it.day }
+            val fileHourDays = hours.mapTo(HashSet()) { it.day }
+            rows += parseDays(p[DAYS]).filter { it.day !in fileDays }
+            hours += parseHours(p[HOURS]).filter { it.day !in fileHourDays }
+            rows to hours
+        }
+
+        private suspend fun <T> kotlinx.coroutines.sync.Mutex.withLockIo(block: suspend () -> T): T =
+            withContext(Dispatchers.IO) { lock(); try { block() } finally { unlock() } }
+    }
+
+    /** Adds one call to [days] (day to Orbit to purpose to [input, output, calls]) in place. */
+    private fun addDay(days: JSONObject, day: String, tag: OrbitUsageTag, input: Long, output: Long) {
         val byOrbit = days.optJSONObject(day) ?: JSONObject().also { days.put(day, it) }
         val byPurpose = byOrbit.optJSONObject(tag.orbitId) ?: JSONObject().also { byOrbit.put(tag.orbitId, it) }
         val old = byPurpose.optJSONArray(tag.purpose.name)
@@ -586,7 +770,6 @@ object OrbitQuota {
             .put((old?.optLong(0) ?: 0L) + input)
             .put((old?.optLong(1) ?: 0L) + output)
             .put((old?.optLong(2) ?: 0L) + 1))
-        return days.toString()
     }
 
     private fun parseDays(raw: String?): List<Usage> {
@@ -605,15 +788,13 @@ object OrbitQuota {
         return out
     }
 
-    private fun addHour(raw: String?, day: String, orbitId: String, hour: Int, oldest: String): String {
-        val days = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
-        days.keys().asSequence().toList().filter { it < oldest }.forEach { days.remove(it) }
+    /** Adds one call at [hour] to [days] (day to Orbit to 24 counts) in place. */
+    private fun addHour(days: JSONObject, day: String, orbitId: String, hour: Int) {
         val byOrbit = days.optJSONObject(day) ?: JSONObject().also { days.put(day, it) }
         val old = byOrbit.optJSONArray(orbitId)
         val counts = JSONArray()
         for (h in 0 until 24) counts.put((old?.optLong(h) ?: 0L) + if (h == hour) 1 else 0)
         byOrbit.put(orbitId, counts)
-        return days.toString()
     }
 
     private fun parseHours(raw: String?): List<Hours> {
@@ -629,15 +810,9 @@ object OrbitQuota {
         return out
     }
 
-    private fun addTotal(raw: String?, day: String, tokens: Long, oldest: String, dropped: Map<String, LongArray>): String {
+    private fun addTotal(raw: String?, day: String, tokens: Long, oldest: String): String {
         val days = raw?.let { runCatching { JSONObject(it) }.getOrNull() } ?: JSONObject()
         days.keys().asSequence().toList().filter { it < oldest }.forEach { days.remove(it) }
-        // The detail of a day was complete; the year's total of it may have started late.
-        dropped.forEach { (d, sum) ->
-            if (d < oldest) return@forEach
-            val old = days.optJSONArray(d)
-            days.put(d, JSONArray().put(maxOf(old?.optLong(0) ?: 0L, sum[0])).put(maxOf(old?.optLong(1) ?: 0L, sum[1])))
-        }
         val old = days.optJSONArray(day)
         days.put(day, JSONArray().put((old?.optLong(0) ?: 0L) + tokens).put((old?.optLong(1) ?: 0L) + 1))
         return days.toString()

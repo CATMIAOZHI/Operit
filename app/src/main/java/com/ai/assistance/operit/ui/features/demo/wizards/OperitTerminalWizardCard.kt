@@ -37,6 +37,8 @@ fun OperitTerminalWizardCard(
     showWizard: Boolean,
     onToggleWizard: (Boolean) -> Unit,
     onOpenTerminalScreen: () -> Unit,
+    /** The setup button's text, when it does something other than opening the terminal setup. */
+    openTerminalLabel: String? = null,
     // 保留旧参数以保持兼容性
     isInstalled: Boolean = false,
     installedVersion: String? = null,
@@ -198,7 +200,7 @@ fun OperitTerminalWizardCard(
                         ) {
                             Icon(Icons.Default.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
                             Spacer(modifier = Modifier.width(8.dp))
-                            Text(stringResource(R.string.go_to_terminal_config), fontSize = 14.sp)
+                            Text(openTerminalLabel ?: stringResource(R.string.go_to_terminal_config), fontSize = 14.sp)
                         }
                     } else {
                         Text(

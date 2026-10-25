@@ -260,13 +260,12 @@ object OrbitCompanion {
         }
     }
 
-    /** Makes the Orbit: named Orbit, the starting SOUL.md, the default role card's picture. */
+    /** Makes the Orbit: named Orbit, the starting SOUL.md, and no picture, so it shows the Orbit logo. */
     private suspend fun createLocked(context: Context, onCreated: (String) -> Unit = {}): OrbitProfile {
         val roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
         val orbitId = UUID.randomUUID().toString()
         val preferences = OrbitPreferences.getInstance(context)
         preferences.writeSoul(orbitId, OrbitSoulTemplate.initial(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)))
-        val avatarUri = roleAvatarCopy(context, roleCardId)
         // No opening message: Orbit greets the user itself on the first talk.
         val chatId = createChat(context, null, DEFAULT_NAME)
         val profile =
@@ -276,7 +275,7 @@ object OrbitCompanion {
                 chatId = chatId,
                 // Orbit starts as Orbit and asks on the first talk whether the user wants another name.
                 name = DEFAULT_NAME,
-                avatarUri = avatarUri,
+                avatarUri = null,
                 createdAt = System.currentTimeMillis(),
             )
         preferences.putOrbit(profile)

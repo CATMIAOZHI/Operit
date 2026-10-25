@@ -29,10 +29,13 @@ internal object OrbitPermissionTools {
                 "phone notifications); notification_read (read other apps' notifications, for watching deliveries and the " +
                 "like); sms (read text messages); contacts (read contacts); calendar (read calendar events); " +
                 "microphone (record audio); location (current location, approximate is enough); " +
-                "geofence (arrival/departure reminders: precise and background location)", required = true),
+                "geofence (arrival/departure reminders: precise and background location); device_access (Operit's " +
+                "elevated access through ADB debugging/Shizuku or Root, which phone control, app installs " +
+                "and system settings need; the device admin level only allows locking the screen and a few similar actions)", required = true),
         ),
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
+  - device_access opens Operit's own access page over the chat (pick a level there and follow its steps). The result gives the picked level and whether it answers now.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
   - After the user opens permission controls from the card and returns, the app checks again. Only an off-to-on change sends a hidden note to this original chat, so you can continue the work. A denial or unchanged setting sends nothing. "Don't remind me" also sends a hidden note.
   - location is only for the current position; coarse location is enough. geofence requires fine location, background location on Android 10+, and the phone's location service. Check coarse/fine/background/location_services separately in the result. Do not continue a geofence while can_continue=false.
@@ -53,6 +56,8 @@ internal object OrbitPermissionTools {
             require(permission in OrbitPermissionCards.kinds) {
                 "Unknown permission \"$permission\". Supported now: ${OrbitPermissionCards.kinds.joinToString()}"
             }
+            // The device-access check is the last step of the first-talk setup check.
+            if (permission == OrbitPermissionCards.DEVICE_ACCESS) runCatching { OrbitOnboarding.markEnvChecked(context, orbit.id) }
             if (permission != OrbitPermissionCards.KEEP_ALIVE) return@runBlockingIoPreservingToolRuntimeContext phoneCard(context, orbit.id, caller.orEmpty(), permission)
             // Offered once: the first-talk hint about keep-alive is over either way.
             runCatching { OrbitOnboarding.markKeepAliveOffered(context, orbit.id) }
@@ -90,7 +95,12 @@ internal object OrbitPermissionTools {
             for (key in listOf("coarse", "fine", "background", "background_required", "location_services"))
                 result.put(key, location.get(key))
         }
-        val on = OrbitPermissionCards.isOn(context, permission)
+        val access = if (permission == OrbitPermissionCards.DEVICE_ACCESS) OrbitPermissionCards.deviceAccess(context) else null
+        if (access != null) {
+            result.put("level", access.level?.name?.lowercase() ?: "not_set")
+                .put("level_working", access.working)
+        }
+        val on = access?.working ?: OrbitPermissionCards.isOn(context, permission)
         val ready = on && (location == null || location.optBoolean("location_services"))
         result.put("can_continue", ready)
         if (on) {

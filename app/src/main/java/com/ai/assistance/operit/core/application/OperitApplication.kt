@@ -362,6 +362,15 @@ class OperitApplication : Application(), ImageLoaderFactory, WorkConfiguration.P
             AppLogger.d(TAG, "【启动计时】当前角色自定义表情初始化完成（异步） - ${System.currentTimeMillis() - emojiStartTime}ms")
         }
 
+        // On the first start, fetch the newest model catalogs and fill in each saved model's
+        // protocol and picture support; a failed download is tried again next start.
+        if (isMainAppProcess()) {
+            applicationScope.launch {
+                runCatching { com.ai.assistance.operit.data.model.ModelAutoConfig.firstStart(applicationContext) }
+                    .onFailure { AppLogger.w(TAG, "Model auto-configuration at first start failed: ${it.message}") }
+            }
+        }
+
         // 初始化AndroidShellExecutor上下文
         AndroidShellExecutor.setContext(applicationContext)
         AppLogger.d(TAG, "【启动计时】AndroidShellExecutor初始化完成 - ${System.currentTimeMillis() - startTime}ms")

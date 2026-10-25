@@ -6,6 +6,7 @@ import com.ai.assistance.operit.core.tools.AIToolHandler
 import com.ai.assistance.operit.core.tools.packTool.PackageManager
 import com.ai.assistance.operit.data.collects.ApiProviderConfigs
 import com.ai.assistance.operit.data.model.ApiProviderType
+import com.ai.assistance.operit.data.model.ModelAutoConfig
 import com.ai.assistance.operit.data.model.getModelList
 import com.ai.assistance.operit.data.preferences.CodexAuthPreferences
 import com.ai.assistance.operit.data.preferences.EnvPreferences
@@ -490,9 +491,11 @@ internal object OrbitApprovalActions {
         val id = "orbit-${orbit.id.take(8)}-$approvalId"
         val existed = configs.getAllConfigSummaries().any { it.id == id }
         if (!existed) configs.createConfig(m.name, id)
+        var auto = ModelAutoConfig.Result(emptyList(), emptyList())
         // Anything after the config exists that fails, or a cancel, takes the config away again.
         try {
             configs.updateModelConfig(id, key, m.endpoint, m.models.joinToString(","), m.provider)
+            auto = ModelAutoConfig.fill(context, id)
             val first = m.models.first()
             when (m.useAs) {
                 USE_MAIN -> OrbitModelPreferences(context).update(orbit.id) { it.copy(main = OrbitModelRef(id, first)) }
@@ -505,7 +508,7 @@ internal object OrbitApprovalActions {
         val first = m.models.first()
         return if (english) {
             "Added the model configuration \"${m.name}\" (${m.provider.name}, ${m.endpoint}, models ${m.models.joinToString()})" +
-                (if (key.isNotEmpty()) " with the API key the user typed" else "") + "." +
+                (if (key.isNotEmpty()) " with the API key the user typed" else "") + "." + autoConfigNote(auto, m.models, true) +
                 when (m.useAs) {
                     USE_MAIN -> " It is now your main model, $first. If replies fail, tell the user to switch back in Orbit settings > Models."
                     USE_ASSISTANT -> " It is now your assistant model, $first."
@@ -513,12 +516,31 @@ internal object OrbitApprovalActions {
                 }
         } else {
             "已新建模型配置「${m.name}」（${m.provider.name}，${m.endpoint}，模型 ${m.models.joinToString("、")}）" +
-                (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") + "。" +
+                (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") + "。" + autoConfigNote(auto, m.models, false) +
                 when (m.useAs) {
                     USE_MAIN -> "已设为你的主模型 $first。要是回复出错，请用户到 Orbit 设置 > 模型 换回去。"
                     USE_ASSISTANT -> "已设为你的辅助模型 $first。"
                     else -> "还没启用，用户可以在 Orbit 设置 > 模型 里选它。"
                 }
+        }
+    }
+
+    /**
+     * What the model catalog filled in for [models], told plainly so Orbit knows whether a model's
+     * protocol and picture support were set or left at the defaults.
+     */
+    fun autoConfigNote(result: ModelAutoConfig.Result, models: List<String>, english: Boolean): String {
+        val unknown = models.filter { it !in result.protocols && it !in result.images }
+        return if (english) buildString {
+            if (result.protocols.isNotEmpty()) append(" Request protocol (and how thinking strength is sent) set from the model catalog for ${result.protocols.joinToString()}.")
+            if (result.images.isNotEmpty()) append(" Reads pictures, per the catalog: ${result.images.joinToString()}.")
+            if (unknown.isNotEmpty() && result.protocols.isEmpty() && result.images.isEmpty())
+                append(" The model catalog does not list ${unknown.joinToString()}, so protocol and picture support stay at the defaults; the user can change them in the app's model settings.")
+        } else buildString {
+            if (result.protocols.isNotEmpty()) append("已按模型目录配好请求协议（含思考强度的传法）：${result.protocols.joinToString("、")}。")
+            if (result.images.isNotEmpty()) append("按目录能看图：${result.images.joinToString("、")}。")
+            if (unknown.isNotEmpty() && result.protocols.isEmpty() && result.images.isEmpty())
+                append("模型目录里没有 ${unknown.joinToString("、")}，协议和看图能力保持默认，用户可以在应用的模型设置里改。")
         }
     }
 

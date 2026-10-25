@@ -307,6 +307,7 @@ private fun OrbitChatPage(
             val sub = when (page) {
                 OrbitCardPage.SPEECH_SETTINGS -> OrbitSubPage.SPEECH_SETTINGS
                 OrbitCardPage.MODEL_CONFIG -> OrbitSubPage.MODEL_CONFIG
+                OrbitCardPage.DEVICE_ACCESS -> OrbitSubPage.DEVICE_ACCESS
             }
             val current = stackNames.split(',').filter { it.isNotEmpty() }
             if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
@@ -887,7 +888,9 @@ private fun OrbitChatPage(
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
                 OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
                 OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(onBack = back)
-                OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back)
+                OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
+                    onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
+                OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
                 OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                     onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) })
@@ -1009,7 +1012,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1233,6 +1236,15 @@ private fun OrbitDevHeader(
     }
 }
 
+/**
+ * The picture an Orbit shows: its own, or the shipped picture of the built-in role it came from.
+ * The default role does not count, so a new Orbit shows its logo until it is given a picture.
+ */
+internal fun orbitPictureUri(orbit: OrbitProfile): String? =
+    orbit.avatarUri ?: orbit.sourceRoleCardId
+        .takeIf { it != com.ai.assistance.operit.data.preferences.CharacterCardManager.DEFAULT_CHARACTER_CARD_ID }
+        ?.let { UserPreferencesManager.getBuiltInCharacterAvatarUri(it) }
+
 /** Orbit's own picture, or a role card's avatar in the picker. */
 @Composable
 internal fun OrbitAvatar(
@@ -1250,8 +1262,7 @@ internal fun OrbitAvatar(
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
     // A built-in role's picture ships with the app, so an Orbit without its own picture uses it.
-    val customUri = orbit?.avatarUri
-        ?: orbit?.sourceRoleCardId?.let { UserPreferencesManager.getBuiltInCharacterAvatarUri(it) }
+    val customUri = orbit?.let(::orbitPictureUri)
     val avatarUri by
         produceState<String?>(initialValue = customUri, roleCardId, customUri) {
             value =
@@ -1301,6 +1312,13 @@ internal fun OrbitAvatar(
                     contentDescription = null,
                     modifier = Modifier.fillMaxSize(),
                     contentScale = if (petId != null) ContentScale.Fit else ContentScale.Crop,
+                )
+            } else if (orbit != null) {
+                // An Orbit without a picture shows its own logo, which moves with what it is doing.
+                OrbitLogoAvatar(
+                    activity = if (animatePet) petActivity else com.ai.assistance.operit.pet.PetActivity.IDLE,
+                    animate = animatePet && petVisible,
+                    modifier = Modifier.fillMaxSize().padding((size * 0.18f).dp),
                 )
             } else {
                 Icon(

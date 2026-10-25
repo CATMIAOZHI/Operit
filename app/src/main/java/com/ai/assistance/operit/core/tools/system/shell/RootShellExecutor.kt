@@ -36,6 +36,8 @@ import kotlinx.coroutines.Dispatchers as CoroutineDispatchers
 class RootShellExecutor(private val context: Context) : ShellExecutor {
     companion object {
         private const val TAG = "RootShellExecutor"
+        /** Long enough to answer a root manager's grant prompt, short enough not to hang a caller. */
+        private const val EXEC_SU_CHECK_TIMEOUT_SECONDS = 15L
         private var rootAvailable: Boolean? = null
         
         // 静态初始化，确保Shell配置只被设置一次
@@ -162,18 +164,20 @@ class RootShellExecutor(private val context: Context) : ShellExecutor {
      * @return su命令是否可用
      */
     private fun checkExecSuAvailable(): Boolean {
+        var process: Process? = null
         try {
-            val process = Runtime.getRuntime().exec(buildSuExecCommand("id"))
-            val reader = BufferedReader(InputStreamReader(process.inputStream))
-            val output = StringBuilder()
-            var line: String?
-            
-            while (reader.readLine().also { line = it } != null) {
-                output.append(line)
+            val started = Runtime.getRuntime().exec(buildSuExecCommand("id"))
+            process = started
+            started.outputStream.close()
+            // su can hang (a grant prompt left open, a broken root manager): give up after a while
+            // instead of blocking the caller for good. `id` prints one short line, so waiting before
+            // reading never fills the pipe.
+            if (!started.waitFor(EXEC_SU_CHECK_TIMEOUT_SECONDS, java.util.concurrent.TimeUnit.SECONDS)) {
+                AppLogger.w(TAG, "exec su可用性检查超时（${EXEC_SU_CHECK_TIMEOUT_SECONDS}秒），视为不可用")
+                return false
             }
-            
-            val exitCode = process.waitFor()
-            val result = output.toString().trim()
+            val exitCode = started.exitValue()
+            val result = started.inputStream.bufferedReader().use { it.readText() }.trim()
             
             val available = exitCode == 0 && result.contains("uid=0")
             AppLogger.d(TAG, "exec su可用性检查: $available (结果: $result, 退出码: $exitCode)")
@@ -181,6 +185,12 @@ class RootShellExecutor(private val context: Context) : ShellExecutor {
         } catch (e: Exception) {
             AppLogger.e(TAG, "exec su可用性检查失败", e)
             return false
+        } finally {
+            process?.let { p ->
+                runCatching { p.inputStream.close() }
+                runCatching { p.errorStream.close() }
+                p.destroyForcibly()
+            }
         }
     }
 

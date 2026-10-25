@@ -44,8 +44,10 @@ internal class OpenCodeGoHeaders {
     suspend fun applyTo(builder: Request.Builder) {
         val request = builder.build()
         val url = request.url
+        // Go's old address and the new one the model catalog points its models at.
         if (url.scheme != "https" || url.host != "opencode.ai" ||
-            !(url.encodedPath == "/zen/go" || url.encodedPath.startsWith("/zen/go/"))) return
+            !(url.encodedPath == "/zen/go" || url.encodedPath.startsWith("/zen/go/") ||
+                url.encodedPath == "/inference/go" || url.encodedPath.startsWith("/inference/go/"))) return
 
         if (request.header("x-opencode-session").isNullOrBlank()) {
             builder.header("x-opencode-session",

@@ -9223,6 +9223,7 @@
     <string name="orbit_quota_range_week">This week</string>
     <string name="orbit_quota_range_30">30 days</string>
     <string name="orbit_quota_range_90">90 days</string>
+    <string name="orbit_quota_range_all">All time</string>
     <string name="orbit_usage_chat">Chat</string>
     <string name="orbit_usage_subagent">Subagents</string>
     <string name="orbit_usage_task">Background tasks</string>
@@ -9485,6 +9486,10 @@
     <string name="orbit_permission_failed">Could not open it; please allow it in system settings</string>
     <string name="orbit_permission_phone_title">%2$s for %1$s</string>
     <string name="orbit_permission_phone_on">On; %1$s can use it now</string>
+    <string name="orbit_device_access_title">Device control access</string>
+    <string name="orbit_device_access_card_title">Let %1$s control the phone</string>
+    <string name="orbit_device_access_card_on">On: %1$s</string>
+    <string name="orbit_device_access_note">With ADB debugging (Shizuku) or Root set up, it can tap the screen, install apps and change system settings. Device admin only allows a few things, such as locking the screen.</string>
     <string name="orbit_permission_open_settings">Open settings</string>
     <string name="orbit_permission_in_settings">Android no longer asks for this; turn on %1$s here</string>
     <string name="orbit_task_timeout">Each run can take up to %1$d minutes</string>

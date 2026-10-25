@@ -28,6 +28,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -101,13 +102,67 @@ internal fun OrbitPermissionCard(card: JSONObject) {
         Unit
     }
     Column(Modifier.widthIn(max = 300.dp).clip(RoundedCornerShape(16.dp)).orbitCardGestures().padding(vertical = 4.dp)) {
-        val on = if (permission == OrbitPermissionCards.KEEP_ALIVE) {
-            KeepAliveBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
-        } else {
-            PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
+        val on = when (permission) {
+            OrbitPermissionCards.KEEP_ALIVE ->
+                KeepAliveBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
+            OrbitPermissionCards.DEVICE_ACCESS -> DeviceAccessBody(name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
+            else -> PhoneBody(permission, cardId, name, tick, onRefresh = { tick++ }, onBeginGrant, onChecked)
         }
         if (!on) DismissFooter(cardId, name, enabled = orbit != null, onDismiss)
     }
+}
+
+/**
+ * Operit's own elevated access (ADB debugging through Shizuku, device admin, Root). It is set up on
+ * the app's access page, which opens over the chat; coming back re-reads it. Returns whether it works.
+ */
+@Composable
+private fun DeviceAccessBody(name: String, tick: Int, onRefresh: () -> Unit,
+    onBeginGrant: (Boolean) -> Unit, onChecked: (Boolean, Int) -> Unit): Boolean {
+    val context = LocalContext.current
+    val openPage = LocalOrbitOpenPage.current
+    // The access page opens inside the app, so coming back is no resume; it reports its close instead.
+    val closed by OrbitPermissionCards.deviceAccessPageClosed.collectAsState()
+    var seenClosed by remember { mutableIntStateOf(closed) }
+    // Setting it up often means a trip to Shizuku or a root app and back while the access page is
+    // still open. Those returns only update what the card shows; a tap is settled by the first read
+    // after the page closes (from [settleTick] on), so finishing on the page still tells Orbit.
+    var settleTick by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(closed) {
+        if (closed != seenClosed) {
+            seenClosed = closed
+            settleTick = tick + 1
+            onRefresh()
+        }
+    }
+    val access by produceState(OrbitPermissionCards.lastDeviceAccess, tick) {
+        val fresh = settleTick in 0..tick
+        val read = withContext(Dispatchers.IO) {
+            runCatching { OrbitPermissionCards.deviceAccess(context.applicationContext, fresh) }.getOrNull()
+        }
+        value = read ?: value
+        if (read != null && fresh) onChecked(read.working, tick)
+    }
+    val english = remember(context) { com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context) }
+    val a = access
+    val on = a?.working == true
+    CardHeader("shield-check", stringResource(R.string.orbit_device_access_card_title, name),
+        if (on) stringResource(R.string.orbit_device_access_card_on, OrbitPermissionCards.levelLabel(english, a?.level))
+        else stringResource(R.string.orbit_device_access_note),
+        subMaxLines = Int.MAX_VALUE)
+    Spacer(Modifier.height(14.dp))
+    PermissionRow(
+        label = stringResource(R.string.orbit_device_access_title),
+        on = a?.working,
+        action = stringResource(R.string.orbit_permission_open_settings),
+        enabled = openPage != null,
+    ) {
+        settleTick = -1
+        onBeginGrant(!on)
+        // The page opens over the chat; leaving it brings the card back on screen, which reads again.
+        openPage?.invoke(OrbitCardPage.DEVICE_ACCESS)
+    }
+    return on
 }
 
 /** Background keep-alive and the battery exemption; returns whether both are on. */

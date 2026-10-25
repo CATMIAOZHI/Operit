@@ -100,6 +100,7 @@ internal object OrbitModelSwitch {
             else "模型配置「$name」已经不在了，什么都没换。用 orbit_models list 重新看看。"
         }
         var added = false
+        var auto = com.ai.assistance.operit.data.model.ModelAutoConfig.Result(emptyList(), emptyList())
         if (r.model !in getModelList(config.modelName)) {
             check(r.adds) {
                 if (english) "\"${r.model}\" is no longer in \"$name\"; nothing was switched. Check orbit_models list."
@@ -107,6 +108,7 @@ internal object OrbitModelSwitch {
             }
             val full = checkNotNull(configs.getModelConfig(config.id))
             configs.saveModelConfig(full.copy(modelName = (getModelList(full.modelName) + r.model).joinToString(",")))
+            auto = com.ai.assistance.operit.data.model.ModelAutoConfig.fill(context, config.id, listOf(r.model))
             added = true
         }
         val prefs = OrbitModelPreferences(context)
@@ -127,13 +129,13 @@ internal object OrbitModelSwitch {
         val thinking = r.thinking?.let { effort(before.assistantThinkingLevel) to effort(it) }
         return if (english) {
             val role = when (r.role) { ROLE_MAIN -> "main chat model"; ROLE_ASSISTANT -> "assistant model"; else -> "picture model" }
-            (if (added) "Added ${r.model} to \"$name\". " else "") +
+            (if (added) "Added ${r.model} to \"$name\"." + OrbitApprovalActions.autoConfigNote(auto, listOf(r.model), true) + " " else "") +
                 "Your $role is now $now (was $old)." +
                 (thinking?.let { " The assistant's thinking strength is now ${it.second} (was ${it.first})." } ?: "") +
                 (if (r.role == ROLE_MAIN) " Your next reply uses it. If replies fail, tell the user they can switch back in Orbit settings > Models." else "")
         } else {
             val role = when (r.role) { ROLE_MAIN -> "主聊天模型"; ROLE_ASSISTANT -> "辅助模型"; else -> "看图模型" }
-            (if (added) "已把 ${r.model} 加进「$name」。" else "") +
+            (if (added) "已把 ${r.model} 加进「$name」。" + OrbitApprovalActions.autoConfigNote(auto, listOf(r.model), false) else "") +
                 "你的${role}已经换成 $now（原来是 $old）。" +
                 (thinking?.let { "辅助模型的思考强度改成了 ${it.second}（原来是 ${it.first}）。" } ?: "") +
                 (if (r.role == ROLE_MAIN) "下一条回复就用它。要是回复出错，告诉用户可以在 Orbit 设置 > 模型 换回去。" else "")

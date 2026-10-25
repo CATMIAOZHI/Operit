@@ -645,6 +645,8 @@ internal fun TokenActivityHeatmap(
     locale: Locale,
     modifier: Modifier = Modifier,
     textColor: Color = TokenStatsCardMuted,
+    /** Six shades from no use to the most; null keeps the main app's pink. */
+    levelColors: List<Color>? = null,
 ) {
     val data = state.yearData
     if (state.loading || data == null) {
@@ -696,7 +698,7 @@ internal fun TokenActivityHeatmap(
     var indicatorRow by remember(state.recentSelected, state.selectedYear, state.viewMode) {
         mutableIntStateOf(-1)
     }
-    val colors = listOf(
+    val colors = levelColors?.takeIf { it.size == 6 } ?: listOf(
         Color(0xFFEFE0E5), Color(0xFFFFD6E0), Color(0xFFFFB3C6),
         Color(0xFFFF85A2), Color(0xFFFF6B8E), Color(0xFFE84973),
     )

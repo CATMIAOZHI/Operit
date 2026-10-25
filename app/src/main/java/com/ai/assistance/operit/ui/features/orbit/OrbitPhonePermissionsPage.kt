@@ -60,13 +60,14 @@ private enum class PhonePermission(
 }
 
 @Composable
-internal fun OrbitPhonePermissionsPage(onBack: () -> Unit) {
+internal fun OrbitPhonePermissionsPage(onBack: () -> Unit, onOpenDeviceAccess: (() -> Unit)? = null) {
     PhonePermissionsPage(
         entries = PhonePermission.entries.filter { it != PhonePermission.NOTIFY },
         title = R.string.orbit_phone_permissions,
         help = R.string.orbit_phone_permissions_note,
         includeKeepAlive = true,
         onBack = onBack,
+        onOpenDeviceAccess = onOpenDeviceAccess,
     )
 }
 
@@ -84,6 +85,7 @@ internal fun OrbitNotificationSettingsPage(onBack: () -> Unit) {
 @Composable
 private fun PhonePermissionsPage(
     entries: List<PhonePermission>, title: Int, help: Int, includeKeepAlive: Boolean, onBack: () -> Unit,
+    onOpenDeviceAccess: (() -> Unit)? = null,
 ) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
@@ -109,6 +111,13 @@ private fun PhonePermissionsPage(
     LaunchedEffect(active) { if (active) refresh++ }
     val result by produceState<Result<Map<PhonePermission, Boolean>>?>(null, refresh) {
         value = withContext(Dispatchers.IO) { runCatching { entries.associateWith { it.granted(app) } } }
+    }
+    // Operit's own elevated access; reading it may ask Shizuku or su, so it is read off the main thread.
+    val deviceAccess by produceState<OrbitPermissionCards.DeviceAccess?>(OrbitPermissionCards.lastDeviceAccess, refresh) {
+        if (onOpenDeviceAccess != null) {
+            // Each return to this page may follow a change on the access page, so it probes anew.
+            value = withContext(Dispatchers.IO) { runCatching { OrbitPermissionCards.deviceAccess(app, fresh = true) }.getOrNull() } ?: value
+        }
     }
     fun openSettings(kind: PhonePermission? = null) {
         val intent = when (kind) {
@@ -145,6 +154,29 @@ private fun PhonePermissionsPage(
         item("header") { OrbitPageHeader(stringResource(title), onBack) }
         item("help") { Text(stringResource(help),
             style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant) }
+        if (onOpenDeviceAccess != null) item("device-access") {
+            val access = deviceAccess
+            val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(app)
+            Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+                Column(Modifier.fillMaxWidth().padding(18.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(orbitIcon("shield-check"), null, Modifier.size(22.dp))
+                        Spacer(Modifier.width(12.dp))
+                        Text(stringResource(R.string.orbit_device_access_title), Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                        Text(when {
+                            access == null -> stringResource(R.string.orbit_phone_checking)
+                            access.working -> OrbitPermissionCards.levelLabel(english, access.level)
+                            else -> stringResource(R.string.orbit_phone_not_granted)
+                        }, style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Text(stringResource(R.string.orbit_device_access_note), Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    TextButton(onClick = onOpenDeviceAccess, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.orbit_phone_manage))
+                    }
+                }
+            }
+        }
         items(entries, key = { it.name }) { kind ->
             val granted = result?.getOrNull()?.get(kind)
             val settings = granted == true || kind.name in settingsOnly ||

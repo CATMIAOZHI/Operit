@@ -23,7 +23,7 @@ internal object OrbitAvatarTools {
         name = NAME,
         description = "换你自己的头像：用用户发来的图片、用户的某只宠物，或者某张角色卡的头像。",
         parametersStructured = listOf(
-            ToolParameterSchema("source", description = "image：用图片；pet：用宠物；role_card：用角色卡的头像；default：恢复默认头像", required = true),
+            ToolParameterSchema("source", description = "image：用图片；pet：用宠物；role_card：用角色卡的头像；default：恢复默认头像（Orbit 的 logo，会跟着你的状态动）", required = true),
             ToolParameterSchema("image_path", description = "image：图片附件的 id（就是它的路径）", required = false),
             ToolParameterSchema("pet_id", description = "pet：宠物编号，用户的消息里会写明", required = false),
             ToolParameterSchema("role_card_id", description = "role_card：角色卡 id，用户的消息里会写明，或用 orbit_soul action=list_role_cards 查", required = false),
@@ -70,7 +70,7 @@ internal object OrbitAvatarTools {
                     require(cardId.isNotEmpty()) { "source=role_card needs role_card_id; the user's message names it, or list cards with orbit_soul action=list_role_cards" }
                     OrbitCompanion.useRoleCardAvatar(context, orbit.id, cardId)
                 }
-                "default" -> OrbitCompanion.useRoleCardAvatar(context, orbit.id)
+                "default" -> preferences.setAvatar(orbit.id, null)
                 else -> error("source must be image, pet, role_card or default")
             }
             ToolResult(NAME, true, StringResultData(org.json.JSONObject().put("changed", true).put("source", args["source"])

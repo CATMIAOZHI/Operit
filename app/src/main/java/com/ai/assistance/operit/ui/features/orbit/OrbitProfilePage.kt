@@ -417,28 +417,40 @@ private fun OrbitAvatarSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
-                AvatarSourceTile(
-                    icon = orbitIcon("image"),
-                    label = stringResource(R.string.orbit_avatar_from_photos),
-                    enabled = !busy,
-                    onClick = { pickImage.launch("image/*") },
-                    modifier = Modifier.weight(1f),
-                )
-                AvatarSourceTile(
-                    icon = orbitIcon("square-user"),
-                    label = stringResource(R.string.orbit_reset_avatar),
-                    enabled = !busy,
-                    onClick = { pickRoleCard = !pickRoleCard },
-                    modifier = Modifier.weight(1f),
-                )
-                AvatarSourceTile(
-                    icon = orbitIcon("pencil"),
-                    label = stringResource(R.string.orbit_rename),
-                    enabled = !busy,
-                    onClick = { ask { resources.getString(R.string.orbit_rename_draft) } },
-                    modifier = Modifier.weight(1f),
-                )
+            // Two rows of two, so each label has room on a narrow phone.
+            Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AvatarSourceTile(
+                        icon = orbitIcon("image"),
+                        label = stringResource(R.string.orbit_avatar_from_photos),
+                        enabled = !busy,
+                        onClick = { pickImage.launch("image/*") },
+                        modifier = Modifier.weight(1f),
+                    )
+                    AvatarSourceTile(
+                        icon = orbitIcon("square-user"),
+                        label = stringResource(R.string.orbit_reset_avatar),
+                        enabled = !busy,
+                        onClick = { pickRoleCard = !pickRoleCard },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AvatarSourceTile(
+                        icon = orbitIcon("orbit"),
+                        label = stringResource(R.string.orbit_avatar_default),
+                        enabled = !busy,
+                        onClick = { ask { resources.getString(R.string.orbit_avatar_draft_default) } },
+                        modifier = Modifier.weight(1f),
+                    )
+                    AvatarSourceTile(
+                        icon = orbitIcon("pencil"),
+                        label = stringResource(R.string.orbit_rename),
+                        enabled = !busy,
+                        onClick = { ask { resources.getString(R.string.orbit_rename_draft) } },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
             }
             if (pickRoleCard) {
                 val cards by produceState<List<com.ai.assistance.operit.data.model.CharacterCard>?>(null) {

@@ -4990,6 +4990,18 @@
       ]
     }
   },
+  "perceptron/perceptron-mk1.5": {
+    "name": "Perceptron Mk1.5",
+    "family": "",
+    "modalities": {
+      "input": [
+        "audio",
+        "image",
+        "text",
+        "video"
+      ]
+    }
+  },
   "perplexity/sonar": {
     "name": "Sonar",
     "family": "sonar",

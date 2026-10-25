@@ -49,8 +49,10 @@ internal object OrbitPermissionCards {
     const val MICROPHONE = "microphone"
     const val LOCATION = "location"
     const val GEOFENCE = "geofence"
+    /** Operit's own elevated access: ADB debugging through Shizuku, device admin, or Root. */
+    const val DEVICE_ACCESS = "device_access"
     val phoneKinds = listOf(NOTIFY, NOTIFICATION_READ, SMS, CONTACTS, CALENDAR, MICROPHONE, LOCATION, GEOFENCE)
-    val kinds = setOf(KEEP_ALIVE) + phoneKinds
+    val kinds = setOf(KEEP_ALIVE, DEVICE_ACCESS) + phoneKinds
 
     const val MARKER = "[orbit-permission]"
     private val markerLine = Regex(Regex.escape(MARKER) + "[ \\t]*([^\\n]+)")
@@ -79,6 +81,82 @@ internal object OrbitPermissionCards {
 
     /** The last read of each phone permission, for the same reason as [lastStatus]. */
     val lastPhoneStatus = java.util.concurrent.ConcurrentHashMap<String, PhoneStatus>()
+
+    /**
+     * Operit's access level as the app is set to use it: [level] is the one picked in the app's
+     * permission page (null before any was picked), [working] whether it is an elevated one (ADB
+     * debugging, device admin or Root) that answers right now.
+     */
+    data class DeviceAccess(val level: com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel?, val working: Boolean)
+
+    @Volatile
+    var lastDeviceAccess: DeviceAccess? = null
+
+    /** Counts closes of the app's access page, which opens inside Orbit, so cards read the level again. */
+    private val deviceAccessClosedFlow = MutableStateFlow(0)
+    val deviceAccessPageClosed: StateFlow<Int> = deviceAccessClosedFlow
+    fun deviceAccessPageClosed() { deviceAccessClosedFlow.update { it + 1 } }
+
+    private val elevatedLevels = setOf(
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER,
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ADMIN,
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT,
+    )
+
+    private val deviceProbeLock = Any()
+    /** When the last probe started and finished (elapsed realtime). */
+    @Volatile
+    private var deviceProbeStartedAt = 0L
+    @Volatile
+    private var deviceProbeDoneAt = 0L
+    /** Reads close together (several cards, a page and a tool) share one probe of Shizuku or su. */
+    private const val DEVICE_PROBE_REUSE_MS = 3_000L
+
+    /**
+     * Reads the access level and whether it works; it may ask Shizuku or su, so call it off the main
+     * thread. Only one probe runs at a time. A read that waited for a running probe takes its answer,
+     * as does one within a few seconds after it, unless [fresh] asks for a probe started after the
+     * read; a changed level always probes again.
+     */
+    fun deviceAccess(context: Context, fresh: Boolean = false): DeviceAccess {
+        val asked = android.os.SystemClock.elapsedRealtime()
+        synchronized(deviceProbeLock) {
+            val last = lastDeviceAccess
+            val sameLevel = last != null && last.level == preferredLevel()
+            val now = android.os.SystemClock.elapsedRealtime()
+            val reuse = sameLevel && (deviceProbeStartedAt >= asked ||
+                !fresh && (deviceProbeDoneAt >= asked || now - deviceProbeDoneAt < DEVICE_PROBE_REUSE_MS))
+            if (reuse) return last!!
+            deviceProbeStartedAt = now
+            return probeDeviceAccess(context).also { deviceProbeDoneAt = android.os.SystemClock.elapsedRealtime() }
+        }
+    }
+
+    private fun preferredLevel() = runCatching {
+        com.ai.assistance.operit.data.preferences.androidPermissionPreferences.getPreferredPermissionLevel()
+    }.getOrNull()
+
+    private fun probeDeviceAccess(context: Context): DeviceAccess {
+        val level = preferredLevel()
+        val working = level in elevatedLevels && runCatching {
+            val executor = com.ai.assistance.operit.core.tools.system.shell.ShellExecutorFactory
+                .getExecutor(context.applicationContext, level!!)
+            // Root's permission check is its availability check, so it is asked once.
+            if (level == com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT) executor.hasPermission().granted
+            else executor.isAvailable() && executor.hasPermission().granted
+        }.getOrDefault(false)
+        return DeviceAccess(level, working).also { lastDeviceAccess = it }
+    }
+
+    /** The access level in a few words, for the card and Orbit's notes. */
+    fun levelLabel(english: Boolean, level: com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel?): String = when (level) {
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT -> "Root"
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ADMIN -> if (english) "device admin" else "设备管理员"
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER -> if (english) "ADB debugging (Shizuku)" else "ADB 调试（Shizuku）"
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ACCESSIBILITY -> if (english) "accessibility" else "无障碍"
+        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.STANDARD -> if (english) "standard" else "普通"
+        null -> if (english) "not set" else "未设置"
+    }
 
     /** Reads [permission] now; call it off the main thread. */
     fun phoneStatus(context: Context, permission: String): PhoneStatus =
@@ -126,6 +204,7 @@ internal object OrbitPermissionCards {
 
     /** Whether the phone permission is on now. Reads system settings; call it off the main thread. */
     fun isOn(context: Context, permission: String): Boolean = when (permission) {
+        DEVICE_ACCESS -> deviceAccess(context).working
         NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled()
         NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
         // The approximate location is enough for Orbit's "where am I".
@@ -171,6 +250,7 @@ internal object OrbitPermissionCards {
     /** What the card turns on, in a few words, for Orbit's notes and reply quotes. */
     fun label(english: Boolean, permission: String): String = when (permission) {
         KEEP_ALIVE -> if (english) "background keep-alive" else "后台保活"
+        DEVICE_ACCESS -> if (english) "device control access (ADB / Root)" else "设备控制权限（ADB / Root）"
         NOTIFY -> if (english) "sending notifications" else "发送通知"
         NOTIFICATION_READ -> if (english) "reading notifications" else "读取通知"
         SMS -> if (english) "reading SMS" else "读取短信"

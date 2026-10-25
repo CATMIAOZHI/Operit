@@ -87,8 +87,10 @@ class ShizukuDemoViewModel(application: Application) : AndroidViewModel(applicat
     /** Check root status */
     fun checkRootStatus(context: Context) {
         viewModelScope.launch {
-            val isDeviceRooted = RootAuthorizer.isDeviceRooted()
-            val hasRootAccess = RootAuthorizer.checkRootStatus(context)
+            // Both may wait on su (a grant prompt, a slow root manager), so they run off the main thread.
+            val (isDeviceRooted, hasRootAccess) = withContext(Dispatchers.IO) {
+                RootAuthorizer.isDeviceRooted() to RootAuthorizer.checkRootStatus(context)
+            }
             stateManager.updateRootStatus(isDeviceRooted, hasRootAccess)
             AppLogger.d(
                     "ShizukuDemoViewModel",
@@ -109,8 +111,11 @@ class ShizukuDemoViewModel(application: Application) : AndroidViewModel(applicat
             // 如果没有Root权限，则先请求权限
             Toast.makeText(context, context.getString(R.string.requesting_root_permission), Toast.LENGTH_SHORT).show()
 
-            RootAuthorizer.requestRootPermission { granted ->
-                viewModelScope.launch {
+            // Asking runs su and waits for the root manager's answer, so it runs off the main thread;
+            // the answer comes back to it.
+            withContext(Dispatchers.IO) {
+                RootAuthorizer.requestRootPermission { granted ->
+                viewModelScope.launch(Dispatchers.Main) {
                     if (granted) {
                         Toast.makeText(context, context.getString(R.string.root_permission_granted), Toast.LENGTH_SHORT).show()
                         // 权限授予后执行一个简单的测试命令
@@ -120,6 +125,7 @@ class ShizukuDemoViewModel(application: Application) : AndroidViewModel(applicat
                     }
                     // 刷新状态
                     checkRootStatus(context)
+                }
                 }
             }
         }
