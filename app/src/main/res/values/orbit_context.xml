@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_context_title">上下文压缩</string>
+    <string name="orbit_context_row">聊天太长时，把早先的内容压缩成摘要</string>
+    <string name="orbit_context_note">和 %1$s 聊得很长时，会把早先的内容压缩成一段摘要再接着聊，这样不会超出模型能看的长度。这里的设置对主聊天和所有侧聊一起生效。摘要默认由辅助模型来写，也可以在「模型」的高级模式里单独换。</string>
+    <string name="orbit_context_now">主模型最多能看 %1$sK，现在聊到约 %2$sK 时会压缩。</string>
+    <string name="orbit_context_now_off">主模型最多能看 %1$sK。自动压缩已关闭，聊太长时可能会出错。</string>
+    <string name="orbit_context_no_model">先在「模型」里给 %1$s 选好主模型。</string>
+    <string name="orbit_context_saved">已保存，主聊天和侧聊都已更新。</string>
+    <string name="orbit_context_compact_now">现在压缩一次</string>
+    <string name="orbit_context_compact_now_note">把和 %1$s 的主聊天立刻压缩成摘要。之后的聊天会接着摘要继续。</string>
+    <string name="orbit_context_compacting">正在压缩…</string>
+    <string name="orbit_context_busy">%1$s 正在回复或整理，等它忙完再压缩。</string>
+    <string name="orbit_context_compact_done">已压缩。</string>
+    <string name="orbit_context_compact_failed">这次没有压缩成功，可能内容太少或出错了。</string>
+    <string name="orbit_settings_context_full">上下文用满主模型</string>
+    <string name="orbit_settings_context_window">上下文长度</string>
+    <string name="orbit_settings_context_auto">自动压缩</string>
+    <string name="orbit_settings_context_at">开始压缩的位置</string>
+    <string name="orbit_settings_context_auto_point">自动</string>
+    <string name="orbit_settings_context_at_off">自动压缩现在是关的，这个位置暂时不起作用。</string>
+    <string name="orbit_settings_context_scope">上下文压缩的修改会同时用在主聊天和所有侧聊。</string>
+</resources>

@@ -142,7 +142,7 @@ object OrbitCompanion {
 
     /**
      * Opens a side chat: a separate, lasting conversation with the same Orbit about one topic,
-     * like Muse's side chats. It shares Orbit's memory and tools; its history stays its own.
+     * next to the main chat. It shares Orbit's memory and tools; its history stays its own.
      */
     suspend fun createSideChat(context: Context, orbitId: String, title: String): String {
         val appContext = context.applicationContext
@@ -154,11 +154,27 @@ object OrbitCompanion {
                 ?: error("Orbit no longer exists")
             check(orbit.canAddSideChat) { "Too many side chats" }
             val chatId = createChat(appContext, null, clean, titled = false)
+            inheritContext(appContext, orbit, chatId)
             preferences.rememberChatOwner(chatId, orbit.id)
             preferences.addSideChat(orbit.id, chatId, clean)
             chatId
         }
     }
+
+    /** A new side chat compacts like the main chat. */
+    private suspend fun inheritContext(context: Context, orbit: OrbitProfile, chatId: String) {
+        try {
+            OrbitContextSettings.inherit(context, orbit, chatId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            // The side chat still works with the app's default compaction.
+            android.util.Log.w("OrbitCompanion", "Side chat kept the default context setting", e)
+        }
+    }
+
+    /** Runs [block] while no chat of any Orbit is being made, so it sees the full side chat list. */
+    internal suspend fun <T> withSideChatsSettled(block: suspend () -> T): T = chatMutex.withLock { block() }
 
     suspend fun renameSideChat(context: Context, orbitId: String, chatId: String, title: String) {
         val clean = title.replace(Regex("\\s+"), " ").trim().take(OrbitSettings.MAX_SIDE_CHAT_TITLE)
@@ -185,6 +201,7 @@ object OrbitCompanion {
             // Keeping the standard placeholder enables the existing first-message title generator.
             val title = appContext.getString(R.string.new_conversation)
             val chatId = createChat(appContext, null, title, titled = false)
+            inheritContext(appContext, orbit, chatId)
             preferences.rememberChatOwner(chatId, orbit.id)
             preferences.addSideChat(orbit.id, chatId, title, origin)
             OrbitChatFork.Created(chatId, title, origin, excerpts)
