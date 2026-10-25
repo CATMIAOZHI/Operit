@@ -9066,7 +9066,7 @@
     <string name="orbit_pillar_task_desc">Keeps up with plans, reminders and checks</string>
     <string name="orbit_choose_companion">Choose a companion</string>
     <string name="orbit_manage_role_cards">Manage role cards</string>
-    <string name="orbit_manage_role_cards_desc">A role card only seeds a new Orbit; later edits do not change existing Orbits</string>
+    <string name="orbit_manage_role_cards_desc">Orbit can borrow a role card\'s character or picture; editing a card does not change Orbit</string>
     <string name="orbit_memory_row">Skills and learning</string>
     <string name="orbit_memory_row_desc">Skills it learned, its learning log and memory change history</string>
     <string name="orbit_memory_unavailable">This Orbit’s memory is unavailable. Please retry. Global memory will not be used instead.</string>
@@ -9125,9 +9125,9 @@
     <string name="orbit_notification_channel_desc">Notifications when Orbit reaches out</string>
     <string name="orbit_run_paused">Orbit is paused</string>
     <string name="orbit_section_my_orbits">My Orbits</string>
-    <string name="orbit_paused_hint">Only one Orbit runs at a time. When you switch roles, the previous Orbit pauses and keeps its chat, name and look.</string>
+    <string name="orbit_paused_hint">There is one Orbit. To start over, delete this one first, then make a new one.</string>
     <string name="orbit_resume">Resume</string>
-    <string name="orbit_create">Pick a role to start Orbit</string>
+    <string name="orbit_create">Start Orbit</string>
     <string name="orbit_card_has_orbit">Has an Orbit; picking it resumes it</string>
     <string name="orbit_role_label">Made from %1$s</string>
     <string name="orbit_delete">Delete</string>
@@ -9247,7 +9247,7 @@
     <string name="orbit_usage_footer">Only the tokens Orbit itself spends (input with cache, plus output) count, not the main app\'s; every Orbit shares this allowance. Tasks handed to the main chat count under Chat.</string>
     <string name="orbit_run_quota_paused">Out of token allowance; stopped for now and will go on as planned once the allowance is back.</string>
     <string name="orbit_change_avatar">Change picture</string>
-    <string name="orbit_reset_avatar">Role card picture</string>
+    <string name="orbit_reset_avatar">Use a role card</string>
     <string name="orbit_avatar_save_failed">Couldn\'t save this picture</string>
     <string name="orbit_name_hint">Orbit picks its own name. Talk it over in the chat.</string>
     <string name="orbit_permission_locked">Orbit always uses the %1$s permission. It cannot be changed.</string>

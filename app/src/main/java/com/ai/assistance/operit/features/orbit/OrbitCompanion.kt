@@ -31,15 +31,17 @@ import kotlinx.coroutines.withTimeout
 /**
  * Orbit: a long-term companion with its own chat, name, look, Soul.md and a daily check-in.
  *
- * A role card only seeds a new Orbit: its persona is copied into Soul.md once, and the Orbit chat
- * then runs under the default role card with Soul.md as its persona, so editing or deleting the
- * role card does not change the Orbit. The user can make one Orbit per role card, but only one runs
- * at a time; the others are paused and keep everything.
+ * There is one Orbit. It starts as "Orbit" with the starting SOUL.md and runs under the default
+ * role card with Soul.md as its persona. On the first talk it asks whether to take another name,
+ * borrow a role card's character for SOUL.md, or bring memories over from another AI. To start
+ * over, the user deletes it and makes a new one. Orbits made before this rule keep working.
  *
  * Background checks use durable tasks; only an explicit submitted message reaches the main chat.
  */
 object OrbitCompanion {
     private const val CHAT_CREATE_TIMEOUT_MS = 15_000L
+    /** A new Orbit's name, the same in every language; the user may give it another on the first talk. */
+    const val DEFAULT_NAME = "Orbit"
     private const val MIN_SCHEDULE_DELAY_MS = 60_000L
     private const val ANDROID_ASSET_URI = "file:///android_asset/"
     private val chatMutex = Mutex()
@@ -51,22 +53,21 @@ object OrbitCompanion {
         ChatRuntimeHolder.getInstance(context.applicationContext).getCore(ChatRuntimeSlot.MAIN)
 
     /**
-     * Starts the Orbit made from [roleCardId], making it the first time, and pauses the one that
-     * was running.
+     * Starts the Orbit, making it the first time. When Orbits from before the one-Orbit rule are
+     * still there, the newest one is started.
      */
-    suspend fun startFromRoleCard(
+    suspend fun start(
         context: Context,
-        roleCardId: String,
         /** Told the id as soon as a new Orbit is saved, so a caller can undo a start that fails later. */
         onCreated: (String) -> Unit = {},
     ): OrbitProfile {
         val appContext = context.applicationContext
         val profile = chatMutex.withLock {
             val preferences = OrbitPreferences.getInstance(appContext)
-            val existing = preferences.current().orbitFromRoleCard(roleCardId)
+            val existing = preferences.current().orbits.maxByOrNull { it.createdAt }
             val profile =
                 if (existing != null) ensureChatLocked(appContext, existing)
-                else createLocked(appContext, roleCardId, onCreated)
+                else createLocked(appContext, onCreated)
             preferences.setActive(profile.id)
             profile
         }
@@ -259,25 +260,22 @@ object OrbitCompanion {
         }
     }
 
-    /** Makes a new Orbit from a role card: its persona becomes Soul.md, its avatar is copied. */
-    private suspend fun createLocked(context: Context, roleCardId: String, onCreated: (String) -> Unit = {}): OrbitProfile {
-        val cardManager = CharacterCardManager.getInstance(context)
-        require(roleCardId in cardManager.characterCardListFlow.first()) {
-            "Role card not found: $roleCardId"
-        }
-        val card = cardManager.getCharacterCard(roleCardId)
+    /** Makes the Orbit: named Orbit, the starting SOUL.md, the default role card's picture. */
+    private suspend fun createLocked(context: Context, onCreated: (String) -> Unit = {}): OrbitProfile {
+        val roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
         val orbitId = UUID.randomUUID().toString()
         val preferences = OrbitPreferences.getInstance(context)
-        preferences.writeSoul(orbitId, cardManager.combinePrompts(roleCardId).trim())
+        preferences.writeSoul(orbitId, OrbitSoulTemplate.initial(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)))
         val avatarUri = roleAvatarCopy(context, roleCardId)
-        val chatId = createChat(context, roleCardId, card.name)
+        // No opening message: Orbit greets the user itself on the first talk.
+        val chatId = createChat(context, null, DEFAULT_NAME)
         val profile =
             OrbitProfile(
                 id = orbitId,
                 sourceRoleCardId = roleCardId,
                 chatId = chatId,
-                // Orbit starts with its role's name and may pick its own later.
-                name = card.name.take(OrbitSettings.MAX_NAME_LENGTH),
+                // Orbit starts as Orbit and asks on the first talk whether the user wants another name.
+                name = DEFAULT_NAME,
                 avatarUri = avatarUri,
                 createdAt = System.currentTimeMillis(),
             )
@@ -304,17 +302,21 @@ object OrbitCompanion {
         }.getOrNull()
 
     /**
-     * Puts the role card's picture back. Uses the card's picture as it is now; if the card was
-     * deleted, a built-in role's picture still works and other Orbits go back to the plain icon.
+     * Uses the picture of role card [roleCardId] (the Orbit's own default card when null), as the
+     * card has it now. A card that no longer exists fails, except a built-in role's picture.
      */
-    suspend fun resetAvatar(context: Context, orbitId: String) {
+    suspend fun useRoleCardAvatar(context: Context, orbitId: String, roleCardId: String? = null) {
         val preferences = OrbitPreferences.getInstance(context)
         val orbit = preferences.current().orbits.firstOrNull { it.id == orbitId } ?: return
+        val cardId = roleCardId ?: orbit.sourceRoleCardId
         val cardExists = runCatching {
-            orbit.sourceRoleCardId in CharacterCardManager.getInstance(context).characterCardListFlow.first()
+            cardId in CharacterCardManager.getInstance(context).characterCardListFlow.first()
         }.getOrDefault(false)
-        val uri = if (cardExists) roleAvatarCopy(context, orbit.sourceRoleCardId)
-            else UserPreferencesManager.getBuiltInCharacterAvatarUri(orbit.sourceRoleCardId)
+        val builtIn = UserPreferencesManager.getBuiltInCharacterAvatarUri(cardId)
+        require(cardExists || builtIn != null) { "No role card with id $cardId; list them with orbit_soul action=list_role_cards" }
+        val uri = if (cardExists) roleAvatarCopy(context, cardId) ?: builtIn else builtIn
+        // A card without a picture changes nothing rather than clearing the current one.
+        checkNotNull(uri) { "That role card has no picture; the avatar was not changed" }
         preferences.setAvatar(orbitId, uri)
     }
 

@@ -307,7 +307,10 @@ object OrbitTaskRunner {
     internal suspend fun readUrl(url: String): String = withContext(Dispatchers.IO) {
         OrbitTaskRepository.validateSource(url)
         client.newCall(Request.Builder().url(url).get().build()).execute().use { response ->
-            check(response.isSuccessful) { "HTTP ${response.code}" }
+            check(response.isSuccessful) {
+                "The page answered HTTP ${response.code}" + (if (response.code == 404) " (not found); check the address" else "") +
+                    ". Nothing was read."
+            }
             val body = checkNotNull(response.body)
             val bytes = body.byteStream().use { input ->
                 val output = java.io.ByteArrayOutputStream()

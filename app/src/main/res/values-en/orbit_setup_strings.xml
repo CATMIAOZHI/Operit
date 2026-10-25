@@ -14,9 +14,9 @@
     <string name="orbit_setup_get_key">Get a key</string>
     <string name="orbit_setup_key_promise">The key stays on this phone.</string>
     <string name="orbit_setup_main">Main model</string>
-    <string name="orbit_setup_main_note">Used for chatting. Pick a smart one.</string>
+    <string name="orbit_setup_main_note">Used for chatting. It doesn\'t have to be the smartest; pick the one that suits you best. We recommend DeepSeek Flash.</string>
     <string name="orbit_setup_assistant">Helper model</string>
-    <string name="orbit_setup_assistant_note">Used for titles, memory and other background work. Pick a cheap one.</string>
+    <string name="orbit_setup_assistant_note">Used for titles, memory and other background work. Pick a cheap, fast one. We recommend DeepSeek Flash.</string>
     <string name="orbit_setup_pick_model">Choose a model</string>
     <string name="orbit_setup_check">Check and load models</string>
     <string name="orbit_setup_testing">Testing…</string>
