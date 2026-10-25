@@ -9617,6 +9617,7 @@
     <string name="orbit_item_reason_preferences">你说过不想听这类</string>
     <string name="orbit_item_reason_not_now">现在不值得打扰你</string>
     <string name="orbit_item_reason_undecided">没想好要不要说</string>
+    <string name="orbit_item_reason_unregistered">没登记要不要说</string>
     <string name="orbit_item_reason_expired">等到时已经过期</string>
     <string name="orbit_routine_source_chat">读取最近的 Orbit 对话</string>
     <string name="orbit_routine_source_goals">读取进行中的目标</string>

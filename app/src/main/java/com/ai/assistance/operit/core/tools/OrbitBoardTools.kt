@@ -13,7 +13,7 @@ import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Orbit's Feed, Ideas and Tracking boards, the tabs at the bottom of the Orbit page (like Muse). */
+/** Orbit's Feed, Ideas and Tracking boards, the tabs at the bottom of the Orbit page. */
 internal object OrbitBoardTools {
     const val FEED = "orbit_feed"
     const val IDEA = "orbit_idea"
@@ -63,17 +63,26 @@ internal object OrbitBoardTools {
                 ToolParameterSchema("description", description = "create：给用户看的说明：做什么、对他有什么用，最多6000字符", required = false),
                 ToolParameterSchema("includes", description = "create：做完会交付的东西，每行一项「名称 | 一句说明」，最多6行", required = false),
                 ToolParameterSchema("plan", description = "create：用户选中后你要做的具体事，写给你自己看，最多2000字符", required = false),
+                ToolParameterSchema("feasibility", "integer", "create 必填：1–5，你现在真能做成的把握（工具、权限、信息够不够）", false),
+                ToolParameterSchema("personal_fit", "integer", "create 必填：1–5，和这位用户的真实情况、目标、口味有多贴合", false),
+                ToolParameterSchema("novelty", "integer", "create 必填：1–5，有多新：和已有、过去的点子不重复，用户自己还没想到", false),
+                ToolParameterSchema("rationale", description = "create 必填：一两句话，为什么现在给这位用户提这个，最多1000字符", required = false),
+                ToolParameterSchema("sources", description = "create 必填：依据从哪来，每行一条，如聊天消息 id、memory.md、目标名、你打开过的链接；最多6条", required = false),
                 ToolParameterSchema("expires_in_days", "integer", "create：几天后自动下架，1–30，默认14", false),
                 ToolParameterSchema("offset", "integer", "list 可选：past 从第几条开始（从0开始），用上次返回的 past_next_offset；每次最多30条", false),
             ),
             details = """
   - 只提和用户真实情况有关、你现在就做得到的事；先 list，不要重复已有的卡片。
+  - create 前给点子打三项分（feasibility、personal_fit、novelty，各 1–5），任何一项低于 3 就别提。
+    rationale 和 sources 必须有真实依据；找不到依据的点子不要提。用户问「为什么提这个」时用 read 看 rationale 和 sources。
   - list 里的 description 只给前300字，要全文（含 plan 和 includes）用 read。
   - 每个点子都要有一个贴合内容的 emoji 和一个分类；同一页尽量不要用同样的 emoji。用户想换图标或分类时用 update。
   - 你的后台任务「每日点子」每天上午 9 点会想新点子；用户想改频率时用 orbit_task 改这个任务的时间，不要取消它。
   - 卡片两周左右自动下架，用户喜欢的会一直留着。用户可以关掉它；你没有关掉卡片的工具，不要说你关掉了。
   - 用户右滑表示喜欢、左滑表示不喜欢，list 里的 vote 就是这个反馈：多提 liked 这类，少提 disliked 这类。
-  - list 里 past 是已经下架、关掉或做过的点子和用户当时的反馈，用来了解用户口味，不要再提一样的。past 一次最多30条，past_next_offset 不为空时用 offset 往后翻。
+  - list 里 past 是已经不在点子页的点子：gone_reason 是 built（你做过）、dismissed（用户关掉）或 expired（到期下架），vote 是用户当时的反馈。
+    用来了解用户口味，不要再提一样的。past 一次最多30条，past_next_offset 不为空时用 offset 往后翻。
+    没回应的旧点子超过 60 条时，最旧的会被删掉，不会出现在 past 里。
 """,
         ),
         ToolPrompt(
@@ -174,24 +183,39 @@ internal object OrbitBoardTools {
                                 it.toIntOrNull() ?: error("expires_in_days must be a whole number from 1 to 30; got \"$it\"")
                             } ?: 14
                             require(days in 1..30) { "expires_in_days must be 1 to 30" }
+                            fun score(name: String): Int {
+                                val value = arg(name).trim()
+                                return value.toIntOrNull()?.takeIf { it in 1..5 }
+                                    ?: error("$name must be a whole number from 1 to 5; got \"$value\"")
+                            }
+                            val scores = OrbitBoardRepository.Scores(score("feasibility"), score("personal_fit"), score("novelty"))
+                            val sources = arg("sources").lines().map { it.trim().removePrefix("-").removePrefix("•").trim() }
+                                .filter { it.isNotEmpty() }
+                            require(sources.isNotEmpty()) { "sources needs at least one real source, one per line" }
                             json(ideas.create(arg("title"), arg("description"), arg("plan"), requestId,
                                 System.currentTimeMillis() + days * 24L * 60 * 60 * 1000, emoji = emoji(arg("emoji")),
-                                parts = parts(args["includes"]), category = arg("category")), Board.IDEAS, brief = true)
+                                parts = parts(args["includes"]), category = arg("category"), scores = scores,
+                                rationale = arg("rationale"), sources = sources), Board.IDEAS, brief = true)
                         }
                         "list" -> {
                             val all = ideas.listAll()
                             val showing = ideas.list().filter { it.state == "OPEN" }
                             val ids = showing.map { it.id }.toSet()
-                            // What the user answered before still teaches their taste after the card is gone.
-                            val answered = all.filter { it.id !in ids && (it.vote != 0 || it.state == "BUILT") }
+                            // Every card that left the tab, and why, still teaches the user's taste.
+                            val gone = all.filter { it.id !in ids }
                             // The done ideas the Ideas tab shows come first, so Orbit can always update them.
-                            val past = (answered.filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) +
-                                answered.sortedByDescending { it.updatedAt }).distinctBy { it.id }
+                            val past = (gone.filter { it.state == "BUILT" }.sortedByDescending { it.builtAt }.take(10) +
+                                gone.sortedByDescending { it.updatedAt }).distinctBy { it.id }
                             // offset pages through past ideas; the open ones always come in full.
                             val pastPage = page(past, args["offset"]) {
                                 JSONObject().put("idea_id", it.id).put("title", it.title).put("emoji", it.emoji)
                                     .put("category", OrbitBoardRepository.categoryOf(it))
-                                    .put("state", it.state).put("vote", voteName(it.vote))
+                                    .put("gone_reason", when (it.state) {
+                                        "BUILT" -> "built"
+                                        "DISMISSED" -> "dismissed"
+                                        else -> "expired"
+                                    })
+                                    .put("vote", voteName(it.vote))
                             }
                             JSONObject().put("open", JSONArray(showing.map { json(it, Board.IDEAS, brief = true) }))
                                 .put("past", pastPage.getJSONArray("items"))
@@ -284,9 +308,12 @@ internal object OrbitBoardTools {
             Board.IDEAS -> {
                 value.put("emoji", item.emoji).put("description", body).put("category", item.category)
                     .put("vote", voteName(item.vote)).put("expires_at", time(item.expiresAt))
+                if (item.scores.rated) value.put("scores", JSONObject().put("feasibility", item.scores.feasibility)
+                    .put("personal_fit", item.scores.fit).put("novelty", item.scores.novelty))
                 // The plan and parts are for doing the idea; a list leaves them to read.
                 if (!brief) value.put("plan", item.extra)
                     .put("includes", JSONArray(item.parts.map { "${it.title} | ${it.detail}".trimEnd(' ', '|') }))
+                    .put("rationale", item.rationale).put("sources", JSONArray(item.sources))
             }
             Board.TRACKING -> value.put("detail", body).put("notes_total", item.notes.size)
                 .put("notes", JSONArray(item.notes.takeLast(if (brief) 3 else 100).map {

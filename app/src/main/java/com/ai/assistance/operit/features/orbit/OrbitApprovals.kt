@@ -296,6 +296,34 @@ internal object OrbitApprovals {
         return all.filterNot { it.id in drop }
     }
 
+    /** Approvals whose text [hit] finds, for a forget plan. */
+    suspend fun matching(context: Context, orbitId: String, hit: (String) -> Boolean): List<String> =
+        list(context, orbitId).filter { a -> listOf(a.title, a.detail, a.note, a.result, a.action).any(hit) }.map { it.id }
+
+    /**
+     * Forgetting: removes the matching lines from approvals [ids]. An open request among them is
+     * declined quietly (Orbit is not told), so the thing it asked for can never be carried out.
+     */
+    suspend fun forget(context: Context, orbitId: String, ids: Set<String>, clean: (String) -> String, hit: (String) -> Boolean): Int =
+        withContext(Dispatchers.IO) {
+            lock(orbitId).withLock {
+                val current = read(context, orbitId)
+                var count = 0
+                val next = current.map { a ->
+                    if (a.id !in ids) return@map a
+                    count++
+                    a.copy(title = clean(a.title).trim().ifBlank { "-" }, detail = clean(a.detail), note = clean(a.note),
+                        result = clean(a.result), action = if (hit(a.action)) "" else a.action,
+                        state = if (a.pending) DENIED else a.state,
+                        decidedAt = if (a.pending) System.currentTimeMillis() else a.decidedAt,
+                        notified = if (a.pending) true else a.notified)
+                        .also { cache[orbitId + "/" + it.id] = it }
+                }
+                if (count > 0) write(context, orbitId, next)
+                count
+            }
+        }
+
     private fun read(context: Context, orbitId: String): List<Approval> {
         val f = file(context, orbitId)
         if (!f.isFile) return emptyList()

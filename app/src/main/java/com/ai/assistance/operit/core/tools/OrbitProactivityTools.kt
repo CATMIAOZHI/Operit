@@ -13,7 +13,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Muse's proactivity.select: when background work hands Orbit draft items, Orbit registers a send
+ * Proactive delivery decision: when background work hands Orbit draft items, Orbit registers a send
  * or skip call with a fixed reason for each before it writes anything. The reasons are kept, so
  * Orbit can later answer "why did you send me this?" and the calls can be counted.
  */
@@ -31,7 +31,7 @@ internal object OrbitProactivityTools {
             ToolParameterSchema("reason", "string", "task：这次为什么值得告诉用户，最多300字；安静结束直接用 orbit_nothing_to_do 的 reason", false),
             ToolParameterSchema("offset", "integer", "history 可选：从第几条开始（从0开始，最新的在前），用上次返回的 next_offset；每次20条", false),
             ToolParameterSchema("decisions", "string",
-                "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"format\":\"text|options（只有 send 填，默认 text）\",\"note\":\"查了什么，最多300字\"}", false),
+                "select：JSON 数组，每条 {\"item\":\"条目id\",\"decision\":\"send|skip\",\"reason\":\"理由\",\"format\":\"text|options|map_widget|list_widget|artifact（只有 send 填，默认 text）\",\"note\":\"查了什么，最多300字\"}", false),
             ToolParameterSchema("item", "string", "respond：用户回应的那条条目 id（history 里的 item）", false),
             ToolParameterSchema("response", "string", "respond：accepted（接受）、declined（不要）、already_done（自己已经办了）或 other", false),
             ToolParameterSchema("note", "string", "respond 可选：用户怎么说的、你接着做了什么，最多300字", false),
@@ -39,7 +39,9 @@ internal object OrbitProactivityTools {
         details = """
   - send 的理由：time_sensitive（有截止且没到）、changed（用户在意的事变了）、requested（用户要过这类更新）、ready_for_decision（备好的东西等他拍板）、new_opportunity（没问过但确实相关）。
   - skip 的理由：moot（前提没了）、already_handled（办完了或说过了）、unconfirmed（核实不了）、preferences（偏好里不要）、not_useful_now（此刻不值得打扰）。
-  - 一次把这批条目都登记完；没登记的条目算作不发。只说 send 的条目。format：有两个以上真正可选的回复时用 options（配 orbit_create_options），否则 text。
+  - 一次把这批条目都登记完；没登记的条目算作不发。只说 send 的条目。
+  - format 选能讲清楚的最简单的一种：text 普通消息（只有一个有意义的回复时也用它）；options 有两个以上真正可选的回复（配 orbit_create_options）；map_widget 地点要在地图上看（dynamic_ui 地图卡）；list_widget 几样东西要并排比较（dynamic_ui 卡片）；artifact 用户会拿去用或回头再看的东西（存成成果或用 orbit_file send 发文件）。
+  - 给用户看的内容里不写条目 id、任务 id、调度细节这些内部信息。
   - 用户回应了你发过的提议（点了选项、回了话、说已经自己办了），用 respond 记下。declined 只是这一次不要，不等于以后这类都别提；用户明确说以后别提，才写进 PROACTIVE_PREFERENCES.md。
   - 用户问“为什么给我发这个”“你怎么没告诉我”时，用 history 查。
   - history 里 selected_for_send=true 只说明当时决定要发，用户有没有真的看到要看你当时在聊天里说了没有。
@@ -132,8 +134,8 @@ internal object OrbitProactivityTools {
                         val allowed = if (decision == OrbitDeliveryEntity.SEND) SEND_REASONS else SKIP_REASONS
                         require(reason in allowed) { "Entry ${i + 1}: reason for $decision must be one of ${allowed.joinToString()}" }
                         require(note.length <= MAX_NOTE) { "Entry ${i + 1}: note is longer than $MAX_NOTE characters" }
-                        require(format.isEmpty() || format == OrbitDeliveryEntity.TEXT || format == OrbitDeliveryEntity.OPTIONS) {
-                            "Entry ${i + 1}: format must be text or options"
+                        require(format.isEmpty() || format in OrbitDeliveryEntity.FORMATS) {
+                            "Entry ${i + 1}: format must be one of ${OrbitDeliveryEntity.FORMATS.joinToString()}"
                         }
                         require(format.isEmpty() || decision == OrbitDeliveryEntity.SEND) {
                             "Entry ${i + 1}: format is only for send"

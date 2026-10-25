@@ -16,12 +16,12 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
 
 /**
- * Orbit's own background routines, like Muse's: the Feed (a new post every 12 hours) and the Ideas
+ * Orbit's own background routines: the Feed (a new post every 12 hours) and the Ideas
  * (new ideas every morning at 9), both written by a background subagent, the nightly alignment
- * review (Muse's dream: how working with the user went, written into the alignment synthesis every
+ * review (how working with the user went, written into the alignment synthesis every
  * chat carries), plus a morning goal alignment: a background subagent checks each active goal against
  * its steps, writes a briefing on the Goals tab and drafts a proactive item only when something needs
- * the user (Muse's research worker; the chat decides whether it is sent). An older nightly self-review is still
+ * the user (the chat decides whether it is sent). An older nightly self-review is still
  * kept for Orbits that have it. They are ordinary Orbit tasks shown in the schedule list. The Feed,
  * Ideas and alignment routines can be paused or rescheduled (also from the chat) but never
  * cancelled. Each routine is made once per Orbit; a cancelled one is not brought back.
@@ -160,7 +160,7 @@ internal object OrbitRoutines {
     }
 
     /**
-     * The nightly alignment review, like Muse's dream: a background subagent reads the day's chats,
+     * The nightly alignment review: a background subagent reads the day's chats,
      * counts corrections, keeps the repair threads and rewrites the alignment synthesis.
      */
     suspend fun ensureAlignment(context: Context, orbit: OrbitProfile) {
@@ -180,7 +180,7 @@ internal object OrbitRoutines {
     }
 
     /**
-     * The proactive check, like Muse's hourly research worker: every 2 hours, day and night, a
+     * The proactive check: every 2 hours, day and night, a
      * background subagent reads the chats with new talk, looks for what was decided but is not covered
      * (a missing reminder, a deadline nobody watches, a decision waiting on the user) and drafts a
      * prepared brief. The chat decides whether and when it is told. Skipped only with nothing new said.
@@ -443,7 +443,7 @@ internal object OrbitRoutines {
 
     /**
      * A chat keeps the system prompt it started with until it is summarized, so a new synthesis
-     * would wait for that. After a night's review, like Muse's next day, every chat of the Orbit
+     * would wait for that. After a night's review, every chat of the Orbit
      * builds its prompt again on its next reply: one fresh prompt a day. Skipped while Orbit is
      * replying, which would swap the prompt under that reply; the next summary picks it up then.
      */
@@ -482,14 +482,14 @@ internal object OrbitRoutines {
            ---
            然后是「# Dream: <today>」和「## Dream」，用几段话写今天相处得怎么样、学到了什么、对齐总结哪一节改了、为什么。每个判断尽量带上 message id。
         6. 重写 ALIGNMENT_SYNTHESIS.md。第一行「# 对齐总结」，下面固定六节，标题照抄：
-           「## 他是谁、该怎么帮他」：用户画像和配合方式的整体叙述（身份、说话风格、做决定的习惯、最近在忙什么），每晚重写。
+           「## 他是谁、该怎么帮他」：怎样和他相处、怎样替他做事的整体叙述（说话风格、做决定的习惯、喜欢怎样的配合），每晚重写。身份、近况、偏好、承诺这类事实归 memory.md 和 user.md，这里不写。
            「## 他从你这里得到什么」：一句话，慢慢变。
            「## 红线」：硬规矩清单，只写用户拍过板的。
            「## 当前的摩擦」：你哪里容易出错、他纠正过什么、哪些事还悬着等他拍板，和摩擦清单对应。
            「## 怎样让关系更好」：一两条能做到的方向。
            「## 细节去哪找」：指向 dreams/、LESSONS.md、memory.md 等。
            除红线外用叙述体，不要堆条目。每个判断都要有聊天里的依据。它会全文放进每次聊天，整篇控制在 1500 字以内。没有新证据的节保持原样。
-        7. 更新 alignment/ALIGNMENT_STATE.yaml（schema_version: 1；relationship_contract 是你对用户的承诺，user_facets、working_alliance、observed_fit、proactivity_policies 何时主动何时安静，repair_threads 只放摩擦 id）。在 alignment/PROGRESSION_HISTORY.yaml 的 observations 末尾追加一条 {observed_at, correction_free_rate, eligible_evidence（= user_turns）, open_repair_threads, classification}：user_turns 少于 10 时 classification 写 insufficient，也不要据此下「关系变好/变差」的结论；够了就和前几条比，写 improving、steady 或 declining。只保留最近 90 条。
+        7. 更新 alignment/ALIGNMENT_STATE.yaml（schema_version: 1；relationship_contract 是你对用户的承诺，user_facets、working_alliance、observed_fit、proactivity_policies 何时主动何时安静，repair_threads 只放摩擦 id）。在 alignment/PROGRESSION_HISTORY.yaml 的 outcomes 末尾追加一条 {observed_at, correction_free_rate, eligible_evidence（= user_turns）, open_repair_threads, classification}（文件里的键如果还叫 observations，改名为 outcomes）：user_turns 少于 10 时 classification 写 insufficient，也不要据此下「关系变好/变差」的结论；够了就和前几条比，写 improving、steady 或 declining。只保留最近 90 条。
         8. 用户纠正过的具体做法，顺手 append 到 LESSONS.md。
         时间不够读完也没关系：commit 过的不会丢。快到时限时把读过的页 commit 掉，调用 orbit_submit_monitor_result，decision 写「还没读完」，下一轮会从记到的地方接着读。没读完时不要写 dream，也不要改对齐总结、摩擦清单和那几个 yaml。
         不要给用户发消息：userMessage 留空，decision 写一句这次复盘的结论。
@@ -533,16 +533,19 @@ internal object OrbitRoutines {
            then "# Dream: <today>" and "## Dream": a few paragraphs on how it went, what you learned, which section of
            the synthesis changed and why, citing message ids.
         6. Rewrite ALIGNMENT_SYNTHESIS.md: "# Alignment synthesis", then six sections with these exact headings:
-           "## Who this user is and how to act for them" (who they are, how they talk and decide, what they are busy
-           with; rewritten nightly), "## User value" (one sentence; changes slowly), "## Boundaries" (hard rules the
+           "## Who this user is and how to act for them" (how to be with them and act for them: how they talk and
+           decide, what kind of help suits them; rewritten nightly; facts such as who they are, what they are busy
+           with, preferences and commitments belong in memory.md and user.md, not here), "## User value" (one
+           sentence; changes slowly), "## Boundaries" (hard rules the
            user settled), "## Current frictions" (where you slip, what they corrected, what waits on them; matches the
            repair list), "## How you can strengthen the relationship" (one or two actionable things), "## Where to look
            for detail" (dreams/, LESSONS.md, memory.md...). Prose except Boundaries, every judgment grounded in the
            chats, under 900 words: every chat carries it in full. Leave a section with no new evidence as it was.
         7. Update alignment/ALIGNMENT_STATE.yaml (schema_version: 1, relationship_contract, user_facets,
            working_alliance, observed_fit, proactivity_policies, repair_threads as repair ids only). Append to the
-           observations in alignment/PROGRESSION_HISTORY.yaml {observed_at, correction_free_rate, eligible_evidence
-           (= user_turns), open_repair_threads, classification}: under 10 user turns write insufficient and draw no
+           outcomes in alignment/PROGRESSION_HISTORY.yaml {observed_at, correction_free_rate, eligible_evidence
+           (= user_turns), open_repair_threads, classification} (if the key is still named observations, rename it
+           to outcomes): under 10 user turns write insufficient and draw no
            conclusion; otherwise compare with the last few: improving, steady or declining. Keep the latest 90.
         8. Append specific ways of working the user corrected to LESSONS.md.
         Running out of time is fine: what you committed is kept. Near the limit, commit the pages you read and call
@@ -609,8 +612,10 @@ internal object OrbitRoutines {
         每日点子。SOURCE 里是最近的对话。结合你对用户的了解（记忆、用户资料、目标、最近聊的事），在「点子」页提 1 到 3 个你现在就做得到、对用户真的有用的点子：
         1. 先用 orbit_idea action=list 看已有的，不要重复。vote 是用户的反馈：多提 liked 这类，少提 disliked 这类。
         2. 每个点子都要选一个贴合内容的 emoji 和一个分类（productivity 效率提升、money 财务管理、relationships 人际关系、health 健康与健身、shopping 购物、other 更多点子）。同一批尽量用不同的 emoji。
-        3. list 里 emoji 或 category 为空的旧点子，用 action=update 补上。
-        4. 没有真正有用的点子就不提，不要凑数。
+        3. 先多想几个候选，每个打三项分（1–5）：feasibility 你现在真能做成吗，personal_fit 和这位用户多贴合，novelty 是否新、不和已有或 past 里的重复。任何一项低于 3 就丢掉，按总分从高到低挑最多 3 个。
+        4. 每个点子都写 rationale（一两句话：为什么现在给他提这个）和 sources（依据从哪来：聊天消息 id、记忆文件、目标、你打开过的链接）。找不到真实依据的不提。
+        5. list 里 emoji 或 category 为空的旧点子，用 action=update 补上。
+        6. 没有真正有用的点子就不提，不要凑数。
         点子会自己出现在点子页，不要给用户发消息：userMessage 留空，decision 写一句这次提了什么。
     """.trimIndent()
 
@@ -621,8 +626,13 @@ internal object OrbitRoutines {
            like the liked ones and fewer like the disliked ones.
         2. Give every idea one fitting emoji and one category (productivity, money, relationships, health, shopping,
            other). Use different emoji within one batch where you can.
-        3. Fill in the emoji or category of older ideas in the list that have none, with action=update.
-        4. Propose nothing rather than something weak.
+        3. Think of several candidates first and rate each 1 to 5: feasibility (can you really do it now),
+           personal_fit (how well it fits this user), novelty (new, not repeating an open or past idea). Drop any with
+           a rating under 3; keep at most 3, highest total first.
+        4. Give every idea a rationale (one or two sentences: why this user, why now) and sources (where that comes
+           from: message ids, memory files, goals, links you opened). Propose nothing you cannot ground.
+        5. Fill in the emoji or category of older ideas in the list that have none, with action=update.
+        6. Propose nothing rather than something weak.
         Ideas show up on the Ideas tab on their own. Do not message the user: leave userMessage empty and say in
         decision what you proposed.
     """.trimIndent()

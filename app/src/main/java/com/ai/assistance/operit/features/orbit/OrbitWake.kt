@@ -94,7 +94,7 @@ object OrbitWake {
 
     /**
      * The notice that hands background drafts (a subagent's report, a question, a failure) to Orbit,
-     * Muse's PROACTIVITY HANDOFF: Orbit checks each item against the latest state, registers send or
+     * Proactive handoff: Orbit checks each item against the latest state, registers send or
      * skip with a fixed reason before it writes anything, and tells only the send items. [told] is
      * what it already told lately, to catch the same matter twice; [preferences] is
      * PROACTIVE_PREFERENCES.md.
@@ -106,8 +106,15 @@ object OrbitWake {
         val title = line(reports.first().title, 80)
         val day = java.text.SimpleDateFormat("MM-dd HH:mm", java.util.Locale.US)
         fun key(it: OrbitDeliveryEntity) = line(it.opportunityKey.ifBlank { "task:${it.taskId}" }, 80)
+        // What the user did with an item told before, so a declined offer is not put to them again.
+        fun answer(it: OrbitDeliveryEntity): String {
+            if (it.userResponse.isBlank()) return ""
+            val note = line(it.userResponseNote, 80)
+            return if (english) " (user: ${it.userResponse}${if (note.isNotEmpty()) ", $note" else ""})"
+            else "（用户回应：${it.userResponse}${if (note.isNotEmpty()) "，$note" else ""}）"
+        }
         val others = told.filter { t -> reports.none { key(it) == key(t) } }.take(8).joinToString("\n") {
-            "- ${day.format(java.util.Date(it.decidedAt))} 「${line(it.title, 80)}」 key=${key(it)}"
+            "- ${day.format(java.util.Date(it.decidedAt))} 「${line(it.title, 80)}」 key=${key(it)}${answer(it)}"
         }
         val prefs = OrbitTaskRunner.fenced(preferences.trim())
         val select = com.ai.assistance.operit.core.tools.OrbitProactivityTools.NAME
@@ -124,10 +131,11 @@ object OrbitWake {
             append("2. Before writing anything the user sees, call $select once with a send or skip call for every item.\n")
             append("   send: time_sensitive (a deadline not yet passed) / changed (something they care about changed) / requested (they asked for this kind of update) / ready_for_decision (prepared work waits for their call) / new_opportunity (not asked, but truly relevant).\n")
             append("   skip: moot (the premise is gone) / already_handled (done, or they were told) / unconfirmed (you could not confirm it still holds) / preferences (their preferences rule it out) / not_useful_now (true and allowed, but not worth interrupting now).\n")
-            append("   For a send, format is options when there are two or more real replies, otherwise text. An item you do not register is not sent. The urgency must match the real deadline.\n")
+            append("   For a send, pick the simplest format that works: text; options when there are two or more real replies; map_widget when places need a map; list_widget when several things need comparing side by side; artifact for something they will use or come back to. An item you do not register is not sent. The urgency must match the real deadline.\n")
             append("3. Tell only the send items, in your own words and concretely: what, where, by when. Put several in one natural message. For a proposal, first say what is covered and what is missing, then what you suggest. Never assume they have not done it yet. If every item is skipped, call ${OrbitReactionNotice.NOTHING_TO_DO}.\n")
             append("   With options, put accepting, declining and \"already done\" side by side (for example \"Add the reminder\" / \"No, I'll remember\" / \"I already bought it\"); a proposal they cannot close with \"I did it\" turns into nagging.\n")
-            append("4. Silence is not an open matter: do not chase an unanswered offer. The same matter in new words is still a repeat; progress on something tracked is a change, not a reminder.\n")
+            append("   What the user sees never shows item ids, task ids or scheduling details.\n")
+            append("4. Silence is not an open matter: do not chase an unanswered offer. The same matter in new words is still a repeat; progress on something tracked is a change, not a reminder. An offer the user declined stays declined (skip already_handled) unless a real new fact changes it.\n")
             append("5. When the user answers (taps an option, replies, says they handled it), record it with $select action=respond, then act: accepted, carry it out as prepared; declined, drop it without explaining; already done, close the loop.\n")
             append("If the user asks why or how you sent this, answer by where it really came from, without defending it first. Your own suggestion (not from a task they set up): say so plainly, explain in a sentence that background checks prepare items and you decide what to tell, and offer right away to turn this kind off or narrow it (written to PROACTIVE_PREFERENCES.md when they ask). From a task or watch they set up: name that task and offer to pause or change it.\n")
             append("Do not mention background work, subagents or hidden notes unless the user asks.")
@@ -144,10 +152,11 @@ object OrbitWake {
             append("2. 写任何给用户看的字之前，先调用一次 $select，给每一条登记 send 或 skip 和理由。\n")
             append("   send：time_sensitive（有截止且还没到）/ changed（用户在意的事有了变化）/ requested（用户要过这类更新）/ ready_for_decision（备好的东西等他拍板）/ new_opportunity（没问过但确实相关的新选择）。\n")
             append("   skip：moot（前提没了）/ already_handled（已经办完或说过）/ unconfirmed（核实不了它还成立）/ preferences（偏好里不要）/ not_useful_now（属实也允许，但此刻不值得打扰）。\n")
-            append("   send 的 format：有两个以上真正可选的回复用 options，否则 text。没登记的条目一律不发。紧急程度要和真实的截止时间相符，不要制造紧迫感。\n")
+            append("   send 的 format 选能讲清楚的最简单的一种：text 普通消息；options 有两个以上真正可选的回复；map_widget 地点要在地图上看；list_widget 几样东西要并排比较；artifact 用户会拿去用或回头再看的东西。没登记的条目一律不发。紧急程度要和真实的截止时间相符，不要制造紧迫感。\n")
             append("3. 只说登记为 send 的，用你自己的话，说具体：什么、在哪、什么时候截止。几条就合成一段自然地说。提议类的先说清已经有什么、还缺什么，再说你的建议；不要默认用户还没办。全部 skip 就调用 ${OrbitReactionNotice.NOTHING_TO_DO}。\n")
             append("   给选项时，把接受、不要、“已经办好了”平等地摆出来（比如「加上下单提醒」/「不用，我自己记着」/「已经买好了」）。用户没法用“我办完了”关掉的提议，就会变成骚扰。\n")
-            append("4. 用户没回上次的提议，不代表事情还悬着，不要追着提醒。同一件事换个说法再发还是重复；追踪的事有了新进展算变化，不算提醒。\n")
+            append("   给用户看的内容里不写条目 id、任务 id、调度细节。\n")
+            append("4. 用户没回上次的提议，不代表事情还悬着，不要追着提醒。同一件事换个说法再发还是重复；追踪的事有了新进展算变化，不算提醒。用户拒绝过的提议，除非出现真正的新情况，否则不再提（skip already_handled）。\n")
             append("5. 用户回应时（点了选项、回了话、说已经自己办了），用 $select action=respond 记下，再接着做：接受就按准备好的直接办；不要就放下，不解释、不再提；已经办了就把这件事收尾。\n")
             append("用户问“这个怎么发来的”“我没问你呀”时，按真实来源回答，不要先辩解。是你自己主动提的（不是他安排的任务）：直接承认，一句话讲清来源（后台检查会备好条目，由你决定说不说），当场给出关掉或收紧这类提议的办法（他要求时写进 PROACTIVE_PREFERENCES.md）。来自他自己设的任务或监控：说出是哪个任务，并给出暂停或修改的办法。\n")
             append("除非用户问起，不要提“后台”“子代理”“隐藏消息”这些内部说法。")
@@ -174,7 +183,7 @@ object OrbitWake {
                 }
                 told.filter { key(it) == key(item) && it.id != item.id }.take(2).forEach {
                     val earlier = "\n${if (english) "Already told" else "以前说过"} ${day.format(java.util.Date(it.decidedAt))}: " +
-                        line(it.body, 120)
+                        line(it.body, 120) + answer(it)
                     if (length + earlier.length <= tailRoom) append(earlier)
                 }
             }
