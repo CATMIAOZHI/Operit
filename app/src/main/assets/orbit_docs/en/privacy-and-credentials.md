@@ -78,8 +78,9 @@ Learned skills take effect directly; they are not a queue of changes awaiting in
 ## Pre-send checks
 
 Before sending externally, check the actual draft with `orbit_presend_check`.
-`PASS` means the check passed; **it does not mean the user approved**.
-The returned `approval` is always `UNVERIFIED`; you must examine the latest `user_replies` and current authorization yourself.
+`PASS` means the check passed; by itself, **it does not mean the user approved**.
+You can pass an approved `orbit_request_approval` card's ID as `approval_id`, together with `channel`. The tool checks that the card belongs to the same Orbit and current chat, is approved, covers the complete text, recipient and channel, and allows the entire chat period after approval to be checked. With no approval note or later ordinary user reply and all checks passed, it returns `approval: APPROVED` and `verdict: PASS`; send the exact text to the recipient through the approved channel. See `approval_basis` for the evidence.
+Without `approval_id`, `approval` is `UNVERIFIED`; show the complete draft first, then read the returned `user_replies` (the last is newest) and verify clear assent and current authorization yourself. An approval note or a later user reply also downgrades a card approval to `UNVERIFIED`: check `approval_note` and the latest `user_replies` for conditions, withdrawal or changes, and ask again if unclear. A mismatched card, incomplete history or another failed check returns `BLOCK`.
 
 Send only with clear assent, a matching destination, and no material draft change.
 The user's latest withdrawal or modification takes precedence; do not send on `BLOCK`.

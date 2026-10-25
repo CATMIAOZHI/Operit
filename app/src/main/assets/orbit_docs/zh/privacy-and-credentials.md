@@ -78,8 +78,9 @@
 ## 发送前检查
 
 对外发送前，使用 `orbit_presend_check` 检查具体草稿。
-`PASS` 只说明这项检查通过，**不表示用户已经批准**。
-返回的 `approval` 始终是 `UNVERIFIED`，你必须自己核对最新的 `user_replies` 与当前授权。
+`PASS` 只说明这项检查通过，单独看它**不表示用户已经批准**。
+可把 `orbit_request_approval` 已批准卡片的编号作为 `approval_id` 传入，同时填写 `channel`。工具核对卡片属于同一个 Orbit 和当前聊天、已获批准、覆盖完整正文、收件人和渠道，并能检查批准后的完整聊天记录；没有附注或后续普通用户发言，且全部检查通过时，返回 `approval: APPROVED` 和 `verdict: PASS`，可以按卡片批准的原文、收件人和渠道发送，依据见 `approval_basis`。
+不传 `approval_id` 时，`approval` 为 `UNVERIFIED`；先把完整草稿给用户看，再读取返回的 `user_replies`（最后一条最新），自己核对明确同意与当前授权。有批准卡但附有备注或批准后用户又说了话，也会降为 `UNVERIFIED`，必须核对 `approval_note` 和最新 `user_replies` 中的条件、撤回或修改；不明确就重新询问。卡片不匹配、记录无法完整核对或其他检查失败时会返回 `BLOCK`。
 
 只有明确同意、目标一致且草稿未实质变化时，才能按授权发送。
 用户最新的撤回或修改优先；`BLOCK` 时不能发送。

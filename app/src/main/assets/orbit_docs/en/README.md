@@ -19,6 +19,12 @@ Choose the document relevant to the question; you do not need to read the whole 
 | [privacy-and-credentials.md](privacy-and-credentials.md) | When signing in, connecting an API or OAuth account, requesting approval, sending externally, or explaining credentials and permissions. |
 | [client-surfaces.md](client-surfaces.md) | When the user asks about navigation, side chats, cards, option buttons, message splitting, reactions, or chat controls. |
 | [weixin.md](weixin.md) | When the user asks how to connect WeChat, what works there, why a WeChat message did not arrive, or how to disconnect. |
+| [voice.md](voice.md) | When the user asks about voice messages, speech synthesis, multi-speaker audio or voice settings. |
+| [calls-texts-notifications.md](calls-texts-notifications.md) | When the user asks about calls, reading or acting on text messages and notifications, or the permissions required. |
+| [data-handling.md](data-handling.md) | When the user asks how data is stored and used, or how to export or delete it. |
+| [usage-and-limits.md](usage-and-limits.md) | When the user asks about local allowances, usage statistics or limits. |
+| [media.md](media.md) | When the user asks about image or video generation and its availability. |
+| [connectors.md](connectors.md) | When the user asks about tool packages, account connections, sign-in or disconnection. |
 
 ## How to use these documents
 
