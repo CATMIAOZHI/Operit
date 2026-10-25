@@ -45,21 +45,28 @@ private fun motionOf(activity: PetActivity): LogoMotion = when (activity) {
 }
 
 /**
- * Orbit's own logo as its default picture: the core, its orbit and two moons, in the theme's color.
- * It follows what Orbit is doing the way a pet does: it turns slowly and breathes at rest, turns
- * faster with a soft halo while thinking, faster still while it uses a tool, and hops once when it
- * finishes and comes back to rest. Each frame is drawn in the draw phase from the frame clock, so
- * it runs at the display's rate without recomposing; with [animate] false it stays still.
+ * Orbit's own logo as its default picture: the core, its orbit and two moons. The core is the user
+ * ([userColor]); the ring and moons are Orbit ([orbitColor]), always circling the user. Null colors
+ * follow the theme. It follows what Orbit is doing the way a pet does: it turns slowly and breathes
+ * at rest, turns faster with a soft halo while thinking, faster still while it uses a tool, and hops
+ * twice when it finishes and comes back to rest. Each frame is drawn in the draw phase from the
+ * frame clock, so it runs at the display's rate without recomposing; with [animate] false it stays
+ * still.
  */
 @Composable
-internal fun OrbitLogoAvatar(activity: PetActivity, animate: Boolean, modifier: Modifier = Modifier) {
-    // The picture sits on white; a light primary (dark theme) is darkened until it reads on white.
+internal fun OrbitLogoAvatar(
+    activity: PetActivity,
+    animate: Boolean,
+    modifier: Modifier = Modifier,
+    userColor: Color? = null,
+    orbitColor: Color? = null,
+) {
+    // The picture sits on white; a light color (a dark theme's primary, or a pale chosen color) is
+    // darkened until it reads on white.
     val primary = MaterialTheme.colorScheme.primary
-    val color = remember(primary) {
-        var c = primary
-        repeat(8) { if (c.luminance() > 0.22f) c = lerp(c, Color(0xFF1C1B1F), 0.25f) }
-        c
-    }
+    val themed = remember(primary) { readableOnWhite(primary) }
+    val core = remember(userColor, themed) { userColor?.let(::readableOnWhite) ?: themed }
+    val ring = remember(orbitColor, themed) { orbitColor?.let(::readableOnWhite) ?: themed }
     val angle = remember { mutableFloatStateOf(0f) }
     val breath = remember { mutableFloatStateOf(0f) }
     val start = remember { motionOf(activity) }
@@ -83,7 +90,10 @@ internal fun OrbitLogoAvatar(activity: PetActivity, animate: Boolean, modifier: 
             launch { halo.animateTo(target.halo, tween(500)) }
             launch {
                 if (animate && (finished || activity == PetActivity.COMPLETE)) {
+                    // Two hops: a full one, then a smaller one that settles.
                     hop.animateTo(1f, tween(160))
+                    hop.animateTo(0f, tween(150))
+                    hop.animateTo(0.6f, tween(130))
                     hop.animateTo(0f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMediumLow))
                 } else if (hop.value != 0f) {
                     hop.animateTo(0f, tween(140))
@@ -114,23 +124,34 @@ internal fun OrbitLogoAvatar(activity: PetActivity, animate: Boolean, modifier: 
         translate(top = -hop.value * 2.4f * unit) {
             // A soft halo around the core while thinking or working.
             if (halo.value > 0.01f) {
-                val ring = 0.5f + 0.5f * breath.floatValue
-                drawCircle(color.copy(alpha = 0.14f * halo.value), radius = (4.6f + 1.4f * ring) * unit, center = center)
+                val swell = 0.5f + 0.5f * breath.floatValue
+                drawCircle(core.copy(alpha = 0.14f * halo.value), radius = (4.6f + 1.4f * swell) * unit, center = center)
             }
             // The orbit and its moons turn around the core.
             rotate(angle.floatValue, center) {
                 val arcSize = Size(20f * unit, 20f * unit)
                 val arcTopLeft = Offset(center.x - 10f * unit, center.y - 10f * unit)
-                drawArc(color, startAngle = -33.5f, sweepAngle = 133.5f, useCenter = false,
+                drawArc(ring, startAngle = -33.5f, sweepAngle = 133.5f, useCenter = false,
                     topLeft = arcTopLeft, size = arcSize, style = stroke)
-                drawArc(color, startAngle = 146.5f, sweepAngle = 133.5f, useCenter = false,
+                drawArc(ring, startAngle = 146.5f, sweepAngle = 133.5f, useCenter = false,
                     topLeft = arcTopLeft, size = arcSize, style = stroke)
-                drawCircle(color, radius = 2f * unit, center = center + Offset(7f * unit, -7f * unit), style = stroke)
-                drawCircle(color, radius = 2f * unit, center = center + Offset(-7f * unit, 7f * unit), style = stroke)
+                drawCircle(ring, radius = 2f * unit, center = center + Offset(7f * unit, -7f * unit), style = stroke)
+                drawCircle(ring, radius = 2f * unit, center = center + Offset(-7f * unit, 7f * unit), style = stroke)
             }
             scale(pulse, pivot = center) {
-                drawCircle(color, radius = 3f * unit, center = center, style = stroke)
+                drawCircle(core, radius = 3f * unit, center = center, style = stroke)
             }
         }
     })
 }
+
+/** Darkens a color step by step until it stands out on the picture's white background. */
+private fun readableOnWhite(color: Color): Color {
+    var c = color
+    repeat(8) { if (c.luminance() > 0.22f) c = lerp(c, Color(0xFF1C1B1F), 0.25f) }
+    return c
+}
+
+/** A saved "#RRGGBB" logo color, or null to follow the theme. */
+internal fun orbitLogoColor(hex: String?): Color? =
+    hex?.takeIf { it.isNotBlank() }?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }

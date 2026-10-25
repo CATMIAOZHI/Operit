@@ -12,6 +12,7 @@ import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.data.preferences.AppLaunchMode
 import com.ai.assistance.operit.data.preferences.LaunchModePreferences
 import com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences
+import com.ai.assistance.operit.data.preferences.OrbitAppearance
 import com.ai.assistance.operit.data.preferences.OrbitAvatarSize
 import com.ai.assistance.operit.data.preferences.OrbitChatPalette
 import com.ai.assistance.operit.data.preferences.OrbitColorMode
@@ -35,6 +36,8 @@ import org.json.JSONObject
 internal object OrbitSettingsTools {
     const val NAME = "orbit_settings"
     private const val MAX_CHANGES_JSON = 8_000
+    /** The logo color value that follows the chat theme. */
+    private const val LOGO_THEME = "theme"
     private val intervals = listOf(5L, 10L, 20L, 50L)
     private val delays = listOf(1L, 5L, 10L, 30L, 60L)
 
@@ -47,6 +50,8 @@ internal object OrbitSettingsTools {
         PALETTE("chat_palette", R.string.orbit_settings_palette, choices = OrbitChatPalette.entries.map { it.name.lowercase(Locale.ROOT) }),
         AVATAR("avatar_size", R.string.orbit_settings_avatar, choices = OrbitAvatarSize.entries.map { it.name.lowercase(Locale.ROOT) }),
         COLOR("color_mode", R.string.orbit_settings_color, choices = OrbitColorMode.entries.map { it.name.lowercase(Locale.ROOT) }),
+        LOGO_USER("logo_user_color", R.string.orbit_settings_logo_user),
+        LOGO_ORBIT("logo_orbit_color", R.string.orbit_settings_logo_orbit),
         WEEKLY("weekly_limit", R.string.orbit_settings_weekly, true),
         EXTRA("extra_limit", R.string.orbit_settings_extra, true),
         EXTRA_WEEKLY("extra_weekly_reset", R.string.orbit_settings_extra_weekly, true),
@@ -78,6 +83,7 @@ internal object OrbitSettingsTools {
         ),
         details = """
   - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, learning cadence and context compaction belong to this Orbit.
+  - logo_user_color and logo_orbit_color color your default logo, shown while you have no avatar picture. The core in the middle stands for the user; the ring and its two moons stand for you, always circling the user. Each takes "#RRGGBB" or "theme" (follow the chat theme). A very light color is darkened so it stays visible on the white background.
   - Context compaction applies to the main chat and every side chat together. Sizes are K tokens measured against your main model. context_compact_at_k=0 means automatic; get also returns where compaction starts now. context_window_k has no effect while context_use_full_window is true.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.
@@ -103,6 +109,8 @@ internal object OrbitSettingsTools {
             Setting.PALETTE -> orbit.appearance.palette.name.lowercase(Locale.ROOT)
             Setting.AVATAR -> orbit.appearance.avatarSize.name.lowercase(Locale.ROOT)
             Setting.COLOR -> orbit.appearance.mode.name.lowercase(Locale.ROOT)
+            Setting.LOGO_USER -> orbit.appearance.logoUserColor ?: LOGO_THEME
+            Setting.LOGO_ORBIT -> orbit.appearance.logoOrbitColor ?: LOGO_THEME
             Setting.WEEKLY -> quota.weeklyLimit
             Setting.EXTRA -> quota.extraLimit
             Setting.EXTRA_WEEKLY -> quota.extraWeekly
@@ -243,6 +251,10 @@ internal object OrbitSettingsTools {
                             put("unit", "K tokens")
                         }
                         Setting.CONTEXT_FULL, Setting.CONTEXT_AUTO -> put("options", JSONArray(listOf(false, true)))
+                        Setting.LOGO_USER, Setting.LOGO_ORBIT -> {
+                            put("options", JSONArray(listOf(LOGO_THEME, "#RRGGBB")))
+                            put("unit", "hex color")
+                        }
                         Setting.REFILL, Setting.PAUSE -> put("options", JSONArray(listOf(true)))
                         Setting.EXTRA_WEEKLY, Setting.LOGIN, Setting.DEVELOPER -> put("options", JSONArray(listOf(false, true)))
                         else -> put("options", JSONArray(setting.choices))
@@ -302,6 +314,12 @@ internal object OrbitSettingsTools {
             return raw
         }
         return when (setting) {
+            Setting.LOGO_USER, Setting.LOGO_ORBIT -> {
+                val value = (raw as? String)?.trim().orEmpty()
+                if (raw == JSONObject.NULL || value.equals(LOGO_THEME, ignoreCase = true)) LOGO_THEME
+                else OrbitAppearance.normalizeColor(value)
+                    ?: throw IllegalArgumentException(text.getString(R.string.orbit_settings_logo_invalid))
+            }
             Setting.WEEKLY, Setting.EXTRA -> {
                 val value = integer(text, raw)
                 val min = if (setting == Setting.WEEKLY) OrbitQuota.MIN_WEEKLY else 0L
@@ -373,6 +391,7 @@ internal object OrbitSettingsTools {
                 else -> R.string.orbit_mode_system
             }
             Setting.LAUNCH -> if (value == "orbit") R.string.nav_orbit else R.string.launch_mode_standard
+            Setting.LOGO_USER, Setting.LOGO_ORBIT -> if (value == LOGO_THEME) R.string.orbit_settings_logo_theme else null
             Setting.LOGIN -> if (value == true) R.string.orbit_settings_main_login else R.string.orbit_settings_own_login
             Setting.PAUSE -> if (value == true) R.string.orbit_settings_paused else R.string.orbit_settings_running
             else -> null
@@ -388,6 +407,7 @@ internal object OrbitSettingsTools {
             Setting.CONTEXT_WINDOW -> "${value}K"
             Setting.CONTEXT_AT -> if ((value as? Number)?.toDouble() == 0.0) text.getString(R.string.orbit_settings_context_auto_point)
                 else "${value}K"
+            Setting.LOGO_USER, Setting.LOGO_ORBIT -> value.toString()
             else -> text.getString(if (value == true) R.string.orbit_settings_on else R.string.orbit_settings_off)
         }
     }
@@ -460,6 +480,12 @@ internal object OrbitSettingsTools {
             }
             Setting.COLOR -> preferences.updateAppearance(state.orbit.id) {
                 it.copy(mode = OrbitColorMode.valueOf((value as String).uppercase(Locale.ROOT)))
+            }
+            Setting.LOGO_USER -> preferences.updateAppearance(state.orbit.id) {
+                it.copy(logoUserColor = (value as String).takeIf { hex -> hex != LOGO_THEME })
+            }
+            Setting.LOGO_ORBIT -> preferences.updateAppearance(state.orbit.id) {
+                it.copy(logoOrbitColor = (value as String).takeIf { hex -> hex != LOGO_THEME })
             }
             // Only the approved field is written; the other two are read inside the same edit.
             Setting.WEEKLY -> OrbitQuota.setLimits(context, weekly = value as Long)

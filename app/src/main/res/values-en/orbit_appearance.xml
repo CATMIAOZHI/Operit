@@ -5,6 +5,11 @@
     <string name="orbit_appearance_palette">Chat theme</string>
     <string name="orbit_appearance_avatar_size">Avatar size</string>
     <string name="orbit_appearance_mode">Mode</string>
+    <string name="orbit_appearance_logo">Logo colors</string>
+    <string name="orbit_appearance_logo_hint">This logo shows when there is no avatar picture. The center is you, and the ring is %1$s, always circling you.</string>
+    <string name="orbit_appearance_logo_user">Center · You</string>
+    <string name="orbit_appearance_logo_orbit">Ring · %1$s</string>
+    <string name="orbit_appearance_logo_theme">Follow theme</string>
     <string name="orbit_appearance_save_failed">Could not save appearance. Please try again.</string>
     <string name="orbit_palette_avatar">Colors from avatar</string>
     <string name="orbit_palette_sky">Sky</string>
