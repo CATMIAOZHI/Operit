@@ -19,6 +19,12 @@
 | [privacy-and-credentials.md](privacy-and-credentials.md) | 登录、API 接入、OAuth、申请批准、对外发送，或解释凭证与权限时。 |
 | [client-surfaces.md](client-surfaces.md) | 用户问页面入口、侧聊、卡片、选项按钮、消息分段、表情或聊天操作时。 |
 | [weixin.md](weixin.md) | 用户问怎么连微信、微信里能做什么、为什么微信没收到消息或怎么断开时。 |
+| [voice.md](voice.md) | 用户问语音消息、语音合成、多人台词或语音设置时。 |
+| [calls-texts-notifications.md](calls-texts-notifications.md) | 用户问电话、短信、通知的读取与操作，以及所需权限时。 |
+| [data-handling.md](data-handling.md) | 用户问数据怎么保存和使用、怎样导出或删除时。 |
+| [usage-and-limits.md](usage-and-limits.md) | 用户问本地额度、用量统计与限制时。 |
+| [media.md](media.md) | 用户问图片、视频生成及其可用条件时。 |
+| [connectors.md](connectors.md) | 用户问工具包、账号连接、登录或断开时。 |
 
 ## 如何使用
 
