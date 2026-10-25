@@ -107,10 +107,12 @@ status: in-progress
 
 ## 参考资料
 
-两个参考包都由用户从 Muse 导出：
+参考包都由用户从 Muse 导出：
 
 - `muse-orbit-reference.zip`：完整系统提示词 `system-prompt.md`、导读和 `docs/` 下 29 份子系统文档。
 - `muse-orbit-reference-supplement.zip`：工具参数、技能原文、运行时文件样例、记忆库和调度结构、实战案例。
+- `muse-orbit-reference-supplement2.zip`：对齐系统（夜间复盘流程、ALIGNMENT_SYNTHESIS 章节、ALIGNMENT_STATE 结构）、主动推送管线、上下文压缩、客户端呈现协议（分段、表情回传、安全卡片）。
+- `muse-orbit-reference-supplement3.zip`：一次主动推送的完整实战案例。
 
 做某一项之前，先读对应资料：
 
@@ -132,8 +134,8 @@ status: in-progress
 
 ## 还缺的参考资料
 
-下面这些在资料里被引用了，但两个包都没有。做到对应功能时再请用户补：
+下面这些在资料里被引用了，但现有的包都没有。做到对应功能时再请用户补：
 
 - 技能附属文件：flight-booking 的 `flights.md`、`browser-booking.md`、`checkout.md`；hotel-booking 的 `hotels.md`；shopping 的 `browser-checkout.md`、`social-shopping-links.md`、`marketplace.md`；spoken-audio 的 `speech.md`；forget 的 `artifact-inventory.md`
 - 未打包的技能：`goals`、`custom-connector-setup`、`generate_podcast`、`trip-planning`、`marketplaces`、`wearables-comms`
-- 后台循环的提示词：夜间 Dreaming、对齐总结、人物关系整理、Ideas 生成、主动消息准备
+- 后台循环的提示词原文：夜间 Dreaming、对齐总结、人物关系整理、Ideas 生成、主动消息准备（补充包 2 只有流程和文件结构，没有提示词原文）
