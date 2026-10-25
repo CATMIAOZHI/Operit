@@ -25,7 +25,7 @@ import org.json.JSONObject
 
 /**
  * The nightly alignment review reads its whole window itself, page by page, and writes down what
- * it learned as it goes (Muse's dream reads every turn). Nothing is fed into its prompt: the app
+ * it learned as it goes (every turn is read). Nothing is fed into its prompt: the app
  * only keeps two positions for it, how far it has read and how far it has written down, so a run
  * that is compacted, stopped by its time limit or killed goes on from the last written page.
  * The window (its chats, start and end) is fixed when a review begins and stays fixed until the

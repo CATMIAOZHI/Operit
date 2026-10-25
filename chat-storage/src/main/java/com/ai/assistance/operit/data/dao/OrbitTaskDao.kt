@@ -149,6 +149,8 @@ interface OrbitTaskDao {
     suspend fun insertArtifact(artifact: OrbitArtifactVersionEntity)
     @Query("DELETE FROM orbit_artifact_versions WHERE orbitId=:orbitId")
     suspend fun deleteArtifacts(orbitId: String)
+    @Query("DELETE FROM orbit_artifact_versions WHERE id=:id")
+    suspend fun deleteArtifact(id: String): Int
 
     @Transaction
     suspend fun confirmArtifact(artifact: OrbitArtifactVersionEntity, generation: Long, summary: String): Boolean {
@@ -549,7 +551,7 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_deliveries SET verdict=:verdict, verdictReason=:reason, verdictNote=:note, " +
         "presentation=:presentation, decidedAt=:now " +
         "WHERE id=:id AND orbitId=:orbitId AND chatId=:chatId AND state='SENT' " +
-        "AND (verdict='' OR verdictReason='" + OrbitDeliveryEntity.UNREGISTERED + "')")
+        "AND (verdict='' OR verdict='" + OrbitDeliveryEntity.UNREGISTERED + "')")
     suspend fun decide(id: String, orbitId: String, chatId: String, verdict: String, reason: String, note: String,
         presentation: String, now: Long): Int
 
@@ -558,9 +560,9 @@ interface OrbitTaskDao {
         "WHERE id=:id AND orbitId=:orbitId AND verdict='" + OrbitDeliveryEntity.SEND + "'")
     suspend fun respond(id: String, orbitId: String, response: String, note: String, now: Long): Int
 
-    /** Items Orbit spoke about without a call count as not sent. */
-    @Query("UPDATE orbit_deliveries SET verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='" +
-        OrbitDeliveryEntity.UNREGISTERED + "', decidedAt=:now WHERE id IN (:ids) AND verdict=''")
+    /** Items Orbit spoke about without a call count as not sent; no reason is made up for them. */
+    @Query("UPDATE orbit_deliveries SET verdict='" + OrbitDeliveryEntity.UNREGISTERED + "', verdictReason='', " +
+        "decidedAt=:now WHERE id IN (:ids) AND verdict=''")
     suspend fun markUnregistered(ids: List<String>, now: Long)
 
     @Query("SELECT * FROM orbit_deliveries WHERE runId = :runId")

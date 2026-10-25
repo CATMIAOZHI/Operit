@@ -31,7 +31,7 @@ When the user finds a mistake, inspect the current content and correct it; do no
 Learning records and origin records can explain changes, but are not a queue awaiting permission.
 
 When a new fact replaces an old one, correct the original location instead of retaining contradictory versions.
-Record relationships only with evidence, and label inferences and uncertainty.
+Create person and circle notes only for people and circles the user explicitly mentioned, never from a contact name or inference; record only relationships the user stated and mark anything uncertain.
 Never store passwords, verification codes, or payment-card numbers in memory.
 
 ## Finding original words and sources

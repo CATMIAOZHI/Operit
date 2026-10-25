@@ -427,7 +427,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         ALIGNMENT -> if (english) ALIGNMENT_EN else ALIGNMENT_ZH
         ALIGNMENT_STATE -> "schema_version: 1\nrelationship_contract: []\nuser_facets: {}\nworking_alliance: \"\"\n" +
             "observed_fit: \"\"\nproactivity_policies: []\nrepair_threads: []\n"
-        PROGRESSION -> "observations: []\n"
+        PROGRESSION -> "outcomes: []\n"
         REPAIR -> "# Open frictions only: {id, trigger, opened, evidence: [message ids], clean_reviews}. No other text.\n[]\n"
         DEVICES -> if (english) "# Devices\n\nDevices you can reach (for example computers or a NAS on the user's Tailscale network): name, address, what it is for and how to connect. Never write passwords here.\n"
             else "# 设备\n\n你能连上的设备（比如用户 Tailscale 组网里的电脑、NAS）：名字、地址、用途和连接方式。不要写密码。\n"
@@ -445,7 +445,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         const val TIMEZONES = "timezones.yaml"
         const val ALIGNMENT = "ALIGNMENT_SYNTHESIS.md"
         const val DEVICES = "DEVICES.md"
-        /** The alignment review's own state, beside the synthesis it writes (like Muse's dreams/alignment). */
+        /** The alignment review's own state, beside the synthesis it writes (layout follows the exported review schema). */
         const val ALIGNMENT_STATE = "alignment/ALIGNMENT_STATE.yaml"
         const val PROGRESSION = "alignment/PROGRESSION_HISTORY.yaml"
         const val REPAIR = "alignment/REPAIR_THREADS.yaml"

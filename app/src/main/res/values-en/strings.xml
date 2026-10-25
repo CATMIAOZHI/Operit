@@ -9640,6 +9640,7 @@
     <string name="orbit_item_reason_preferences">you said you don\'t want this kind</string>
     <string name="orbit_item_reason_not_now">not worth interrupting you now</string>
     <string name="orbit_item_reason_undecided">it never decided to tell you</string>
+    <string name="orbit_item_reason_unregistered">it never recorded whether to tell you</string>
     <string name="orbit_item_reason_expired">it had expired by then</string>
     <string name="orbit_routine_source_chat">Reads the recent Orbit conversation</string>
     <string name="orbit_routine_source_goals">Reads your active goals</string>

@@ -1124,6 +1124,7 @@ internal fun watchSuffix(task: OrbitTaskEntity): String =
 private fun proactiveVerdictText(item: OrbitDeliveryEntity, name: String): String {
     val reason = stringResource(when {
         item.verdictNote == OrbitDeliveryEntity.EXPIRED -> R.string.orbit_item_reason_expired
+        item.verdict == OrbitDeliveryEntity.UNREGISTERED -> R.string.orbit_item_reason_unregistered
         else -> when (item.verdictReason) {
             "time_sensitive" -> R.string.orbit_item_reason_time_sensitive
             "changed" -> R.string.orbit_item_reason_changed

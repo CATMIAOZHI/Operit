@@ -14,7 +14,7 @@ description: Find meeting times and manage the calendar - gather constraints, re
 
 - Read the phone's calendar with orbit_device calendar.search. A calendar you could not read does not mean that person is free; say which ones you could not check.
 - Treat tentative events as possible conflicts.
-- Offer two or three workable times in each participant's local time. When the user only needs to pick one, an option card from the dynamic_ui package works well.
+- Offer two or three workable times in each participant's local time. When the user only needs to pick one, offer reply options with orbit_create_options.
 
 ## Create or change events
 

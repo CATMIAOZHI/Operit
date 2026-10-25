@@ -23,3 +23,11 @@ description: Search and compare flights - rank whole trips by verified total pri
 - Orbit cannot pay for the user. Stop at the payment page and hand the browser to the user. If the price rises or terms get worse before payment, tell the user first.
 - When a payment result is uncertain, check the order list or the confirmation message before booking again.
 - Report the booking reference, flight numbers, local times, baggage allowance and change rules; add a check-in or departure reminder with orbit_task when useful.
+
+## Reference files
+
+The `Skill directory` returned when loading this skill is its directory. Use an available file-reading tool to read the reference paths within it.
+
+- `references/flights.md`: Read when searching, verifying whole itineraries or comparing fares.
+- `references/booking.md`: Read after selection, for booking review and ticket status.
+- `references/sources.md`: Read for missing airlines, gaps or wider coverage.

@@ -70,14 +70,15 @@ status: in-progress
 | 起名卡片 | 新 Orbit 的主聊天前几轮，提示词里带一段「第一次相处」，让 Orbit 用 dynamic_ui 做起名和气质卡片，用户选好后 `orbit_set_name` 改名、写进 IDENTITY.md [DONE batch4] |
 | 密码凭据保险箱 | `orbit_vault`：request_login / request_api_key 在聊天里放一张安全卡片并立即返回；用户点卡片在弹层里填，值直接加密存进保险箱，保存后隐藏通知 Orbit 接着做，关掉卡片什么都不发；Orbit 只看到网站和打码用户名；fill 只填进同站 https 网页，http_request 只发往登记的主机；设置「隐私与数据」里可查看、删除 [DONE batch5，卡片流程 batch7] |
 | 发图片和文件 | `orbit_file` 的 send：把 `files/` 里的文件像真人一样发进聊天，图片点一下存相册，其他文件点一下用别的应用打开；Orbit 读图时的「已查看 N 张图像」在 Orbit 聊天里不显示 [DONE batch7] |
-| 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、动态点子、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉；SOUL / IDENTITY / 提示词里的命中只列出请用户自己改；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5] |
+| 「忘掉」流程 | `orbit_forget`：plan 只读找出记忆、资料、文件（含回收站）、技能、目标、任务、任务成果的每个版本、动态（含卡片）、点子（含已下架的和全部字段）、跟踪、批准记录、未发汇报、修改记录里的副本，用户确认后 confirm 一起清掉，没回答的批准申请安静拒绝；SOUL / IDENTITY / 提示词 / 用户自己加的技能里的命中只列出请用户自己改；图片音视频只按文件名查；聊天记录要用户自己删；清掉的内容不能再写回记忆 [DONE batch5，补充包 4 补漏扫] |
 | 记忆溯源 | `orbit_memory_origin`：说明一条记忆来自哪次聊天、什么时候、谁批准、替换了几行，不返回旧正文 [DONE batch5] |
 | 发送前检查 | `orbit_presend_check`：对外发消息前核对草稿已定稿、没有密码和已忘内容、收件人明确、用户看过并同意 [DONE batch5] |
 | 从别的 AI 导入记忆 | 设置「隐私与数据」→ 复制提示词给别的 AI，粘贴回答后交给 Orbit 整理进记忆 [DONE batch5] |
 | 自己申请工具包和模型 | `orbit_packages` 的 request_import 一次申请导入多个主程序包或文件夹里的包，`orbit_models` 的 request_create 申请新建模型配置；都弹批准卡片，用户同意后 App 直接执行并把结果隐藏通知给 Orbit；模型密钥在卡片里填。包要的 API 密钥用 `orbit_vault` 的 request_api_key + package_name 存进保险箱，只给该包运行时读；codex_draw 用 request_chatgpt_login 放 ChatGPT 登录卡 [DONE] |
 | 分享到 Operit | 从别的 App 分享文字或文件时可选「发给 Orbit」，文件存进 `files/shared/`；Orbit 通知点开直接进 Orbit 聊天 [DONE batch5] |
 | 消息频道（微信） | 对应 Muse 的 WhatsApp：设置「消息频道 → 微信」扫码连一个专属微信机器人；微信里的话进「微信」侧聊，Orbit 在那里说的话、图片和文件自动发回微信，分段逐条发；只收绑定用户的消息，读不到其他微信聊天；`orbit_channel` 查看状态；微信太久没互动时消息先存着，用户下次说话后补发 [DONE 7d322e6f8，分段修复 776072753] |
-| 专项技能 | 预装 8 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息），按 Operit 真实工具改写，付款一律交给用户；每个 Orbit 只装一次，删了不装回 [DONE batch5] |
+| 专项技能 | 预装 10 个技能（替用户发消息、约时间、管理邮件、购物、机票、酒店、出行交通、语音消息、目标引导七类、行程规划），按 Operit 真实工具改写，付款一律交给用户；整个技能目录（含参考文件）一起装；新版本只更新没被改过的文件，用户改过的保留，删掉的文件和技能不装回 [DONE batch5，补充包 4] |
+| 后台任务输出契约 | 按补充包 4 的投递枚举和可观测结构：主动消息五种呈现格式、拒绝过的提议不再提、不写内部 id；夜间复盘 `PROGRESSION_HISTORY.yaml` 用 `outcomes`，对齐总结只写相处方式；点子带三项评分（可行性 / 个人契合 / 新颖度）、理由和来源，过往点子标明下架原因；人物与圈子只为用户明确提到的建档 [DONE 补充包 4] |
 ## 部分有，需要接进 Orbit
 
 - [ ] 深度研究（Muse 的 `browser.deep_research`）——暂不做
@@ -113,6 +114,7 @@ status: in-progress
 - `muse-orbit-reference-supplement.zip`：工具参数、技能原文、运行时文件样例、记忆库和调度结构、实战案例。
 - `muse-orbit-reference-supplement2.zip`：对齐系统（夜间复盘流程、ALIGNMENT_SYNTHESIS 章节、ALIGNMENT_STATE 结构）、主动推送管线、上下文压缩、客户端呈现协议（分段、表情回传、安全卡片）。
 - `muse-orbit-reference-supplement3.zip`：一次主动推送的完整实战案例。
+- `muse-orbit-reference-supplement4.zip`：技能附属文件、goals 和 trip-planning 等技能全文、主动推送投递枚举、五个后台任务的可观测结构（没有后台提示词原文）。
 
 做某一项之前，先读对应资料：
 
@@ -134,8 +136,6 @@ status: in-progress
 
 ## 还缺的参考资料
 
-下面这些在资料里被引用了，但现有的包都没有。做到对应功能时再请用户补：
-
-- 技能附属文件：flight-booking 的 `flights.md`、`browser-booking.md`、`checkout.md`；hotel-booking 的 `hotels.md`；shopping 的 `browser-checkout.md`、`social-shopping-links.md`、`marketplace.md`；spoken-audio 的 `speech.md`；forget 的 `artifact-inventory.md`
-- 未打包的技能：`goals`、`custom-connector-setup`、`generate_podcast`、`trip-planning`、`marketplaces`、`wearables-comms`
-- 后台循环的提示词原文：夜间 Dreaming、对齐总结、人物关系整理、Ideas 生成、主动消息准备（补充包 2 只有流程和文件结构，没有提示词原文）
+补充包 4 已补齐技能附属文件和未打包的技能。flight-booking 的 `browser-booking.md`、`checkout.md` 和 shopping 的 `marketplace.md` 实际不存在，不要按名字凭空写。
+不打算做的：本地播客（generate_podcast）、二手交易（marketplaces）、穿戴通信（wearables-comms）；「接入新服务」（custom-connector-setup）放到最后。
+还缺、而且导不出来的：后台任务的提示词原文（夜间复盘、对齐总结、人物关系整理、点子生成、主动消息准备）。它们是服务端任务定义，现在的提示词按补充包 2、3 的流程和补充包 4 的输出结构自己写；以后能导出时再对照。

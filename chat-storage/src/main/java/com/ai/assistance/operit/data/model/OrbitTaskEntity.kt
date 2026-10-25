@@ -121,14 +121,14 @@ data class OrbitDeliveryEntity(
     @ColumnInfo(defaultValue = "'regular'") val priority: String = "regular",
     /** What the draft rests on (message ids, sources, links), for Orbit's check before telling. */
     @ColumnInfo(defaultValue = "''") val evidence: String = "",
-    /** Orbit's call in the chat: [SEND], [SKIP], or empty while it has not decided. */
+    /** Orbit's call in the chat: [SEND], [SKIP], [UNREGISTERED] when it never made one, or empty while undecided. */
     @ColumnInfo(defaultValue = "''") val verdict: String = "",
-    /** One of the fixed send or skip reasons, or [UNREGISTERED]. */
+    /** One of the fixed send or skip reasons; empty for [UNREGISTERED]. */
     @ColumnInfo(defaultValue = "''") val verdictReason: String = "",
     /** Why, in Orbit's words: what it checked. Answers "why did you send me this?". */
     @ColumnInfo(defaultValue = "''") val verdictNote: String = "",
     @ColumnInfo(defaultValue = "0") val decidedAt: Long = 0,
-    /** How a sent item was put to the user: [TEXT] or [OPTIONS]; empty for skips and older items. */
+    /** How a sent item was put to the user: one of [FORMATS]; empty for skips and older items. */
     @ColumnInfo(defaultValue = "''") val presentation: String = "",
     /** What the user did with a sent item: one of [RESPONSES], or empty while nothing is known. */
     @ColumnInfo(defaultValue = "''") val userResponse: String = "",
@@ -139,12 +139,14 @@ data class OrbitDeliveryEntity(
     companion object {
         const val SEND = "send"
         const val SKIP = "skip"
-        /** Orbit spoke without registering the item: it counts as not sent. */
+        /** Orbit spoke without registering the item: no call was made, and it counts as not sent. */
         const val UNREGISTERED = "unregistered"
         /** The item ran out before it was handed to Orbit. */
         const val EXPIRED = "expired"
         const val TEXT = "text"
         const val OPTIONS = "options"
+        /** Plain message, reply options, a map card, a list card, or a saved piece of work. */
+        val FORMATS = listOf(TEXT, OPTIONS, "map_widget", "list_widget", "artifact")
         /** Took it up / turned it down / had already handled it themselves / something else. */
         val RESPONSES = setOf("accepted", "declined", "already_done", "other")
     }

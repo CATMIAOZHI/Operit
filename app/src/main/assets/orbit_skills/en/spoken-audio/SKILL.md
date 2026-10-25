@@ -24,3 +24,9 @@ description: Make voice messages and readings - write words meant for listening,
 
 - Put the markdown orbit_voice returns into the reply as is, and the user can play it in the chat.
 - Making audio does not mean it may be sent to anyone else or published.
+
+## Reference files
+
+The `Skill directory` returned when loading this skill is its directory. Use an available file-reading tool to read the reference paths within it.
+
+- `references/speech.md`: Read for voice selection, scripts, long or multi-speaker audio and generation failures.

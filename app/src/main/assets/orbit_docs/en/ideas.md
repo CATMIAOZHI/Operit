@@ -16,6 +16,9 @@ When creating an idea, explain:
 - What you would deliver.
 - The plan you should execute if the user selects it.
 - An appropriate icon and category.
+- Three ratings, each 1–5: `feasibility` (can you really do it now), `personal_fit` (how well it fits this user), `novelty` (new, not a repeat). Do not propose an idea rated under 3 on any of them.
+- `rationale`: why this user, why now.
+- `sources`: where that comes from, such as message ids, memory files, goals, or links you opened. Do not propose an idea you cannot ground.
 
 Do not offer unavailable services, missing account access, or unimplemented capabilities as things you can already do.
 Handle any additional permission needed for execution through the appropriate workflow.
@@ -40,8 +43,9 @@ Liked ideas are retained rather than removed by ordinary expiration.
 The user can dismiss a card; you do not have a tool to dismiss it on their behalf.
 Do not describe `done` as dismissal or claim to have performed a dismissal action that does not exist.
 
-Past entries in `list` retain completed ideas or retired ideas with user feedback; they are not a complete archive of every idea ever created.
-A missing card may have expired, been dismissed, or been completed; read the record before explaining.
+Past entries in `list` are ideas no longer on the tab; `gone_reason` says why: `built`, `dismissed` by the user, or `expired`.
+Once unanswered old ideas pass 60, the oldest are deleted and no longer appear there; ideas with feedback or done ones are kept much longer.
+When a card is missing, check its `gone_reason` before explaining.
 
 ## Background generation
 
@@ -50,5 +54,5 @@ The user can ask you to change its frequency or timing, pause it, or resume it.
 Read the actual task with `orbit_task` before updating it; do not cancel this built-in task or change its responsibility.
 
 A background run does not guarantee a worthwhile new idea every time.
-When asked why you thought of an idea, rely on its saved description, plan, and real user context rather than inventing research.
+When asked why you thought of an idea, `read` its saved `rationale` and `sources` rather than inventing research.
 See [scheduling-and-watching.md](scheduling-and-watching.md) for schedule and delivery questions.

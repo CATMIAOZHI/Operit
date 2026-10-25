@@ -19,7 +19,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * The Feed, Ideas and Tracking boards of one Orbit, like Muse's tabs. Each board is one JSON file
+ * The Feed, Ideas and Tracking boards of one Orbit, the tabs on its page. Each board is one JSON file
  * in the Orbit's own folder (`orbit/<UUID>/feed.json`, `ideas.json`, `tracking.json`), next to its
  * memory and skills, so deleting the Orbit deletes them too.
  */
@@ -49,6 +49,14 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
     /** One thing an idea would deliver, listed under "What's included". */
     data class Part(val title: String, val detail: String)
 
+    /**
+     * Ideas only: how Orbit rated an idea before proposing it, each 1 to 5 (0 on ideas made before
+     * ratings): can it really be done, how well it fits this user, how new it is.
+     */
+    data class Scores(val feasibility: Int, val fit: Int, val novelty: Int) {
+        val rated get() = feasibility > 0 && fit > 0 && novelty > 0
+    }
+
     data class Item(
         val id: String,
         val title: String,
@@ -73,6 +81,12 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val doneAt: Long = 0,
         /** Feed only: a Dynamic UI card is saved beside the post (see [readCard]) and shown under its text. */
         val card: Boolean = false,
+        /** Ideas only: the ratings Orbit gave it. */
+        val scores: Scores = Scores(0, 0, 0),
+        /** Ideas only: why this idea, for this user, now. */
+        val rationale: String = "",
+        /** Ideas only: where the reason comes from (a message id, a memory file, a goal, a link Orbit opened). */
+        val sources: List<String> = emptyList(),
     ) {
         val liked get() = vote > 0
         val disliked get() = vote < 0
@@ -93,7 +107,10 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val MAX_PARTS = 6
         const val MAX_PART_TITLE = 60
         const val MAX_PART_DETAIL = 200
-        /** Muse retires idea cards after about two weeks. */
+        const val MAX_RATIONALE = 1000
+        const val MAX_SOURCES = 6
+        const val MAX_SOURCE = 300
+        /** Idea cards retire after about two weeks. */
         const val IDEA_LIFETIME_MS = 14L * 24 * 60 * 60 * 1000
         /** Ideas the user has not answered: the newest are kept, older ones make room. */
         const val IDEA_PLAIN_LIMIT = 60
@@ -178,6 +195,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         category: String = "",
         /** Feed only: a checked Dynamic UI card document shown under the post. */
         card: String = "",
+        scores: Scores = Scores(0, 0, 0),
+        rationale: String = "",
+        sources: List<String> = emptyList(),
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
@@ -185,10 +205,24 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val checkedCategory = checkCategory(category)
         require(card.isEmpty() || board == Board.FEED) { "Only feed posts take a card" }
         require(card.length <= MAX_CARD) { "The card is larger than $MAX_CARD characters" }
+        require(board == Board.IDEAS || (rationale.isBlank() && sources.isEmpty() && !scores.rated)) {
+            "Only ideas take ratings, a rationale and sources"
+        }
+        listOf(scores.feasibility, scores.fit, scores.novelty).forEach {
+            require(it in 0..5) { "Ratings are whole numbers from 1 to 5" }
+        }
+        val checkedRationale = rationale.trim().also {
+            require(it.length <= MAX_RATIONALE) { "The rationale is at most $MAX_RATIONALE characters" }
+        }
+        val checkedSources = sources.map { it.trim() }.filter { it.isNotEmpty() }.also { list ->
+            require(list.size <= MAX_SOURCES) { "At most $MAX_SOURCES sources" }
+            require(list.all { it.length <= MAX_SOURCE }) { "A source is at most $MAX_SOURCE characters" }
+        }
         val now = System.currentTimeMillis()
         val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),
-            emojiOf(emoji), checkParts(parts), checkedCategory, card = card.isNotBlank())
+            emojiOf(emoji), checkParts(parts), checkedCategory, card = card.isNotBlank(),
+            scores = scores, rationale = checkedRationale, sources = checkedSources)
         // The card is written before the post is saved, so a saved post never points at a missing card.
         if (item.card) atomic(File(directory, CARD_FOLDER), cardFile(directory, id), card)
         val all = listOf(item) + items
@@ -368,10 +402,18 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         .put("category", item.category)
         .put("doneAt", item.doneAt)
         .put("card", item.card)
+        .apply {
+            if (item.scores.rated) put("scores", JSONObject().put("feasibility", item.scores.feasibility)
+                .put("fit", item.scores.fit).put("novelty", item.scores.novelty))
+            if (item.rationale.isNotEmpty()) put("rationale", item.rationale)
+            if (item.sources.isNotEmpty()) put("sources", JSONArray(item.sources))
+        }
 
     private fun item(value: JSONObject): Item {
         val notes = value.optJSONArray("notes") ?: JSONArray()
         val parts = value.optJSONArray("parts") ?: JSONArray()
+        val scores = value.optJSONObject("scores")
+        val sources = value.optJSONArray("sources") ?: JSONArray()
         return Item(
             value.getString("id"), value.getString("title"), value.optString("body"), value.optString("extra"),
             value.optString("state", initialState()),
@@ -385,6 +427,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             value.optString("category"),
             value.optLong("doneAt"),
             value.optBoolean("card"),
+            Scores(scores?.optInt("feasibility") ?: 0, scores?.optInt("fit") ?: 0, scores?.optInt("novelty") ?: 0),
+            value.optString("rationale"),
+            (0 until sources.length()).map { sources.optString(it) }.filter { it.isNotBlank() },
         )
     }
 }

@@ -20,3 +20,9 @@ description: Find and compare stays by the full-stay total with taxes, location 
 - Orbit cannot pay for the user. Stop at the payment page and hand the browser to the user. If the price rises or terms get worse, tell the user first.
 - When a result is uncertain, check the bookings before trying again.
 - Report the confirmation number, address, check-in and check-out times, the free-cancellation deadline and what to bring; add reminders with orbit_task when useful.
+
+## Reference files
+
+The `Skill directory` returned when loading this skill is its directory. Use an available file-reading tool to read the reference paths within it.
+
+- `references/hotels.md`: Read for occupancy, full-stay comparisons, final review and reservations.

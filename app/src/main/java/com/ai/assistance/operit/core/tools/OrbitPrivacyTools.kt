@@ -39,7 +39,7 @@ internal object OrbitPrivacyTools {
         ),
         details = """
   - 「忘掉」是在你这里全面清理，不是改一条笔记。改错的事实、换个偏好，用记忆工具改就行，不用这个。
-  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含每晚复盘记录、对齐状态和回收站）、技能、目标、定时任务、动态和点子、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止、purge 把回收站里的那份彻底删掉）。SOUL.md、IDENTITY.md 和自定义提示词里的命中只列出来，不会自动改，要请用户自己在 Orbit 资料页里改。scanned 是查过的范围，unscanned 是读不了、没能检查的地方。
+  - 先 plan（只读，不改任何东西）。它会列出记忆、用户资料、文件（含每晚复盘记录、对齐状态和回收站）、技能、目标、定时任务、任务做出的成果（含旧版本）、动态（含卡片）、点子和跟踪、批准记录、还没发出的汇报、修改记录里有这条信息的地方，以及准备怎么处理（edit 整行删除、delete 整条删除、stop 停止、purge 把回收站里的那份彻底删掉）。还没回答的批准申请会被安静地拒绝。SOUL.md、IDENTITY.md、自定义提示词和用户自己加的技能里的命中只列出来（user_review），不会自动改，要请用户自己在 Orbit 资料页或技能设置里改。scanned 是查过的范围，unscanned 是读不了、没能检查的地方；图片、音视频只按文件名查。
   - 用日常说法把范围告诉用户：记忆、提醒和定时任务、你做的东西、记录。说清楚删除不能撤销，再问一句是否确认。不要在回复里重复要忘掉的内容，用「那件事」指代。
   - 用户明确同意后才 confirm。沉默、含糊、只同意一部分，都不算同意；用户改了范围就重新 plan。
   - confirm 会重新检查，情况变了会要求重新 plan。完成后按结果汇报清掉了哪些类别、停了哪些任务、还剩什么。
@@ -83,7 +83,8 @@ internal object OrbitPrivacyTools {
 
     private fun args(tool: AITool) = tool.parameters.associate { it.name to it.value }
     private val CANNOT_ERASE = listOf("this chat and earlier chats (the user can delete those chats from the chat list)",
-        "things already sent to outside services or other apps", "data backups the user made", "background run logs")
+        "things already sent to outside services or other apps", "data backups the user made", "background run logs",
+        "what is inside pictures, audio, video and other non-text files (only their file names are checked)")
     private fun fail(name: String, e: Exception) = ToolResult(name, false, StringResultData(""), error = e.message ?: e.toString())
 
     private suspend fun orbitOf(context: Context): Pair<OrbitProfile, String?> {
