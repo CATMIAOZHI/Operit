@@ -406,7 +406,7 @@ object AIMessageManager {
 
         val buildMemoryStartTime = messageTimingNow()
         val memory = getMemoryFromMessages(
-            messages = chatHistory,
+            messages = orbitHistoryForModel(chatId, chatHistory),
             splitByRole = splitHistoryByRole,
             targetRoleName = currentRoleName,
             groupOrchestrationMode = groupOrchestrationMode
@@ -580,9 +580,9 @@ object AIMessageManager {
             .getInstance(context).contextSnapshot(chatId)
         val memory =
             getMemoryFromMessages(
-                messages = collaboration?.historyCutoff?.let { cutoff ->
+                messages = orbitHistoryForModel(chatId, collaboration?.historyCutoff?.let { cutoff ->
                     chatHistory.filter { it.timestamp > cutoff }
-                } ?: chatHistory,
+                } ?: chatHistory),
                 splitByRole = splitHistoryByRole,
                 targetRoleName = currentRoleName,
                 groupOrchestrationMode = groupOrchestrationMode
@@ -1360,9 +1360,22 @@ object AIMessageManager {
         return false
     }
 
+    /** In an Orbit chat, the parts of a split reply go back to the model as one reply with its breaks. */
+    private suspend fun orbitHistoryForModel(chatId: String?, messages: List<ChatMessage>): List<ChatMessage> {
+        if (chatId.isNullOrBlank() || messages.size < 2) return messages
+        val prefs = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context)
+        val orbit = (prefs.loadedSnapshot() ?: prefs.current()).orbitForChat(chatId)
+        if (orbit?.talkChatIds?.contains(chatId) != true) return messages
+        return kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            com.ai.assistance.operit.services.core.OrbitMessageBreaks.rejoin(messages)
+        }
+    }
+
     /**
      * 从完整的聊天记录中提取用于AI上下文的“记忆”。
      * 这会获取上次总结之后的所有消息。
+     *
+     * Orbit 聊天里，一次回复拆成的几条消息会先用 `<message_break/>` 拼回去，见 [orbitHistoryForModel]。
      *
      * @param messages 完整的聊天记录。
      * @return 一个Pair列表，包含角色和内容，用于AI请求。
