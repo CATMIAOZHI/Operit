@@ -279,10 +279,18 @@ private fun EditableOrbitAvatar(orbit: OrbitProfile, onDraft: (String) -> Unit, 
     var cropSource by remember { mutableStateOf<Uri?>(null) }
     val context = LocalContext.current
     val resources = LocalResources.current
+    val shared = LocalOrbitSharedAvatar.current
     Box(modifier) {
-        OrbitAvatar(
+        // Orbit's one picture shows here; it moves in from the chat header on top of the page.
+        if (shared != null) OrbitAvatarSlot(
+            shared = shared,
+            size = ORBIT_PROFILE_AVATAR_DP,
+            onClickLabel = stringResource(R.string.orbit_change_avatar),
+            onClick = { showSheet = true },
+            report = { shared.profileAvatar = it },
+        ) else OrbitAvatar(
             orbit = orbit,
-            size = 120,
+            size = ORBIT_PROFILE_AVATAR_DP,
             animatePet = true,
             petVisible = LocalProfileVisible.current && !showSheet && cropSource == null,
             onClickLabel = stringResource(R.string.orbit_change_avatar),

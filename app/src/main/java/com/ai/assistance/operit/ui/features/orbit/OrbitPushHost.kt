@@ -7,6 +7,7 @@ import androidx.activity.compose.LocalOnBackPressedDispatcherOwner
 import androidx.activity.compose.PredictiveBackHandler
 import androidx.compose.animation.core.animate
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.AnimationVector1D
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
@@ -31,6 +32,7 @@ import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.GraphicsLayerScope
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -318,6 +320,8 @@ private fun <T> forget(holder: SaveableStateHolder, before: List<T>, after: List
  * still intercept back first. [backEnabled] false leaves back to something on top of it.
  * [fade] shows it in place instead (a search page over the menu): it fades in, and the back swipe
  * fades and shrinks it a little under the finger.
+ * [zoom] draws the page itself from its place (0 shown, 1 gone), for a page that grows out of
+ * something on screen; [progress] then lets others follow the same motion.
  */
 @Composable
 internal fun OrbitCoverPage(
@@ -327,10 +331,13 @@ internal fun OrbitCoverPage(
     backEnabled: Boolean = true,
     dim: Float = 0f,
     fade: Boolean = false,
+    progress: Animatable<Float, AnimationVector1D>? = null,
+    zoom: (GraphicsLayerScope.(Float) -> Unit)? = null,
     content: @Composable () -> Unit,
 ) {
     // 0: in place; 1: off screen.
-    val slide = remember { Animatable(if (visible) 0f else 1f) }
+    val ownSlide = remember { Animatable(if (visible) 0f else 1f) }
+    val slide = progress ?: ownSlide
     var composed by remember { mutableStateOf(visible) }
     // True from a finished back swipe until the page is gone: taps and another back wait.
     var settling by remember { mutableStateOf(false) }
@@ -340,10 +347,18 @@ internal fun OrbitCoverPage(
     LaunchedEffect(visible) {
         if (visible) {
             composed = true
-            val ms = if (fromBottom) OrbitMotion.PRESENT_MS else OrbitMotion.PUSH_MS
+            val ms = when {
+                zoom != null -> OrbitMotion.ZOOM_IN_MS
+                fromBottom -> OrbitMotion.PRESENT_MS
+                else -> OrbitMotion.PUSH_MS
+            }
             slide.animateTo(0f, tween(ms, easing = OrbitMotion.Easing))
         } else {
-            val ms = if (fromBottom) OrbitMotion.DISMISS_MS else OrbitMotion.PUSH_MS
+            val ms = when {
+                zoom != null -> OrbitMotion.ZOOM_OUT_MS
+                fromBottom -> OrbitMotion.DISMISS_MS
+                else -> OrbitMotion.PUSH_MS
+            }
             try {
                 slide.animateTo(1f, tween(ms, easing = OrbitMotion.Easing))
                 composed = false
@@ -364,7 +379,8 @@ internal fun OrbitCoverPage(
         try {
             events.collect { slide.snapTo(start + (1f - start) * it.progress) }
             settling = true
-            val rest = (OrbitMotion.PUSH_MS * (1f - slide.value)).toInt().coerceAtLeast(120)
+            val full = if (zoom != null) OrbitMotion.ZOOM_OUT_MS else OrbitMotion.PUSH_MS
+            val rest = (full * (1f - slide.value)).toInt().coerceAtLeast(120)
             slide.animateTo(1f, tween(rest, easing = OrbitMotion.Easing))
             currentOnDismiss()
         } catch (e: CancellationException) {
@@ -385,6 +401,7 @@ internal fun OrbitCoverPage(
         Modifier.fillMaxSize()
             .graphicsLayer {
                 when {
+                    zoom != null -> zoom(slide.value)
                     fade -> {
                         alpha = 1f - slide.value
                         val scale = 1f - 0.06f * slide.value
