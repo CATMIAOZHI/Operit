@@ -9200,6 +9200,7 @@
     <string name="orbit_quota_range_week">本周</string>
     <string name="orbit_quota_range_30">近 30 天</string>
     <string name="orbit_quota_range_90">近 90 天</string>
+    <string name="orbit_quota_range_all">全部时间</string>
     <string name="orbit_usage_chat">聊天</string>
     <string name="orbit_usage_subagent">子代理</string>
     <string name="orbit_usage_task">后台任务</string>
@@ -9462,6 +9463,10 @@
     <string name="orbit_permission_failed">没能打开，请到系统设置里手动允许</string>
     <string name="orbit_permission_phone_title">给 %1$s 开启「%2$s」</string>
     <string name="orbit_permission_phone_on">已开启，%1$s 现在可以用了</string>
+    <string name="orbit_device_access_title">设备控制权限</string>
+    <string name="orbit_device_access_card_title">让 %1$s 能控制手机</string>
+    <string name="orbit_device_access_card_on">已开启：%1$s</string>
+    <string name="orbit_device_access_note">设置 ADB 调试（Shizuku）或 Root 后，它能点屏幕、装应用、改系统设置。设备管理员只能锁屏等少数操作。</string>
     <string name="orbit_permission_open_settings">去设置</string>
     <string name="orbit_permission_in_settings">系统不再弹出授权框了，请在这里打开「%1$s」</string>
     <string name="orbit_task_timeout">每次运行最多 %1$d 分钟</string>

@@ -55,7 +55,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
-internal enum class OrbitCardPage { SPEECH_SETTINGS, MODEL_CONFIG }
+internal enum class OrbitCardPage { SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS }
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
 internal val LocalOrbitOpenPage = compositionLocalOf<((OrbitCardPage) -> Unit)?> { null }
@@ -233,6 +233,31 @@ internal fun OrbitSpeechSettingsPage(onBack: () -> Unit) {
             Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
         Box(Modifier.fillMaxWidth().weight(1f)) {
             com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSettingsScreen(onBackPressed = onBack)
+        }
+    }
+}
+
+/** The app's own access page (ADB debugging through Shizuku, device admin, Root), opened inside Orbit. */
+@Composable
+internal fun OrbitDeviceAccessPage(name: String, onBack: () -> Unit, onDraft: (String) -> Unit) {
+    OrbitPageBack(onBack = onBack)
+    androidx.compose.runtime.DisposableEffect(Unit) {
+        onDispose { com.ai.assistance.operit.features.orbit.OrbitPermissionCards.deviceAccessPageClosed() }
+    }
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)
+        .statusBarsPadding().navigationBarsPadding()) {
+        OrbitPageHeader(stringResource(R.string.orbit_device_access_title), onBack,
+            Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
+        Box(Modifier.fillMaxWidth().weight(1f)) {
+            val terminalDraft = stringResource(R.string.orbit_device_access_terminal_draft)
+            val terminalLabel = stringResource(R.string.orbit_device_access_terminal_button, name)
+            // The page's terminal setup button asks Orbit, which installs the terminal itself.
+            com.ai.assistance.operit.ui.features.demo.screens.ShizukuDemoScreen(
+                navigateTo = { screen ->
+                    if (screen == com.ai.assistance.operit.ui.main.screens.Screen.TerminalSetup) onDraft(terminalDraft)
+                },
+                terminalSetupLabel = terminalLabel,
+            )
         }
     }
 }

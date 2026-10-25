@@ -52,7 +52,9 @@ fun ShizukuDemoScreen(
                                                 android.app.Application
                                 )
                 ),
-        navigateTo: ScreenNavigationHandler? = null
+        navigateTo: ScreenNavigationHandler? = null,
+        /** The terminal setup button's text, when [navigateTo] does something else with it. */
+        terminalSetupLabel: String? = null
 ) {
     val context = LocalContext.current
     val updateNotify = stringResource(R.string.shizuku_demo_update_notify)
@@ -696,7 +698,8 @@ fun ShizukuDemoScreen(
                     onOpenTerminalScreen = { 
                         // 跳转到TerminalSetup，直接显示配置界面
                         navigateTo?.invoke(Screen.TerminalSetup)
-                    }
+                    },
+                    openTerminalLabel = terminalSetupLabel
                 )
             }
         }

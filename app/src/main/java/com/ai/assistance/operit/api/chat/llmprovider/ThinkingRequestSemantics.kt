@@ -219,7 +219,8 @@ object ThinkingRequestSemantics {
                             ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
                     ApiProviderType.OPENAI,
                     ApiProviderType.OPENAI_GENERIC,
-                    ApiProviderType.OPENCODE_ZEN_FREE ->
+                    ApiProviderType.OPENCODE_ZEN_FREE,
+                    ApiProviderType.OPENCODE_GO ->
                         resolveOpenAiChatReasoningEffortOverride(modelParameters)
 
                     ApiProviderType.OPENAI_LOCAL,
@@ -296,7 +297,8 @@ object ThinkingRequestSemantics {
                     ?.let(::textSummary) ?: ThinkingRequestSummary.NotSent
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
-            ApiProviderType.OPENCODE_ZEN_FREE ->
+            ApiProviderType.OPENCODE_ZEN_FREE,
+            ApiProviderType.OPENCODE_GO ->
                 resolveOpenAiChatReasoningEffortOverride(modelParameters)
                     ?: ThinkingRequestSummary.Effort(
                         defaultReasoningEffort(effectiveProviderType, qualityLevel)!!,
@@ -438,7 +440,8 @@ object ThinkingRequestSemantics {
             ApiProviderType.DEEPSEEK -> normalizeDeepseekEffort(effort)
             ApiProviderType.GROK_ACCOUNT,
             ApiProviderType.COMMAND_CODE,
-            ApiProviderType.OPENCODE_ZEN_FREE -> effort
+            ApiProviderType.OPENCODE_ZEN_FREE,
+            ApiProviderType.OPENCODE_GO -> effort
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
             ApiProviderType.OPENAI_CODEX,
@@ -501,7 +504,8 @@ object ThinkingRequestSemantics {
         when (providerType) {
             ApiProviderType.OPENAI,
             ApiProviderType.OPENAI_GENERIC,
-            ApiProviderType.OPENCODE_ZEN_FREE ->
+            ApiProviderType.OPENCODE_ZEN_FREE,
+            ApiProviderType.OPENCODE_GO ->
                 resolveOpenAiChatReasoningEffortOverride(modelParameters)
             ApiProviderType.OPENAI_RESPONSES, ApiProviderType.OPENAI_RESPONSES_GENERIC ->
                 resolveResponsesOverride(modelParameters)
@@ -515,6 +519,7 @@ object ThinkingRequestSemantics {
             ApiProviderType.OPENAI_RESPONSES,
             ApiProviderType.OPENAI_RESPONSES_GENERIC,
             ApiProviderType.OPENCODE_ZEN_FREE,
+            ApiProviderType.OPENCODE_GO,
         )
 
     fun normalizeDeepseekEffort(effort: String): String =

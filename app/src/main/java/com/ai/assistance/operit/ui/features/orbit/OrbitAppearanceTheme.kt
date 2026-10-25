@@ -24,7 +24,6 @@ import com.ai.assistance.operit.core.application.OperitApplication
 import com.ai.assistance.operit.data.preferences.OrbitChatPalette
 import com.ai.assistance.operit.data.preferences.OrbitColorMode
 import com.ai.assistance.operit.data.preferences.OrbitProfile
-import com.ai.assistance.operit.data.preferences.UserPreferencesManager
 import com.ai.assistance.operit.ui.theme.LocalOpaquePageAppearance
 import com.ai.assistance.operit.ui.theme.OpaquePageAppearance
 import kotlinx.coroutines.CancellationException
@@ -50,7 +49,7 @@ internal fun orbitPaletteColor(palette: OrbitChatPalette, avatar: Color): Color 
 @Composable
 internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -> Unit) {
     val context = LocalContext.current.applicationContext
-    val avatar = orbit.avatarUri ?: UserPreferencesManager.getBuiltInCharacterAvatarUri(orbit.sourceRoleCardId)
+    val avatar = orbitPictureUri(orbit)
     val avatarColor by produceState(Color(0xFFDDE6F2), avatar) {
         value = Color(0xFFDDE6F2)
         if (avatar != null) {

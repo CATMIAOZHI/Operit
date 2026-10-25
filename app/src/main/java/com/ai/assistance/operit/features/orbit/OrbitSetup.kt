@@ -140,7 +140,10 @@ internal object OrbitSetup {
         val id = "orbit-setup-" + UUID.randomUUID().toString().take(8)
         configs.createConfig(providerName.take(40), id)
         try {
-            val config = configs.updateModelConfig(id, key, endpoint, models.joinToString(","), provider)
+            configs.updateModelConfig(id, key, endpoint, models.joinToString(","), provider)
+            // The catalog sets the request protocol (how thinking strength is sent) and picture support.
+            com.ai.assistance.operit.data.model.ModelAutoConfig.fill(app, id)
+            val config = checkNotNull(configs.getModelConfig(id)) { "The model configuration could not be read" }
             // The request blocks on the network, so a timer cancels it at the limit itself;
             // waiting for the call to return would wait for the much longer network limit.
             val service = java.util.concurrent.atomic.AtomicReference<com.ai.assistance.operit.api.chat.llmprovider.AIService?>()

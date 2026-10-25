@@ -166,22 +166,39 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
-    fun customOpenAiTransportsDoNotReceiveInferredReasoningControls() {
-        listOf(ApiProviderType.OPENAI_GENERIC, ApiProviderType.OPENAI_RESPONSES_GENERIC)
-            .forEach { providerType ->
-                val request =
-                    buildFunctionalReasoningRequest(
-                        providerType = providerType,
-                        modelName = "gpt-5.4-mini",
-                        modelParameters = emptyList(),
-                        thinkingQualityLevel = 5,
-                    )
+    fun customOpenAiTransportsPassTheFunctionEffortForModelsTheCatalogDoesNotKnow() {
+        val chat = buildFunctionalReasoningRequest(
+            providerType = ApiProviderType.OPENAI_GENERIC,
+            modelName = "gpt-5.4-mini",
+            modelParameters = emptyList(),
+            thinkingQualityLevel = 1,
+        )
+        assertTrue(chat.enableThinking)
+        assertEquals("low", chat.parameterValue("reasoning_effort"))
+        assertTrue(consumeAutomaticReasoningSuppression(chat.modelParameters).suppressAutomaticReasoning)
 
-                assertFalse(request.enableThinking)
-                val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
-                assertTrue(consumed.suppressAutomaticReasoning)
-                assertTrue(consumed.modelParameters.isEmpty())
-            }
+        val responses = buildFunctionalReasoningRequest(
+            providerType = ApiProviderType.OPENAI_RESPONSES_GENERIC,
+            modelName = "gpt-5.4-mini",
+            modelParameters = emptyList(),
+            thinkingQualityLevel = 1,
+        )
+        assertTrue(responses.enableThinking)
+        assertEquals("low", responses.responsesEffort())
+    }
+
+    @Test
+    fun customOpenAiTransportsSendNoEffortWhenTheCatalogListsNone() {
+        val request = buildFunctionalReasoningRequest(
+            providerType = ApiProviderType.OPENCODE_GO,
+            modelName = "some-model",
+            modelParameters = emptyList(),
+            thinkingQualityLevel = 5,
+            catalogReasoning = com.ai.assistance.operit.data.model.ModelProtocolSettings(reasoningEfforts = emptyList<String>()),
+        )
+        val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
+        assertTrue(consumed.suppressAutomaticReasoning)
+        assertTrue(consumed.modelParameters.none { it.apiName == "reasoning_effort" })
     }
 
     @Test
@@ -247,7 +264,7 @@ class FunctionalReasoningAIServiceTest {
     }
 
     @Test
-    fun unknownDeepSeekModelsPreserveProviderManagedThinkingControls() {
+    fun unknownDeepSeekModelsGetTheFunctionEffortLikeKnownOnes() {
         val nativeThinking = objectParameter("thinking", "{\"type\":\"disabled\"}")
         val nativeEffort = stringParameter("reasoning_effort", "low")
         val request =
@@ -259,9 +276,8 @@ class FunctionalReasoningAIServiceTest {
             )
 
         assertTrue(request.enableThinking)
-        val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
-        assertTrue(consumed.suppressAutomaticReasoning)
-        assertEquals(listOf(nativeThinking, nativeEffort), consumed.modelParameters)
+        assertEquals("max", request.parameterValue("reasoning_effort"))
+        assertTrue(request.modelParameters.none { it.apiName == "thinking" })
     }
 
     @Test
@@ -1224,7 +1240,8 @@ class FunctionalReasoningAIServiceTest {
         val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
 
         assertTrue(consumed.suppressAutomaticReasoning)
-        assertEquals(listOf("temperature"), consumed.modelParameters.map { it.apiName })
+        // The catalog does not know the model, so the function's own effort passes through.
+        assertEquals(listOf("temperature", "reasoning_effort"), consumed.modelParameters.map { it.apiName })
         assertTrue(
             consumed.modelParameters.none {
                 it.apiName == SUPPRESS_AUTOMATIC_REASONING_API_NAME
@@ -1238,9 +1255,8 @@ class FunctionalReasoningAIServiceTest {
     }
 
     /**
-     * Function requests on the Zen free tier take no reasoning control: the provider now reaches
-     * the chat Completions reasoning_effort path, and without the suppression its automatic effort
-     * would come from the chat slider instead of this function's own level.
+     * Function requests on the Zen free tier carry the function's own level, and the suppression
+     * keeps the chat slider from replacing it.
      */
     @Test
     fun zenFreeFunctionRequestsKeepTheChatSliderOutOfTheirBody() {
@@ -1254,7 +1270,7 @@ class FunctionalReasoningAIServiceTest {
         val consumed = consumeAutomaticReasoningSuppression(request.modelParameters)
 
         assertTrue(consumed.suppressAutomaticReasoning)
-        assertEquals(listOf("temperature"), consumed.modelParameters.map { it.apiName })
+        assertEquals(listOf("temperature", "reasoning_effort"), consumed.modelParameters.map { it.apiName })
     }
 
     @Test

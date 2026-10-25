@@ -15,6 +15,7 @@ import kotlinx.coroutines.withContext
 internal object OrbitOnboarding {
     private const val MARKER = ".onboarded"
     private const val KEEP_ALIVE_MARKER = ".keepalive_offered"
+    private const val ENV_MARKER = ".env_checked"
     /** After this many user messages the first talk is over, whatever was settled. */
     private const val USER_MESSAGES = 8
     /** After this many user messages the keep-alive offer is past too; long-standing Orbits never get it. */
@@ -26,6 +27,8 @@ internal object OrbitOnboarding {
         File(OrbitPreferences.getInstance(context).orbitDir(orbitId), MARKER)
     private fun keepAliveMarker(context: Context, orbitId: String) =
         File(OrbitPreferences.getInstance(context).orbitDir(orbitId), KEEP_ALIVE_MARKER)
+    private fun envMarker(context: Context, orbitId: String) =
+        File(OrbitPreferences.getInstance(context).orbitDir(orbitId), ENV_MARKER)
 
     suspend fun markDone(context: Context, orbitId: String) = withContext(Dispatchers.IO) {
         runCatching { marker(context, orbitId).apply { parentFile?.mkdirs() }.createNewFile() }
@@ -35,6 +38,12 @@ internal object OrbitOnboarding {
     /** The keep-alive card was offered (or is no longer due): the hint about it stops. */
     suspend fun markKeepAliveOffered(context: Context, orbitId: String) = withContext(Dispatchers.IO) {
         runCatching { keepAliveMarker(context, orbitId).apply { parentFile?.mkdirs() }.createNewFile() }
+        Unit
+    }
+
+    /** Orbit reached the last step of the setup check (the device-access card): the hint about it stops. */
+    suspend fun markEnvChecked(context: Context, orbitId: String) = withContext(Dispatchers.IO) {
+        runCatching { envMarker(context, orbitId).apply { parentFile?.mkdirs() }.createNewFile() }
         Unit
     }
 
@@ -52,31 +61,62 @@ internal object OrbitOnboarding {
     }
 
     /**
-     * Once the name is settled, a new Orbit asks once, in its own words, to keep Operit awake in the
-     * background, and offers the keep-alive card. Nothing is said when both are already on.
+     * Once the name is settled, a new Orbit looks at its setup once: whether the terminal environment
+     * is installed and whether Operit has device control access, then asks once, in its own words, to
+     * keep Operit awake in the background. Each part drops out when done; keep-alive is skipped when on.
      */
     private suspend fun keepAliveHint(context: Context, orbit: OrbitProfile, english: Boolean): String? {
         if (orbit.createdAt < KEEP_ALIVE_SINCE) return null
-        if (withContext(Dispatchers.IO) { keepAliveMarker(context, orbit.id).exists() }) return null
+        val (keepAliveDone, envDone) = withContext(Dispatchers.IO) {
+            keepAliveMarker(context, orbit.id).exists() to envMarker(context, orbit.id).exists()
+        }
+        if (keepAliveDone && envDone) return null
         val users = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().userMessageCount(orbit.chatId)
         if (users >= KEEP_ALIVE_USER_MESSAGES) {
             markKeepAliveOffered(context, orbit.id)
+            markEnvChecked(context, orbit.id)
             return null
         }
-        if (OrbitTaskBlock.status(context).allOn) return null
-        return if (english) KEEP_ALIVE_EN else KEEP_ALIVE_ZH
+        val keepAlive = !keepAliveDone && !OrbitTaskBlock.status(context).allOn
+        if (!keepAlive && envDone) return null
+        return listOfNotNull(
+            if (!envDone) (if (english) ENV_EN else ENV_ZH) else null,
+            if (keepAlive) (if (english) KEEP_ALIVE_EN else KEEP_ALIVE_ZH) else null,
+        ).joinToString("\n")
     }
+
+    private val ENV_ZH = """
+        <orbit_setup_check>
+        初次见面已经过去了。先悄悄看一下你的环境，再挑自然的时机（别打断用户正在说的事）用你自己的口吻说结果：
+        1. 调用 orbit_components action=list，看终端环境装没装。没装就说一句终端能帮他做什么（跑脚本、处理文件），问要不要装；他同意就用 action=request_install 申请。
+        2. 调用 orbit_permission_card permission=device_access。已经开着就不会放卡；没开会放一张卡，用一句话说明有了它你能帮他点屏幕、装应用、改设置。
+        一次只放一张卡，一件一件来；他说不用的就别再提。
+        </orbit_setup_check>
+    """.trimIndent()
+
+    private val ENV_EN = """
+        <orbit_setup_check>
+        The first talk is behind you. Quietly look at your setup, then at a natural moment (without cutting into what the
+        user is saying) tell them in your own words what you found:
+        1. Call orbit_components action=list to see whether the terminal environment is installed. If not, say in one line
+           what it lets you do for them (run scripts, work with files) and ask whether to install it; if they agree, ask
+           with action=request_install.
+        2. Call orbit_permission_card permission=device_access. When it is on already no card is placed; otherwise a card
+           appears, and you say in one line that with it you can tap the screen, install apps and change settings for them.
+        One card at a time, one thing at a time; drop anything they decline.
+        </orbit_setup_check>
+    """.trimIndent()
 
     private val KEEP_ALIVE_ZH = """
         <orbit_keep_alive>
-        初次见面已经过去了。找个自然的时机（别打断用户正在说的事），用你自己的口吻提一句：你有些事要在后台按时帮他做（提醒、盯着网页、夜里整理），得让 Operit 在后台醒着才行。
+        找个自然的时机（别打断用户正在说的事），用你自己的口吻提一句：你有些事要在后台按时帮他做（提醒、盯着网页、夜里整理），得让 Operit 在后台醒着才行。
         然后调用 orbit_permission_card（permission=keep_alive）放一张卡，让他一键打开。只提这一次；他不想开就算了。
         </orbit_keep_alive>
     """.trimIndent()
 
     private val KEEP_ALIVE_EN = """
         <orbit_keep_alive>
-        The first talk is behind you. When it fits naturally (without cutting into what the user is saying), mention in your own
+        When it fits naturally (without cutting into what the user is saying), mention in your own
         words that some things you do for them run in the background on time (reminders, watching pages, tidying up at
         night), so Operit needs to stay awake in the background. Then call orbit_permission_card with
         permission=keep_alive to put a card in the chat they can turn it on from. Bring it up only this once; if they
@@ -87,7 +127,7 @@ internal object OrbitOnboarding {
     private val HINT_ZH = """
         <orbit_first_talk>
         你和用户刚开始相处。你最初的名字是 Orbit，SOUL.md 一开始是默认的起点；名字和 SOUL.md 以当前实际为准。先回应用户说的话，再在头几次回复里自然地问他三件事。一次问一件，别堆成清单；已经问过、办完或他说不用的，不再提。
-        1. 要不要给你换个名字。用 orbit_create_options 给选项：「就叫 Orbit」、两个你觉得合适的名字、「我自己起一个」（最多 4 个选项）。定下来后用 orbit_set_name 改名；保持 Orbit 也调用一次确认。
+        1. 要不要给你换个名字。用 orbit_create_options 放专用选项卡（别用 dynamic_ui，也别只用文字列出来）：「就叫 Orbit」、两个你觉得合适的名字、「我自己起一个」（最多 4 个选项）。定下来后用 orbit_set_name 改名；保持 Orbit 也调用一次确认。
         2. 要不要参考某张角色卡来定你的性格。他想参考时，用 orbit_soul action=list_role_cards 列出角色卡让他选，再用 action=read_role_card 读那一张。把它的性格和说话方式融进 SOUL.md（先 read 再 update，起点里仍然适用的几条留着），改完告诉他改了什么。不想参考就保留现在的 SOUL.md。
         3. 要不要把其他 AI（比如 ChatGPT、豆包、Kimi）记得的关于他的事搬过来。想搬的话，把下面这段提示词原样发给他，让他交给那个 AI，再把回答贴回来：
         「{import_prompt}」
@@ -101,7 +141,7 @@ internal object OrbitOnboarding {
         point; your current name and SOUL.md are whatever they are now.
         Answer what they said first, then over your first few replies ask them three things, naturally and one at a time,
         never as a list. Do not bring up again anything already asked, done, or declined.
-        1. Whether they want another name for you. Offer choices with orbit_create_options: "Keep Orbit", two names you
+        1. Whether they want another name for you. Offer choices on the dedicated options card from orbit_create_options (not dynamic_ui, not a plain text list): "Keep Orbit", two names you
            think suit you, and "I'll pick one myself" (at most 4 options). Once settled, rename yourself with orbit_set_name; if they
            keep Orbit, confirm it once with orbit_set_name too.
         2. Whether to shape your character after one of their role cards. If they want to, list the cards with orbit_soul

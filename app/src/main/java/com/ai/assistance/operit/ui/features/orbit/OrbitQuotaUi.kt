@@ -99,6 +99,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Today's date and time zone, kept current while the page is shown: read again at midnight, on
@@ -146,6 +147,33 @@ private fun rememberQuotaUsage(): OrbitQuota.UsageData? {
     val usage by flow.collectAsState(initial = null as OrbitQuota.UsageData?)
     return usage
 }
+
+/**
+ * The usage grouped for [range], worked out off the main thread: all time can be years of days.
+ * The last result stays shown while a new one is worked out; null only before the first.
+ */
+@Composable
+private fun rememberUsageView(
+    usage: OrbitQuota.UsageData?,
+    range: UsageRange,
+    weekStart: Long,
+    orbitId: String,
+    otherLabel: String,
+    today: Today,
+): UsageView? {
+    val context = LocalContext.current
+    val view by androidx.compose.runtime.produceState<UsageView?>(null, usage, range, weekStart, orbitId, otherLabel, today) {
+        val data = usage ?: return@produceState
+        value = withContext(Dispatchers.Default) {
+            usageView(context, data, range, weekStart, orbitId, otherLabel, today.zone)
+        }
+    }
+    return view
+}
+
+/** A range with nothing in it, for the moment before the first grouping is ready. */
+private fun emptyUsageView(today: LocalDate) = UsageView(emptyList(), 0L, 0L,
+    listOf(UsageDay(today, 0L, 0L, 0L)), emptyList(), 0L, 0, 0)
 
 /** "已使用 5%"; a little use never shows as 0%, and an allowance of nothing shows as off. */
 @Composable
@@ -436,10 +464,12 @@ private fun ExtraModeRow(selected: Boolean, title: String, description: String, 
     }
 }
 
+/** [days] is the length for a rolling range; this week and all time have none. */
 private enum class UsageRange(@StringRes val label: Int, val days: Int?) {
     WEEK(R.string.orbit_quota_range_week, null),
     MONTH(R.string.orbit_quota_range_30, 30),
-    ALL(R.string.orbit_quota_range_90, OrbitQuota.KEEP_DAYS),
+    QUARTER(R.string.orbit_quota_range_90, 90),
+    ALL(R.string.orbit_quota_range_all, null),
 }
 
 @StringRes
@@ -507,9 +537,13 @@ private fun usageView(
     zone: ZoneId,
 ): UsageView {
     val today = LocalDate.now(zone)
-    val first = range.days?.let { today.minusDays((it - 1).toLong()) }
-        ?: Instant.ofEpochMilli(weekStart + 2 * 86_400_000L).atZone(zone).toLocalDate()
+    val first = when {
+        range.days != null -> today.minusDays((range.days - 1).toLong())
+        range == UsageRange.ALL -> data.rows.minOfOrNull { it.day }
+            ?.let { runCatching { LocalDate.parse(it) }.getOrNull() }?.coerceAtMost(today) ?: today
+        else -> Instant.ofEpochMilli(weekStart + 2 * 86_400_000L).atZone(zone).toLocalDate()
             .with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY))
+    }
     val from = first.toString()
     val inRange = data.rows.filter { it.day >= from }
     val mine = inRange.filter { it.orbitId == orbitId }
@@ -556,11 +590,34 @@ private val NO_COST = TokenStatsCostSummary(PricingCurrency.CNY, 0.0, 0L, 0L, 1.
 
 private val NO_TIME = TokenStatsDurationAggregate(0L, 0L, 0L, 0.0)
 
-/** The days as the main app's charts take them: one daily bucket each, input and output only. */
+/** Longer than this, the chart shows a bar a week, so all time stays readable and cheap to draw. */
+private const val DAILY_CHART_DAYS = 180
+
+/**
+ * A bar's time in the chart details, with the year: the day, or for a week's bar its first and last
+ * day, so a week's total never reads as one day's.
+ */
+private fun chartTimeLabel(bucket: TokenStatsTrendBucket, zone: ZoneId): String {
+    val first = Instant.ofEpochMilli(bucket.bucketStartMs).atZone(zone).toLocalDate()
+    val last = Instant.ofEpochMilli(bucket.bucketEndMs).atZone(zone).toLocalDate().minusDays(1)
+    val full = java.time.format.DateTimeFormatter.ofPattern("yyyy/MM/dd")
+    if (!last.isAfter(first)) return full.format(first)
+    val end = if (last.year == first.year) java.time.format.DateTimeFormatter.ofPattern("MM/dd").format(last) else full.format(last)
+    return "${full.format(first)} – $end"
+}
+
+/**
+ * The days as the main app's charts take them, input and output only: one bucket a day, or a week
+ * (from its Monday) once the range is longer than [DAILY_CHART_DAYS].
+ */
 private fun chartBuckets(days: List<UsageDay>, zone: ZoneId): List<TokenStatsTrendBucket> {
-    return days.map { day ->
-        val start = day.date.atStartOfDay(zone).toInstant().toEpochMilli()
-        val end = day.date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+    val groups: List<List<UsageDay>> = if (days.size <= DAILY_CHART_DAYS) days.map { listOf(it) }
+        else days.groupBy { it.date.with(TemporalAdjusters.previousOrSame(DayOfWeek.MONDAY)) }.values.toList()
+    return groups.map { group ->
+        val first = group.first().date
+        val start = first.atStartOfDay(zone).toInstant().toEpochMilli()
+        val end = group.last().date.plusDays(1).atStartOfDay(zone).toInstant().toEpochMilli()
+        val day = UsageDay(first, group.sumOf { it.input }, group.sumOf { it.output }, group.sumOf { it.calls })
         TokenStatsTrendBucket(
             bucketStartMs = start,
             bucketEndMs = end,
@@ -592,18 +649,19 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
     val context = LocalContext.current
     val loaded = rememberQuotaState()
     val usage = rememberQuotaUsage()
-    var range by rememberSaveable { mutableStateOf(UsageRange.WEEK) }
+    var range by rememberSaveable { mutableStateOf(UsageRange.ALL) }
     val state = loaded ?: OrbitQuota.State().at(System.currentTimeMillis())
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
     val zone = today.zone
-    // Grouping is redone only when the usage, the range, the week, the day or the zone changes, not on every frame.
-    val view = remember(usage, range, state.weekStart, orbit.id, otherLabel, today) {
-        usageView(context, usage ?: OrbitQuota.UsageData(emptyList(), emptyList()), range, state.weekStart,
-            orbit.id, otherLabel, zone)
-    }
+    // Grouping is redone off the main thread, only when the usage, the range, the week, the day or the zone changes.
+    val computed = rememberUsageView(usage, range, state.weekStart, orbit.id, otherLabel, today)
+    val view = computed ?: remember(today) { emptyUsageView(today.date) }
     var heatmapMode by rememberSaveable { mutableStateOf(TokenActivityViewMode.DAILY) }
-    val heatmapData = remember(usage, today) { usage?.let { heatmapYear(it, today) } }
+    val heatmapData by androidx.compose.runtime.produceState<TokenActivityYearData?>(null, usage, today) {
+        val data = usage ?: return@produceState
+        value = withContext(Dispatchers.Default) { heatmapYear(data, today) }
+    }
     val heatmap = TokenActivityUiState(
         loading = heatmapData == null,
         viewMode = heatmapMode,
@@ -611,7 +669,7 @@ internal fun OrbitUsagePage(orbit: OrbitProfile, onBack: () -> Unit, onOpenTrend
         selectedYear = today.date.year,
         yearData = heatmapData,
     )
-    val ready = usage != null
+    val ready = computed != null
     val cardColor = rememberOrbitCardColor()
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -825,12 +883,15 @@ private fun rememberOrbitCardColor() =
 
 /**
  * The main app's activity heatmap data for the last year: every Orbit's tokens by day, from the
- * year-long day totals, with the 90 days of detailed use taking over the days they cover (the
- * totals only started being kept with this version).
+ * detailed use by day, with the year-long day totals filling in days older versions no longer kept
+ * in detail.
  */
 private fun heatmapYear(data: OrbitQuota.UsageData, today: Today): TokenActivityYearData {
-    val byDay = HashMap<String, Long>(data.totals)
-    data.rows.groupBy { it.day }.forEach { (day, rows) -> byDay[day] = rows.sumOf { it.tokens } }
+    // Only the last year is drawn, so older days are dropped before anything is added up.
+    val oldest = today.date.minusDays(OrbitQuota.HEATMAP_DAYS.toLong()).toString()
+    val byDay = HashMap<String, Long>()
+    data.totals.forEach { (day, tokens) -> if (day >= oldest) byDay[day] = tokens }
+    data.rows.filter { it.day >= oldest }.groupBy { it.day }.forEach { (day, rows) -> byDay[day] = rows.sumOf { it.tokens } }
     val records = byDay.mapNotNull { (day, tokens) ->
         val date = runCatching { LocalDate.parse(day) }.getOrNull() ?: return@mapNotNull null
         TokenActivityRecord(date.atTime(12, 0).atZone(today.zone).toInstant().toEpochMilli(), tokens)
@@ -874,8 +935,14 @@ private fun UsageHeatmapCard(
             }
         }
         Spacer(Modifier.height(8.dp))
+        // The shades follow Orbit's look: from the empty cell colour up to its accent.
+        val empty = MaterialTheme.colorScheme.surfaceVariant
+        val accent = MaterialTheme.colorScheme.primary
+        val shades = remember(empty, accent) {
+            listOf(0f, 0.25f, 0.45f, 0.65f, 0.82f, 1f).map { androidx.compose.ui.graphics.lerp(empty, accent, it) }
+        }
         TokenActivityHeatmap(state = state, zone = zone, locale = locale,
-            textColor = MaterialTheme.colorScheme.onSurfaceVariant)
+            textColor = MaterialTheme.colorScheme.onSurfaceVariant, levelColors = shades)
     }
 }
 
@@ -893,7 +960,7 @@ private fun UsageTrendsRow(cardColor: androidx.compose.ui.graphics.Color, onOpen
     }
 }
 
-/** The main app's token and request trend charts, by day, for this week or the last 30 or 90 days. */
+/** The main app's token and request trend charts, by day, for this week, the last 30 or 90 days, or all time. */
 @Composable
 internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
@@ -905,15 +972,13 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
     val otherLabel = stringResource(R.string.orbit_usage_other_orbits)
     val today = rememberToday()
     val zone = today.zone
-    val view = remember(usage, range, state.weekStart, orbit.id, otherLabel, today) {
-        usageView(context, usage ?: OrbitQuota.UsageData(emptyList(), emptyList()), range, state.weekStart,
-            orbit.id, otherLabel, zone)
-    }
+    val computed = rememberUsageView(usage, range, state.weekStart, orbit.id, otherLabel, today)
+    val view = computed ?: remember(today) { emptyUsageView(today.date) }
     // The charts always draw every day of the range, so they keep their full height while loading
     // or empty; they are then hidden behind a note instead of shown as made-up zeros.
     val buckets = remember(view, zone) { chartBuckets(view.days, zone) }
     val hasData = view.days.any { it.calls > 0 || it.input + it.output > 0 }
-    val ready = usage != null
+    val ready = computed != null
     val cardColor = rememberOrbitCardColor()
     Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Column(
@@ -952,6 +1017,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                         stackLabels = { listOf(outputLabel, inputLabel) },
                         stackTotalSelector = { bucket -> bucket.totals.totalTokens.knownSum.toDouble() },
                         legendItems = listOf(outputLabel to colors.output, inputLabel to colors.uncachedInput),
+                        timeLabel = { chartTimeLabel(it, zone) },
                         )
                     }
                 }
@@ -966,6 +1032,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                         emptyText = emptyText,
                         chartLabel = requestsTitle,
                         valueSelector = { it.totals.requests.toDouble() },
+                        timeLabel = { chartTimeLabel(it, zone) },
                         )
                     }
                 }

@@ -4,6 +4,10 @@
     <string name="orbit_avatar_draft_image">帮我把头像换成这张图片。</string>
     <string name="orbit_avatar_draft_pet">帮我把头像换成我的宠物「%1$s」（宠物编号：%2$s）。</string>
     <string name="orbit_avatar_draft_role_card">帮我把头像换成角色卡「%1$s」的头像（角色卡 id：%2$s）。</string>
+    <string name="orbit_avatar_draft_default">帮我把头像换回 Orbit 默认的 logo。</string>
+    <string name="orbit_avatar_default">默认头像</string>
+    <string name="orbit_device_access_terminal_draft">帮我装一下终端环境。</string>
+    <string name="orbit_device_access_terminal_button">让 %1$s 帮你装</string>
     <string name="orbit_rename_draft">我想给你改个名字，叫：</string>
     <string name="orbit_avatar_pick_role_card">选一张角色卡</string>
     <string name="orbit_avatar_no_role_cards">还没有角色卡</string>
