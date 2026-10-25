@@ -11,6 +11,7 @@ import com.ai.assistance.operit.data.preferences.OrbitAppearance
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+import com.ai.assistance.operit.ui.features.orbit.OrbitLogoDefaults
 import com.ai.assistance.operit.ui.features.orbit.orbitLogoShownHex
 import java.io.File
 import org.json.JSONObject
@@ -21,8 +22,8 @@ import org.json.JSONObject
  */
 internal object OrbitAvatarTools {
     const val NAME = "orbit_set_avatar"
-    /** The logo color value that follows the chat theme. */
-    private const val THEME = "theme"
+    /** The logo color value that goes back to the logo's own default color. */
+    private const val DEFAULT = "default"
 
     val prompt = ToolPrompt(
         name = NAME,
@@ -32,14 +33,15 @@ internal object OrbitAvatarTools {
             ToolParameterSchema("image_path", description = "image：图片附件的 id（就是它的路径）", required = false),
             ToolParameterSchema("pet_id", description = "pet：宠物编号，用户的消息里会写明", required = false),
             ToolParameterSchema("role_card_id", description = "role_card：角色卡 id，用户的消息里会写明，或用 orbit_soul action=list_role_cards 查", required = false),
-            ToolParameterSchema("user_color", description = "default / logo_colors：logo 中间核心的颜色，代表用户。任意 #RRGGBB（或 #RGB），theme 表示跟随主题；不填就不变", required = false),
-            ToolParameterSchema("orbit_color", description = "default / logo_colors：logo 外圈和两颗卫星的颜色，代表你自己。任意 #RRGGBB（或 #RGB），theme 表示跟随主题；不填就不变", required = false),
+            ToolParameterSchema("user_color", description = "default / logo_colors：logo 中间核心的颜色，代表用户。任意 #RRGGBB（或 #RGB），default 表示恢复默认色；不填就不变", required = false),
+            ToolParameterSchema("orbit_color", description = "default / logo_colors：logo 外圈和两颗卫星的颜色，代表你自己。任意 #RRGGBB（或 #RGB），default 表示恢复默认色；不填就不变", required = false),
         ),
         details = """
   - 头像只能由你用这个工具换。用户想换头像时，会在 Orbit 资料页选图片或宠物，选好的内容作为一条消息发给你。
   - 图片附件不用先读，直接把它的 id 填进 image_path。
-  - 默认 logo 的含义：中间的核心是用户，外圈和两颗卫星是你，你始终围绕着用户转。两种颜色都可以自己挑，也可以按用户的要求填，颜色是头像的一部分，只能由你改。
-  - logo_colors 至少填 user_color、orbit_color 之一。正在用图片或宠物头像时 logo 不显示，颜色会先存着，换回 default 后生效。logo 画在白底上，太浅的颜色会自动压深，结果里的 shown_as 是实际显示的颜色。
+  - 默认 logo 的含义：中间的核心是用户，外圈和两颗卫星是你，你始终围绕着用户转。两种颜色都可以自己挑，也可以按用户的要求填，颜色是头像的一部分，只能由你改。默认色：中间 ${OrbitLogoDefaults.USER_HEX}，外圈 ${OrbitLogoDefaults.ORBIT_HEX}。
+  - logo 就是你的头像，聊天配色选「从头像取色」（默认）时，会从外圈颜色取色，所以改外圈颜色也会改变聊天配色。
+  - logo_colors 至少填 user_color、orbit_color 之一。正在用图片或宠物头像时 logo 不显示，颜色会先存着，换回 source=default 后生效。logo 画在白底上，太浅的颜色会自动压深，结果里的 shown_as 是实际显示的颜色。
   - 换好后简单告诉用户就行。
 """,
     )
@@ -67,8 +69,8 @@ internal object OrbitAvatarTools {
                 if (userColor == null && orbitColor == null) return
                 preferences.updateAppearance(orbit.id) {
                     val next = it.copy(
-                        logoUserColor = if (userColor != null) userColor.takeIf { c -> c != THEME } else it.logoUserColor,
-                        logoOrbitColor = if (orbitColor != null) orbitColor.takeIf { c -> c != THEME } else it.logoOrbitColor,
+                        logoUserColor = if (userColor != null) userColor.takeIf { c -> c != DEFAULT } else it.logoUserColor,
+                        logoOrbitColor = if (orbitColor != null) orbitColor.takeIf { c -> c != DEFAULT } else it.logoOrbitColor,
                     )
                     before = it.logoUserColor to it.logoOrbitColor
                     after = next.logoUserColor to next.logoOrbitColor
@@ -107,7 +109,7 @@ internal object OrbitAvatarTools {
                 "default" -> { saveColors(); preferences.setAvatar(orbit.id, null) }
                 "logo_colors" -> {
                     require(userColor != null || orbitColor != null) {
-                        "source=logo_colors needs user_color, orbit_color or both: #RRGGBB, #RGB or theme"
+                        "source=logo_colors needs user_color, orbit_color or both: #RRGGBB, #RGB or default"
                     }
                     saveColors()
                 }
@@ -118,8 +120,8 @@ internal object OrbitAvatarTools {
             if (now != null && (source == "default" || source == "logo_colors")) {
                 val current = now.appearance.logoUserColor to now.appearance.logoOrbitColor
                 val (old, new) = (before ?: current) to (after ?: current)
-                result.put("user_color", colorChange(old.first, new.first))
-                result.put("orbit_color", colorChange(old.second, new.second))
+                result.put("user_color", colorChange(old.first, new.first, OrbitLogoDefaults.USER_HEX))
+                result.put("orbit_color", colorChange(old.second, new.second, OrbitLogoDefaults.ORBIT_HEX))
                 val logoVisible = now.avatarUri.isNullOrBlank()
                 result.put("logo_visible", logoVisible)
                 result.put("note", if (logoVisible) "The logo with these colors shows on the Orbit page right away."
@@ -135,15 +137,16 @@ internal object OrbitAvatarTools {
         }
     }
 
-    /** A given color as "#RRGGBB" or [THEME]; null only when the argument is left out. */
+    /** A given color as "#RRGGBB" or [DEFAULT]; null only when the argument is left out. */
     private fun color(args: Map<String, String>, key: String): String? {
         val raw = args[key] ?: return null
-        require(raw.isNotEmpty()) { "$key is empty; give #RRGGBB, #RGB or theme, or leave $key out to keep it" }
-        if (raw.equals(THEME, ignoreCase = true)) return THEME
-        return requireNotNull(OrbitAppearance.normalizeColor(raw)) { "$key=$raw is not a color; use #RRGGBB, #RGB or theme" }
+        require(raw.isNotEmpty()) { "$key is empty; give #RRGGBB, #RGB or default, or leave $key out to keep it" }
+        if (raw.equals(DEFAULT, ignoreCase = true)) return DEFAULT
+        return requireNotNull(OrbitAppearance.normalizeColor(raw)) { "$key=$raw is not a color; use #RRGGBB, #RGB or default" }
     }
 
-    private fun colorChange(before: String?, after: String?): JSONObject = JSONObject()
-        .put("before", before ?: THEME).put("after", after ?: THEME)
-        .apply { if (after != null) orbitLogoShownHex(after).takeIf { it != after }?.let { put("shown_as", it) } }
+    /** before/after as saved ("default" for the logo's own color); shown_as is the color actually drawn. */
+    private fun colorChange(before: String?, after: String?, defaultHex: String): JSONObject = JSONObject()
+        .put("before", before ?: DEFAULT).put("after", after ?: DEFAULT)
+        .put("shown_as", orbitLogoShownHex(after ?: defaultHex))
 }

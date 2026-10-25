@@ -45,36 +45,46 @@ internal fun orbitPaletteColor(palette: OrbitChatPalette, avatar: Color): Color 
     OrbitChatPalette.GREEN -> Color(0xFFE0EBC6)
 }
 
-/** Extract once per avatar, off the UI thread, from a bounded still thumbnail (never pet frames). */
+/**
+ * Extract once per avatar, off the UI thread, from a bounded still thumbnail (never pet frames).
+ * Without a picture the avatar is Orbit's logo, so the color comes from the logo's ring (Orbit).
+ */
 @Composable
 internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -> Unit) {
     val context = LocalContext.current.applicationContext
     val avatar = orbitPictureUri(orbit)
-    val avatarColor by produceState(Color(0xFFDDE6F2), avatar) {
-        value = Color(0xFFDDE6F2)
+    val logoRing = orbit.appearance.logoOrbitColor
+    val logoColor = if (avatar == null) {
+        remember(logoRing) { orbitAvatarTone(orbitLogoDrawnColor(orbitLogoColor(logoRing), OrbitLogoDefaults.orbit)) }
+    } else null
+    // Each extracted color is tied to the picture it came from, so a new picture never borrows the
+    // last one's color; until it is ready the theme keeps the color it already shows.
+    val pictureColor by produceState<Pair<String, Color>?>(null, avatar) {
         if (avatar != null) {
-            try {
+            value = avatar to try {
                 val result = OperitApplication.globalImageLoader.execute(
                     ImageRequest.Builder(context).data(avatar).size(96).allowHardware(false).build()
                 )
                 result.drawable?.let { drawable ->
-                    value = withContext(Dispatchers.Default) {
+                    withContext(Dispatchers.Default) {
                         val bitmap = drawable.toBitmap(96, 96)
                         val pixels = IntArray(96 * 96)
                         bitmap.getPixels(pixels, 0, 96, 0, 0, 96, 96)
-                        val color = Color(orbitDominantColor(pixels))
-                        val hsl = FloatArray(3)
-                        ColorUtils.colorToHSL(color.toArgb(), hsl)
-                        Color.hsl(hsl[0], hsl[1].coerceIn(0.12f, 0.45f), 0.86f)
+                        orbitAvatarTone(Color(orbitDominantColor(pixels)))
                     }
-                }
+                } ?: NEUTRAL_AVATAR_TONE
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
                 // An unavailable image keeps a neutral palette and does not prevent opening settings.
+                NEUTRAL_AVATAR_TONE
             }
         }
     }
+    val lastAvatarColor = remember { LastColor() }
+    val avatarColor = logoColor ?: pictureColor?.takeIf { it.first == avatar }?.second ?: lastAvatarColor.color
+    // Remembered only once this frame is really shown, so an abandoned composition cannot leave it.
+    SideEffect { lastAvatarColor.color = avatarColor }
     val dark = when (orbit.appearance.mode) {
         OrbitColorMode.SYSTEM -> isSystemInDarkTheme()
         OrbitColorMode.LIGHT -> false
@@ -146,6 +156,19 @@ internal fun orbitLightAccent(hue: Float, saturation: Float): Color {
 
 /** Contrast against white the light accent keeps, enough for its icons, slider and short labels. */
 private const val ORBIT_ACCENT_MIN_CONTRAST = 3.2f
+
+/** The chat tone used when a picture gives no color. */
+private val NEUTRAL_AVATAR_TONE = Color(0xFFDDE6F2)
+
+/** The avatar tone shown last, kept while a new picture's color is still being read. */
+private class LastColor(var color: Color = NEUTRAL_AVATAR_TONE)
+
+/** The soft chat tone taken from an avatar's main color: its hue, gently saturated and light. */
+private fun orbitAvatarTone(color: Color): Color {
+    val hsl = FloatArray(3)
+    ColorUtils.colorToHSL(color.toArgb(), hsl)
+    return Color.hsl(hsl[0], hsl[1].coerceIn(0.12f, 0.45f), 0.86f)
+}
 
 /** A small RGB histogram ignores transparent padding and plain white/black avatar backgrounds. */
 internal fun orbitDominantColor(pixels: IntArray): Int {

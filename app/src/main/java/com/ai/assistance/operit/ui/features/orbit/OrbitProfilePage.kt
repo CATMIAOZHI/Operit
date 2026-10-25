@@ -425,7 +425,7 @@ private fun OrbitAvatarSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(bottom = 16.dp),
             )
-            // Two rows of two, so each label has room on a narrow phone.
+            // Rows of two, so each label has room on a narrow phone.
             Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
                     AvatarSourceTile(
@@ -452,12 +452,23 @@ private fun OrbitAvatarSheet(
                         modifier = Modifier.weight(1f),
                     )
                     AvatarSourceTile(
+                        icon = orbitIcon("palette"),
+                        label = stringResource(R.string.orbit_avatar_logo_colors),
+                        enabled = !busy,
+                        onClick = { ask { resources.getString(R.string.orbit_avatar_logo_colors_draft) } },
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                    AvatarSourceTile(
                         icon = orbitIcon("pencil"),
                         label = stringResource(R.string.orbit_rename),
                         enabled = !busy,
                         onClick = { ask { resources.getString(R.string.orbit_rename_draft) } },
                         modifier = Modifier.weight(1f),
                     )
+                    // Keeps the last tile the same width as the others above it.
+                    Spacer(Modifier.weight(1f))
                 }
             }
             if (pickRoleCard) {

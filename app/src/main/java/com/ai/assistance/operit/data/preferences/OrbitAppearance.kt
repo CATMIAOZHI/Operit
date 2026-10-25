@@ -12,9 +12,10 @@ data class OrbitAppearance(
     val avatarSize: OrbitAvatarSize = OrbitAvatarSize.LARGE,
     val mode: OrbitColorMode = OrbitColorMode.SYSTEM,
     /**
-     * Colors of the Orbit logo shown while there is no picture, as "#RRGGBB"; null follows the
-     * theme. The core in the middle is the user, the ring and its moons are Orbit, which always
-     * circles the user. Like the picture, only Orbit changes them (orbit_set_avatar).
+     * Colors of the Orbit logo shown while there is no picture, as "#RRGGBB"; null uses the logo's
+     * default color. The core in the middle is the user, the ring and its moons are Orbit, which
+     * always circles the user. Like the picture, only Orbit changes them (orbit_set_avatar), and
+     * the "from avatar" chat palette takes its color from the ring.
      */
     val logoUserColor: String? = null,
     val logoOrbitColor: String? = null,

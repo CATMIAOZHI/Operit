@@ -5,7 +5,6 @@ import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.layout.Box
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,11 +47,12 @@ private fun motionOf(activity: PetActivity): LogoMotion = when (activity) {
 /**
  * Orbit's own logo as its default picture: the core, its orbit and two moons. The core is the user
  * ([userColor]); the ring and moons are Orbit ([orbitColor]), always circling the user. Null colors
- * follow the theme. It follows what Orbit is doing the way a pet does: it turns slowly and breathes
- * at rest, turns faster with a soft halo while thinking, faster still while it uses a tool, and hops
- * twice when it finishes and comes back to rest. Each frame is drawn in the draw phase from the
- * frame clock, so it runs at the display's rate without recomposing; with [animate] false it stays
- * still.
+ * use the logo's own defaults; like a picture, the logo is the avatar, so the chat theme takes its
+ * color from the logo and never the other way round. It follows what Orbit is doing the way a pet
+ * does: it turns slowly and breathes at rest, turns faster with a soft halo while thinking, faster
+ * still while it uses a tool, and hops twice when it finishes and comes back to rest. Each frame is
+ * drawn in the draw phase from the frame clock, so it runs at the display's rate without
+ * recomposing; with [animate] false it stays still.
  */
 @Composable
 internal fun OrbitLogoAvatar(
@@ -62,12 +62,9 @@ internal fun OrbitLogoAvatar(
     userColor: Color? = null,
     orbitColor: Color? = null,
 ) {
-    // The picture sits on white; a light color (a dark theme's primary, or a pale chosen color) is
-    // darkened until it reads on white.
-    val primary = MaterialTheme.colorScheme.primary
-    val themed = remember(primary) { readableOnWhite(primary) }
-    val core = remember(userColor, themed) { userColor?.let(::readableOnWhite) ?: themed }
-    val ring = remember(orbitColor, themed) { orbitColor?.let(::readableOnWhite) ?: themed }
+    // The picture sits on white; a pale chosen color is darkened until it reads on white.
+    val core = remember(userColor) { orbitLogoDrawnColor(userColor, OrbitLogoDefaults.user) }
+    val ring = remember(orbitColor) { orbitLogoDrawnColor(orbitColor, OrbitLogoDefaults.orbit) }
     val angle = remember { mutableFloatStateOf(0f) }
     val breath = remember { mutableFloatStateOf(0f) }
     val start = remember { motionOf(activity) }
@@ -153,9 +150,23 @@ private fun readableOnWhite(color: Color): Color {
     return c
 }
 
-/** A saved "#RRGGBB" logo color, or null to follow the theme. */
+/**
+ * The logo's own colors when Orbit has not chosen any: a warm core like a sun for the user, and a
+ * calm blue ring for Orbit going round it.
+ */
+internal object OrbitLogoDefaults {
+    const val USER_HEX = "#D9531F"
+    const val ORBIT_HEX = "#3D6FD1"
+    val user = Color(0xFFD9531F)
+    val orbit = Color(0xFF3D6FD1)
+}
+
+/** A saved "#RRGGBB" logo color, or null for the default. */
 internal fun orbitLogoColor(hex: String?): Color? =
     hex?.takeIf { it.isNotBlank() }?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
+
+/** The color a logo part is really drawn in: the chosen one or [default], darkened to read on white. */
+internal fun orbitLogoDrawnColor(chosen: Color?, default: Color): Color = readableOnWhite(chosen ?: default)
 
 /** How a saved "#RRGGBB" logo color is actually drawn: very light colors are darkened to read on white. */
 internal fun orbitLogoShownHex(hex: String): String {
