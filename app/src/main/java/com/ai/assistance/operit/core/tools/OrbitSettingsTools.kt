@@ -22,6 +22,7 @@ import com.ai.assistance.operit.features.orbit.OrbitApprovalActions
 import com.ai.assistance.operit.features.orbit.OrbitApprovals
 import com.ai.assistance.operit.features.orbit.OrbitChatCards
 import com.ai.assistance.operit.features.orbit.OrbitCompanion
+import com.ai.assistance.operit.features.orbit.OrbitContextSettings
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitQuota
 import com.ai.assistance.operit.util.LocaleUtils
@@ -56,6 +57,10 @@ internal object OrbitSettingsTools {
         DELAY("learning_delay_minutes", R.string.orbit_settings_delay),
         DEVELOPER("developer_mode", R.string.orbit_settings_developer, true),
         LAUNCH("launch_mode", R.string.orbit_settings_launch, true, listOf("orbit", "standard")),
+        CONTEXT_FULL("context_use_full_window", R.string.orbit_settings_context_full),
+        CONTEXT_WINDOW("context_window_k", R.string.orbit_settings_context_window),
+        CONTEXT_AUTO("context_auto_compact", R.string.orbit_settings_context_auto),
+        CONTEXT_AT("context_compact_at_k", R.string.orbit_settings_context_at),
         // Kept last: all other changes finish before the current companion is stopped.
         PAUSE("pause", R.string.orbit_settings_pause, true),
     }
@@ -63,7 +68,7 @@ internal object OrbitSettingsTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read Orbit and app settings, ask to change several with one approval card, or put a data export card in the chat. " +
-            "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
+            "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式、上下文压缩或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "get / request_change / request_export", required = true),
             ToolParameterSchema("changes", "string",
@@ -72,7 +77,8 @@ internal object OrbitSettingsTools {
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
         details = """
-  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice and learning cadence belong to this Orbit.
+  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, learning cadence and context compaction belong to this Orbit.
+  - Context compaction applies to the main chat and every side chat together. Sizes are K tokens measured against your main model. context_compact_at_k=0 means automatic; get also returns where compaction starts now. context_window_k has no effect while context_use_full_window is true.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.
   - browser_shares_main_login=true uses the main app's browser account environment; false returns to this Orbit's separate environment. This tool never reads or returns cookies. Unsupported WebViews cannot switch.
@@ -89,6 +95,9 @@ internal object OrbitSettingsTools {
         val quota: OrbitQuota.State,
         val memory: MemorySearchSettingsPreferences,
         val launchMode: AppLaunchMode,
+        /** Null when the main model is not set; [contextError] then says why. */
+        val context: OrbitContextSettings.State?,
+        val contextError: String?,
     ) {
         fun value(setting: Setting): Any = when (setting) {
             Setting.PALETTE -> orbit.appearance.palette.name.lowercase(Locale.ROOT)
@@ -104,8 +113,19 @@ internal object OrbitSettingsTools {
             Setting.DELAY -> memory.learningDelayMinutes().toLong()
             Setting.DEVELOPER -> settings.developerMode
             Setting.LAUNCH -> launchMode.name.lowercase(Locale.ROOT)
+            Setting.CONTEXT_FULL -> context?.policy?.maxMode ?: JSONObject.NULL
+            Setting.CONTEXT_WINDOW -> context?.policy?.windowK?.let(::kValue) ?: JSONObject.NULL
+            Setting.CONTEXT_AUTO -> context?.policy?.autoCompact ?: JSONObject.NULL
+            Setting.CONTEXT_AT -> context?.let { state -> state.policy.compactAtK?.let(::kValue) ?: 0L }
+                ?: JSONObject.NULL
             Setting.PAUSE -> settings.activeOrbitId == null
         }
+    }
+
+    /** A K size exactly as the user set it in the app: whole numbers stay whole, 100.4 stays 100.4. */
+    private fun kValue(value: Float): Number {
+        val exact = java.math.BigDecimal(value.toString()).stripTrailingZeros()
+        return if (exact.scale() <= 0) exact.toLong() else exact.toDouble()
     }
 
     private suspend fun snapshot(context: Context, orbitId: String): Snapshot {
@@ -113,8 +133,18 @@ internal object OrbitSettingsTools {
         val orbit = settings.orbits.firstOrNull { it.id == orbitId && !it.deleting }
             ?: error(context.getString(R.string.orbit_settings_missing))
         val spaceId = OrbitMemoryScope.ensureInitialized(context, orbit)
+        var contextError: String? = null
+        val contextState = try {
+            OrbitContextSettings.state(context, orbit)
+        } catch (e: CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            contextError = e.message ?: context.getString(R.string.orbit_settings_failed)
+            null
+        }
         return Snapshot(settings, orbit, OrbitQuota.state(context),
-            MemorySearchSettingsPreferences(context, spaceId), LaunchModePreferences.getInstance(context).mode)
+            MemorySearchSettingsPreferences(context, spaceId), LaunchModePreferences.getInstance(context).mode,
+            contextState, contextError)
     }
 
     private fun textContext(context: Context): Context =
@@ -207,6 +237,12 @@ internal object OrbitSettingsTools {
                             put("unit", if (setting == Setting.MEMORY) "turns" else "iterations")
                         }
                         Setting.DELAY -> { put("options", JSONArray(delays)); put("unit", "minutes") }
+                        Setting.CONTEXT_WINDOW, Setting.CONTEXT_AT -> {
+                            put("min", if (setting == Setting.CONTEXT_AT) 0L else 1L)
+                            state.context?.let { put("max", capacityK(it)) }
+                            put("unit", "K tokens")
+                        }
+                        Setting.CONTEXT_FULL, Setting.CONTEXT_AUTO -> put("options", JSONArray(listOf(false, true)))
                         Setting.REFILL, Setting.PAUSE -> put("options", JSONArray(listOf(true)))
                         Setting.EXTRA_WEEKLY, Setting.LOGIN, Setting.DEVELOPER -> put("options", JSONArray(listOf(false, true)))
                         else -> put("options", JSONArray(setting.choices))
@@ -224,11 +260,22 @@ internal object OrbitSettingsTools {
                         put("current_means", "extra_used_tokens")
                         put("note", text.getString(R.string.orbit_settings_refill_note))
                     }
+                    if (setting.name.startsWith("CONTEXT_")) {
+                        put("can_change", state.context != null)
+                        state.contextError?.let { put("note", it) }
+                    }
+                    if (setting == Setting.CONTEXT_AT) state.context?.let {
+                        put("main_model_max_k", capacityK(it))
+                        put("effective_compact_at_k", Math.round(it.compactAtK).toLong())
+                        if (!it.policy.autoCompact) put("note", text.getString(R.string.orbit_settings_context_at_off))
+                    }
                 }
         }
         return JSONObject().put("settings", JSONArray(settings))
             .put("note", text.getString(R.string.orbit_settings_get_note))
     }
+
+    private fun capacityK(state: OrbitContextSettings.State): Long = kotlin.math.floor(state.capacityK).toLong().coerceAtLeast(1L)
 
     private fun integer(text: Context, raw: Any): Long =
         (raw as? Number)?.toString()?.toLongOrNull()
@@ -241,6 +288,18 @@ internal object OrbitSettingsTools {
                 text.getString(R.string.orbit_settings_options, setting.choices.joinToString())
             }
             return checkNotNull(value)
+        }
+        if (setting.name.startsWith("CONTEXT_")) {
+            val current = state.context ?: throw IllegalArgumentException(state.contextError)
+            if (setting == Setting.CONTEXT_WINDOW || setting == Setting.CONTEXT_AT) {
+                val value = integer(text, raw)
+                val min = if (setting == Setting.CONTEXT_AT) 0L else 1L
+                val max = capacityK(current)
+                require(value in min..max) { text.getString(R.string.orbit_settings_range, min.toString(), max.toString()) }
+                return value
+            }
+            require(raw is Boolean) { text.getString(R.string.orbit_settings_boolean) }
+            return raw
         }
         return when (setting) {
             Setting.WEEKLY, Setting.EXTRA -> {
@@ -280,8 +339,13 @@ internal object OrbitSettingsTools {
         }
     }
 
-    private fun same(a: Any, b: Any): Boolean =
-        if (a is Number && b is Number) a.toLong() == b.toLong() else a == b
+    /** Whole numbers compare exactly as Long; a fraction such as 100.4K is compared as it is. */
+    private fun same(a: Any, b: Any): Boolean = when {
+        a is Number && b is Number ->
+            if (a is Double || a is Float || b is Double || b is Float) a.toDouble() == b.toDouble()
+            else a.toLong() == b.toLong()
+        else -> a == b
+    }
 
     private fun display(text: Context, setting: Setting, value: Any): String {
         val label = when (setting) {
@@ -321,6 +385,9 @@ internal object OrbitSettingsTools {
             Setting.MEMORY -> text.getString(R.string.orbit_settings_turns, value.toString())
             Setting.SKILLS -> text.getString(R.string.orbit_settings_iterations, value.toString())
             Setting.DELAY -> text.getString(R.string.orbit_settings_minutes, value.toString())
+            Setting.CONTEXT_WINDOW -> "${value}K"
+            Setting.CONTEXT_AT -> if ((value as? Number)?.toDouble() == 0.0) text.getString(R.string.orbit_settings_context_auto_point)
+                else "${value}K"
             else -> text.getString(if (value == true) R.string.orbit_settings_on else R.string.orbit_settings_off)
         }
     }
@@ -336,6 +403,9 @@ internal object OrbitSettingsTools {
                 if (setting == Setting.LOGIN) append(text.getString(R.string.orbit_settings_login_note)).append('\n')
                 if (setting == Setting.REFILL) append(text.getString(R.string.orbit_settings_refill_note)).append('\n')
                 if (setting == Setting.PAUSE) append(text.getString(R.string.orbit_settings_pause_note)).append('\n')
+            }
+            if (Setting.entries.any { it.name.startsWith("CONTEXT_") && changes.has(it.key) }) {
+                append(text.getString(R.string.orbit_settings_context_scope)).append('\n')
             }
         }.trim()
 
@@ -403,6 +473,14 @@ internal object OrbitSettingsTools {
             Setting.DEVELOPER -> preferences.setDeveloperMode(value as Boolean)
             Setting.LAUNCH -> LaunchModePreferences.getInstance(context).setMode(
                 AppLaunchMode.valueOf((value as String).uppercase(Locale.ROOT)))
+            Setting.CONTEXT_FULL -> OrbitContextSettings.update(context, state.orbit.id) { it.copy(maxMode = value as Boolean) }
+            Setting.CONTEXT_WINDOW -> OrbitContextSettings.update(context, state.orbit.id) {
+                it.copy(windowK = (value as Long).toFloat())
+            }
+            Setting.CONTEXT_AUTO -> OrbitContextSettings.update(context, state.orbit.id) { it.copy(autoCompact = value as Boolean) }
+            Setting.CONTEXT_AT -> OrbitContextSettings.update(context, state.orbit.id) {
+                it.copy(compactAtK = (value as Long).takeIf { k -> k > 0L }?.toFloat())
+            }
             Setting.PAUSE -> OrbitCompanion.pause(context, state.orbit.id)
         }
     }

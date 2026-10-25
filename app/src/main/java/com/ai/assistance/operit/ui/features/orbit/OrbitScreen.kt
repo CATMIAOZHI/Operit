@@ -870,6 +870,7 @@ private fun OrbitChatPage(
                     onOpenUsage = { push(OrbitSubPage.USAGE) },
                     onOpenAppearance = { push(OrbitSubPage.APPEARANCE) },
                     onOpenModels = { push(OrbitSubPage.MODELS) },
+                    onOpenContext = { push(OrbitSubPage.CONTEXT) },
                     onOpenPhonePermissions = { push(OrbitSubPage.PHONE_PERMISSIONS) },
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
                     onOpenChannels = { push(OrbitSubPage.CHANNELS) },
@@ -886,6 +887,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.APPEARANCE -> OrbitAppearancePage(orbit, onBack = back)
                 OrbitSubPage.MODELS -> OrbitModelsPage(orbit, onBack = back,
                     onOpenModelConfig = { push(OrbitSubPage.MODEL_CONFIG) })
+                OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
                 OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
                 OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
@@ -1012,7 +1014,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1237,13 +1239,10 @@ private fun OrbitDevHeader(
 }
 
 /**
- * The picture an Orbit shows: its own, or the shipped picture of the built-in role it came from.
- * The default role does not count, so a new Orbit shows its logo until it is given a picture.
+ * The picture an Orbit shows: only its own. Without one it shows the Orbit logo, never the
+ * picture of the role card its chat runs under.
  */
-internal fun orbitPictureUri(orbit: OrbitProfile): String? =
-    orbit.avatarUri ?: orbit.sourceRoleCardId
-        .takeIf { it != com.ai.assistance.operit.data.preferences.CharacterCardManager.DEFAULT_CHARACTER_CARD_ID }
-        ?.let { UserPreferencesManager.getBuiltInCharacterAvatarUri(it) }
+internal fun orbitPictureUri(orbit: OrbitProfile): String? = orbit.avatarUri?.takeIf { it.isNotBlank() }
 
 /** Orbit's own picture, or a role card's avatar in the picker. */
 @Composable
@@ -1261,7 +1260,6 @@ internal fun OrbitAvatar(
     val resources = LocalResources.current
     // An Orbit keeps the copy it made of its picture, so it never reads the role card again.
     val roleCardId = if (orbit == null) card?.id else null
-    // A built-in role's picture ships with the app, so an Orbit without its own picture uses it.
     val customUri = orbit?.let(::orbitPictureUri)
     val avatarUri by
         produceState<String?>(initialValue = customUri, roleCardId, customUri) {
@@ -1366,6 +1364,7 @@ private fun OrbitSettingsPage(
     onOpenUsage: () -> Unit,
     onOpenAppearance: () -> Unit,
     onOpenModels: () -> Unit,
+    onOpenContext: () -> Unit,
     onOpenPhonePermissions: () -> Unit,
     onOpenNotificationSettings: () -> Unit,
     onOpenChannels: () -> Unit,
@@ -1402,6 +1401,14 @@ private fun OrbitSettingsPage(
                     icon = lucide("brain"),
                     searchable = false,
                     onClick = onOpenModels,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
+                    title = stringResource(R.string.orbit_context_title),
+                    subtitle = stringResource(R.string.orbit_context_row),
+                    icon = lucide("archive"),
+                    searchable = false,
+                    onClick = onOpenContext,
                 )
             }
 

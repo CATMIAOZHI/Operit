@@ -49,7 +49,7 @@ data class OrbitProfile(
     val chatId: String,
     /** The name Orbit chose for itself; only Orbit changes it, through its tool. */
     val name: String,
-    /** Orbit's picture: the default card's at creation, or one picked later. */
+    /** Orbit's own picture; null shows the Orbit logo. */
     val avatarUri: String? = null,
     val createdAt: Long = 0L,
     val memorySpaceId: String? = null,

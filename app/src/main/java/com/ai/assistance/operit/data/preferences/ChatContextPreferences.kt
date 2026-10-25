@@ -48,4 +48,34 @@ class ChatContextPreferences(context: Context) {
             dao.updateContextPolicy(chatId, transform(current).encode())
         }
     }
+
+    /** Gives [toChatId] the same setting as [fromChatId]; nothing happens while that one has none. */
+    suspend fun copy(fromChatId: String, toChatId: String) {
+        database.withTransaction {
+            val policy = dao.getChatById(fromChatId)?.contextPolicyJson ?: return@withTransaction
+            ChatContextPolicy.decode(policy)
+            dao.updateContextPolicy(toChatId, policy)
+        }
+    }
+
+    /**
+     * Gives every chat in [chatIds] the result of [transform] on [sourceChatId]'s setting, in one
+     * transaction: either all of them change or none. Chats that no longer exist are skipped.
+     */
+    suspend fun updateAll(
+        sourceChatId: String,
+        chatIds: Collection<String>,
+        config: ModelConfigData,
+        transform: (ChatContextPolicy) -> ChatContextPolicy,
+    ) {
+        database.withTransaction {
+            val source = requireNotNull(dao.getChatById(sourceChatId)) { "Conversation no longer exists" }
+            val current = source.contextPolicyJson?.let(ChatContextPolicy::decode)
+                ?: ChatContextPolicy.fromLegacy(config)
+            val encoded = transform(current).encode()
+            (chatIds + sourceChatId).toSet().forEach { chatId ->
+                if (chatId == sourceChatId || dao.getChatById(chatId) != null) dao.updateContextPolicy(chatId, encoded)
+            }
+        }
+    }
 }
