@@ -47,15 +47,16 @@ internal fun orbitPaletteColor(palette: OrbitChatPalette, avatar: Color): Color 
 
 /**
  * Extract once per avatar, off the UI thread, from a bounded still thumbnail (never pet frames).
- * Without a picture the avatar is Orbit's logo, so the color comes from the logo's ring (Orbit).
+ * Without a picture the avatar is Orbit's logo, so the color comes from the logo's core: the core
+ * is the user, and the theme, including the user's own message bubbles, is the user's color.
  */
 @Composable
 internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -> Unit) {
     val context = LocalContext.current.applicationContext
     val avatar = orbitPictureUri(orbit)
-    val logoRing = orbit.appearance.logoOrbitColor
+    val logoCore = orbit.appearance.logoUserColor
     val logoColor = if (avatar == null) {
-        remember(logoRing) { orbitAvatarTone(orbitLogoColor(logoRing) ?: OrbitLogoDefaults.orbit) }
+        remember(logoCore) { orbitAvatarTone(orbitLogoColor(logoCore) ?: OrbitLogoDefaults.user) }
     } else null
     // Each extracted color is tied to the picture it came from, so a new picture never borrows the
     // last one's color; until it is ready the theme keeps the color it already shows.
