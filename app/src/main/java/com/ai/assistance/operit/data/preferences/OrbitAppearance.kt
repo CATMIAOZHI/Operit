@@ -14,7 +14,7 @@ data class OrbitAppearance(
     /**
      * Colors of the Orbit logo shown while there is no picture, as "#RRGGBB"; null follows the
      * theme. The core in the middle is the user, the ring and its moons are Orbit, which always
-     * circles the user.
+     * circles the user. Like the picture, only Orbit changes them (orbit_set_avatar).
      */
     val logoUserColor: String? = null,
     val logoOrbitColor: String? = null,
@@ -28,10 +28,15 @@ data class OrbitAppearance(
 
     companion object {
         private val HEX = Regex("^#[0-9A-F]{6}$")
+        private val SHORT_HEX = Regex("^#[0-9A-F]{3}$")
 
-        /** "#RRGGBB" in upper case, or null for anything else. */
-        fun normalizeColor(raw: String?): String? =
-            raw?.trim()?.uppercase()?.let { if (it.startsWith("#")) it else "#$it" }?.takeIf { HEX.matches(it) }
+        /** "#RRGGBB" in upper case from "#RRGGBB", "#RGB" (with or without "#"), or null for anything else. */
+        fun normalizeColor(raw: String?): String? {
+            val value = raw?.trim()?.uppercase()?.takeIf { it.isNotEmpty() }
+                ?.let { if (it.startsWith("#")) it else "#$it" } ?: return null
+            if (SHORT_HEX.matches(value)) return "#" + value.drop(1).map { "$it$it" }.joinToString("")
+            return value.takeIf { HEX.matches(it) }
+        }
 
         fun fromJson(json: JSONObject?): OrbitAppearance = OrbitAppearance(
             palette = OrbitChatPalette.entries.firstOrNull { it.name == json?.optString("palette") } ?: OrbitChatPalette.AVATAR,

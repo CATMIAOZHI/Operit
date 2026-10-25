@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.drawscope.scale
@@ -155,3 +156,9 @@ private fun readableOnWhite(color: Color): Color {
 /** A saved "#RRGGBB" logo color, or null to follow the theme. */
 internal fun orbitLogoColor(hex: String?): Color? =
     hex?.takeIf { it.isNotBlank() }?.let { runCatching { Color(android.graphics.Color.parseColor(it)) }.getOrNull() }
+
+/** How a saved "#RRGGBB" logo color is actually drawn: very light colors are darkened to read on white. */
+internal fun orbitLogoShownHex(hex: String): String {
+    val shown = readableOnWhite(orbitLogoColor(hex) ?: return hex)
+    return String.format(java.util.Locale.ROOT, "#%06X", shown.toArgb() and 0xFFFFFF)
+}

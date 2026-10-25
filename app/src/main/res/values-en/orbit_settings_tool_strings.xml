@@ -4,10 +4,6 @@
     <string name="orbit_settings_palette">Chat palette</string>
     <string name="orbit_settings_avatar">Avatar size</string>
     <string name="orbit_settings_color">Color mode</string>
-    <string name="orbit_settings_logo_user">Logo center color</string>
-    <string name="orbit_settings_logo_orbit">Logo ring color</string>
-    <string name="orbit_settings_logo_theme">Follow theme</string>
-    <string name="orbit_settings_logo_invalid">Use a #RRGGBB color, or theme to follow the theme</string>
     <string name="orbit_settings_weekly">Weekly allowance</string>
     <string name="orbit_settings_extra">Extra allowance</string>
     <string name="orbit_settings_extra_weekly">Reset extra allowance weekly</string>

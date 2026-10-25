@@ -3,7 +3,6 @@ package com.ai.assistance.operit.ui.features.orbit
 import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -93,12 +92,6 @@ internal fun OrbitAppearancePage(orbit: OrbitProfile, onBack: () -> Unit) {
                 }
             }
         }
-        item("logo-title") { SectionTitle(stringResource(R.string.orbit_appearance_logo)) }
-        item("logo") {
-            LogoColors(orbit, enabled = !saving,
-                onUser = { hex -> change { it.copy(logoUserColor = hex) } },
-                onOrbit = { hex -> change { it.copy(logoOrbitColor = hex) } })
-        }
         item("size-title") { SectionTitle(stringResource(R.string.orbit_appearance_avatar_size)) }
         item("size") {
             Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface) {
@@ -137,97 +130,6 @@ private fun AppearanceChoice(label: String, selected: Boolean, enabled: Boolean,
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyLarge)
         Icon(orbitIcon(if (selected) "circle-check" else "circle"), null, Modifier.size(24.dp),
             tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
-    }
-}
-
-/** Colors offered for the logo; each one reads on the picture's white background. */
-private val logoSwatches = listOf("#D94F70", "#E07A1F", "#C99A06", "#2E9E6A", "#1E88C9", "#5B5BD6", "#8E44AD", "#1C1B1F")
-
-/**
- * The two colors of Orbit's logo: the core in the middle is the user, the ring around it is Orbit,
- * which always circles the user. Each can follow the theme or take its own color.
- */
-@Composable
-private fun LogoColors(orbit: OrbitProfile, enabled: Boolean, onUser: (String?) -> Unit, onOrbit: (String?) -> Unit) {
-    val appearance = orbit.appearance
-    val name = orbitName(orbit)
-    Surface(shape = RoundedCornerShape(28.dp), color = MaterialTheme.colorScheme.surface) {
-        Column(Modifier.padding(vertical = 18.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
-            Row(Modifier.padding(horizontal = 20.dp), verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(16.dp)) {
-                Box(Modifier.size(64.dp).clip(CircleShape).background(Color.White)
-                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, CircleShape)) {
-                    OrbitLogoAvatar(
-                        activity = com.ai.assistance.operit.pet.PetActivity.IDLE,
-                        animate = false,
-                        modifier = Modifier.fillMaxSize().padding(11.dp),
-                        userColor = orbitLogoColor(appearance.logoUserColor),
-                        orbitColor = orbitLogoColor(appearance.logoOrbitColor),
-                    )
-                }
-                Text(stringResource(R.string.orbit_appearance_logo_hint, name), Modifier.weight(1f),
-                    style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-            LogoColorRow(stringResource(R.string.orbit_appearance_logo_user), appearance.logoUserColor, enabled, onUser)
-            LogoColorRow(stringResource(R.string.orbit_appearance_logo_orbit, name), appearance.logoOrbitColor, enabled, onOrbit)
-        }
-    }
-}
-
-@Composable
-private fun LogoColorRow(label: String, current: String?, enabled: Boolean, onPick: (String?) -> Unit) {
-    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        Text(label, Modifier.padding(horizontal = 20.dp), style = MaterialTheme.typography.bodyLarge)
-        LazyRow(Modifier.fillMaxWidth().selectableGroup(), contentPadding = PaddingValues(horizontal = 20.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
-            item("theme") {
-                val selected = current == null
-                Surface(
-                    shape = RoundedCornerShape(50),
-                    color = if (selected) MaterialTheme.colorScheme.secondaryContainer else MaterialTheme.colorScheme.surfaceVariant,
-                    border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
-                    modifier = Modifier.height(40.dp).clip(RoundedCornerShape(50))
-                        .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = { onPick(null) }),
-                ) {
-                    Box(Modifier.padding(horizontal = 14.dp), contentAlignment = Alignment.Center) {
-                        Text(stringResource(R.string.orbit_appearance_logo_theme), style = MaterialTheme.typography.labelLarge)
-                    }
-                }
-            }
-            items(logoSwatches, key = { it }) { hex ->
-                val selected = current == hex
-                val tint = orbitLogoColor(hex) ?: Color.Gray
-                Surface(
-                    shape = CircleShape,
-                    color = tint,
-                    border = if (selected) BorderStroke(3.dp, MaterialTheme.colorScheme.primary) else null,
-                    modifier = Modifier.size(40.dp).clip(CircleShape)
-                        .selectable(selected, enabled = enabled, role = Role.RadioButton, onClick = { onPick(hex) })
-                        .semantics { contentDescription = hex },
-                ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        if (selected) Icon(orbitIcon("check"), null, Modifier.size(20.dp),
-                            tint = if (tint.luminance() > 0.22f) Color(0xFF242426) else Color.White)
-                    }
-                }
-            }
-            // A color Orbit picked that is not among the swatches still shows as chosen.
-            if (current != null && current !in logoSwatches) {
-                item("custom") {
-                    val tint = orbitLogoColor(current) ?: Color.Gray
-                    Surface(shape = CircleShape, color = tint,
-                        border = BorderStroke(3.dp, MaterialTheme.colorScheme.primary),
-                        modifier = Modifier.size(40.dp).clip(CircleShape)
-                            .selectable(true, enabled = enabled, role = Role.RadioButton, onClick = {})
-                            .semantics { contentDescription = current }) {
-                        Box(contentAlignment = Alignment.Center) {
-                            Icon(orbitIcon("check"), null, Modifier.size(20.dp),
-                                tint = if (tint.luminance() > 0.22f) Color(0xFF242426) else Color.White)
-                        }
-                    }
-                }
-            }
-        }
     }
 }
 
