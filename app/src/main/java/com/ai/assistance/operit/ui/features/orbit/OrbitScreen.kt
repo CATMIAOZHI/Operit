@@ -104,6 +104,7 @@ import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalResources
 import androidx.compose.ui.res.stringResource
@@ -567,8 +568,15 @@ private fun OrbitChatPage(
     }
 
     // The chat always stays underneath, so closing the profile never reloads it. The profile
-    // slides up over it and the pages opened from the profile slide in from the right, like iOS.
-    CompositionLocalProvider(LocalOrbitActivity provides rememberOrbitActivity(orbit, currentChatId)) {
+    // grows out of Orbit's picture over it, and the pages opened from it slide in from the right.
+    val sharedAvatar = remember(orbit.id) {
+        OrbitSharedAvatar(androidx.compose.animation.core.Animatable(if (showProfile) 0f else 1f))
+    }
+    CompositionLocalProvider(
+        LocalOrbitActivity provides rememberOrbitActivity(orbit, currentChatId),
+        LocalOrbitSharedAvatar provides sharedAvatar,
+    ) {
+    androidx.compose.runtime.SideEffect { sharedAvatar.onTab = tab != OrbitTab.CHAT }
     Box(Modifier.fillMaxSize()) {
         val tabBack = rememberOrbitBackMotion()
         OrbitBackHandler(tabBack, enabled = tab != OrbitTab.CHAT && !showProfile && !devView && stack.isEmpty()) {
@@ -714,6 +722,7 @@ private fun OrbitChatPage(
                                 avatarAnimated = tab != OrbitTab.CHAT && !showProfile && !showChats &&
                                     stackNames.isEmpty() && editingFile == null && !showImport,
                                 onOpenProfile = { showProfile = true }, onOpenMenu = { showChats = true },
+                                onTabLayer = true,
                             )
                         }
                     }
@@ -771,8 +780,9 @@ private fun OrbitChatPage(
                 OrbitMadeFilePage(files, path, orbitName(orbit), onBack = { editingFile = null; filesVersion++ })
             }
         }
-        // The profile rises from the bottom; the back swipe lowers it with the finger. Under the
-        // developer view it is kept but not laid out, so it draws nothing and takes no touch, and comes
+        // The profile grows out of Orbit's picture while the picture itself moves on top into the
+        // profile's place; the back swipe shrinks it back under the finger. Under the developer
+        // view it is kept but not laid out, so it draws nothing and takes no touch, and comes
         // back exactly as it was; closed meanwhile, it finishes closing out of sight. Its back goes to
         // a dispatcher nobody presses until the developer view is fully gone. While the developer view
         // slides off, it waits a little to the left under it.
@@ -800,11 +810,11 @@ private fun OrbitChatPage(
         OrbitCoverPage(
             visible = showProfile,
             onDismiss = { showProfile = false },
-            fromBottom = true,
             backEnabled = stack.isEmpty(),
-            dim = 0.18f,
+            progress = sharedAvatar.profile,
+            zoom = { s -> sharedAvatar.pageZoom(this, s) },
         ) {
-            Box(Modifier.fillMaxSize()) {
+            Box(Modifier.fillMaxSize().onPlaced { sharedAvatar.profilePage = it }) {
                 // Pushed pages move the profile a little to the left underneath them.
                 Box(
                     Modifier.fillMaxSize().graphicsLayer { translationX = -size.width * 0.3f * pushState.baseCover() }
@@ -845,6 +855,15 @@ private fun OrbitChatPage(
                 }
             }
         }
+        // Above the profile, under pages pushed from it: Orbit's picture always stays on top.
+        // The one avatar plays only while one of its places is in view.
+        OrbitSharedAvatarLayer(
+            orbit, sharedAvatar,
+            playing = chatOnScreen || (profileShown && subPage == null) ||
+                (tab != OrbitTab.CHAT && !showProfile && !showChats && stackNames.isEmpty() &&
+                    editingFile == null && !showImport &&
+                    lifecycleState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)),
+        )
         }
         }
         // Pages opened from the profile or the settings slide in over whatever is showing, so
@@ -1022,6 +1041,9 @@ internal object OrbitMotion {
     const val PRESENT_MS = 500
     const val DISMISS_MS = 380
     const val PUSH_MS = 420
+    /** The profile growing out of Orbit's picture, and shrinking back into it. */
+    const val ZOOM_IN_MS = 360
+    const val ZOOM_OUT_MS = 300
 }
 
 /**
@@ -1039,6 +1061,8 @@ internal fun OrbitHeader(
     /** What Orbit is doing now ([orbitActivity]); null while it rests. */
     activity: String? = null,
     avatarAnimated: Boolean = true,
+    /** The copy the other bottom tabs show, in the same place as the chat's. */
+    onTabLayer: Boolean = false,
 ) {
     val pageColor = MaterialTheme.colorScheme.background
     val avatarSize = orbit.appearance.avatarSize.dp
@@ -1085,7 +1109,15 @@ internal fun OrbitHeader(
             ),
             contentAlignment = Alignment.TopCenter,
         ) {
-            if (avatarSize > 0) OrbitAvatar(
+            val shared = LocalOrbitSharedAvatar.current
+            if (avatarSize > 0 && shared != null) OrbitAvatarSlot(
+                shared = shared,
+                size = avatarSize,
+                modifier = Modifier.zIndex(1f),
+                onClickLabel = stringResource(R.string.orbit_profile_open, orbitName(orbit)),
+                onClick = onOpenProfile,
+                report = { if (onTabLayer) shared.tabHeader = it else shared.chatHeader = it },
+            ) else if (avatarSize > 0) OrbitAvatar(
                 orbit = orbit,
                 size = avatarSize,
                 modifier = Modifier.zIndex(1f),
