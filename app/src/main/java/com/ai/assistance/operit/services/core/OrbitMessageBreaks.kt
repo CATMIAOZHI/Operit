@@ -1,6 +1,7 @@
 package com.ai.assistance.operit.services.core
 
 import com.ai.assistance.operit.data.model.ChatMessage
+import com.ai.assistance.operit.data.model.ChatMessageDisplayMode
 import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
 import kotlinx.coroutines.Dispatchers
@@ -84,4 +85,43 @@ internal object OrbitMessageBreaks {
         }.filter { it.isNotEmpty() }
         return listOf(first) + rest
     }
+
+    /**
+     * The saved parts of each reply joined back with `<message_break/>`, for the history the model
+     * reads. Without this the model sees its own split replies as one message with plain newlines,
+     * copies that, and stops sending separate messages. A part is the AI row right after another
+     * part of the same reply: same sending and finishing time, and no token counts of its own.
+     */
+    fun rejoin(messages: List<ChatMessage>): List<ChatMessage> {
+        if (messages.size < 2) return messages
+        val out = ArrayList<ChatMessage>(messages.size)
+        var i = 0
+        while (i < messages.size) {
+            val head = messages[i]
+            var end = i + 1
+            while (end < messages.size && isPartOf(messages[end], messages[end - 1])) end++
+            if (end == i + 1) {
+                out += head
+            } else {
+                val text = StringBuilder(head.content.trimEnd())
+                for (k in i + 1 until end) text.append('\n').append(BREAK).append('\n').append(messages[k].content.trim())
+                out += head.copy(content = text.toString())
+            }
+            i = end
+        }
+        return out
+    }
+
+    private const val BREAK = "<message_break/>"
+
+    /** [part] is the next saved part of the reply [before] belongs to. */
+    private fun isPartOf(part: ChatMessage, before: ChatMessage): Boolean =
+        part.sender == "ai" && before.sender == "ai" &&
+            part.displayMode == ChatMessageDisplayMode.NORMAL && before.displayMode == ChatMessageDisplayMode.NORMAL &&
+            part.contentStream == null && before.contentStream == null &&
+            part.roleName == before.roleName &&
+            part.timestamp > before.timestamp &&
+            before.sentAt > 0L && part.sentAt == before.sentAt &&
+            before.completedAt > 0L && part.completedAt == before.completedAt &&
+            part.inputTokens == 0 && part.outputTokens == 0 && part.cachedInputTokens == 0
 }
