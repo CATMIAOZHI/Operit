@@ -1369,6 +1369,8 @@ internal fun OrbitAvatar(
                     activity = if (animatePet) petActivity else com.ai.assistance.operit.pet.PetActivity.IDLE,
                     animate = animatePet && petVisible,
                     modifier = Modifier.fillMaxSize().padding((size * 0.18f).dp),
+                    userColor = orbitLogoColor(orbit.appearance.logoUserColor),
+                    orbitColor = orbitLogoColor(orbit.appearance.logoOrbitColor),
                 )
             } else {
                 Icon(

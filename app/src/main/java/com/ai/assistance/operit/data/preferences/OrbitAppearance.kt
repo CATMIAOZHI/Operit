@@ -11,15 +11,34 @@ data class OrbitAppearance(
     val palette: OrbitChatPalette = OrbitChatPalette.AVATAR,
     val avatarSize: OrbitAvatarSize = OrbitAvatarSize.LARGE,
     val mode: OrbitColorMode = OrbitColorMode.SYSTEM,
+    /**
+     * Colors of the Orbit logo shown while there is no picture, as "#RRGGBB"; null follows the
+     * theme. The core in the middle is the user, the ring and its moons are Orbit, which always
+     * circles the user.
+     */
+    val logoUserColor: String? = null,
+    val logoOrbitColor: String? = null,
 ) {
     fun toJson(): JSONObject = JSONObject()
         .put("palette", palette.name).put("avatarSize", avatarSize.name).put("mode", mode.name)
+        .apply {
+            logoUserColor?.let { put("logoUserColor", it) }
+            logoOrbitColor?.let { put("logoOrbitColor", it) }
+        }
 
     companion object {
+        private val HEX = Regex("^#[0-9A-F]{6}$")
+
+        /** "#RRGGBB" in upper case, or null for anything else. */
+        fun normalizeColor(raw: String?): String? =
+            raw?.trim()?.uppercase()?.let { if (it.startsWith("#")) it else "#$it" }?.takeIf { HEX.matches(it) }
+
         fun fromJson(json: JSONObject?): OrbitAppearance = OrbitAppearance(
             palette = OrbitChatPalette.entries.firstOrNull { it.name == json?.optString("palette") } ?: OrbitChatPalette.AVATAR,
             avatarSize = OrbitAvatarSize.entries.firstOrNull { it.name == json?.optString("avatarSize") } ?: OrbitAvatarSize.LARGE,
             mode = OrbitColorMode.entries.firstOrNull { it.name == json?.optString("mode") } ?: OrbitColorMode.SYSTEM,
+            logoUserColor = normalizeColor(json?.optString("logoUserColor")),
+            logoOrbitColor = normalizeColor(json?.optString("logoOrbitColor")),
         )
     }
 }
