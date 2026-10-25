@@ -30,6 +30,9 @@ internal object QuickJsNativeBridge {
     external fun nativeExecutePendingJobs(handle: Long, maxJobs: Int): Int
 
     @JvmStatic
+    external fun nativeDiscardPendingJobs(handle: Long, maxJobs: Int): Boolean
+
+    @JvmStatic
     external fun nativeInterrupt(handle: Long)
 }
 
@@ -96,6 +99,43 @@ class QuickJsNativeRuntime private constructor(
         require(maxJobs > 0) { "maxJobs must be > 0" }
         return QuickJsNativeBridge.nativeExecutePendingJobs(requireHandle(), maxJobs)
     }
+
+    /**
+     * Runs microtasks until the queue is empty, so every continuation queued by the current entry
+     * runs under that entry's owner instead of leaking into the next entry. A failed job does not
+     * stop the drain. Jobs that keep re-queueing past [maxJobs] or [maxMillis] are thrown away so
+     * they can neither block the runtime thread nor run later under another owner.
+     */
+    fun drainPendingJobs(
+        batchSize: Int = 128,
+        maxJobs: Int = 100_000,
+        maxMillis: Long = 5_000L,
+    ): Int {
+        val deadline = System.nanoTime() + maxMillis * 1_000_000L
+        var total = 0
+        while (true) {
+            val executed = executePendingJobs(batchSize)
+            total += executed
+            if (executed < batchSize) return total
+            if (total >= maxJobs || System.nanoTime() >= deadline) {
+                val emptied = QuickJsNativeBridge.nativeDiscardPendingJobs(requireHandle(), maxJobs)
+                System.err.println(
+                    "QuickJS microtask queue exceeded its budget after $total jobs; " +
+                        "remaining jobs discarded (queue empty: $emptied)"
+                )
+                if (!emptied) {
+                    // Leftover jobs would resume inside the next entry under another owner.
+                    unusable = true
+                }
+                return total
+            }
+        }
+    }
+
+    /** Set when queued jobs could not be cleared; such a runtime must be closed and replaced. */
+    @Volatile
+    var unusable: Boolean = false
+        private set
 
     fun dispatchTimer(timerId: Int): EvalResult {
         return eval(

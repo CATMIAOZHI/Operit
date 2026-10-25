@@ -131,7 +131,9 @@ internal fun <T : Any> OrbitPushHost(
     var gestureDone by remember { mutableStateOf(false) }
     val currentEntries by rememberUpdatedState(entries)
     val currentOnPop by rememberUpdatedState(onPop)
-    SideEffect { state.depth = entries.size }
+    // Follows the stack as drawn: a page pushed but not yet drawn must not slide the page under it
+    // aside first, or that page moves for a frame with nothing covering it (a flash).
+    SideEffect { state.depth = drawn.size }
 
     LaunchedEffect(entries) {
         val before = drawn

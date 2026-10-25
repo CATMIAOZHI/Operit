@@ -5500,7 +5500,7 @@
     <string name="delete_selected_chats">Delete Selected Chats (%1$d)</string>
     <string name="delete_selected_chats_confirmation">Are you sure you want to delete the selected %1$d chat record(s)?\n\nLocked chats will be skipped. This action cannot be undone.</string>
     <string name="deleted_selected_chats_count">Deleted %1$d chat record(s)</string>
-    <string name="deleted_selected_chats_with_skipped_locked">Deleted %1$d chat record(s), skipped %2$d locked chat(s)</string>
+    <string name="deleted_selected_chats_with_skipped_locked">Deleted %1$d chat record(s), skipped %2$d locked or protected chat(s) (such as an Orbit side chat linked to WeChat)</string>
     <string name="unbound_workspaces_title">Unbound Workspaces</string>
     <string name="unbound_workspaces_subtitle">Manage workspace folders not used by any chat</string>
     <string name="no_unbound_workspaces">No unbound workspace folders</string>
@@ -5739,7 +5739,7 @@
     <string name="backup_import_failed_unreadable_file">Import failed: unable to read file</string>
     <string name="backup_import_failed_with_reason">Import failed: %1$s</string>
     <string name="backup_clear_failed_with_reason">Clear failed: %1$s</string>
-    <string name="backup_delete_skipped_locked">\nSkipped locked chats: %1$d</string>
+    <string name="backup_delete_skipped_locked">\nSkipped locked or protected chats (such as an Orbit side chat linked to WeChat): %1$d</string>
 
     <string name="backup_open_file_failed">Unable to open file</string>
     <string name="backup_import_file_empty">The imported file is empty</string>
@@ -9662,6 +9662,10 @@
     <string name="orbit_chats_title_hint">For example: Trip plans</string>
     <string name="orbit_chats_delete">Delete side chat</string>
     <string name="orbit_chats_delete_confirm">Delete “%1$s” and all its messages? Reminders set in this side chat will show up in the main chat.</string>
+    <string name="orbit_chats_delete_weixin_title">This chat is linked to WeChat</string>
+    <string name="orbit_chats_delete_weixin_text">Messages from WeChat land in “%1$s”, so it can\'t be deleted right now. To delete it, first disconnect in Settings → Message channels → WeChat.</string>
+    <string name="orbit_chats_delete_weixin_settings">Open settings</string>
+    <string name="orbit_chats_delete_weixin_ok">OK</string>
     <string name="orbit_chats_limit">You can have up to %1$d side chats. Archive or delete one to make another.</string>
     <string name="orbit_chats_failed">That didn\'t work. Try again later.</string>
     <string name="orbit_chats_long_press">Long press a side chat to rename, pin, archive or delete it</string>

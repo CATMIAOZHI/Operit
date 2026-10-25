@@ -144,6 +144,8 @@ class JsEngine(private val context: Context) {
     )
 
     private val activeExecutionSessions = ConcurrentHashMap<String, ExecutionSession>()
+    /** The script call each pending tool callback belongs to, so its result resumes that call. */
+    private val toolCallbackOwners = ConcurrentHashMap<String, String>()
     private val pendingJsBridgeCallbacks = ConcurrentLinkedQueue<PendingJsBridgeCallback>()
     private val pendingJsBridgeCallbackMap = ConcurrentHashMap<String, PendingJsBridgeCallback>()
     private var jsEnvironmentInitialized = false
@@ -221,6 +223,7 @@ class JsEngine(private val context: Context) {
 
     private fun ensureQuickJs() {
         check(!destroyed.get()) { "JsEngine already destroyed" }
+        quickJs?.takeIf { it.isUnusable }?.let(::retireUnusableQuickJs)
         if (quickJs != null) {
             return
         }
@@ -240,6 +243,21 @@ class JsEngine(private val context: Context) {
                 AppLogger.e(TAG, "Error initializing QuickJS: ${e.message}", e)
                 throw e
             }
+        }
+    }
+
+    /**
+     * Replaces a runtime whose leftover jobs could not be cleared (they could run under another
+     * chat's identity). Its script calls can no longer finish, so they fail now. Only [retired] is
+     * closed: another thread may already have replaced it.
+     */
+    private fun retireUnusableQuickJs(retired: OperitQuickJsEngine) {
+        synchronized(quickJsInitLock) {
+            if (quickJs !== retired) return
+            val reason = "QuickJS runtime was reset: queued jobs could not be cleared"
+            drainExecutionSessions(reason)
+            clearPendingJsBridgeCallbacks("java bridge callback canceled: $reason")
+            disposeQuickJsForReinit(reason)
         }
     }
 
@@ -271,6 +289,8 @@ class JsEngine(private val context: Context) {
             } finally {
                 quickJs = null
                 jsEnvironmentInitialized = false
+                // Callbacks registered in the closed runtime can no longer be delivered.
+                toolCallbackOwners.clear()
             }
         }
     }
@@ -292,7 +312,9 @@ class JsEngine(private val context: Context) {
     private fun launchQuickJsEvaluation(
         script: String,
         fileName: String = "<eval>",
-        onError: ((Exception) -> Unit)? = null
+        onError: ((Exception) -> Unit)? = null,
+        /** The script call this JavaScript belongs to, if known (see [callerRuntimeContext]). */
+        owner: String? = null,
     ) {
         if (!canScheduleQuickJsWork()) {
             return
@@ -304,7 +326,7 @@ class JsEngine(private val context: Context) {
                     if (!canScheduleQuickJsWork()) {
                         return@launch
                     }
-                    engine.evaluate<Any?>(script, fileName)
+                    engine.evaluate<Any?>(script, fileName, owner)
                 } catch (e: Exception) {
                     if (onError != null) {
                         onError(e)
@@ -321,19 +343,21 @@ class JsEngine(private val context: Context) {
         functionName: String,
         argsJson: String,
         callSite: String = "<call:$functionName>",
-        onError: ((Exception) -> Unit)? = null
+        onError: ((Exception) -> Unit)? = null,
+        owner: String? = null,
+        targetEngine: OperitQuickJsEngine? = null,
     ) {
         if (!canScheduleQuickJsWork()) {
             return
         }
-        val engine = quickJs ?: return
+        val engine = targetEngine ?: quickJs ?: return
         try {
             engineScope.launch {
                 try {
                     if (!canScheduleQuickJsWork()) {
                         return@launch
                     }
-                    engine.callFunction<Any?>(functionName, argsJson, callSite)
+                    engine.callFunction<Any?>(functionName, argsJson, callSite, owner)
                 } catch (e: Exception) {
                     if (onError != null) {
                         onError(e)
@@ -907,10 +931,17 @@ class JsEngine(private val context: Context) {
             )
         }
 
+        // A timeout must interrupt the runtime this call runs in, never a replacement built since.
+        val sessionEngine = quickJs ?: run {
+            removeExecutionSession(callId)
+            return buildJsExecutionErrorPayload("QuickJS runtime unavailable")
+        }
         launchQuickJsFunctionCall(
             functionName = TOOLPKG_EXECUTION_ENTRY_FUNCTION,
             argsJson = executionArgsJson,
             callSite = "quickjs/runtime/execute-script.call",
+            owner = callId,
+            targetEngine = sessionEngine,
             onError = { e ->
                 AppLogger.e(
                     TAG,
@@ -954,7 +985,11 @@ class JsEngine(private val context: Context) {
             ) {
                 // JS-side cancellation uses this engine's executor. Native interruption must
                 // happen first because a synchronous loop prevents the queued cancellation.
-                interruptQuickJs("callId=$callId, function=$functionName")
+                try {
+                    sessionEngine.interrupt()
+                } catch (interruptError: Exception) {
+                    AppLogger.e(TAG, "Error interrupting QuickJS: callId=$callId, ${interruptError.message}", interruptError)
+                }
             }
             if (e is InterruptedException) {
                 Thread.currentThread().interrupt()
@@ -2879,17 +2914,20 @@ class JsEngine(private val context: Context) {
                 toolName: String,
                 paramsJson: String
         ) {
+            val owner = quickJs?.currentEntryOwner()
+            if (owner != null) toolCallbackOwners[callbackId] = owner
             JsNativeInterfaceDelegates.callToolAsync(
                 toolHandler = toolHandler,
                 callbackId = callbackId,
                 toolType = toolType,
                 toolName = toolName,
                 paramsJson = paramsJson,
+                runtimeContext = ownerRuntimeContext(owner),
                 binaryDataRegistry = binaryDataRegistry,
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
                 }
             )
         }
@@ -2902,6 +2940,11 @@ class JsEngine(private val context: Context) {
                 toolName: String,
                 paramsJson: String
         ) {
+            val owner = quickJs?.currentEntryOwner()
+            if (owner != null) {
+                toolCallbackOwners[callbackId] = owner
+                toolCallbackOwners[intermediateCallbackId] = owner
+            }
             JsNativeInterfaceDelegates.callToolAsyncStreaming(
                 toolHandler = toolHandler,
                 callbackId = callbackId,
@@ -2909,20 +2952,33 @@ class JsEngine(private val context: Context) {
                 toolType = toolType,
                 toolName = toolName,
                 paramsJson = paramsJson,
+                runtimeContext = ownerRuntimeContext(owner),
                 binaryDataRegistry = binaryDataRegistry,
                 binaryHandlePrefix = BINARY_HANDLE_PREFIX,
                 binaryDataThreshold = BINARY_DATA_THRESHOLD,
                 sendToolResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    toolCallbackOwners.remove(intermediateCallbackId)
+                    sendToolResult(callback, result, isError, toolCallbackOwners.remove(callback))
                 },
                 sendIntermediateResult = { callback, result, isError ->
-                    sendToolResult(callback, result, isError)
+                    sendToolResult(callback, result, isError, toolCallbackOwners[callback])
                 }
             )
         }
 
+        /**
+         * The chat a script's tool call runs as, so chat-scoped tools (an Orbit's chats) see the
+         * space of the chat that called the script. [owner] is the script call the running
+         * JavaScript entry belongs to (its start, a result delivered to it, or a timer it set);
+         * its context is used only while that call is still running. JavaScript that cannot be
+         * traced to a running call (a timer left behind by a finished call, other callbacks)
+         * runs with no context, so one chat's context is never handed to another chat's work.
+         */
+        private fun ownerRuntimeContext(owner: String?): ToolExecutionManager.ToolRuntimeContext? =
+            owner?.let { resolveExecutionSession(it)?.toolRuntimeContext }
+
         /** 向JavaScript发送工具调用结果 */
-        private fun sendToolResult(callbackId: String, result: String, isError: Boolean) {
+        private fun sendToolResult(callbackId: String, result: String, isError: Boolean, owner: String? = null) {
             if (!canScheduleQuickJsWork()) {
                 return
             }
@@ -2938,7 +2994,9 @@ class JsEngine(private val context: Context) {
                     script = jsCode,
                     onError = { e ->
                         AppLogger.e(TAG, "Error sending tool result to JavaScript: ${e.message}", e)
-                    }
+                    },
+                    // Code resumed by this result belongs to the call that asked for it.
+                    owner = owner,
                 )
             } catch (e: Exception) {
                 AppLogger.e(TAG, "Error sending tool result to JavaScript: ${e.message}", e)
@@ -3200,6 +3258,7 @@ class JsEngine(private val context: Context) {
             // 清理二进制数据注册表
             binaryDataRegistry.clear()
             javaObjectRegistry.clear()
+            toolCallbackOwners.clear()
 
         } catch (e: Exception) {
             AppLogger.e(TAG, "Error during JsEngine destruction: ${e.message}", e)

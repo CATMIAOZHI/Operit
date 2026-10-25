@@ -12,22 +12,33 @@ import com.ai.assistance.operit.features.orbit.OrbitCompanion
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
 import com.ai.assistance.operit.features.orbit.OrbitReactions
 import com.ai.assistance.operit.util.ChatUtils
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Orbit's chats: the main chat and its side chats (Muse's chat.*), and emoji reactions. */
+/** Orbit's chats: the main chat and its side chats, and emoji reactions. */
 internal object OrbitChatTools {
     const val CHAT = "orbit_chat"
     const val REACT = "orbit_react"
     const val NOTHING_TO_DO = com.ai.assistance.operit.features.orbit.OrbitReactionNotice.NOTHING_TO_DO
+    private const val SEND_CHARS = 4000
+    private const val SEND_TRY_MS = 3_000L
+    private const val SEND_QUEUE_MS = 30 * 60_000L
+    private const val SEND_QUEUE_MAX = 10
+    private val sendScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO
+    )
+    /** Sends waiting for a busy chat, per chat; one worker per chat goes through them in order. */
+    private val sendQueues = HashMap<String, ArrayDeque<Pair<String, Long>>>()
 
     val chatPrompt = ToolPrompt(
         name = CHAT,
-        description = "你和用户的聊天：主聊天和侧聊。list 列出所有聊天；create 新开侧聊；fork 从主聊天某条消息处分出侧聊；read 读最近的消息；message 读一条消息的全文。",
+        description = "你和用户的聊天：主聊天和侧聊。list 列出所有聊天；create 新开侧聊；fork 从主聊天某条消息处分出侧聊；read 读最近的消息；message 读一条消息的全文；send 把一段话送到另一个聊天，由那边的你告诉用户。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list/create/fork/read/message", required = true),
+            ToolParameterSchema("action", description = "list/create/fork/read/message/send", required = true),
             ToolParameterSchema("title", description = "create：侧聊的标题，最多40字符", required = false),
-            ToolParameterSchema("chat_id", description = "read/message：聊天编号（来自 list）", required = false),
+            ToolParameterSchema("chat_id", description = "read/message/send：聊天编号（来自 list）；send 不能是当前聊天", required = false),
+            ToolParameterSchema("text", description = "send：要在那个聊天里告诉用户的内容，最多4000字", required = false),
             ToolParameterSchema("limit", description = "read：读最近几条，1-40，默认20", required = false),
             ToolParameterSchema("before", description = "read：可选，上次返回的 next_before，用来往前翻更早的消息", required = false),
             ToolParameterSchema("message_id", description = "message/fork：read 返回的 message_id；fork 必须是主聊天中一条已完成的可见消息", required = false),
@@ -39,6 +50,8 @@ internal object OrbitChatTools {
   - 只在主聊天中用 fork + message_id 从某条消息处分出侧聊。它引用截至该消息的上下文，预览最多6条近期原话、每条最多1000字；不复制历史、不发送消息、不切走当前聊天。返回来源、预览消息编号和新侧聊编号；用户可从侧边栏打开，首条消息后自动取标题。更早上下文按来源 read/message 读取。
   - 主聊天和所有侧聊共用你的同一份记忆。找用户以前说过的话，用 search_chat_history，它会一起搜主聊天和全部侧聊。要读某个聊天最近的原话，先 list 找到它，再 read。
   - read 按时间从旧到新返回。hidden=true 的是用户看不到的系统提示（比如表情回应、到点的任务），不是用户说的话。单条超过2000字会截断并标 cut=true，用 message 带上 chat_id 和 message_id 读全文。has_more=true 时把 next_before 传给 before 再读更早的（这一页可能是空的，照样接着翻）。
+  - 要在别的聊天里跟用户说话（比如把结果发到某个侧聊），先 list 拿到 chat_id，再 send。那边的你会收到这段话，并在那个聊天里用平常的口吻告诉用户；用户在当前聊天里看不到它。status=sent 表示已经送到；status=queued 表示那个聊天正忙，空下来后会自动送到，不用重发。已归档的侧聊不能 send。
+  - 不要用 extended_chat 之类的通用聊天工具给侧聊发消息，它们管的是 App 里的普通聊天，不是你的侧聊。
   - 在哪个聊天里安排的提醒和定时任务，结果就回到哪个聊天。
 """,
     )
@@ -178,7 +191,47 @@ internal object OrbitChatTools {
                         .put("next_start_char", if (end < text.length) end + 1 else JSONObject.NULL)
                         .put("text", text.substring(from - 1, end))
                 }
-                else -> error("Unknown action \"${args["action"]}\". Use list, create, fork, read or message.")
+                "send" -> {
+                    val id = args["chat_id"]?.trim().orEmpty()
+                    require(id.isNotEmpty()) { "send needs chat_id; get it from list" }
+                    require(id in orbit.talkChatIds) { "No chat $id in this Orbit; use list to see its chats" }
+                    require(id != caller) { "chat_id is the chat you are in now; just reply here instead of send" }
+                    require(orbit.sideChats.none { it.chatId == id && it.archived }) {
+                        "Side chat $id is archived; ask the user to restore it from the archive list first"
+                    }
+                    val text = args["text"]?.trim().orEmpty()
+                    require(text.isNotEmpty()) { "send needs text: what to tell the user in that chat" }
+                    require(text.length <= SEND_CHARS) { "text is ${text.length} characters; at most $SEND_CHARS" }
+                    val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)
+                    val fromTitle = if (caller == orbit.chatId) (if (english) "main chat" else "主聊天")
+                        else orbit.sideChats.firstOrNull { it.chatId == caller }?.title ?: (if (english) "another chat" else "另一个聊天")
+                    val notice = sendNotice(english, fromTitle, text)
+                    val app = context.applicationContext
+                    val stillThere: suspend () -> Boolean = {
+                        OrbitPreferences.getInstance(app).current().orbits.any { o ->
+                            o.id == orbit.id && !o.deleting && id in o.talkChatIds && o.sideChats.none { it.chatId == id && it.archived }
+                        }
+                    }
+                    // Earlier sends still waiting for this chat go first, so the order is kept.
+                    val waiting = synchronized(sendQueues) { sendQueues[id]?.isNotEmpty() == true }
+                    val told = if (waiting) com.ai.assistance.operit.features.orbit.OrbitWake.Told.BUSY
+                        else com.ai.assistance.operit.features.orbit.OrbitWake.tell(
+                            app, orbit, id, notice, SEND_TRY_MS, SEND_TRY_MS, ready = stillThere, announce = false)
+                    val title = if (id == orbit.chatId) "main" else orbit.sideChats.firstOrNull { it.chatId == id }?.title.orEmpty()
+                    if (told.sent) {
+                        JSONObject().put("status", "sent").put("chat_id", id).put("title", title)
+                            .put("note", "Delivered. You in that chat will tell the user there; nothing more to do here.")
+                    } else if (told == com.ai.assistance.operit.features.orbit.OrbitWake.Told.DROPPED) {
+                        error("Chat $id is no longer available; use list again")
+                    } else {
+                        require(queueSend(app, orbit, id, notice, stillThere)) {
+                            "Chat $id already has $SEND_QUEUE_MAX messages waiting; wait until it is free before sending more"
+                        }
+                        JSONObject().put("status", "queued").put("chat_id", id).put("title", title)
+                            .put("note", "That chat is busy. It is delivered automatically once the chat is free (tried for up to 30 minutes); do not send it again.")
+                    }
+                }
+                else -> error("Unknown action \"${args["action"]}\". Use list, create, fork, read, message or send.")
             }
             ToolResult(CHAT, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -186,6 +239,76 @@ internal object OrbitChatTools {
         } catch (e: Exception) {
             ToolResult(CHAT, false, StringResultData(""), error = e.message ?: e.toString())
         }
+    }
+
+    /** The hidden note another chat's Orbit receives for a send. */
+    private fun sendNotice(english: Boolean, fromTitle: String, text: String): String {
+        val body = com.ai.assistance.operit.features.orbit.OrbitTaskRunner.fenced(text)
+        val marker = com.ai.assistance.operit.features.orbit.OrbitWake.MARKER
+        return if (english) buildString {
+            append("$marker Message from $fromTitle\n")
+            append("You wrote this in your chat \"$fromTitle\" for this chat. It is not from the user; they cannot see this note.\n")
+            append("Tell the user here, the way you normally talk. Do not mention hidden notes or that it came through a tool.\n")
+            append("BEGIN MESSAGE\n$body\nEND MESSAGE")
+        } else buildString {
+            append("$marker 来自「$fromTitle」的消息\n")
+            append("这是你在「$fromTitle」里留给这个聊天的话，不是用户发的，用户也看不到这段说明。\n")
+            append("现在在这个聊天里用你平常说话的方式告诉用户。不要提隐藏消息，也不要说是工具转过来的。\n")
+            append("BEGIN MESSAGE\n$body\nEND MESSAGE")
+        }
+    }
+
+    /**
+     * Queues a send whose chat was busy; false when that chat already has [SEND_QUEUE_MAX]
+     * waiting. One worker per chat sends them in order, each tried until it goes out, the chat
+     * is gone, or [SEND_QUEUE_MS] passes.
+     */
+    private fun queueSend(
+        app: Context,
+        orbit: com.ai.assistance.operit.data.preferences.OrbitProfile,
+        chatId: String,
+        notice: String,
+        stillThere: suspend () -> Boolean,
+    ): Boolean {
+        // Each send keeps the deadline it was queued with, so none waits longer than SEND_QUEUE_MS.
+        val expiresAt = android.os.SystemClock.elapsedRealtime() + SEND_QUEUE_MS
+        synchronized(sendQueues) {
+            val queue = sendQueues[chatId]
+            if (queue != null) {
+                if (queue.size >= SEND_QUEUE_MAX) return false
+                queue.addLast(notice to expiresAt)
+                return true
+            }
+            sendQueues[chatId] = ArrayDeque(listOf(notice to expiresAt))
+        }
+        sendScope.launch {
+            while (true) {
+                val (next, deadline) = synchronized(sendQueues) {
+                    val queue = sendQueues[chatId]
+                    if (queue.isNullOrEmpty()) { sendQueues.remove(chatId); null } else queue.first()
+                } ?: break
+                try {
+                    while (true) {
+                        val left = deadline - android.os.SystemClock.elapsedRealtime()
+                        if (left <= 0) {
+                            com.ai.assistance.operit.util.AppLogger.w("OrbitChatTools", "Gave up sending to busy chat $chatId")
+                            break
+                        }
+                        val told = com.ai.assistance.operit.features.orbit.OrbitWake.tell(
+                            app, orbit, chatId, next, left, left, ready = stillThere, announce = false)
+                        if (told != com.ai.assistance.operit.features.orbit.OrbitWake.Told.BUSY) break
+                        kotlinx.coroutines.delay(1_500)
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    synchronized(sendQueues) { sendQueues.remove(chatId) }
+                    throw e
+                } catch (e: Exception) {
+                    com.ai.assistance.operit.util.AppLogger.w("OrbitChatTools", "Could not send to chat $chatId: ${e.message}")
+                }
+                synchronized(sendQueues) { sendQueues[chatId]?.removeFirstOrNull() }
+            }
+        }
+        return true
     }
 
     fun executeReact(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
