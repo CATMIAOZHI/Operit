@@ -5140,8 +5140,8 @@
     <string name="api_key_pool_test_failed">测试失败: %1$s</string>
 
     <!-- 手动更新记忆 -->
-    <string name="memory_include_thinking">提取时包含思考内容</string>
-    <string name="memory_include_thinking_desc">当前记忆空间整理笔记和技能时会参考模型的思考内容，包括整理时读取的历史。默认开启；关闭后只参考正文和工具记录，不影响聊天显示或上下文缓存。</string>
+    <string name="memory_include_thinking">需要时可查看思考内容</string>
+    <string name="memory_include_thinking_desc">整理时默认只看正文和工具记录。开启后，提炼技能需要时可以单独查看某条回复的思考过程。关闭后完全不看思考。不影响聊天显示和上下文缓存。</string>
     <string name="manual_memory_update">立即整理图谱记忆</string>
     <string name="manual_memory_update_desc">立即将本次对话的有价值内容整理到旧记忆图谱，不受自动保存总开关影响。笔记和技能由自动提炼整理。</string>
     <string name="manual_conversation_summary">手动总结对话</string>

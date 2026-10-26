@@ -37,7 +37,6 @@ internal object OrbitSettingsTools {
     private const val MAX_CHANGES_JSON = 8_000
     /** How many items an already approved card may carry; above today's settings to allow removed ones. */
     private const val MAX_APPROVED_ITEMS = 32
-    private val intervals = listOf(5L, 10L, 20L, 50L)
     private val delays = listOf(1L, 5L, 10L, 30L, 60L)
 
     private enum class Setting(
@@ -54,8 +53,6 @@ internal object OrbitSettingsTools {
         EXTRA_WEEKLY("extra_weekly_reset", R.string.orbit_settings_extra_weekly, true),
         REFILL("refill_extra", R.string.orbit_settings_refill, true),
         LOGIN("browser_shares_main_login", R.string.orbit_settings_login),
-        MEMORY("memory_review_turns", R.string.orbit_settings_memory),
-        SKILLS("skill_review_iterations", R.string.orbit_settings_skills),
         DELAY("learning_delay_minutes", R.string.orbit_settings_delay),
         DEVELOPER("developer_mode", R.string.orbit_settings_developer, true),
         LAUNCH("launch_mode", R.string.orbit_settings_launch, true, listOf("orbit", "standard")),
@@ -68,7 +65,7 @@ internal object OrbitSettingsTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read Orbit and app settings, ask to change several with one approval card, or put a data export card in the chat. " +
-            "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
+            "查看设置，申请修改外观、额度、共用登录、记忆整理等待时间、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "get / request_change / request_export / open_page", required = true),
             ToolParameterSchema("changes", "string",
@@ -78,7 +75,7 @@ internal object OrbitSettingsTools {
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
         details = """
-  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, learning cadence, message notifications and the context budget belong to this Orbit.
+  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, the memory review wait, message notifications and the context budget belong to this Orbit.
   - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 400K is recommended.
   - message_notifications=true lets your messages also appear as their own phone notification while the app is closed; false keeps them in the chat only. It is separate from the system notification permission, which orbit_permission_card notify asks for.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
@@ -111,8 +108,6 @@ internal object OrbitSettingsTools {
             Setting.EXTRA_WEEKLY -> quota.extraWeekly
             Setting.REFILL -> quota.extraUsed
             Setting.LOGIN -> orbit.browserSharesMainLogin || !BrowserProfiles.isSupported()
-            Setting.MEMORY -> memory.memoryReviewInterval().toLong()
-            Setting.SKILLS -> memory.skillReviewInterval().toLong()
             Setting.DELAY -> memory.learningDelayMinutes().toLong()
             Setting.DEVELOPER -> settings.developerMode
             Setting.LAUNCH -> launchMode.name.lowercase(Locale.ROOT)
@@ -254,10 +249,6 @@ internal object OrbitSettingsTools {
                             put("max", OrbitQuota.MAX_LIMIT)
                             put("unit", "tokens")
                         }
-                        Setting.MEMORY, Setting.SKILLS -> {
-                            put("options", JSONArray(intervals))
-                            put("unit", if (setting == Setting.MEMORY) "turns" else "iterations")
-                        }
                         Setting.DELAY -> { put("options", JSONArray(delays)); put("unit", "minutes") }
                         Setting.CONTEXT_WINDOW -> {
                             put("min", 1L)
@@ -329,10 +320,9 @@ internal object OrbitSettingsTools {
                 }
                 value
             }
-            Setting.MEMORY, Setting.SKILLS, Setting.DELAY -> {
+            Setting.DELAY -> {
                 val value = integer(text, raw)
-                val options = if (setting == Setting.DELAY) delays else intervals
-                require(value in options) { text.getString(R.string.orbit_settings_options, options.joinToString()) }
+                require(value in delays) { text.getString(R.string.orbit_settings_options, delays.joinToString()) }
                 value
             }
             else -> {
@@ -401,8 +391,6 @@ internal object OrbitSettingsTools {
             Setting.WEEKLY, Setting.EXTRA -> text.getString(R.string.orbit_settings_tokens, OrbitQuota.amount(text, (value as Number).toLong()))
             Setting.REFILL -> if (value == true) text.getString(R.string.orbit_settings_refilled)
                 else text.getString(R.string.orbit_settings_extra_used, OrbitQuota.amount(text, (value as Number).toLong()))
-            Setting.MEMORY -> text.getString(R.string.orbit_settings_turns, value.toString())
-            Setting.SKILLS -> text.getString(R.string.orbit_settings_iterations, value.toString())
             Setting.DELAY -> text.getString(R.string.orbit_settings_minutes, value.toString())
             Setting.CONTEXT_WINDOW -> "${value}K"
             else -> text.getString(if (value == true) R.string.orbit_settings_on else R.string.orbit_settings_off)
@@ -486,8 +474,6 @@ internal object OrbitSettingsTools {
             Setting.EXTRA_WEEKLY -> OrbitQuota.setLimits(context, extraWeekly = value as Boolean)
             Setting.REFILL -> OrbitQuota.refillExtra(context)
             Setting.LOGIN -> preferences.setBrowserSharesMainLogin(state.orbit.id, value as Boolean)
-            Setting.MEMORY -> state.memory.setMemoryReviewInterval((value as Long).toInt())
-            Setting.SKILLS -> state.memory.setSkillReviewInterval((value as Long).toInt())
             Setting.DELAY -> state.memory.setLearningDelayMinutes((value as Long).toInt())
             Setting.DEVELOPER -> preferences.setDeveloperMode(value as Boolean)
             Setting.LAUNCH -> LaunchModePreferences.getInstance(context).setMode(

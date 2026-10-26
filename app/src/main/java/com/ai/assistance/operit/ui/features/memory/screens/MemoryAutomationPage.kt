@@ -26,8 +26,6 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
     var includeThinking by remember(profileId) { mutableStateOf(prefs.shouldIncludeThinking()) }
     var revise by remember(profileId) { mutableStateOf(prefs.mayReviseLearnedSkills()) }
     var learningDelay by remember(profileId) { mutableStateOf(prefs.learningDelayMinutes()) }
-    var memoryInterval by remember(profileId) { mutableStateOf(prefs.memoryReviewInterval()) }
-    var skillInterval by remember(profileId) { mutableStateOf(prefs.skillReviewInterval()) }
     var delayMenu by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     MemoryLibraryPage(stringResource(R.string.memory_automation_title), profileId, onBack, interceptBack) {
@@ -65,14 +63,6 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
                     prefs.setExtractSkills(it); skills = it
                 }
             }
-            LearningIntervalSetting(stringResource(R.string.memory_review_interval), memoryInterval,
-                stringResource(R.string.memory_interval_unit_turns), orbitSpace) {
-                prefs.setMemoryReviewInterval(it); memoryInterval = it
-            }
-            LearningIntervalSetting(stringResource(R.string.skill_review_interval), skillInterval,
-                stringResource(R.string.memory_interval_unit_iterations), orbitSpace) {
-                prefs.setSkillReviewInterval(it); skillInterval = it
-            }
             ListItem(
                 headlineContent = { Text(stringResource(R.string.memory_learning_delay)) },
                 supportingContent = { Text(stringResource(R.string.memory_learning_delay_desc)) },
@@ -103,24 +93,6 @@ fun MemoryAutomationPage(profileId: String, interceptBack: Boolean = false, onBa
             }
         }
     }
-}
-
-@Composable
-private fun LearningIntervalSetting(title: String, value: Int, unit: String, orbitSpace: Boolean, onChange: (Int) -> Unit) {
-    var expanded by remember { mutableStateOf(false) }
-    ListItem(headlineContent = { Text(title) }, trailingContent = {
-        Box {
-            // A bare number does not say whether the interval counts turns, replies or tool calls.
-            TextButton(onClick = { expanded = true }) { Text("$value $unit") }
-            LearningDropdownMenu(orbitSpace, expanded, onDismissRequest = { expanded = false }) {
-                listOf(5, 10, 20, 50).forEach { interval ->
-                    DropdownMenuItem(text = { Text("$interval $unit") }, onClick = {
-                        onChange(interval); expanded = false
-                    })
-                }
-            }
-        }
-    })
 }
 
 @Composable
