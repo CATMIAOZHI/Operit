@@ -14,12 +14,15 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
 internal object ToolErrorExportHelper {
+    /** Where the export went: a path to show and an address to share it from. */
+    data class Saved(val path: String, val uri: android.net.Uri, val name: String)
+
     suspend fun export(
         context: Context,
         toolName: String?,
         since: Long,
         repository: ToolErrorRepository = ToolErrorRepository.getInstance(context),
-    ): String =
+    ): Saved =
         withContext(Dispatchers.IO) {
             val name = "operit_tool_errors_${SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US).format(Date())}.zip"
             val temporary = File.createTempFile("tool-errors-", ".zip", context.cacheDir)
@@ -27,7 +30,7 @@ internal object ToolErrorExportHelper {
                 temporary.outputStream().use {
                     repository.export(it, toolName, since)
                 }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                     val resolver = context.contentResolver
                     val values = ContentValues().apply {
                         put(MediaStore.MediaColumns.DISPLAY_NAME, name)
@@ -47,6 +50,7 @@ internal object ToolErrorExportHelper {
                         resolver.delete(uri, null, null)
                         throw e
                     }
+                    uri
                 } else {
                     val folder = File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS), "operit")
                     check(folder.isDirectory || folder.mkdirs())
@@ -57,8 +61,9 @@ internal object ToolErrorExportHelper {
                         target.delete()
                         throw e
                     }
+                    androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", target)
                 }
-                "${Environment.DIRECTORY_DOWNLOADS}/operit/$name"
+                Saved("${Environment.DIRECTORY_DOWNLOADS}/operit/$name", uri, name)
             } finally {
                 temporary.delete()
             }

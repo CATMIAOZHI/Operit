@@ -134,8 +134,8 @@ internal fun ToolErrorPanel(modifier: Modifier = Modifier) {
                 val selectedSince = since
                 scope.launch {
                     try {
-                        val path = ToolErrorExportHelper.export(context, selectedTool, selectedSince)
-                        exportMessage = savedFormat.format(path)
+                        val saved = ToolErrorExportHelper.export(context, selectedTool, selectedSince)
+                        exportMessage = savedFormat.format(saved.path)
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {

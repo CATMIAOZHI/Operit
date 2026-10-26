@@ -26,7 +26,12 @@ import kotlinx.coroutines.withContext
 
 data class LogcatExportResult(
     val message: String,
-    val success: Boolean
+    val success: Boolean,
+    /** The saved file, ready to share; null when nothing was saved. */
+    val uri: android.net.Uri? = null,
+    val fileName: String? = null,
+    /** False when some of the newest records may not have reached the file; [message] says why. */
+    val complete: Boolean = true,
 )
 
 object LogcatExportHelper {
@@ -48,7 +53,7 @@ object LogcatExportHelper {
             // 既保留完整正文，又不用来回传几十 MB 的文本文件。
             val entryName = "operit_log_$timestamp.txt"
             val fileName = "$entryName.zip"
-            val filePath = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val (filePath, savedUri) = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
                 saveUsingMediaStore(context, fileName, entryName, logFile, logLineCount, flush)
             } else {
                 saveUsingFileSystem(context, fileName, entryName, logFile, logLineCount, flush)
@@ -65,7 +70,10 @@ object LogcatExportHelper {
                         }
                         context.getString(R.string.logcat_flush_incomplete, filePath) + "\n" + reasons.joinToString("\n")
                     },
-                success = true
+                success = true,
+                uri = savedUri,
+                fileName = fileName,
+                complete = flush.complete,
             )
         } catch (e: Exception) {
             LogcatExportResult(
@@ -119,6 +127,16 @@ object LogcatExportHelper {
      * 高度重复的 JSON 文本压缩比约 3:1（实测 27 MB 的日志压到约 8 MB，约三成），解压后按原样
      * 阅读和检索。
      */
+    /** The whole app log as the zip the export saves, written to [outputStream]. */
+    fun writeZipTo(context: Context, outputStream: OutputStream, entryName: String): Boolean {
+        val flush = AppLogger.flushFileLogsWithResult()
+        val logFile = AppLogger.getLogFile()?.takeIf { it.isFile && it.length() > 0 }
+        val logLineCount = logFile?.let(::countExportableLogLines) ?: 0L
+        if (logLineCount == 0L && !MemoryDiagnostics.hasRecords(context)) return false
+        writeZipLog(context, outputStream, entryName, logFile, logLineCount, flush)
+        return true
+    }
+
     private fun writeZipLog(
         context: Context,
         outputStream: OutputStream,
@@ -153,7 +171,7 @@ object LogcatExportHelper {
         logFile: File?,
         logLineCount: Long,
         flush: LogFlushResult,
-    ): String {
+    ): Pair<String, android.net.Uri> {
         try {
             val contentValues = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, fileName)
@@ -171,7 +189,7 @@ object LogcatExportHelper {
 
             val downloadsDir =
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-            return "${downloadsDir.absolutePath}/operit/$fileName"
+            return "${downloadsDir.absolutePath}/operit/$fileName" to uri
         } catch (e: Exception) {
             throw Exception(context.getString(R.string.logcat_mediestore_save_failed, e.message ?: ""))
         }
@@ -184,7 +202,7 @@ object LogcatExportHelper {
         logFile: File?,
         logLineCount: Long,
         flush: LogFlushResult,
-    ): String {
+    ): Pair<String, android.net.Uri> {
         try {
             val downloadsDir =
                 Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
@@ -202,7 +220,8 @@ object LogcatExportHelper {
             if (!file.exists() || file.length() == 0L) {
                 throw Exception(context.getString(R.string.logcat_file_create_failed))
             }
-            return file.absolutePath
+            return file.absolutePath to
+                androidx.core.content.FileProvider.getUriForFile(context, context.packageName + ".fileprovider", file)
         } catch (e: Exception) {
             throw Exception(context.getString(R.string.logcat_filesystem_save_failed, e.message ?: ""))
         }
