@@ -61,6 +61,8 @@
     <string name="chat_recall_back">Back to list</string>
     <string name="chat_recall_empty">No messages found</string>
     <string name="chat_recall_error">Unable to read chat history. Please retry.</string>
+    <string name="chat_recall_bad_args">Bad arguments, nothing was read: %1$s. Times can be 2026-10-26, 2026-10-26 12:30:00 (local time), an ISO time with Z or an offset, epoch milliseconds, or relative like 7d or 24h; after must not be later than before; role is user or ai; query is 1 to 200 characters. Fix the arguments and call again.</string>
+    <string name="chat_recall_failed">Unable to read chat history: %1$s. If the arguments are right, try again.</string>
     <string name="chat_recall_filter_role_invalid">Role accepts user or ai only. Leave it empty for any role.</string>
     <string name="chat_recall_filter_time_invalid">Date filter must look like 2026-09-01, 7d or 24h. Leave it empty for no limit.</string>
     <string name="chat_recall_more">Load more</string>
