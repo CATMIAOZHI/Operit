@@ -28,8 +28,10 @@ class ChatRecallRepository internal constructor(
     suspend fun search(query: String, offset: Int = 0, role: String = "", profile: String = "",
         chatId: String = "", after: Long = 0, before: Long = Long.MAX_VALUE,
         literal: Boolean = false): List<ChatRecallHit> = withContext(Dispatchers.IO) {
-        require(query.trim().length in 1..200)
-        require(role in setOf("", "user", "ai") && after <= before && offset >= 0)
+        require(query.trim().length in 1..200) { "query must be 1 to 200 characters" }
+        require(role in setOf("", "user", "ai")) { "role must be user or ai" }
+        require(after <= before) { "after is later than before" }
+        require(offset >= 0) { "offset must not be negative" }
         val (mode, ids) = scope()
         // unicode61 treats an uninterrupted CJK sentence as one token; substring search is
         // required for ordinary Chinese/Japanese keywords.
@@ -40,7 +42,7 @@ class ChatRecallRepository internal constructor(
         },role,profile,chatId,maxOf(after,minimumTimestamp),before,20,offset,mode,ids,minimumMessageId)
     }
     suspend fun context(messageId: Long, window: Int = 5): List<ChatRecallHit> = withContext(Dispatchers.IO) {
-        require(messageId > 0)
+        require(messageId > 0) { "message_id must be a positive number" }
         val (mode, ids) = scope()
         dao.readRecallContext(messageId, window.coerceIn(1,50)*2+1,mode,ids,minimumMessageId,minimumTimestamp).sortedWith(compareBy<ChatRecallHit> { it.timestamp }.thenBy { it.messageId })
     }
@@ -101,7 +103,8 @@ class ChatRecallRepository internal constructor(
         val after = parseRecallTime(args["after"].orEmpty(), false)
         val before = parseRecallTime(args["before"].orEmpty(), true)
         val role = args["role"].orEmpty().let { if (it == "assistant") "ai" else it }
-        require(role in setOf("", "user", "ai") && after <= before)
+        require(role in setOf("", "user", "ai")) { "role must be user or ai" }
+        require(after <= before) { "after is later than before" }
         val id = args["message_id"]?.toLongOrNull()
         val chatId = args["session_id"].orEmpty()
         val query = args["query"].orEmpty()
@@ -193,14 +196,21 @@ private fun recallUsesLiteral(query: String) = query.any {
 }
 
 internal fun parseRecallTime(raw: String, end: Boolean): Long {
-    if (raw.isBlank()) return if (end) Long.MAX_VALUE else 0
-    Regex("(\\d+)([hdw])").matchEntire(raw)?.let {
+    val text = raw.trim()
+    if (text.isEmpty()) return if (end) Long.MAX_VALUE else 0
+    Regex("(\\d+)([hdw])").matchEntire(text)?.let {
         val unit = when(it.groupValues[2]) { "h" -> 3_600_000L; "d" -> 86_400_000L; else -> 604_800_000L }
         return System.currentTimeMillis() - Math.multiplyExact(it.groupValues[1].toLong(),unit)
     }
-    raw.toLongOrNull()?.let { return it }
+    text.toLongOrNull()?.let { return it }
     val zone = java.time.ZoneId.systemDefault()
-    return if (raw.length==10) java.time.LocalDate.parse(raw).let {
+    if (text.length == 10) return java.time.LocalDate.parse(text).let {
         (if(end) it.plusDays(1) else it).atStartOfDay(zone).toInstant().toEpochMilli() - if(end) 1 else 0
-    } else java.time.Instant.parse(raw).toEpochMilli()
+    }
+    // Times with a zone or offset are exact; plain "2026-10-26 12:12:36" (how the app writes times
+    // in its own sources) is local time.
+    runCatching { return java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }
+    runCatching { return java.time.Instant.parse(text).toEpochMilli() }
+    return java.time.LocalDateTime.parse(text.replace(' ', 'T'))
+        .atZone(zone).toInstant().toEpochMilli()
 }

@@ -61,6 +61,8 @@
     <string name="chat_recall_back">返回列表</string>
     <string name="chat_recall_empty">没有找到消息</string>
     <string name="chat_recall_error">读取对话历史失败，请重试</string>
+    <string name="chat_recall_bad_args">参数写错了，这次没有读取：%1$s。时间可写 2026-10-26、2026-10-26 12:30:00（本地时间）、带 Z 或时区的 ISO 时间、毫秒时间戳，或 7d、24h 这样的相对时间；after 不能晚于 before；role 只能是 user 或 ai；query 为 1 到 200 个字。改好参数再调用一次。</string>
+    <string name="chat_recall_failed">读取对话历史失败：%1$s。参数没问题时可以再试一次。</string>
     <string name="chat_recall_filter_role_invalid">角色只能填 user（用户）或 ai（助手），留空表示不限</string>
     <string name="chat_recall_filter_time_invalid">时间筛选格式不对：可填 2026-09-01、7d、24h，留空表示不限</string>
     <string name="chat_recall_more">加载更多</string>

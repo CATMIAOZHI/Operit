@@ -91,6 +91,8 @@
     <string name="orbit_browser_watch_waiting">等 %1$s 停手…</string>
     <string name="orbit_browser_watch_stop">停止任务</string>
     <string name="orbit_browser_watch_close">关闭</string>
+    <string name="orbit_browser_watch_landscape">横屏查看</string>
+    <string name="orbit_browser_watch_portrait">竖屏查看</string>
     <string name="orbit_browser_watch_busy">浏览器正被另一件事占用，稍后再试</string>
     <string name="orbit_review_read_tool">读复盘的聊天</string>
     <string name="orbit_decision_review_continues">这次没读完（已读并记下 %1$s 条），下次复盘时接着读</string>

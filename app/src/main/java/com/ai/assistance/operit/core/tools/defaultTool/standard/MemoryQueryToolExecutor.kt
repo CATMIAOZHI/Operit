@@ -779,9 +779,20 @@ class MemoryQueryToolExecutor(private val context: Context) : ToolExecutor {
             ToolResult(toolName = tool.name, success = true, result = StringResultData(json.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
             throw e
-        } catch (e: Exception) {
+        } catch (e: java.time.format.DateTimeParseException) {
+            // Bad input says what to fix; a generic "retry" only repeats the same call.
             ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
-                error = context.getString(R.string.chat_recall_error))
+                error = context.getString(R.string.chat_recall_bad_args, "cannot read time \"${e.parsedString}\""))
+        } catch (e: IllegalArgumentException) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_bad_args, e.message ?: "invalid value"))
+        } catch (e: ArithmeticException) {
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_bad_args, "relative time too large"))
+        } catch (e: Exception) {
+            AppLogger.e(TAG, "Chat recall failed", e)
+            ToolResult(toolName = tool.name, success = false, result = StringResultData(""),
+                error = context.getString(R.string.chat_recall_failed, e.message ?: e.javaClass.simpleName))
         }
     }
 

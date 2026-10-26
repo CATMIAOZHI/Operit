@@ -1,21 +1,35 @@
 package com.ai.assistance.operit.ui.features.websession.browser
 
-import android.graphics.Color as AndroidColor
 import android.widget.FrameLayout
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculateCentroid
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.displayCutout
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.systemBars
+import androidx.compose.foundation.layout.union
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -23,6 +37,7 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -36,6 +51,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.res.stringResource
@@ -56,6 +74,9 @@ private val WatchBlue = Color(0xFF3478F6)
  * Orbit's browser while it works, like watching over someone's shoulder: the page shows, but
  * touches stop at a layer over it until the user takes control. The AI drives the page directly,
  * so the layer never gets in its way.
+ *
+ * Two fingers zoom and move the whole page picture (never the page's own size, which sites read
+ * to tell phones from computers); one finger is the page's, once the user has control.
  */
 @Composable
 internal fun WebSessionWatchScreen(
@@ -74,6 +95,46 @@ internal fun WebSessionWatchScreen(
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
+    // The layout follows how the screen really stands, so it matches even when the system rotates.
+    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
+    val landscape = configuration.screenWidthDp > configuration.screenHeightDp
+    if (landscape) {
+        // Sideways the page gets the full height; the title and buttons move to a column beside it.
+        Row(
+            Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) }
+                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)),
+        ) {
+            Column(Modifier.weight(1f).fillMaxHeight()) {
+                if (watch.controlling) {
+                    WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
+                }
+                WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
+            }
+            // Buttons sit at the bottom; when the keyboard leaves too little height, the column scrolls.
+            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.width(220.dp).fillMaxHeight()) {
+                val columnHeight = maxHeight
+                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
+                    Column(
+                        Modifier.heightIn(min = columnHeight).padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                WatchCloseButton(watch)
+                                Spacer(Modifier.weight(1f))
+                                WatchRotateButton(watch, landscape = true)
+                            }
+                            WatchTitle(watch, Modifier.fillMaxWidth())
+                        }
+                        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                            WatchActions(watch)
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
     Column(
         Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
     ) {
@@ -81,89 +142,164 @@ internal fun WebSessionWatchScreen(
             Modifier.fillMaxWidth().statusBarsPadding().padding(horizontal = 16.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            val close = stringResource(R.string.orbit_browser_watch_close)
-            Surface(
-                onClick = watch.onClose,
-                shape = CircleShape,
-                color = colors.surfaceVariant,
-                modifier = Modifier.size(48.dp).semantics { contentDescription = close },
-            ) {
-                Box(contentAlignment = Alignment.Center) {
-                    Icon(Icons.Filled.Close, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(26.dp))
-                }
-            }
-            Column(Modifier.weight(1f).padding(horizontal = 8.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                Text(
-                    stringResource(when {
-                        watch.controlling -> R.string.orbit_browser_watch_yours
-                        watch.finished -> R.string.orbit_browser_watch_finished
-                        else -> R.string.orbit_browser_watch_working
-                    }),
-                    color = colors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
-                    maxLines = 2, overflow = TextOverflow.Ellipsis,
-                    textAlign = androidx.compose.ui.text.style.TextAlign.Center,
-                )
-                if (watch.host.isNotBlank()) {
-                    Text(
-                        watch.host, color = colors.onSurfaceVariant, fontSize = 13.sp,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
-            Spacer(Modifier.size(48.dp))
+            WatchCloseButton(watch)
+            WatchTitle(watch, Modifier.weight(1f).padding(horizontal = 8.dp))
+            WatchRotateButton(watch, landscape = false)
         }
         // Once the user drives the page, they get a browser's own controls.
         if (watch.controlling) {
             WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
         }
-        Box(
-            Modifier.weight(1f).fillMaxWidth()
-                .onSizeChanged { onBrowserArea(it.width, it.height) },
-        ) {
-            if (hasSession) {
-                AndroidView(
-                    factory = { context ->
-                        FrameLayout(context).apply {
-                            setBackgroundColor(AndroidColor.WHITE)
-                            webViewHost.attachContainer(this)
-                        }
-                    },
-                    update = { container -> webViewHost.attachContainer(container) },
-                    modifier = Modifier.fillMaxSize(),
-                )
-            }
-            if (!watch.controlling) {
-                // Every touch, scroll and long press stops here; the page under it only shows.
-                Box(
-                    Modifier.fillMaxSize().pointerInput(Unit) {
-                        awaitPointerEventScope {
-                            while (true) awaitPointerEvent().changes.forEach { it.consume() }
-                        }
-                    },
-                )
-            }
-        }
+        WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
         Column(
             Modifier.fillMaxWidth().navigationBarsPadding().padding(horizontal = 16.dp, vertical = 12.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            WatchButton(
-                text = when {
-                    watch.controlling -> stringResource(R.string.orbit_browser_watch_hand_back, watch.orbitName)
-                    watch.waiting -> stringResource(R.string.orbit_browser_watch_waiting, watch.orbitName)
-                    else -> stringResource(R.string.orbit_browser_watch_take_over)
+            WatchActions(watch)
+        }
+    }
+}
+
+/**
+ * The page picture. Margins around it take the screen's own background. Two fingers zoom and move
+ * the picture; until the user takes control, every other touch stops at a layer over the page.
+ */
+@Composable
+private fun WatchBrowserArea(
+    watch: BrowserWatchUi,
+    webViewHost: WebSessionWebViewHost,
+    hasSession: Boolean,
+    onBrowserArea: (width: Int, height: Int) -> Unit,
+    modifier: Modifier,
+) {
+    val margin = MaterialTheme.colorScheme.background.toArgb()
+    Box(
+        modifier
+            .onSizeChanged { onBrowserArea(it.width, it.height) }
+            .pointerInput(webViewHost) {
+                // Seen before the page: once a second finger lands the gesture is the picture's,
+                // and the page gets a cancel for the first finger, until every finger lifts.
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+                    var zooming = false
+                    do {
+                        val event = awaitPointerEvent(PointerEventPass.Initial)
+                        if (!zooming && event.changes.count { it.pressed } >= 2) zooming = true
+                        if (zooming) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            val centroid = event.calculateCentroid(useCurrent = false)
+                            if (centroid.isSpecified() && (zoom != 1f || pan.x != 0f || pan.y != 0f)) {
+                                webViewHost.transformUserView(centroid.x, centroid.y, zoom, pan.x, pan.y)
+                            }
+                            event.changes.forEach { it.consume() }
+                        }
+                    } while (event.changes.any { it.pressed })
+                }
+            },
+    ) {
+        if (hasSession) {
+            AndroidView(
+                factory = { context ->
+                    FrameLayout(context).apply {
+                        setBackgroundColor(margin)
+                        webViewHost.attachContainer(this)
+                    }
                 },
-                color = WatchBlue,
-                textColor = Color.White,
-                busy = watch.waiting,
-                onClick = { if (watch.controlling) watch.onHandBack() else if (!watch.waiting) watch.onTakeOver() },
+                update = { container ->
+                    container.setBackgroundColor(margin)
+                    webViewHost.attachContainer(container)
+                },
+                modifier = Modifier.fillMaxSize(),
             )
-            WatchButton(
-                stringResource(if (watch.finished) R.string.orbit_browser_watch_close_page else R.string.orbit_browser_watch_stop),
-                colors.surfaceVariant, textColor = colors.onSurfaceVariant, busy = false, onClick = watch.onStop,
+        }
+        if (!watch.controlling) {
+            // Every touch, scroll and long press stops here; the page under it only shows.
+            Box(
+                Modifier.fillMaxSize().pointerInput(Unit) {
+                    awaitPointerEventScope {
+                        while (true) awaitPointerEvent().changes.forEach { it.consume() }
+                    }
+                },
             )
         }
     }
+}
+
+private fun androidx.compose.ui.geometry.Offset.isSpecified(): Boolean =
+    this != androidx.compose.ui.geometry.Offset.Unspecified && x.isFinite() && y.isFinite()
+
+@Composable
+private fun WatchCloseButton(watch: BrowserWatchUi) {
+    WatchRoundButton(Icons.Filled.Close, stringResource(R.string.orbit_browser_watch_close), 26, watch.onClose)
+}
+
+/** Turns the screen sideways for a bigger page picture, and back upright: always the other way from now. */
+@Composable
+private fun WatchRotateButton(watch: BrowserWatchUi, landscape: Boolean) {
+    WatchRoundButton(
+        Icons.Filled.ScreenRotation,
+        stringResource(if (landscape) R.string.orbit_browser_watch_portrait else R.string.orbit_browser_watch_landscape),
+        22,
+    ) { watch.onTurn(!landscape) }
+}
+
+@Composable
+private fun WatchRoundButton(icon: ImageVector, label: String, iconDp: Int, onClick: () -> Unit) {
+    val colors = MaterialTheme.colorScheme
+    Surface(
+        onClick = onClick,
+        shape = CircleShape,
+        color = colors.surfaceVariant,
+        modifier = Modifier.size(48.dp).semantics { contentDescription = label },
+    ) {
+        Box(contentAlignment = Alignment.Center) {
+            Icon(icon, null, tint = colors.onSurfaceVariant, modifier = Modifier.size(iconDp.dp))
+        }
+    }
+}
+
+@Composable
+private fun WatchTitle(watch: BrowserWatchUi, modifier: Modifier) {
+    val colors = MaterialTheme.colorScheme
+    Column(modifier, horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            stringResource(when {
+                watch.controlling -> R.string.orbit_browser_watch_yours
+                watch.finished -> R.string.orbit_browser_watch_finished
+                else -> R.string.orbit_browser_watch_working
+            }),
+            color = colors.onBackground, fontSize = 17.sp, fontWeight = FontWeight.SemiBold,
+            maxLines = 2, overflow = TextOverflow.Ellipsis,
+            textAlign = androidx.compose.ui.text.style.TextAlign.Center,
+        )
+        if (watch.host.isNotBlank()) {
+            Text(
+                watch.host, color = colors.onSurfaceVariant, fontSize = 13.sp,
+                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun WatchActions(watch: BrowserWatchUi) {
+    val colors = MaterialTheme.colorScheme
+    WatchButton(
+        text = when {
+            watch.controlling -> stringResource(R.string.orbit_browser_watch_hand_back, watch.orbitName)
+            watch.waiting -> stringResource(R.string.orbit_browser_watch_waiting, watch.orbitName)
+            else -> stringResource(R.string.orbit_browser_watch_take_over)
+        },
+        color = WatchBlue,
+        textColor = Color.White,
+        busy = watch.waiting,
+        onClick = { if (watch.controlling) watch.onHandBack() else if (!watch.waiting) watch.onTakeOver() },
+    )
+    WatchButton(
+        stringResource(if (watch.finished) R.string.orbit_browser_watch_close_page else R.string.orbit_browser_watch_stop),
+        colors.surfaceVariant, textColor = colors.onSurfaceVariant, busy = false, onClick = watch.onStop,
+    )
 }
 
 @Composable

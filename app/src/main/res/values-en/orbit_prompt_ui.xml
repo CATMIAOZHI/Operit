@@ -91,6 +91,8 @@
     <string name="orbit_browser_watch_waiting">Waiting for %1$s to pause…</string>
     <string name="orbit_browser_watch_stop">Stop task</string>
     <string name="orbit_browser_watch_close">Close</string>
+    <string name="orbit_browser_watch_landscape">View in landscape</string>
+    <string name="orbit_browser_watch_portrait">View in portrait</string>
     <string name="orbit_browser_watch_busy">The browser is busy with something else. Try again shortly.</string>
     <string name="orbit_review_read_tool">Read the review\'s chats</string>
     <string name="orbit_decision_review_continues">Not finished this time (%1$s read and written down); it goes on at the next review</string>

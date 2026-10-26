@@ -116,6 +116,11 @@ internal data class BrowserWatchUi(
     val waiting: Boolean,
     /** Orbit stopped working here; the page stays for the user to look at or take over. */
     val finished: Boolean,
+    /**
+     * Turns the watch screen sideways (true) for a bigger page picture, or upright (false); the page
+     * itself keeps its size.
+     */
+    val onTurn: (landscape: Boolean) -> Unit,
     val onClose: () -> Unit,
     val onTakeOver: () -> Unit,
     val onHandBack: () -> Unit,
