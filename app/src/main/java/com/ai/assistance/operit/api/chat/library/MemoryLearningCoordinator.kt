@@ -77,8 +77,13 @@ object MemoryLearningCoordinator {
         }.distinct()
         targets.forEach { it.cancel() }
         targets.forEach { it.join() }
+        // Grading resumed outside a review is not among those jobs.
+        SkillScorer.closeSpace(profile)
         lifecycle(profile).withLock {
-            withContext(Dispatchers.IO) { MemoryLearningJournal.deleteSpace(context,profile) }
+            withContext(Dispatchers.IO) {
+                MemoryLearningJournal.deleteSpace(context,profile)
+                SkillScorer.deleteSpace(context,profile)
+            }
         }
     }
     private val sessions = ConcurrentHashMap<String, Session>()
@@ -265,6 +270,11 @@ object MemoryLearningCoordinator {
             MemoryLearningJournal.pending(context).forEach { (profile,chat) ->
                 if (!foreground.contains(chat) && !jobs.containsKey(chat)) schedule(context,profile,chat)
             }
+            // Grading a restart or cancellation cut short; waits like a review for a quiet device.
+            if (foreground.isEmpty()) try {
+                SkillScorer.resumeAll(context)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) { AppLogger.w("MemoryLearning","Resuming skill grading failed",e) }
         }
     }
 
@@ -370,6 +380,8 @@ object MemoryLearningCoordinator {
         val journal=MemoryLearningJournal(context,profileId,chatId)
         if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
         exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
+        // Skills an earlier, interrupted review left waiting are graded before new work starts.
+        scoreNewSkills(context,profileId,chatId)
         // Pages never carry thinking: notes do not need it, and a skill review looks up the thinking of
         // the messages it cares about with history include_thinking=true.
         // The source's horizon is read with this enqueue count; the whole run compares against it, so a
@@ -421,9 +433,28 @@ object MemoryLearningCoordinator {
                 exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
                 if (!peek.more) return
             }
-            reviewRun(context,profileId,chatId,selected,source,pageBudget,journal,manual,ignoreBusy,reviewedGeneration,
-                firstPage)
+            try {
+                reviewRun(context,profileId,chatId,selected,source,pageBudget,journal,manual,ignoreBusy,reviewedGeneration,
+                    firstPage)
+            } catch (e: CancellationException) { throw e }
+            catch (e: Exception) {
+                // Pages committed before the failure may have written skills; they still get graded.
+                scoreNewSkills(context,profileId,chatId)
+                throw e
+            }
+            scoreNewSkills(context,profileId,chatId)
         }
+    }
+
+    /**
+     * New skills from this space's reviews wait archived until the independent grader has looked at
+     * them. It runs after the review, never inside it, so the two never wait on one model slot.
+     */
+    private suspend fun scoreNewSkills(context: Context, profileId: String, chatId: String) {
+        try {
+            SkillScorer.scoreWaiting(context,profileId,chatId)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { AppLogger.w("MemoryLearning","Skill grading failed for $profileId",e) }
     }
 
     /**
@@ -556,6 +587,14 @@ object MemoryLearningCoordinator {
 
             override suspend fun commit(carry: String): JSONObject {
                 val batch = checkNotNull(session.page) { "No page is open. Call read_next." }
+                // A new skill is installed off and waits for the independent grader, which reads the
+                // page it came from.
+                staged.replaceAll { change ->
+                    if (change.kind != "skill") change else {
+                        val key = SkillScorer.keepEvidence(context,profileId,chatId,batch.text)
+                        change.copy(holdForScore = true, scoreEvidence = key)
+                    }
+                }
                 journal.complete(paths,batch.next,batch.more,staged.toList(),carry,batch.guard?.generation ?: 0,
                     reviewed=reviewedGeneration)
                 created += staged.size

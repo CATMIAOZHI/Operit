@@ -86,6 +86,7 @@ import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import androidx.lifecycle.repeatOnLifecycle
 import sh.calvin.reorderable.ReorderableItem
 import sh.calvin.reorderable.rememberReorderableLazyListState
 
@@ -117,6 +118,8 @@ fun SkillConfigScreen(
     var skills by remember { mutableStateOf<Map<String, SkillPackage>>(emptyMap()) }
     var learnedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
     var archivedNames by remember { mutableStateOf<Set<String>>(emptySet()) }
+    /** Grades of new learned skills: a held or failed one shows why it is off. */
+    var scores by remember { mutableStateOf<Map<String, com.ai.assistance.operit.data.preferences.LearnedSkillRepository.Score>>(emptyMap()) }
     var isLoading by remember { mutableStateOf(true) }
 
     var selectedSkill by remember { mutableStateOf<SkillPackage?>(null) }
@@ -172,11 +175,13 @@ fun SkillConfigScreen(
             val owned = if (learnedOnlyProfileId != null || groupBySource)
                 learnedRepository.owned(learnedOnlyProfileId, loaded.first) else emptySet()
             val archived = if (groupBySource) learnedRepository.archived() else archivedNames
+            val graded = runCatching { learnedRepository.scores() }.getOrDefault(scores)
             val switches = readSwitches(loaded.first.keys)
             if (gen != refreshGen.get()) return
             skills = loaded.first
             learnedNames = owned
             archivedNames = archived
+            scores = graded
             visibleToAi = if (toggles == toggleGen.get()) switches
                 else switches + visibleToAi.filterKeys { it in switches }
             skillLoadErrors = loaded.second
@@ -230,13 +235,41 @@ fun SkillConfigScreen(
         } else if (resumedOnce && skills.isNotEmpty()) scope.launch {
             val names = skills.keys
             val archived = if (groupBySource) runCatching { learnedRepository.archived() }.getOrDefault(archivedNames) else archivedNames
+            val graded = runCatching { learnedRepository.scores() }.getOrDefault(scores)
             val switches = readSwitches(names)
             if (skills.keys == names) {
                 archivedNames = archived
+                scores = graded
                 visibleToAi = switches
             }
         }
         resumedOnce = true
+    }
+    // A new skill is graded in the background; while one is waiting, its line and switch are read
+    // again now and then so the page shows the result without leaving it. Paused while hidden.
+    val grading = scores.values.any {
+        it.state == com.ai.assistance.operit.data.preferences.LearnedSkillRepository.SCORE_PENDING
+    }
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    LaunchedEffect(grading) {
+        if (!grading) return@LaunchedEffect
+        lifecycleOwner.lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.RESUMED) {
+            while (true) {
+                kotlinx.coroutines.delay(15_000)
+                val graded = runCatching { learnedRepository.scores() }.getOrNull() ?: continue
+                if (graded == scores) continue
+                val toggles = toggleGen.get()
+                val names = skills.keys
+                val archived = if (groupBySource) runCatching { learnedRepository.archived() }.getOrDefault(archivedNames)
+                    else archivedNames
+                val switches = readSwitches(names)
+                if (skills.keys != names) continue
+                scores = graded
+                archivedNames = archived
+                visibleToAi = if (toggles == toggleGen.get()) switches
+                    else switches + visibleToAi.filterKeys { it in switches }
+            }
+        }
     }
     // Switching a learned skill back on for the AI also takes it out of the archive and restarts
     // its idle clock, wherever the switch is (here or on the learned-skills page).
@@ -246,7 +279,11 @@ fun SkillConfigScreen(
                 com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, skillRepository.memorySpaceId)
                     .unarchive(name)
             }
+            // A grade landing between the switch and the line above may have switched it off again;
+            // the user's choice, now on record, wins.
+            if (visibleToAi[name] == true) skillVisibilityPreferences.setSkillVisibleToAi(name, true)
             archivedNames = archivedNames - name
+            scores = scores - name
         }
     }
 
@@ -360,6 +397,7 @@ fun SkillConfigScreen(
                     skills = displayedSkills,
                     learnedNames = learnedNames,
                     archivedNames = archivedNames,
+                    notes = scores.mapNotNull { (name, score) -> skillScoreNote(score)?.let { name to it } }.toMap(),
                     builtInNames = remember { com.ai.assistance.operit.features.orbit.OrbitBundledSkills.NAMES.toSet() },
                     searching = searchQuery.isNotBlank(),
                     visibleToAi = visibleToAi,
@@ -374,6 +412,7 @@ fun SkillConfigScreen(
                             if (restored) {
                                 setVisible(name, true)
                                 archivedNames = archivedNames - name
+                                scores = scores - name
                             }
                             snackbarHostState.showSnackbar(context.getString(
                                 if (restored) R.string.skill_restored else R.string.skill_restore_failed, name))
@@ -444,6 +483,7 @@ fun SkillConfigScreen(
                                 Column {
                                     SkillListItem(
                                         skill = skill,
+                                        note = scores[skill.name]?.let { skillScoreNote(it) },
                                         visibleToAi = visibleToAi[skill.name] ?: true,
                                         onVisibleChange = { setVisible(skill.name, it) },
                                         onShown = { markShown(skill.name) },
@@ -633,6 +673,7 @@ fun SkillConfigScreen(
                 com.ai.assistance.operit.data.preferences.MemorySearchSettingsPreferences.isOrbitSpace(it)
             } == true,
             skill = skill,
+            note = scores[skill.name]?.let { skillScoreNote(it) },
             detail = selectedSkillDetail,
             isLoading = isSkillDetailLoading,
             // An Orbit's folders mean nothing to the user, wherever its skills are listed.
@@ -851,6 +892,8 @@ private fun SkillLoadErrorsDialog(
 @Composable
 private fun SkillListItem(
     skill: SkillPackage,
+    /** Why a new learned skill is off: still being graded, or the grade it failed with. */
+    note: String? = null,
     visibleToAi: Boolean,
     onVisibleChange: (Boolean) -> Unit,
     onClick: () -> Unit,
@@ -881,6 +924,7 @@ private fun SkillListItem(
                         overflow = TextOverflow.Ellipsis
                     )
                 }
+                if (note != null) SkillScoreNote(note)
             }
             Spacer(Modifier.width(8.dp))
             val switchLabel = stringResource(R.string.skill_visible_to_ai, skill.name)

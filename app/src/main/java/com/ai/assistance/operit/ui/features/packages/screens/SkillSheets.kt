@@ -167,6 +167,8 @@ internal fun SkillDetailSheet(
     onDismiss: () -> Unit,
     onDelete: () -> Unit,
     orbitStyle: Boolean = false,
+    /** The skill's grade line in full; the list shows it cut to a few lines. */
+    note: String? = null,
 ) {
     var showInstructions by remember(skill.name) { mutableStateOf(false) }
     var confirmDelete by remember(skill.name) { mutableStateOf(false) }
@@ -197,6 +199,11 @@ internal fun SkillDetailSheet(
                         maxLines = 2, overflow = TextOverflow.Ellipsis)
                     if (skill.description.isNotBlank()) Text(skill.description, style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            note?.let {
+                SheetCardBox {
+                    Text(it, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
             if (loadError != null) {

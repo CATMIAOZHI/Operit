@@ -19,6 +19,19 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
         private val mutex = Mutex()
         private const val LAST_USED = "lastUsed"
         private const val ARCHIVED_AT = "archivedAt"
+        /** A new skill's grade from the independent scorer; see [holdForScore]. */
+        private const val SCORE = "score"
+        const val SCORE_PENDING = "pending"
+        const val SCORE_PASSED = "passed"
+        const val SCORE_FAILED = "failed"
+        /** The scorer never managed to grade it; it stays archived like a failed one. */
+        const val SCORE_UNSCORED = "unscored"
+        /** The user switched it on themselves; a later grade no longer moves it. */
+        const val SCORE_USER = "user"
+        /** Below this on any of the three, a new skill stays archived. */
+        const val PASSING_SCORE = 3
+        /** Failed scorer runs before a waiting skill is given up on and left archived. */
+        const val MAX_SCORE_ATTEMPTS = 3
         /** A learned skill nobody loaded for this long is archived: hidden from the AI, kept on disk. */
         const val IDLE_ARCHIVE_MS = 28L * 24 * 60 * 60 * 1000
         /** Archiving counts in weeks, so a use only needs writing down a few times a day. */
@@ -65,6 +78,22 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
             .joinToString("") { "%02x".format(it) }
     }
     data class Snapshot(val text: String, val version: String, val exists: Boolean)
+    /** What the scorer said about a new skill. Ratings are 0 until it has graded it. */
+    data class Score(val state: String, val reuse: Int = 0, val verified: Int = 0, val substance: Int = 0,
+        val reason: String = "", val attempts: Int = 0,
+        /** Key of the conversation excerpt the scorer reads; empty once graded. */
+        val evidence: String = "") {
+        val passed get() = listOf(reuse, verified, substance).all { it >= PASSING_SCORE }
+        internal fun json(): JSONObject = JSONObject().put("state", state).put("reuse", reuse)
+            .put("verified", verified).put("substance", substance).put("reason", reason).put("attempts", attempts)
+            .put("evidence", evidence)
+        companion object {
+            internal fun of(json: JSONObject?) = json?.let {
+                Score(it.optString("state"), it.optInt("reuse"), it.optInt("verified"), it.optInt("substance"),
+                    it.optString("reason"), it.optInt("attempts"), it.optString("evidence"))
+            }
+        }
+    }
     private suspend fun manager() = memorySpaceId?.let { SkillManager.forMemorySpace(context, it) }
         ?: SkillManager.getInstance(context)
     private suspend fun registryFile(): File {
@@ -121,8 +150,96 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
             val data = registry()
             val entry = data.optJSONObject(name) ?: return@withLock
             entry.put(LAST_USED, System.currentTimeMillis())
-            if (unarchive) entry.remove(ARCHIVED_AT)
+            if (unarchive) {
+                entry.remove(ARCHIVED_AT)
+                // Switched on by hand: the user's choice stands over any grade, given or still to come.
+                Score.of(entry.optJSONObject(SCORE))?.let { entry.put(SCORE, it.copy(state = SCORE_USER).json()) }
+            }
             atomic(registry, data.toString())
+        }
+    }
+
+    /**
+     * A skill the background review just installed waits archived, off for the AI, until the
+     * independent scorer has graded it. The caller has already switched it off for the AI.
+     */
+    suspend fun holdForScore(name: String, evidence: String) = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: error("Skill is not registered")
+            entry.put(ARCHIVED_AT, System.currentTimeMillis())
+                .put(SCORE, Score(SCORE_PENDING, evidence = evidence).json())
+            atomic(registry, data.toString())
+        }
+    }
+
+    /** Skills of [profileId] still waiting for a grade, with their evidence keys. */
+    suspend fun waitingForScore(profileId: String): Map<String, String> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().mapNotNull { name ->
+                val entry = data.optJSONObject(name) ?: return@mapNotNull null
+                val score = Score.of(entry.optJSONObject(SCORE))
+                if (entry.optString("profile") == profileId && score?.state == SCORE_PENDING) name to score.evidence
+                else null
+            }.toMap()
+        }
+    }
+
+    /** Every grade on record, for the skill pages. */
+    suspend fun scores(): Map<String, Score> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val data = registry()
+            data.keys().asSequence().mapNotNull { name ->
+                Score.of(data.optJSONObject(name)?.optJSONObject(SCORE))?.let { name to it }
+            }.toMap()
+        }
+    }
+
+    /**
+     * Records the scorer's grade for a waiting skill. A pass takes it out of the archive with a fresh
+     * idle clock, a fail leaves it archived. [setVisible] writes the switch to match, durably, under
+     * the same lock and before the grade: a crash in between leaves it waiting, so it is graded again
+     * and the switch set again. Returns null when it was no longer waiting (deleted, or switched on
+     * by the user), so nothing changed.
+     */
+    suspend fun recordScore(name: String, score: Score, setVisible: (Boolean) -> Unit): Boolean? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock null
+            if (Score.of(entry.optJSONObject(SCORE))?.state != SCORE_PENDING) return@withLock null
+            val pass = score.state == SCORE_PASSED
+            setVisible(pass)
+            entry.put(SCORE, score.copy(evidence = "").json())
+            if (pass) {
+                entry.remove(ARCHIVED_AT)
+                entry.put(LAST_USED, System.currentTimeMillis())
+            }
+            atomic(registry, data.toString())
+            pass
+        }
+    }
+
+    /**
+     * One scorer attempt failed. Returns true once [MAX_SCORE_ATTEMPTS] are used up: it stays
+     * archived ungraded and [switchOff] runs under the same lock first, so it is off whatever a crash
+     * left behind. False to try again, null when it is no longer waiting (the user's choice stands).
+     */
+    suspend fun scoreAttemptFailed(name: String, reason: String, switchOff: () -> Unit): Boolean? = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val registry = registryFile()
+            val data = registry()
+            val entry = data.optJSONObject(name) ?: return@withLock null
+            val current = Score.of(entry.optJSONObject(SCORE))?.takeIf { it.state == SCORE_PENDING } ?: return@withLock null
+            val attempts = current.attempts + 1
+            val givenUp = attempts >= MAX_SCORE_ATTEMPTS
+            if (givenUp) switchOff()
+            entry.put(SCORE, current.copy(state = if (givenUp) SCORE_UNSCORED else SCORE_PENDING,
+                attempts = attempts, reason = reason.take(300), evidence = if (givenUp) "" else current.evidence).json())
+            atomic(registry, data.toString())
+            givenUp
         }
     }
 
@@ -156,6 +273,8 @@ class LearnedSkillRepository(private val context: Context, private val memorySpa
                     val entry = data.optJSONObject(name) ?: return@forEach
                     if (entry.optString("profile") != profileId ||
                         installed[name]?.directory?.canonicalPath != entry.optString("directory")) return@forEach
+                    // A new skill waiting for its grade is the scorer's to switch on or keep off.
+                    if (Score.of(entry.optJSONObject(SCORE))?.state == SCORE_PENDING) return@forEach
                     val visible = isVisible(name)
                     // A load whose write is still on its way counts as use, so it is never archived.
                     val pendingUse = memorySpaceId?.let { lastTouchAt["$it/$name"] }
