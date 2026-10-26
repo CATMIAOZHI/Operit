@@ -495,15 +495,17 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     private fun dispatchNativeTapByRef(webView: WebView, ref: String): Boolean {
         val rect = resolveElementRect(webView, ref) ?: return false
-        val pageScale = webView.scale.takeIf { it > 0f } ?: 1f
-        val x =
-            (((rect.left + rect.right) / 2f) * pageScale)
-                .coerceIn(1f, (webView.width - 1).coerceAtLeast(1).toFloat())
-        val y =
-            (((rect.top + rect.bottom) / 2f) * pageScale)
-                .coerceIn(1f, (webView.height - 1).coerceAtLeast(1).toFloat())
+        // 浏览器工具可能在后台线程调用（比如工具包里的 JS 调工具），WebView 的方法只能在主线程用，
+        // 所以缩放和尺寸也要在主线程里读。
         return runOnMainSync {
             try {
+                val pageScale = webView.scale.takeIf { it > 0f } ?: 1f
+                val x =
+                    (((rect.left + rect.right) / 2f) * pageScale)
+                        .coerceIn(1f, (webView.width - 1).coerceAtLeast(1).toFloat())
+                val y =
+                    (((rect.top + rect.bottom) / 2f) * pageScale)
+                        .coerceIn(1f, (webView.height - 1).coerceAtLeast(1).toFloat())
                 webView.requestFocus()
                 val downTime = SystemClock.uptimeMillis()
                 val down =
@@ -1258,16 +1260,18 @@ class StandardBrowserSessionTools(internal val context: Context) : ToolExecutor 
 
     private fun browserNavigateBack(tool: AITool): ToolResult {
         val session = getSession(null) ?: return error(tool.name, "No active browser tab")
-        val couldGoBack = session.canGoBack || runCatching { session.webView.canGoBack() }.getOrDefault(false)
         val markers = captureActionMarkers(session)
 
-        runOnMainSync(timeoutMs = 8_000L) {
+        // canGoBack 是 WebView 方法，只能在主线程问；和后退放在同一次主线程调用里。
+        val couldGoBack = runOnMainSync(timeoutMs = 8_000L) {
             ensureSessionAttachedOnMain(session.id)
-            if (session.webView.canGoBack()) {
+            val sessionCouldGoBack = session.canGoBack
+            val webViewCanGoBack = session.webView.canGoBack()
+            if (webViewCanGoBack) {
                 session.webView.goBack()
             }
             refreshNavigationStateAsync(session)
-            Unit
+            sessionCouldGoBack || webViewCanGoBack
         }
         val settlement =
             settleBrowserAction(
