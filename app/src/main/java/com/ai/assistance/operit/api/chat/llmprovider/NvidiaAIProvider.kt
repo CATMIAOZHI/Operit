@@ -90,7 +90,7 @@ class NvidiaAIProvider(
         )
 
         logRequestBodyForDebugging("NvidiaAIProvider", "Final NVIDIA request body: ") { jsonObject }
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 
     private fun resolveGptOssReasoningEffort(context: Context): String? {

@@ -65,18 +65,18 @@ object AppLogger {
     var enableFileLogging: Boolean = true
 
     /**
-     * 请求体转储开关，默认开启；同时门控本地 llama.cpp 的完整 prompt。
+     * 请求体转储开关，默认关闭；同时门控本地 llama.cpp 的完整 prompt。
      *
-     * 转储占导出日志的约 90%（实测一次 27 MB 的会话里占 24 MB），但排障经常需要原文，所以
-     * 这里保留完整内容、不截断字段；体积在导出环节解决——导出日志会把文本压缩成 zip
-     * （同一份日志 27 MB 压到约 8 MB，无损，见 LogcatExportHelper）。确实不需要转储时把
-     * 这处置 false，日志里就不会再出现请求体。
+     * 转储占导出日志的约 90%（实测一次 27 MB 的会话里占 24 MB），而且是在发请求前同步写的：
+     * 长对话（约 1.5 MB 请求体）每次要多花约 0.3 秒才能发出去。所以默认关掉，每次请求的
+     * 模型、大小和分段耗时仍会写在 LlmPerf 那一行里。排障需要看请求内容时把这处置 true，
+     * 按 RequestBodyLog 的规则记录（文字不截断，工具列表和图片 base64 只记占位说明）。
      *
      * 只覆盖各家 LLM 的请求体与本地 llama.cpp 的完整 prompt；语音合成文本、最终模型输出等
      * 不受它控制。
      */
     @Volatile
-    var logRequestBodies: Boolean = true
+    var logRequestBodies: Boolean = false
 
     @Volatile
     private var logFile: File? = null

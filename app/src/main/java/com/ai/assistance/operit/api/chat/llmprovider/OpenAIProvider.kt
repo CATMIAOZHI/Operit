@@ -2,6 +2,7 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
 import android.net.Uri
+import com.ai.assistance.operit.core.chat.LlmBodyStages
 import com.ai.assistance.operit.core.chat.timeBody
 import com.ai.assistance.operit.core.chat.withPerf
 import android.os.Environment
@@ -419,7 +420,9 @@ open class OpenAIProvider(
     /** Logging walks the existing request; it never materializes a second request-sized JSON. */
     protected fun logRequestBodyForDebugging(tag: String, prefix: String, body: () -> JSONObject) {
         if (!AppLogger.logRequestBodies) return
+        LlmBodyStages.lap("其他")
         RequestBodyLog.write(tag, prefix, body())
+        LlmBodyStages.lap("请求日志")
     }
 
     protected fun logFinalOutput(tag: String, content: CharSequence, prefix: String = "Final output: ") {
@@ -708,7 +711,7 @@ open class OpenAIProvider(
             applyOpenAiChatReasoning(context, requestJson, enableThinking)
         }
         logRequestBodyForDebugging("AIService", "Request body: ") { requestJson }
-        return createJsonRequestBody(requestJson.toString())
+        return createJsonRequestBody(requestJson)
     }
 
     private fun applyOpenAiChatReasoning(
@@ -764,8 +767,13 @@ open class OpenAIProvider(
     private fun supportsOpenAiChatReasoningEffort(): Boolean =
         supportsAutomaticOpenAiChatReasoning(providerType)
 
-    protected fun createJsonRequestBody(jsonString: String): RequestBody {
-        return jsonString.toByteArray(Charsets.UTF_8).toRequestBody(JSON)
+    protected fun createJsonRequestBody(json: JSONObject): RequestBody {
+        LlmBodyStages.lap("其他")
+        val jsonString = json.toString()
+        LlmBodyStages.lap("转文字")
+        val bytes = jsonString.toByteArray(Charsets.UTF_8)
+        LlmBodyStages.lap("转字节")
+        return bytes.toRequestBody(JSON)
     }
 
     /**
@@ -855,6 +863,7 @@ open class OpenAIProvider(
                 AppLogger.d("AIService", "Tool Call已启用，添加了 ${tools.length()} 个工具定义")
             }
         }
+        LlmBodyStages.lap("工具定义")
 
         // 使用新的核心逻辑构建消息并获取token计数
         val (messagesArray, tokenCount) = buildMessagesAndCountTokens(
@@ -868,7 +877,9 @@ open class OpenAIProvider(
 
         val finalRequestObject =
             if (useResponsesApi) {
-                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject)
+                OpenAIResponsesPayloadAdapter.toResponsesRequest(jsonObject).also {
+                    LlmBodyStages.lap("Responses转换")
+                }
             } else {
                 jsonObject
             }
@@ -1187,6 +1198,7 @@ open class OpenAIProvider(
     ): Pair<JSONArray, Int> {
         val messagesArray = JSONArray()
         val providerReadyHistory = prepareHistoryForProvider(chatHistory, useToolCall)
+        LlmBodyStages.lap("历史整理")
 
         // 使用TokenCacheManager计算token数量（包含工具定义）
         val tokenCount =
@@ -1195,6 +1207,7 @@ open class OpenAIProvider(
                 toolsJson,
                 preserveThinkInHistory
             )
+        LlmBodyStages.lap("token计数")
         val effectiveHistory = providerReadyHistory
 
         var queuedAssistantToolText: String? = null
@@ -1470,6 +1483,7 @@ open class OpenAIProvider(
         }
 
         flushOpenToolCallsAsUnmatched("history_end")
+        LlmBodyStages.lap("消息组装")
 
         return Pair(messagesArray, tokenCount)
     }
@@ -3048,6 +3062,9 @@ open class OpenAIProvider(
 
             // 停滞重试单独计数：不占用普通网络错误的重试额度
             var stallRetryCount = 0
+            // 打好的请求体。重试时内容不变（登录信息只在请求头里），直接复用这份字节，
+            // 不再重新整理历史、重新打包；只在打包成功后才记下，打包出错时下次重试照常重打。
+            var preparedRequestBody: RequestBody? = null
 
             while (retryCount <= maxRetries) {
                 // 在循环开始时检查是否已被取消
@@ -3071,7 +3088,7 @@ open class OpenAIProvider(
                 val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
                 // 有些服务商无论设置都走流式，以实际发出的方式记首字。
                 perf?.actualStreaming(effectiveStream)
-                val requestBody = perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { createRequestBody(
+                val requestBody = preparedRequestBody ?: perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { LlmBodyStages.collect(perf) { createRequestBody(
                     context,
                     currentHistory,
                     modelParameters,
@@ -3079,7 +3096,7 @@ open class OpenAIProvider(
                     effectiveStream,
                     availableTools,
                     preserveThinkInHistory
-                ) } }
+                ) } } }.also { preparedRequestBody = it }
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,

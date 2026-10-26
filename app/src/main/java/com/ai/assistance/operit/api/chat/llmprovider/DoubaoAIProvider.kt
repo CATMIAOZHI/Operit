@@ -59,8 +59,8 @@ class DoubaoAIProvider(
         jsonObject.put("thinking", thinkingObject)
         AppLogger.d("DoubaoAIProvider", "已为豆包模型设置思考模式: $thinkingType")
 
-        RequestBodyLog.write("DoubaoAIProvider", "Request body: ", jsonObject)
+        logRequestBodyForDebugging("DoubaoAIProvider", "Request body: ") { jsonObject }
         // 使用更新后的JSONObject创建新的RequestBody
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 }

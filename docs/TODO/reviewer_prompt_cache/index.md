@@ -58,9 +58,9 @@ so a rebuild that ends with the same fingerprint points at the fragments the bat
 as the events it was given still exist: the review history is a bounded, sanitized window and the
 block drops its own oldest fragments at its budget. The ledger stores counts, not content, so the
 structured record cannot show the prompt text. The request body is reachable only through the app's
-ordinary logging, where `AppLogger.enableFileLogging` and `AppLogger.logRequestBodies` are both on by
-default and the providers that go through them log the messages they send, so a classifier prompt
-appears in the file the in-app log viewer reads. That is a debugging channel rather than a per-batch
+ordinary logging: `AppLogger.enableFileLogging` is on by default, but `AppLogger.logRequestBodies` is
+off by default, so a classifier prompt appears in the file the in-app log viewer reads only after that
+switch is turned on and the call is reproduced. That is a debugging channel rather than a per-batch
 record: the file is cleared on every cold start and kept only when the app was launched to send a
 crash report, and no id links a logged body back to a batch - only the progress lines written beside
 it, which a reader has to match up by hand.
