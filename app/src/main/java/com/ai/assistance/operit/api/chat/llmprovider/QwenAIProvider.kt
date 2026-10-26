@@ -78,7 +78,7 @@ class QwenAIProvider(
         }
 
         // 使用更新后的JSONObject创建新的RequestBody
-        return createJsonRequestBody(jsonObject.toString())
+        return createJsonRequestBody(jsonObject)
     }
 
     private fun applyQwenReasoningSettings(

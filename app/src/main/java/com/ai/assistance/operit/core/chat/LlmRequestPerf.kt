@@ -79,6 +79,8 @@ internal class LlmRequestPerf(
     private var bodyMs = 0L
     private var bodyBytes = -1L
     private var bodies = 0
+    /** 转 JSON 内部各段耗时（纳秒），见 [LlmBodyStages]。重试重新打包会累加。 */
+    private val bodyStageNs = LinkedHashMap<String, Long>()
     private var firstChunkAt = -1L
     /** 最后一个 Call 的网络事件：连接只留最后一次拿连接，上传和等待只留最后一次往返。 */
     private val net = HashMap<String, Long>()
@@ -121,6 +123,12 @@ internal class LlmRequestPerf(
         bodyMs += ms
         bodies++
         if (bytes >= 0) bodyBytes = bytes
+    }
+
+    /** 转 JSON 内部各段的耗时（纳秒）。 */
+    @Synchronized
+    fun bodyStages(stages: Map<String, Long>) {
+        stages.forEach { (stage, ns) -> bodyStageNs[stage] = (bodyStageNs[stage] ?: 0L) + ns }
     }
 
     /** 网络监听的事件（callStart、dnsStart、requestBodyEnd、responseHeadersStart 等）。 */
@@ -175,7 +183,13 @@ internal class LlmRequestPerf(
             steps.entries.joinToString("/") { "${it.key} ${it.value}" } + ")"
         if (bodies > 0) {
             val size = if (bodyBytes >= 0) "${(bodyBytes + 1023) / 1024}KB" else "大小未知"
-            parts += "转JSON ${bodyMs}ms($size" + (if (bodies > 1) "，${bodies}次" else "") + ")"
+            // 只列 1ms 以上的段，看得出慢在历史整理、消息组装、写日志还是转文字。
+            val stages = bodyStageNs.entries
+                .map { it.key to it.value / 1_000_000L }
+                .filter { it.second > 0 }
+                .joinToString("/") { "${it.first} ${it.second}" }
+            parts += "转JSON ${bodyMs}ms($size" + (if (bodies > 1) "，${bodies}次" else "") +
+                (if (stages.isNotEmpty()) "：$stages" else "") + ")"
         }
         // 只算第一次发出；重试花掉的时间单独列在“重试”里，免得算成本地慢。
         if (requestAt >= 0 && firstCallAt >= 0) parts += "到发出 ${(firstCallAt - requestAt).coerceAtLeast(0)}ms(含转JSON)"
@@ -248,4 +262,44 @@ internal inline fun <T> LlmRequestPerf?.timeBody(bytes: (T) -> Long, build: () -
     val result = build()
     this?.body((System.nanoTime() - start) / 1_000_000L, runCatching { bytes(result) }.getOrDefault(-1L))
     return result
+}
+
+/**
+ * 转 JSON 内部的分段计时。只在 [collect] 包住的同步打包代码里生效（同一线程）；
+ * 服务商打包时每做完一段调用一次 [lap]，从上一次记录到现在的耗时算在这一段上。
+ * 不在计时中（测试连接、估算 token 等）时 [lap] 什么都不做。
+ */
+internal object LlmBodyStages {
+    private class Laps {
+        val ns = LinkedHashMap<String, Long>()
+        var last = System.nanoTime()
+    }
+
+    private val current = ThreadLocal<Laps?>()
+
+    fun lap(stage: String) {
+        val laps = current.get() ?: return
+        val t = System.nanoTime()
+        laps.ns[stage] = (laps.ns[stage] ?: 0L) + (t - laps.last)
+        laps.last = t
+    }
+
+    /**
+     * 在当前线程上同步执行 [build]，成功后把各段耗时记到 [perf]。打包失败时不记，
+     * 和 [timeBody] 只累加成功打包的总耗时保持一致。
+     */
+    fun <T> collect(perf: LlmRequestPerf?, build: () -> T): T {
+        if (perf == null) return build()
+        val previous = current.get()
+        val laps = Laps()
+        current.set(laps)
+        try {
+            val result = build()
+            lap("其他")
+            perf.bodyStages(laps.ns)
+            return result
+        } finally {
+            if (previous == null) current.remove() else current.set(previous)
+        }
+    }
 }
