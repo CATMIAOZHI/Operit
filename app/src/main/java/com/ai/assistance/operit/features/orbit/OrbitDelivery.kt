@@ -128,7 +128,9 @@ object OrbitDelivery {
         val notice = OrbitWake.resultNotice(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context), batch,
             earlier, preferences)
         // Marked as told the moment Orbit takes the notice, so a crash never tells it twice.
-        val told = OrbitWake.tell(context, orbit, chatId, notice, IDLE_WAIT_MS, totalWaitMs,
+        // Followed to its end, so a reply that failed (the model was down) leaves the reports to be told again.
+        val turn = OrbitChatDecision.Turn()
+        val told = OrbitWake.tell(context, orbit, chatId, notice, IDLE_WAIT_MS, totalWaitMs, decision = turn,
             // A report cancelled or replaced while the chat was busy is not told.
             ready = { OrbitExecutionGate.serialized { dao.validPending(ids).size == ids.size } },
             // Tried twice: a report left pending after it went out would be told again later.
@@ -138,7 +140,13 @@ object OrbitDelivery {
                 catch (e: Exception) { OrbitExecutionGate.serialized { dao.markHandedToOrbit(ids) } }
             })
         if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbitId, System.currentTimeMillis())
-        // An item Orbit did not register a call for counts as not sent (Muse: undecided means no).
+        if (told == OrbitWake.Told.FAILED) {
+            runCatching { OrbitExecutionGate.serialized { dao.returnToPending(ids) } }
+                .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+            busy += chatId
+            return true
+        }
+        // An item Orbit did not register a call for counts as not sent (undecided means no).
         // A call that comes later, from a reply still running, still replaces this.
         if (told.sent) runCatching { dao.markUnregistered(ids, System.currentTimeMillis()) }
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
@@ -176,6 +184,18 @@ object OrbitDelivery {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    private const val NOTIFY_BLOCKED = "notify_blocked"
+
+    private fun tellBlocked(context: Context, orbitId: String) = OrbitNotices.once(context, orbitId, NOTIFY_BLOCKED,
+        "[orbit-notify] 通知发不出去\n这是 App 发给你的说明，不是用户说的，用户也看不到。刚才 App 在后台想把你说的话用通知告诉用户，" +
+            "但系统把 Operit 的通知（或 Orbit 的通知渠道）关掉了，用户没收到。找合适的时机用一句话告诉用户，并调用 " +
+            "orbit_permission_card permission=notify 放一张卡片让他打开。他以前说过不要通知的话，就调用 orbit_nothing_to_do 保持安静。",
+        "[orbit-notify] Notifications cannot get through\nThis is a note from the app, not from the user; they cannot see it. " +
+            "The app just tried to show what you said as a notification, but the system has Operit's notifications (or Orbit's " +
+            "channel) turned off, so the user did not get it. When it fits, tell them in one line and call orbit_permission_card " +
+            "permission=notify to put a card in the chat for turning them on. If they said before they don't want notifications, " +
+            "call orbit_nothing_to_do to stay quiet.")
+
     /** The notification channel for what Orbit says while the app is in the background. */
     const val CHANNEL = "orbit_check_in"
 
@@ -187,11 +207,16 @@ object OrbitDelivery {
     }
 
     private fun notify(context: Context, key: String, chatId: String, title: String, body: String) {
-        if (ActivityLifecycleManager.getCurrentActivity() != null ||
-            !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        if (ActivityLifecycleManager.getCurrentActivity() != null) return
         // The Orbit's own switch: off keeps what it says in the chat only.
         val orbit = runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) }.getOrNull()
         if (orbit?.messageNotifications == false) return
+        // Blocked by the system (app notifications or Orbit's channel off): Orbit hears it once, so it can ask.
+        if (!NotificationManagerCompat.from(context).areNotificationsEnabled() || !channelOn(context)) {
+            orbit?.let { tellBlocked(context, it.id) }
+            return
+        }
+        orbit?.let { OrbitNotices.clear(context, it.id, NOTIFY_BLOCKED) }
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
         val channel = CHANNEL
         manager.createNotificationChannel(NotificationChannel(channel,

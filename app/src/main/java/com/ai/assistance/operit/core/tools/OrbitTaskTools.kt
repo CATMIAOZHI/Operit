@@ -110,10 +110,15 @@ internal object OrbitTaskTools {
             "pending" -> JSONArray(repository.dao.tasks(orbit.id).mapNotNull { task ->
                 val last = repository.dao.latestRun(task.id)
                 val locationProblem = if (task.kind == OrbitGeofence.KIND) OrbitGeofence.status(context, task) else null
-                // Waiting for the user, waiting to be checked, or failing (stopped or still retrying).
-                val waiting = task.state in setOf("WAITING_USER", "VERIFY") ||
-                    (task.state in setOf("PAUSED", "ACTIVE") && last?.state == "FAILED") || locationProblem != null
-                if (!waiting) null else summary(task, context).put("waiting_for", locationProblem ?: last?.error.orEmpty())
+                // Waiting for the user, waiting to be checked, or failing (stopped, skipped this time, still retrying,
+                // or handed to you in the chat where your reply failed).
+                val chatFailed = last != null && com.ai.assistance.operit.features.orbit.OrbitChatDecision.failed(last.decision)
+                val waiting = task.state != "CANCELLED" && (task.state in setOf("WAITING_USER", "VERIFY") ||
+                    (task.state in setOf("PAUSED", "ACTIVE") && last?.state in setOf("FAILED", "INTERRUPTED")) ||
+                    chatFailed || locationProblem != null)
+                if (!waiting) null else summary(task, context).put("waiting_for", locationProblem
+                    ?: last?.error?.takeIf { it.isNotBlank() }
+                    ?: if (chatFailed) "The last run was handed to you in the chat, but the model failed while replying, so it did not get done." else "")
                     .put("unverified_actions", JSONArray(repository.dao.unresolvedActions(task.id).map { it.summary }))
             })
             else -> {

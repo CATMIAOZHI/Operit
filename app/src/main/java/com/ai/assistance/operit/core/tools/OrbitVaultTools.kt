@@ -58,6 +58,7 @@ internal object OrbitVaultTools {
             ToolParameterSchema("method", description = "http_request：GET（默认）/POST/PUT/PATCH/DELETE", required = false),
             ToolParameterSchema("headers", description = "http_request：可选，JSON 对象", required = false),
             ToolParameterSchema("body", description = "http_request：可选，请求正文", required = false),
+            ToolParameterSchema("relogin", description = "request_chatgpt_login / request_account_login：true 表示账号虽然存着、但用起来报登录失效（401、要重新登录），放一张重新登录卡片", required = false),
         ),
         details = """
   - 需要登录或 API 密钥时，先 list 看有没有存过；没有就用 request_login / request_api_key。要注册新账号或重设密码时用 request_new_password，用户在卡片里设一个新密码（输两遍，也可以一键生成）。这会立刻在聊天里放一张安全卡片，然后马上返回，不会等用户。用户点卡片、在弹出的输入框里填，值直接存进保险箱，不经过聊天。只能在和用户的聊天里用。
@@ -75,6 +76,7 @@ internal object OrbitVaultTools {
   - 汇报时只说用没用成，不要说出任何保存的值。
   - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名，不传 api_hosts，不需要 env_reason。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
   - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
+  - “已经登录”只表示 App 里存着账号，不保证还能用。用这个账号时报登录失效、401、需要重新登录，就再调一次并加 relogin=true，放一张重新登录卡片。
   - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：用户点卡片上的「添加模型」去加，再用 orbit_models 的 request_use 申请切换。
 """,
     )
@@ -98,20 +100,23 @@ internal object OrbitVaultTools {
                             "for an API key use request_api_key.")
                     val label = com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLabel(provider)
                     val signedIn = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, provider).account.value != null
-                    val key = "${caller.orEmpty()}|account_login|$id"
+                    val relogin = signedIn && arg("relogin").equals("true", ignoreCase = true)
+                    val key = "${caller.orEmpty()}|account_login|$id|$relogin"
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     when {
-                        signedIn -> JSONObject().put("already_logged_in", true)
+                        signedIn && !relogin -> JSONObject().put("already_logged_in", true)
                             .put("note", "The $label account is already signed in in this app. To use it as a model, check orbit_models list " +
-                                "for a configuration with provider ${provider.type.name}.")
+                                "for a configuration with provider ${provider.type.name}. If using it fails with a sign-in error (401, " +
+                                "sign in again), the saved sign-in stopped working: call again with relogin=true.")
                         sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)
                             .put("note", "The $label login card is already in the chat above. Do not send another. End this turn now.")
                         else -> JSONObject().put("card_sent", true)
-                            .put("note", "A $label account login card is now in the chat. The user signs in whenever they like; you get a " +
+                            .put("note", "A $label account " + (if (relogin) "sign-in-again" else "login") +
+                                " card is now in the chat. The user signs in whenever they like; you get a " +
                                 "hidden note once it is done, and nothing if they skip it. End this turn now.")
                             .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
-                                com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLogin(orbit.id, caller.orEmpty(), id))
+                                com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLogin(orbit.id, caller.orEmpty(), id, relogin))
                     }
                 }
                 "request_chatgpt_login" -> {
@@ -120,19 +125,22 @@ internal object OrbitVaultTools {
                     }
                     val signedIn = com.ai.assistance.operit.data.preferences.CodexAuthPreferences
                         .getInstance(context).currentState() != null
-                    val key = "${caller.orEmpty()}|chatgpt_login"
+                    val relogin = signedIn && arg("relogin").equals("true", ignoreCase = true)
+                    val key = "${caller.orEmpty()}|chatgpt_login|$relogin"
                     val now = System.currentTimeMillis()
                     sentCards.entries.removeIf { now - it.value > CARD_REPEAT_MS }
                     when {
-                        signedIn -> JSONObject().put("already_logged_in", true)
-                            .put("note", "ChatGPT is already signed in in this app; go ahead with what needed it.")
+                        signedIn && !relogin -> JSONObject().put("already_logged_in", true)
+                            .put("note", "ChatGPT is already signed in in this app; go ahead with what needed it. If using it fails " +
+                                "with a sign-in error (401, sign in again), the saved sign-in stopped working: call again with relogin=true.")
                         sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)
                             .put("note", "The login card is already in the chat above. Do not send another. End this turn now.")
                         else -> JSONObject().put("card_sent", true)
-                            .put("note", "A ChatGPT login card is now in the chat. The user signs in whenever they like; you get a " +
+                            .put("note", "A ChatGPT " + (if (relogin) "sign-in-again" else "login") +
+                                " card is now in the chat. The user signs in whenever they like; you get a " +
                                 "hidden note once it is done, and nothing if they skip it. End this turn now.")
                             .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
-                                com.ai.assistance.operit.features.orbit.OrbitChatCards.chatGptLogin(orbit.id, caller.orEmpty(), now))
+                                com.ai.assistance.operit.features.orbit.OrbitChatCards.chatGptLogin(orbit.id, caller.orEmpty(), now, relogin))
                     }
                 }
                 "request_login", "request_new_password", "request_api_key", "request_oauth", "request_update" -> {

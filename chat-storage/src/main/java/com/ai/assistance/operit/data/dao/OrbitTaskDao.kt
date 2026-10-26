@@ -533,6 +533,15 @@ interface OrbitTaskDao {
     @Query("UPDATE orbit_deliveries SET state='SENT', notificationSent=1 WHERE id IN (:ids) AND state='PENDING'")
     suspend fun markHandedToOrbit(ids: List<String>)
 
+    /**
+     * Orbit's reply to the reports failed (the model was down), so the user heard none of them: the ones
+     * it had not decided on, or had chosen to tell, wait to be told again. A call to leave one out stands.
+     */
+    @Query("UPDATE orbit_deliveries SET state='PENDING', notificationSent=0, verdict='', verdictReason='', verdictNote='', " +
+        "presentation='', decidedAt=0 WHERE id IN (:ids) AND state='SENT' " +
+        "AND (verdict='' OR verdict='" + OrbitDeliveryEntity.SEND + "')")
+    suspend fun returnToPending(ids: List<String>)
+
     /** Drafts that ran out before Orbit heard of them are never told; the reason is kept. */
     @Query("UPDATE orbit_deliveries SET state='CANCELLED', verdict='" + OrbitDeliveryEntity.SKIP + "', verdictReason='moot', " +
         "verdictNote='" + OrbitDeliveryEntity.EXPIRED + "', decidedAt=:now WHERE orbitId=:orbitId AND state='PENDING' " +

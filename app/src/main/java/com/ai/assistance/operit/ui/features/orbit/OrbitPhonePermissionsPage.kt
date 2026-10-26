@@ -78,7 +78,7 @@ internal fun OrbitPhonePermissionsPage(onBack: () -> Unit, onOpenDeviceAccess: (
  * the app is closed also shows as a notification. The permission only allows notifications at all.
  */
 @Composable
-internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Unit) {
+internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Unit, onOpenDelivery: (() -> Unit)? = null) {
     val app = LocalContext.current.applicationContext
     val scope = rememberCoroutineScope()
     var enabled by remember(orbit.id, orbit.messageNotifications) { mutableStateOf(orbit.messageNotifications) }
@@ -118,6 +118,19 @@ internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Un
                             }
                         }
                     })
+            }
+        }
+        // Quiet hours and how often results arrive.
+        onOpenDelivery?.let { open ->
+            Surface(onClick = open, shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+                Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f)) {
+                        Text(stringResource(R.string.orbit_notifications_row), style = MaterialTheme.typography.titleMedium)
+                        Text(stringResource(R.string.orbit_notifications_row_desc), Modifier.padding(top = 8.dp),
+                            style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    Icon(orbitIcon("chevron-right"), null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
         }
     }

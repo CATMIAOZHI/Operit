@@ -193,7 +193,11 @@ fun OrbitScreen(
         recovering = false
     }
     // A welcome that never reached Orbit (the app closed first) is sent now.
-    LaunchedEffect(Unit) { com.ai.assistance.operit.features.orbit.OrbitSetup.resumeWelcome(context) }
+    LaunchedEffect(Unit) {
+        com.ai.assistance.operit.features.orbit.OrbitSetup.resumeWelcome(context)
+        // Chats a timed-out setup gave up on but that were made before the app closed.
+        runCatching { com.ai.assistance.operit.features.orbit.OrbitCompanion.sweepLateChats(context) }
+    }
     if (setupRunning || recovering || (activeOrbitId == null && showSetup && loadedSettings.orbits.isEmpty())) {
         val setupBack = rememberOrbitBackMotion()
         // Opened again from the list: back returns to the list. On first start it leaves the app.
@@ -322,6 +326,10 @@ private fun OrbitChatPage(
                 OrbitCardPage.MODEL_CONFIG -> OrbitSubPage.MODEL_CONFIG
                 OrbitCardPage.DEVICE_ACCESS -> OrbitSubPage.DEVICE_ACCESS
                 OrbitCardPage.WEIXIN -> OrbitSubPage.WEIXIN
+                OrbitCardPage.TOOL_ACCESS -> OrbitSubPage.TOOL_ACCESS
+                OrbitCardPage.TOOL_PERMISSIONS -> OrbitSubPage.TOOL_PERMISSIONS
+                OrbitCardPage.ORBIT_MODELS -> OrbitSubPage.MODELS
+                OrbitCardPage.NOTIFICATIONS -> OrbitSubPage.NOTIFICATION_SETTINGS
                 // Role cards are managed in the app's role card page; back returns here.
                 OrbitCardPage.ROLE_CARDS -> null
             }
@@ -928,7 +936,8 @@ private fun OrbitChatPage(
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
-                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back)
+                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back,
+                    onOpenDelivery = { push(OrbitSubPage.NOTIFICATIONS) })
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                     onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) })
                 OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)
@@ -1785,7 +1794,13 @@ private fun OrbitHome(
         if (settings.orbits.isEmpty()) Button(
             enabled = !starting && removingId == null,
             // Starts with the main app's models and greets the user, like the setup page does.
-            onClick = { start { com.ai.assistance.operit.features.orbit.OrbitSetup.startWithExisting(context) } },
+            // Without a model that can answer, the quick setup opens instead of an Orbit that cannot talk.
+            onClick = {
+                start {
+                    if (com.ai.assistance.operit.features.orbit.OrbitSetup.existing(context) == null) onOpenSetup()
+                    else com.ai.assistance.operit.features.orbit.OrbitSetup.startWithExisting(context)
+                }
+            },
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
             if (starting) {

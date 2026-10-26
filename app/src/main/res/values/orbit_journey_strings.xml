@@ -13,4 +13,18 @@
     <string name="orbit_page_card_models_title">模型配置</string>
     <string name="orbit_page_card_models_sub">在这里改 API 密钥、地址和模型，密钥不会进聊天</string>
     <string name="orbit_page_card_models_open">打开模型配置</string>
+    <string name="orbit_page_card_access_title">全访问模式</string>
+    <string name="orbit_page_card_access_sub">要不要让 Orbit 不用每次问你就能用工具，由你决定</string>
+    <string name="orbit_page_card_access_open">打开全访问模式</string>
+    <string name="orbit_page_card_tools_title">工具权限</string>
+    <string name="orbit_page_card_tools_sub">每个工具是先问你、直接用还是不能用，由你决定</string>
+    <string name="orbit_page_card_tools_open">打开工具权限</string>
+    <string name="orbit_page_card_orbit_models_title">模型</string>
+    <string name="orbit_page_card_orbit_models_sub">选 Orbit 聊天、后台和看图分别用哪个模型</string>
+    <string name="orbit_page_card_orbit_models_open">打开模型</string>
+    <string name="orbit_page_card_notify_title">通知</string>
+    <string name="orbit_page_card_notify_sub">通知开关、夜间安静时间、多久汇报一次</string>
+    <string name="orbit_page_card_notify_open">打开通知设置</string>
+    <string name="orbit_login_card_relogin_sub">登录好像失效了，重新登录一下</string>
+    <string name="orbit_login_card_relogin">重新登录</string>
 </resources>

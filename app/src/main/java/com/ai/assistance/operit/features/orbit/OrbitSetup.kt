@@ -38,6 +38,8 @@ internal object OrbitSetup {
     /** Setup that started making a configuration and Orbit but has not bound them yet. */
     private const val KEY_PENDING_CONFIG = "pending_config"
     private const val KEY_PENDING_ORBIT = "pending_orbit"
+    /** The chat id picked for the pending Orbit before the chat was made; only this chat is undone. */
+    private const val KEY_PENDING_CHAT = "pending_chat"
     /** The Orbit whose welcome has not been delivered yet. */
     private const val KEY_WELCOME = "welcome_pending"
     /** When the welcome last went to Orbit; its saved reply after this time settles it. */
@@ -187,12 +189,11 @@ internal object OrbitSetup {
         val app = context.applicationContext
         try {
             withContext(NonCancellable) {
+                if (!undoPending(app)) throw SetupException(Problem.OTHER, LEFTOVER)
                 prefs(app).edit().remove(KEY_PENDING_CONFIG).putString(KEY_PENDING_ORBIT, "").commit()
-                var createdId: String? = null
                 try {
-                    val orbit = OrbitCompanion.start(app, onCreated = {
-                        createdId = it
-                        prefs(app).edit().putString(KEY_PENDING_ORBIT, it).commit()
+                    val orbit = OrbitCompanion.start(app, onCreated = { id, chat ->
+                        prefs(app).edit().putString(KEY_PENDING_ORBIT, id).putString(KEY_PENDING_CHAT, chat).commit()
                     })
                     // The first read copies the main app's chat, helper and picture models. A helper
                     // model that cannot answer is replaced by the main one, as the setup page showed.
@@ -202,13 +203,12 @@ internal object OrbitSetup {
                     if (usable(app, configs, FunctionalConfigManager(app), FunctionType.MEMORY) == null) {
                         models.update(orbit.id) { it.copy(assistant = it.main) }
                     }
-                    prefs(app).edit().remove(KEY_PENDING_ORBIT).remove(KEY_WELCOME_SENT).putString(KEY_WELCOME, orbit.id).commit()
+                    prefs(app).edit().remove(KEY_PENDING_ORBIT).remove(KEY_PENDING_CHAT).remove(KEY_WELCOME_SENT).putString(KEY_WELCOME, orbit.id).commit()
                     welcome(app, orbit)
                     orbit
                 } catch (e: Throwable) {
                     AppLogger.e("OrbitSetup", "Could not start Orbit with the existing models", e)
-                    createdId?.let { runCatching { OrbitCompanion.remove(app, it) } }
-                    prefs(app).edit().remove(KEY_PENDING_ORBIT).commit()
+                    undoPending(app)
                     throw SetupException(Problem.OTHER, e.message.orEmpty().take(200))
                 }
             }
@@ -231,18 +231,55 @@ internal object OrbitSetup {
         if (!running.compareAndSet(false, true)) return@withContext
         val app = context.applicationContext
         try {
-            val p = prefs(app)
-            val orbitId = p.getString(KEY_PENDING_ORBIT, null)?.takeIf { it.isNotBlank() }
-            val configId = p.getString(KEY_PENDING_CONFIG, null)?.takeIf { it.isNotBlank() }
-            if (orbitId != null && OrbitPreferences.getInstance(app).current().orbits.any { it.id == orbitId }) {
-                runCatching { OrbitCompanion.remove(app, orbitId) }
-                    .onFailure { AppLogger.w("OrbitSetup", "Could not remove the half-made Orbit: ${it.message}") }
-            }
-            if (configId != null) runCatching { ModelConfigManager(app).deleteConfig(configId) }
-            p.edit().remove(KEY_PENDING_CONFIG).remove(KEY_PENDING_ORBIT).commit()
+            undoPending(app)
         } finally {
             running.value = false
         }
+    }
+
+    /**
+     * Removes what a cut-off or failed setup made: the Orbit it saved, or else its folder and the chat
+     * made for it (only by that chat's exact id), and the new configuration. A chat that turns up after
+     * its making timed out removes itself. When something could not be removed the marks stay, so the
+     * next try finishes the cleanup; returns whether everything is gone.
+     */
+    private suspend fun undoPending(app: Context): Boolean {
+        // Chats a timed-out start gave up on but that were made before the app closed.
+        runCatching { OrbitCompanion.sweepLateChats(app) }
+        val p = prefs(app)
+        val orbitId = p.getString(KEY_PENDING_ORBIT, null)?.takeIf { it.isNotBlank() }
+        val configId = p.getString(KEY_PENDING_CONFIG, null)?.takeIf { it.isNotBlank() }
+        val orbits = OrbitPreferences.getInstance(app).current().orbits
+        var left = false
+        if (orbitId != null && orbits.any { it.id == orbitId }) {
+            runCatching { OrbitCompanion.remove(app, orbitId) }
+                .onFailure {
+                    left = true
+                    AppLogger.w("OrbitSetup", "Could not remove the half-made Orbit: ${it.message}")
+                }
+        } else if (orbitId != null) {
+            // Cut off before the Orbit was saved: its folder and the chat made for it (by its exact id) are left over.
+            runCatching { OrbitPreferences.getInstance(app).orbitDir(orbitId).deleteRecursively() }
+            val chatId = p.getString(KEY_PENDING_CHAT, null)?.takeIf { it.isNotBlank() }
+            if (chatId != null && orbits.none { chatId in it.talkChatIds }) runCatching {
+                val db = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(app)
+                if (db.chatDao().getChatById(chatId) != null &&
+                    !com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(app).deleteChatHistory(chatId)
+                ) left = true
+            }.onFailure {
+                left = true
+                AppLogger.w("OrbitSetup", "Could not remove the half-made chat: ${it.message}")
+            }
+        }
+        val configLeft = configId != null && runCatching {
+            val configs = ModelConfigManager(app)
+            if (configs.getModelConfig(configId) != null) configs.deleteConfig(configId)
+        }.isFailure
+        val edit = p.edit()
+        if (!configLeft) edit.remove(KEY_PENDING_CONFIG)
+        if (!left) edit.remove(KEY_PENDING_ORBIT).remove(KEY_PENDING_CHAT)
+        edit.commit()
+        return !left && !configLeft
     }
 
     /** Sends the welcome again when an earlier one never reached Orbit (the app closed, or the chat stayed busy). */
@@ -271,6 +308,7 @@ internal object OrbitSetup {
     val inProgress: StateFlow<Boolean> = finishing.asStateFlow()
 
     private const val TEST_TIMEOUT_MS = 60_000L
+    private const val LEFTOVER = "An earlier setup could not be cleaned up yet; please try again"
     /** "high" in low, medium, high, xhigh, max. */
     private val THINKING_HIGH =
         com.ai.assistance.operit.data.preferences.ApiPreferences.THINKING_QUALITY_EFFORTS.indexOf("high") +
@@ -370,7 +408,9 @@ internal object OrbitSetup {
             .onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }.getOrDefault(true)
         val models = listOf(main, assistant).distinct()
         val id = "orbit-setup-" + UUID.randomUUID().toString().take(8)
-        prefs(app).edit().putString(KEY_PENDING_CONFIG, id).remove(KEY_PENDING_ORBIT).commit()
+        // What an earlier try left behind goes first; its marks are only replaced once it is gone.
+        if (!withContext(NonCancellable) { undoPending(app) }) throw SetupException(Problem.OTHER, LEFTOVER)
+        prefs(app).edit().putString(KEY_PENDING_CONFIG, id).commit()
         configs.createConfig(providerName.take(40), id)
         try {
             configs.updateModelConfig(id, key, endpoint, models.joinToString(","), provider)
@@ -391,11 +431,9 @@ internal object OrbitSetup {
         // half made. A failure removes the new Orbit and configuration so setup can run again.
         return withContext(NonCancellable) {
             // Only the Orbit this setup made is undone, even if the start fails after saving it.
-            var createdId: String? = null
             val started = try {
-                val orbit = OrbitCompanion.start(app, onCreated = {
-                    createdId = it
-                    prefs(app).edit().putString(KEY_PENDING_ORBIT, it).commit()
+                val orbit = OrbitCompanion.start(app, onCreated = { id, chat ->
+                    prefs(app).edit().putString(KEY_PENDING_ORBIT, id).putString(KEY_PENDING_CHAT, chat).commit()
                 })
                 // Pictures go to whichever of the two models can see them; none means Orbit says so when asked.
                 val saved = configs.getModelConfig(id)
@@ -407,14 +445,13 @@ internal object OrbitSetup {
                     it.copy(main = OrbitModelRef(id, main), assistant = OrbitModelRef(id, assistant),
                         multimodal = image?.let { name -> OrbitModelRef(id, name) })
                 }
-                prefs(app).edit().remove(KEY_PENDING_CONFIG).remove(KEY_PENDING_ORBIT)
+                prefs(app).edit().remove(KEY_PENDING_CONFIG).remove(KEY_PENDING_ORBIT).remove(KEY_PENDING_CHAT)
                     .remove(KEY_WELCOME_SENT).putString(KEY_WELCOME, orbit.id).commit()
                 orbit
             } catch (e: Throwable) {
                 AppLogger.e("OrbitSetup", "Could not start Orbit with the new model", e)
-                createdId?.let { runCatching { OrbitCompanion.remove(app, it) } }
                 runCatching { configs.deleteConfig(id) }
-                prefs(app).edit().remove(KEY_PENDING_CONFIG).remove(KEY_PENDING_ORBIT).commit()
+                undoPending(app)
                 throw SetupException(Problem.OTHER, hide(e.message.orEmpty()))
             }
             // Only a main app that could not chat yet is set up too: it gets the new model, and

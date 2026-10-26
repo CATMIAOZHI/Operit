@@ -257,6 +257,8 @@ object OrbitTaskRunner {
                     check(dao.run(token.id)?.state in setOf("COMPLETED", "WAITING_USER", "UNKNOWN")) {
                         "The model did not submit a result"
                     }
+                    // The model answered: a failure of this model told before is over.
+                    modelWorked(context, state)
                     if (task.source == OrbitRoutines.ALIGNMENT_SOURCE && dao.run(token.id)?.state == "COMPLETED" &&
                         OrbitReviewReader.of(context, orbit.id).done()) {
                         OrbitRoutines.afterAlignmentReview(context, orbit)
@@ -279,6 +281,9 @@ object OrbitTaskRunner {
                 dao.interrupt(token, System.currentTimeMillis(), (e as? ModelTurnFailed)?.let {
                     context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_paused, it.reason(context))
                 } ?: context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+            }
+            (e as? ModelTurnFailed)?.let {
+                tellModelFailure(context, state, OrbitSetup.problemOf(it.detail).name, it.reason(context))
             }
         } finally {
             withContext(NonCancellable) {
@@ -358,6 +363,30 @@ object OrbitTaskRunner {
     private class ModelTurnFailed(val detail: String) : Exception(detail) {
         fun reason(context: Context): String = OrbitSetup.describe(context, OrbitSetup.problemOf(detail))
     }
+
+    /**
+     * Tells Orbit once that background work stopped working because of its model, so a user who
+     * chats as usual still hears about it; told again only after that model worked once more
+     * ([modelWorked]). Kept apart for the main and the assistant model.
+     */
+    private fun tellModelFailure(context: Context, state: ActiveRun, problem: String, reason: String) {
+        val title = state.task.title.replace(Regex("\\s+"), " ").take(80)
+        OrbitNotices.once(context, state.orbitId, "${modelKey(state)}$problem",
+            "[orbit-task] 后台任务的模型出错了\n这是 App 发给你的说明，不是用户说的，用户也看不到。后台任务「$title」这次没跑成：$reason" +
+                "重复的任务下次到点会再试，一次性的任务先暂停了。模型修好之前，其他后台工作（动态、点子、提醒、整理）也可能一样失败。" +
+                "找合适的时机用一句话告诉用户，并调用 orbit_models action=open_settings 放一张卡片，让他去检查模型和密钥。" +
+                "他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
+            "[orbit-task] A background task's model failed\nThis is a note from the app, not from the user; they cannot see it. " +
+                "The background task \"$title\" did not run this time: $reason Repeating tasks try again at their next time; a " +
+                "one-time task is paused. Until the model works, other background work (feed, ideas, reminders, tidying) may fail too. " +
+                "When it fits, tell the user in one line and call orbit_models action=open_settings to put a card in the chat for " +
+                "checking the model and key. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
+    }
+
+    private fun modelKey(state: ActiveRun) = "task_model:${OrbitModels.taskRole(state.task)}:"
+
+    /** The task's model answered a turn: its failure, if one was told, is over and a new one is told again. */
+    private fun modelWorked(context: Context, state: ActiveRun) = OrbitNotices.clear(context, state.orbitId, modelKey(state))
 
     /**
      * A repeating task whose model failed (no network, a wrong key, no balance) gives up only this
@@ -463,6 +492,10 @@ object OrbitTaskRunner {
             }
             dao.recordChatDecision(state.token.id, state.token.generation, state.token.owner,
                 OrbitChatDecision.encode(outcome, decision.reason))
+            if (told == OrbitWake.Told.FAILED) {
+                // The task was handed over but Orbit's reply failed: told once, and listed by orbit_tasks pending.
+                tellModelFailure(context, state, "wake", context.getString(com.ai.assistance.operit.R.string.orbit_decision_chat_failed, orbit.name) + if (english) "." else "。")
+            } else if (told == OrbitWake.Told.SPOKE || decision.confirmed) modelWorked(context, state)
             if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, System.currentTimeMillis())
             // A one-time reminder must still reach the user when Orbit's reply failed (the model
             // was down): its own words go into the chat, and out as a notification when the app is closed.

@@ -222,6 +222,10 @@ private fun ChatGptLoginCard(card: JSONObject) {
         }
     }
     val signedIn = auth?.authState?.collectAsState()?.value != null
+    // Asked to sign in again: an old sign-in is saved but no longer works. Done once a new one is made here.
+    var relogged by androidx.compose.runtime.saveable.rememberSaveable { mutableStateOf(false) }
+    val relogin = card.optBoolean("relogin") && !relogged
+    val canLogin = !signedIn || relogin
     val orbitFlow = remember(orbitId) {
         com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).settingsFlow
     }
@@ -231,6 +235,7 @@ private fun ChatGptLoginCard(card: JSONObject) {
     val scope = rememberCoroutineScope()
     val onSuccess: (com.ai.assistance.operit.data.preferences.CodexAuthState) -> Unit = {
         login = 0
+        relogged = true
         orbit?.let { o -> com.ai.assistance.operit.features.orbit.OrbitVaultNotice.sendChatGptLogin(context, o, chatId) }
         scope.launch { runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) } }
     }
@@ -242,7 +247,11 @@ private fun ChatGptLoginCard(card: JSONObject) {
                 Text(stringResource(R.string.orbit_chatgpt_card_title), style = MaterialTheme.typography.titleMedium,
                     maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    stringResource(if (signedIn) R.string.orbit_chatgpt_card_done else R.string.orbit_chatgpt_card_sub),
+                    stringResource(when {
+                        relogin -> R.string.orbit_login_card_relogin_sub
+                        signedIn -> R.string.orbit_chatgpt_card_done
+                        else -> R.string.orbit_chatgpt_card_sub
+                    }),
                     style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant,
                     maxLines = 2, overflow = TextOverflow.Ellipsis,
                 )
@@ -253,16 +262,20 @@ private fun ChatGptLoginCard(card: JSONObject) {
             shape = RoundedCornerShape(50),
             color = colors.surface,
             modifier = Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50))
-                .orbitCardGestures(onClick = { login = 1 }, enabled = !signedIn && orbit != null && auth != null)
-                .semantics { if (signedIn) disabled() },
+                .orbitCardGestures(onClick = { login = 1 }, enabled = canLogin && orbit != null && auth != null)
+                .semantics { if (!canLogin) disabled() },
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Text(stringResource(if (signedIn) R.string.orbit_chatgpt_card_signed_in else R.string.orbit_chatgpt_card_login),
+                Text(stringResource(when {
+                    relogin -> R.string.orbit_login_card_relogin
+                    signedIn -> R.string.orbit_chatgpt_card_signed_in
+                    else -> R.string.orbit_chatgpt_card_login
+                }),
                     style = MaterialTheme.typography.titleMedium,
-                    color = if (signedIn) colors.onSurface.copy(alpha = 0.38f) else androidx.compose.ui.graphics.Color.Unspecified)
+                    color = if (!canLogin) colors.onSurface.copy(alpha = 0.38f) else androidx.compose.ui.graphics.Color.Unspecified)
             }
         }
-        if (!signedIn) {
+        if (canLogin) {
             androidx.compose.material3.TextButton(
                 onClick = { login = 2 }, enabled = orbit != null && auth != null,
                 modifier = Modifier.fillMaxWidth().padding(top = 2.dp),

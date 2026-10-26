@@ -945,6 +945,7 @@ class ChatHistoryDelegate(
         characterCardId: String? = null,
         withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
+        chatId: String? = null,
     ) {
         coroutineScope.launch {
             val (inputTokens, outputTokens, windowSize) = getChatStatistics()
@@ -969,7 +970,8 @@ class ChatHistoryDelegate(
                 inheritGroupFromChatId = inheritGroupFromChatId,
                 characterCardName = target.characterCardName,
                 characterGroupId = target.characterGroupId,
-                setAsCurrentChat = shouldSyncCurrentChatToGlobal
+                setAsCurrentChat = shouldSyncCurrentChatToGlobal,
+                chatId = chatId,
             )
 
             if (withOpeningMessage) target.openingMessage?.let { chatHistoryManager.addMessage(newChat.id, it) }

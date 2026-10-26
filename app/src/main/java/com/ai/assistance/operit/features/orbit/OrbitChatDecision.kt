@@ -38,6 +38,10 @@ object OrbitChatDecision {
 
     fun isChat(decision: String) = decision == OrbitRunEntity.IN_CHAT || decision.startsWith(OrbitRunEntity.IN_CHAT + ":")
 
+    /** A task handed to Orbit in the chat whose reply then failed (the model was down). */
+    fun failed(decision: String) = decision.startsWith(OrbitRunEntity.IN_CHAT + ":") &&
+        runCatching { JSONObject(decision.substringAfter(':')).optString("outcome") == "failed" }.getOrDefault(false)
+
     fun describe(context: Context, decision: String, name: String): String {
         val value = runCatching { JSONObject(decision.substringAfter(':')) }.getOrNull()
         if (value == null) return context.getString(R.string.orbit_decision_in_chat, name)

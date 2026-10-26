@@ -58,8 +58,8 @@ object OrbitCompanion {
      */
     suspend fun start(
         context: Context,
-        /** Told the id as soon as a new Orbit is saved, so a caller can undo a start that fails later. */
-        onCreated: (String) -> Unit = {},
+        /** Told the new Orbit's id and its chat's id before either is made, so a caller can undo a start cut off later. */
+        onCreated: (orbitId: String, chatId: String) -> Unit = { _, _ -> },
     ): OrbitProfile {
         val appContext = context.applicationContext
         val profile = chatMutex.withLock {
@@ -284,13 +284,16 @@ object OrbitCompanion {
     }
 
     /** Makes the Orbit: named Orbit, the starting SOUL.md, and no picture, so it shows the Orbit logo. */
-    private suspend fun createLocked(context: Context, onCreated: (String) -> Unit = {}): OrbitProfile {
+    private suspend fun createLocked(context: Context, onCreated: (String, String) -> Unit): OrbitProfile {
         val roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID
         val orbitId = UUID.randomUUID().toString()
+        val newChatId = UUID.randomUUID().toString()
         val preferences = OrbitPreferences.getInstance(context)
+        // The caller records both ids before anything is made, so a setup cut off halfway can undo exactly them.
+        onCreated(orbitId, newChatId)
         preferences.writeSoul(orbitId, OrbitSoulTemplate.initial(com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context)))
         // No opening message: Orbit greets the user itself on the first talk.
-        val chatId = createChat(context, null, DEFAULT_NAME)
+        val chatId = createChat(context, null, DEFAULT_NAME, chatId = newChatId)
         val profile =
             OrbitProfile(
                 id = orbitId,
@@ -301,8 +304,6 @@ object OrbitCompanion {
                 avatarUri = null,
                 createdAt = System.currentTimeMillis(),
             )
-        // The caller records the id before the Orbit is saved, so a setup cut off in between can undo it.
-        onCreated(orbitId)
         preferences.putOrbit(profile)
         val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
         return profile.copy(memorySpaceId = memorySpaceId)
@@ -370,21 +371,80 @@ object OrbitCompanion {
      * Creates an Orbit chat. A new Orbit's chat starts with its role card's opening message; after
      * that the chat no longer follows the role card.
      */
-    private suspend fun createChat(context: Context, roleCardId: String?, title: String, titled: Boolean = true): String {
+    private suspend fun createChat(
+        context: Context, roleCardId: String?, title: String, titled: Boolean = true, chatId: String? = null,
+    ): String {
         val core = core(context)
         val created = CompletableDeferred<String>()
+        // 0 waiting, 1 handed over, 2 given up. A chat that turns up after the wait gave up
+        // removes itself, so a timed-out start never leaves a chat nobody knows about. Its id is
+        // also written down until it is gone, in case the app is closed before it removes itself.
+        val state = java.util.concurrent.atomic.AtomicInteger(0)
+        fun giveUp() {
+            if (state.compareAndSet(0, 2) && chatId != null) {
+                lateInFlight.add(chatId)
+                editLate(context) { it + chatId }
+            }
+        }
         core.createNewChat(
             inheritGroupFromCurrent = false,
             setAsCurrentChat = false,
             characterCardId = roleCardId ?: CharacterCardManager.DEFAULT_CHARACTER_CARD_ID,
             // A side chat (no role card) starts empty: it is Orbit talking, not the default card.
             withOpeningMessage = roleCardId != null,
-            onCreated = { chatId -> created.complete(chatId) },
+            onCreated = { madeId ->
+                if (state.compareAndSet(0, 1)) created.complete(madeId)
+                else core.getChatHistoryDelegate().deleteChatHistory(madeId) { ok ->
+                    lateInFlight.remove(madeId)
+                    if (ok) editLate(context) { it - madeId }
+                    else com.ai.assistance.operit.util.AppLogger.w("OrbitCompanion", "Could not remove a chat made too late")
+                }
+            },
+            chatId = chatId,
         )
-        val chatId = withTimeout(CHAT_CREATE_TIMEOUT_MS) { created.await() }
+        val made = try {
+            kotlinx.coroutines.withTimeoutOrNull(CHAT_CREATE_TIMEOUT_MS) { created.await() }
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            giveUp()
+            throw e
+        } ?: run {
+            giveUp()
+            if (state.get() == 2) throw IllegalStateException("The chat could not be made in time")
+            created.await()
+        }
         core.getChatHistoryDelegate()
-            .updateChatTitleAndWait(chatId, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
-        return chatId
+            .updateChatTitleAndWait(made, if (titled) context.getString(R.string.orbit_chat_title, title) else title)
+        return made
+    }
+
+    private const val LATE_PREFS = "orbit_late_chats"
+    private const val KEY_LATE = "ids"
+    /** Given-up chats whose making may still finish in this run of the app. */
+    private val lateInFlight = java.util.concurrent.ConcurrentHashMap.newKeySet<String>()
+
+    private fun editLate(context: Context, change: (Set<String>) -> Set<String>) = synchronized(lateInFlight) {
+        val p = context.applicationContext.getSharedPreferences(LATE_PREFS, Context.MODE_PRIVATE)
+        val now = p.getStringSet(KEY_LATE, emptySet()).orEmpty().toSet()
+        p.edit().putStringSet(KEY_LATE, change(now)).commit()
+    }
+
+    /**
+     * Removes chats whose making was given up but which were made anyway (the app was closed before
+     * they removed themselves). An id is forgotten once its chat is gone, or when it never appeared
+     * and is no longer being made.
+     */
+    suspend fun sweepLateChats(context: Context) = withContext(kotlinx.coroutines.Dispatchers.IO) {
+        val app = context.applicationContext
+        val ids = app.getSharedPreferences(LATE_PREFS, Context.MODE_PRIVATE).getStringSet(KEY_LATE, emptySet()).orEmpty().toSet()
+        if (ids.isEmpty()) return@withContext
+        val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(app).chatDao()
+        val history = com.ai.assistance.operit.data.repository.ChatHistoryManager.getInstance(app)
+        ids.forEach { id ->
+            val gone = runCatching {
+                if (dao.getChatById(id) != null) history.deleteChatHistory(id) else id !in lateInFlight
+            }.getOrDefault(false)
+            if (gone) editLate(app) { it - id }
+        }
     }
 
     /** Milliseconds from [nowMillis] to the next [minuteOfDay], at least a minute ahead. */

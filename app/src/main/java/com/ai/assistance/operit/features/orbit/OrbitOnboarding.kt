@@ -10,7 +10,7 @@ import kotlinx.coroutines.withContext
 /**
  * The first talk with a new Orbit: it asks whether the user wants another name for it, whether to
  * shape SOUL.md after a role card, and whether to bring memories over from another AI. The hint
- * stays in the prompt for the first few user messages only.
+ * stays until Orbit ends the first talk with orbit_soul first_talk_done, or for the first few user messages at most.
  */
 internal object OrbitOnboarding {
     private const val MARKER = ".onboarded"
@@ -54,7 +54,7 @@ internal object OrbitOnboarding {
         val users = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao().userMessageCount(orbit.chatId)
         if (users >= USER_MESSAGES) {
             markDone(context, orbit.id)
-            return null
+            return keepAliveHint(context, orbit, english)
         }
         val importPrompt = context.getString(com.ai.assistance.operit.R.string.orbit_import_prompt)
         return (if (english) HINT_EN else HINT_ZH).replace("{import_prompt}", importPrompt)
@@ -136,6 +136,7 @@ internal object OrbitOnboarding {
         3. 要不要把其他 AI（比如 ChatGPT、豆包、Kimi）记得的关于他的事搬过来。想搬的话，把下面这段提示词原样发给他，让他交给那个 AI，再把回答贴回来：
         「{import_prompt}」
         收到回答后，按 memory 文档里导入记忆的规则，提炼长期有用的事实和偏好，写进 user.md 和 memory.md，再告诉他记下了哪些。
+        三件事都问过了（办完或他说不用），调用一次 orbit_soul action=first_talk_done 结束初次见面。
         </orbit_first_talk>
     """.trimIndent()
 
@@ -158,6 +159,7 @@ internal object OrbitOnboarding {
            "{import_prompt}"
            When the answer comes, follow the memory guide on importing: keep the facts and preferences that stay useful,
            write them into user.md and memory.md, then tell them what you saved.
+        Once all three were asked (done or declined), call orbit_soul action=first_talk_done once to end the first talk.
         </orbit_first_talk>
     """.trimIndent()
 }

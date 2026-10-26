@@ -3369,6 +3369,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         characterCardName: String?,
         characterGroupId: String?,
         contextPolicyJson: String,
+        chatId: String? = null,
     ): ChatHistory {
         val dateTime = LocalDateTime.now()
         val formattedTime =
@@ -3378,6 +3379,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         val localizedContext = LocaleUtils.getLocalizedContext(context)
 
         return ChatHistory(
+            id = chatId ?: java.util.UUID.randomUUID().toString(),
             title = "${localizedContext.getString(R.string.new_conversation)} $formattedTime",
             messages = emptyList(),
             inputTokens = 0,
@@ -3395,7 +3397,9 @@ class ChatHistoryManager private constructor(private val context: Context) {
         inheritGroupFromChatId: String? = null,
         characterCardName: String? = null,
         characterGroupId: String? = null,
-        setAsCurrentChat: Boolean = true
+        setAsCurrentChat: Boolean = true,
+        /** A caller that must find the chat again after a crash picks its id up front. */
+        chatId: String? = null,
     ): ChatHistory {
         val contextPolicy = com.ai.assistance.operit.data.preferences.ChatContextPreferences(context)
             .defaults.first().encode()
@@ -3411,6 +3415,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     characterCardName = characterCardName,
                     characterGroupId = characterGroupId,
                     contextPolicyJson = contextPolicy,
+                    chatId = chatId,
                 )
             }
         releaseLegacyFolderReservations(listOf(newHistory.folderId))
