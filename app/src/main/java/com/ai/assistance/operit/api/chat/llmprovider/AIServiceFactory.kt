@@ -43,12 +43,17 @@ internal data class LlmRequestTraceContext(
 
 private object LlmNetworkEventListenerFactory : EventListener.Factory {
     override fun create(call: Call): EventListener {
-        return LlmNetworkEventListener(call.request().tag(LlmRequestTraceContext::class.java))
+        return LlmNetworkEventListener(
+            call.request().tag(LlmRequestTraceContext::class.java),
+            call.request().tag(com.ai.assistance.operit.core.chat.LlmRequestPerf::class.java),
+        )
     }
 }
 
 private class LlmNetworkEventListener(
-    private val traceContext: LlmRequestTraceContext?
+    private val traceContext: LlmRequestTraceContext?,
+    /** 这次请求的计时卡，没有就只写原来的逐条日志。 */
+    private val perf: com.ai.assistance.operit.core.chat.LlmRequestPerf?,
 ) : EventListener() {
     private val startedAtNs = System.nanoTime()
 
@@ -64,6 +69,7 @@ private class LlmNetworkEventListener(
     }
 
     private fun log(stage: String, details: String = "") {
+        perf?.network(stage)
         val suffix = if (details.isBlank()) "" else " | $details"
         AppLogger.d("AIHttpTrace", "${prefix()} +${elapsedMs()}ms $stage$suffix")
     }

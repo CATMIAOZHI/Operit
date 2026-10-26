@@ -10,6 +10,7 @@ import android.os.Build
 import android.provider.Settings
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
+import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
@@ -282,6 +283,13 @@ internal object OrbitPermissionCards {
                 if (!stillOn()) return@launch
                 val english = LocaleUtils.usesEnglishPrompt(app)
                 val what = label(english, permission)
+                // Listed with the approvals, so the user can see what they turned on for Orbit and when.
+                runCatching {
+                    OrbitApprovals.recordPermission(app, orbitId, chatId, "$cardId/on",
+                        app.getString(R.string.orbit_permission_record_on_title, shownName(app, permission)),
+                        app.getString(R.string.orbit_permission_record_on_detail, orbit.name, shownName(app, permission)),
+                        granted = true)
+                }.onFailure { AppLogger.w("OrbitPermissionCards", "Could not list a granted permission: ${it.message}") }
                 val notice = if (english) {
                     "$MARKER Granted: $what\n" +
                         "The user opened the permission controls from your card and returned. " +
@@ -374,6 +382,12 @@ internal object OrbitPermissionCards {
         sendingFlow.value = sendingFlow.value + cardId
         scope.launch {
             try {
+                runCatching {
+                    OrbitApprovals.recordPermission(app, orbit.id, target, "$cardId/off",
+                        app.getString(R.string.orbit_permission_record_off_title, shownName(app, permission)),
+                        app.getString(R.string.orbit_permission_record_off_detail, orbit.name, shownName(app, permission)),
+                        granted = false)
+                }.onFailure { AppLogger.w("OrbitPermissionCards", "Could not list a dismissed card: ${it.message}") }
                 val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
                 while (true) {
                     val left = deadline - android.os.SystemClock.elapsedRealtime()
@@ -392,6 +406,21 @@ internal object OrbitPermissionCards {
             }
         }
     }
+
+    /** The permission's name as the approval list shows it, in the app's display language. */
+    private fun shownName(app: Context, permission: String): String = when (permission) {
+        KEEP_ALIVE -> R.string.orbit_permission_name_keep_alive
+        DEVICE_ACCESS -> R.string.orbit_permission_name_device_access
+        NOTIFY -> R.string.orbit_permission_name_notify
+        NOTIFICATION_READ -> R.string.orbit_permission_name_notification_read
+        SMS -> R.string.orbit_permission_name_sms
+        CONTACTS -> R.string.orbit_permission_name_contacts
+        CALENDAR -> R.string.orbit_permission_name_calendar
+        MICROPHONE -> R.string.orbit_permission_name_microphone
+        LOCATION -> R.string.orbit_permission_name_location
+        GEOFENCE -> R.string.orbit_permission_name_geofence
+        else -> null
+    }?.let { app.getString(it) } ?: permission
 
     private fun markDismissed(app: Context, cardId: String) {
         dismissed(app)

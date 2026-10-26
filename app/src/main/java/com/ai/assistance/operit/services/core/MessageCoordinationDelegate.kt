@@ -641,6 +641,10 @@ class MessageCoordinationDelegate(
             }
             return true
         }
+        // 性能日志：从这里算用户这条消息的耗时（含等总结、读配置），随本次发送带过去。
+        val perfMark = com.ai.assistance.operit.core.chat.LlmRequestPerf.now()
+        fun logUnsent(cause: Throwable?, where: String) =
+            com.ai.assistance.operit.core.chat.LlmRequestPerf.logUnsent(perfMark, cause, where)
         val currentChat = chatHistoryDelegate.chatHistories.value.find { it.id == chatId }
         val workspacePath = currentChat?.workspace
         val workspaceEnv = currentChat?.workspaceEnv
@@ -783,7 +787,8 @@ class MessageCoordinationDelegate(
                     suppressUserMessageInHistory = suppressUserMessageInHistory,
                     isGroupOrchestrationTurn = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
-                    turnOptions = orbitReasoningLevel?.let { turnOptions.copy(chatReasoningLevel = it) } ?: turnOptions
+                    turnOptions = (orbitReasoningLevel?.let { turnOptions.copy(chatReasoningLevel = it) } ?: turnOptions)
+                        .copy(perfStartMs = perfMark)
                 )
 
                 if (accepted && prepareAsynchronously && shouldReadComposerState && effectiveMessageTextOverride == null) {
@@ -837,6 +842,7 @@ class MessageCoordinationDelegate(
                     val afterTimestamp = snapshotMessages.getOrNull(insertPosition)?.timestamp
 
                     // 总结完成并保存后才发送；协程等待不会阻塞 UI 线程。
+                    var sentAfterSummary = false
                     launchSummaryBeforeSend(
                         snapshotMessages = snapshotMessages,
                         beforeTimestamp = beforeTimestamp,
@@ -846,7 +852,8 @@ class MessageCoordinationDelegate(
                         chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                         chatModelIndexOverride = resolvedChatModelIndexOverride,
                         memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
-                        onReady = { sendPreparedMessage(afterSummary = true) }
+                        onReady = { sentAfterSummary = sendPreparedMessage(afterSummary = true) },
+                        onSettled = { cause -> if (!sentAfterSummary) logUnsent(cause, "等总结后没发出") },
                     )
 
                     return true
@@ -857,7 +864,16 @@ class MessageCoordinationDelegate(
         }
 
         // Keep the established synchronous admission path for main-app chats.
-        if (!prepareAsynchronously) return runBlocking { prepareAndSend() }
+        if (!prepareAsynchronously) {
+            val accepted = try {
+                runBlocking { prepareAndSend() }
+            } catch (e: Throwable) {
+                logUnsent(e, "发送入口准备出错")
+                throw e
+            }
+            if (!accepted) logUnsent(null, "发送入口没受理")
+            return accepted
+        }
         if (messageProcessingDelegate.isChatLoading(chatId) ||
             (pendingText.isBlank() && currentAttachments.isEmpty() && !isAutoContinuation && !isGroupOrchestrationTurn)) return false
         var handedOff = false
@@ -889,6 +905,7 @@ class MessageCoordinationDelegate(
             InputProcessingState.Processing(context.getString(R.string.message_processing)))
         // Completion also runs if the parent scope was cancelled before the lazy body could start.
         preparation.invokeOnCompletion { cause ->
+            if (!handedOff) logUnsent(cause, "发送入口准备没完成")
             if (!handedOff && !messageProcessingDelegate.isChatLoading(chatId)) {
                 messageProcessingDelegate.setInputProcessingStateForChat(chatId, InputProcessingState.Idle)
             }
@@ -1818,9 +1835,12 @@ class MessageCoordinationDelegate(
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
         memorySpaceIdOverride: String? = null,
-        onReady: () -> Unit
+        onReady: () -> Unit,
+        /** Called once the summary is over, whether or not [onReady] ran; the cause is null on a normal end. */
+        onSettled: (Throwable?) -> Unit = {},
     ) {
         if (snapshotMessages.isEmpty() || originalChatId == null) {
+            onSettled(null)
             return
         }
 
@@ -1912,6 +1932,7 @@ class MessageCoordinationDelegate(
             kotlinx.coroutines.currentCoroutineContext().ensureActive()
             if (chatHistoryDelegate.currentChatId.value == originalChatId) onReady()
         }
+        asyncSummaryJob.invokeOnCompletion(onSettled)
         sendTriggeredSummaryJob = asyncSummaryJob
     }
 

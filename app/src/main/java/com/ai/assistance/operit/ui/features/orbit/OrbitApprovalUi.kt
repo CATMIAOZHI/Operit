@@ -62,6 +62,7 @@ import java.util.Date
 internal fun approvalIcon(a: OrbitApprovals.Approval?): String = when {
     a == null -> "shield-question"
     a.kind == OrbitApprovals.VAULT_SAVED -> "lock-keyhole"
+    a.kind == OrbitApprovals.PERMISSION -> if (a.state == OrbitApprovals.APPROVED) "shield-check" else "bell-off"
     a.state == OrbitApprovals.APPROVED -> "shield-check"
     a.state == OrbitApprovals.DENIED -> "shield-x"
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.IMPORT_PACKAGES -> "package-plus"
@@ -78,6 +79,9 @@ internal fun approvalStateText(a: OrbitApprovals.Approval): String = stringResou
     a.kind == OrbitApprovals.VAULT_SAVED ->
         if (a.detail == com.ai.assistance.operit.features.orbit.OrbitVault.LOGIN) R.string.orbit_approval_vault_login
         else R.string.orbit_approval_vault_key
+    a.kind == OrbitApprovals.PERMISSION ->
+        if (a.state == OrbitApprovals.APPROVED) R.string.orbit_approval_state_permission_on
+        else R.string.orbit_approval_state_permission_off
     a.state == OrbitApprovals.APPROVED -> R.string.orbit_approval_state_approved
     a.state == OrbitApprovals.DENIED -> R.string.orbit_approval_state_denied
     else -> R.string.orbit_approval_state_pending
@@ -132,7 +136,8 @@ internal fun OrbitApprovalCard(card: JSONObject) {
             Surface(shape = RoundedCornerShape(14.dp), color = colors.surface, modifier = Modifier.size(52.dp)) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(orbitIcon(approvalIcon(a)), null, Modifier.size(26.dp),
-                        tint = if (a?.state == OrbitApprovals.DENIED) colors.error else colors.onSurface)
+                        tint = if (a?.state == OrbitApprovals.DENIED && a.kind != OrbitApprovals.PERMISSION) colors.error
+                        else colors.onSurface)
                 }
             }
             Spacer(Modifier.width(14.dp))
@@ -318,7 +323,8 @@ internal fun OrbitApprovalSheet(
             Surface(shape = RoundedCornerShape(18.dp), color = colors.surface, shadowElevation = 1.dp, modifier = Modifier.size(64.dp)) {
                 Box(contentAlignment = Alignment.Center) {
                     Icon(orbitIcon(approvalIcon(approval)), null, Modifier.size(30.dp),
-                        tint = if (approval.state == OrbitApprovals.DENIED) colors.error else colors.onSurface)
+                        tint = if (approval.state == OrbitApprovals.DENIED && approval.kind != OrbitApprovals.PERMISSION)
+                            colors.error else colors.onSurface)
                 }
             }
             Spacer(Modifier.height(16.dp))

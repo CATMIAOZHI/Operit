@@ -2,6 +2,8 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import com.ai.assistance.operit.util.AppLogger
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
+import com.ai.assistance.operit.core.chat.timeBody
+import com.ai.assistance.operit.core.chat.withPerf
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
 import com.ai.assistance.operit.core.chat.hooks.toPromptTurns
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -1460,8 +1462,11 @@ open class GeminiProvider(
                     )
                 }
 
-                val requestBody = withContext(kotlinx.coroutines.Dispatchers.IO) {
-                    createRequestBody(context, chatHistory, modelParameters, enableThinking, availableTools, preserveThinkInHistory)
+                val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
+                val requestBody = perf.timeBody({ it.contentLength() }) {
+                    withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        createRequestBody(context, chatHistory, modelParameters, enableThinking, availableTools, preserveThinkInHistory)
+                    }
                 }
                 onTokensUpdated(
                         tokenCacheManager.totalInputTokenCount,
@@ -1470,7 +1475,7 @@ open class GeminiProvider(
                 )
                 val request = createRequest(context, requestBody, stream, requestId) // 根据stream参数决定使用流式还是非流式
 
-                val call = client.newCall(request)
+                val call = client.newCall(request.withPerf(perf))
                 activeCall = call
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
                     ?.bindAbort { call.cancel() }

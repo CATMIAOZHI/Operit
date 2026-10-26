@@ -2,6 +2,8 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
 import android.net.Uri
+import com.ai.assistance.operit.core.chat.timeBody
+import com.ai.assistance.operit.core.chat.withPerf
 import android.os.Environment
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
@@ -3066,7 +3068,10 @@ open class OpenAIProvider(
                     "【发送消息】准备构建请求体，模型参数数量: ${modelParameters.size}，已启用参数: ${modelParameters.count { it.isEnabled }}"
                 )
                 // 直接传递原始历史记录给createRequestBody，让具体的Provider决定如何处理（例如Deepseek需要保留<think>标签）
-                val requestBody = withContext(Dispatchers.IO) { createRequestBody(
+                val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
+                // 有些服务商无论设置都走流式，以实际发出的方式记首字。
+                perf?.actualStreaming(effectiveStream)
+                val requestBody = perf.timeBody({ it.contentLength() }) { withContext(Dispatchers.IO) { createRequestBody(
                     context,
                     currentHistory,
                     modelParameters,
@@ -3074,7 +3079,7 @@ open class OpenAIProvider(
                     effectiveStream,
                     availableTools,
                     preserveThinkInHistory
-                ) }
+                ) } }
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
                     tokenCacheManager.cachedInputTokenCount,
@@ -3093,7 +3098,7 @@ open class OpenAIProvider(
                 checkAuthenticationContinuity(firstAuthenticatedRequest, request)
                 if (firstAuthenticatedRequest == null) firstAuthenticatedRequest = request
                 // 创建Call对象并保存到activeCall中，以便可以取消
-                val call = client.newCall(request)
+                val call = client.newCall(request.withPerf(perf))
                 activeCall = call
                 kotlin.coroutines.coroutineContext[com.ai.assistance.operit.core.chat.SamplingInterrupt]
                     ?.bindAbort { call.cancel() }

@@ -2,6 +2,8 @@ package com.ai.assistance.operit.api.chat.llmprovider
 
 import android.content.Context
 import com.ai.assistance.operit.util.AppLogger
+import com.ai.assistance.operit.core.chat.timeBody
+import com.ai.assistance.operit.core.chat.withPerf
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.chat.hooks.PromptTurn
 import com.ai.assistance.operit.core.chat.hooks.PromptTurnKind
@@ -1508,7 +1510,8 @@ class ClaudeProvider(
                     )
                 }
 
-                val builtRequestBody = withContext(Dispatchers.IO) { createRequestBody(
+                val perf = com.ai.assistance.operit.core.chat.currentLlmPerf()
+                val builtRequestBody = perf.timeBody({ it.body.contentLength() }) { withContext(Dispatchers.IO) { createRequestBody(
                     context,
                     chatHistory,
                     modelParameters,
@@ -1516,7 +1519,7 @@ class ClaudeProvider(
                     stream,
                     availableTools,
                     preserveThinkInHistory
-                ) }
+                ) } }
                 attemptedThinkingFormat = builtRequestBody.thinkingFormat
                 onTokensUpdated(
                     tokenCacheManager.totalInputTokenCount,
@@ -1524,7 +1527,7 @@ class ClaudeProvider(
                     tokenCacheManager.outputTokenCount
                 )
                 val request = createRequest(builtRequestBody.body, stream)
-                client.newCall(request)
+                client.newCall(request.withPerf(perf))
             } catch (e: Exception) {
                 throw e
             }
@@ -1570,6 +1573,8 @@ class ClaudeProvider(
                         )
 
                         if (stream && !looksLikeSse && looksLikeJson) {
+                            // 服务器没按流式回，整段一次到达：计时按非流式算。
+                            com.ai.assistance.operit.core.chat.currentLlmPerf()?.actualStreaming(false)
                             val responseText = responseBody.string().trim()
                             val json = JSONObject(responseText)
                             val resultText = parseAnthropicNonStreaming(json).ifBlank { parseOpenAiNonStreaming(json) }

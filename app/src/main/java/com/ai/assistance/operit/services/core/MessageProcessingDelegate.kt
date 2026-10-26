@@ -949,6 +949,9 @@ class MessageProcessingDelegate(
         updateGlobalLoadingState()
         setChatInputProcessingState(chatId, EnhancedInputProcessingState.Processing(context.getString(R.string.message_processing)))
 
+        // 性能日志：这一轮的起点只交给本轮主请求；没用上（插件接管、出错、还没开始就取消）时结束补一行。
+        val perfStart = com.ai.assistance.operit.core.chat.LlmPerfStart(
+            turnOptions.perfStartMs ?: com.ai.assistance.operit.core.chat.LlmRequestPerf.now())
         val sendJob =
             coroutineScope.launch(Dispatchers.IO + CoroutineName("ChatSend")) {
             val sendUserMessageStartTime = messageTimingNow()
@@ -1360,6 +1363,7 @@ class MessageProcessingDelegate(
                     systemPromptOverride = turnOptions.systemPromptOverride,
                     collaborationHistory = turnOptions.collaborationHistory,
                     collaborationInput = turnOptions.isCollaborationAgent,
+                    perfStart = perfStart,
                 )
                 } catch (error: Throwable) {
                     toolBoundaryMessageReady.complete(null)
@@ -2013,6 +2017,7 @@ class MessageProcessingDelegate(
             }
             cancellationToPropagate?.let { throw it }
         }
+        sendJob.invokeOnCompletion { perfStart.reportIfUnused(it) }
         chatRuntime.sendJob = sendJob
         if (turnOptions.turnId?.let(isTurnCancellationRequested) == true) {
             sendJob.cancel(

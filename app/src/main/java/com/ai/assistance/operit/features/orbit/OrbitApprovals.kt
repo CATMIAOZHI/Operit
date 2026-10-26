@@ -37,6 +37,8 @@ import java.util.concurrent.ConcurrentHashMap
 internal object OrbitApprovals {
     const val REQUEST = "request"
     const val VAULT_SAVED = "vault_saved"
+    /** The user answered a permission card: turned the permission on, or chose not to be reminded. */
+    const val PERMISSION = "permission"
 
     const val PENDING = "pending"
     const val APPROVED = "approved"
@@ -156,6 +158,24 @@ internal object OrbitApprovals {
                 val entry = Approval(UUID.randomUUID().toString().take(8), VAULT_SAVED, SOURCE_ORBIT, site.take(MAX_TITLE),
                     if (login) OrbitVault.LOGIN else OrbitVault.API_KEY, chatId, SAVED, "", now, now, true)
                 write(context, orbitId, trim(read(context, orbitId) + entry))
+            }
+        }
+    }
+
+    /**
+     * The user answered a permission card: [granted] when the permission is now on, otherwise they
+     * chose not to be reminded. Listed with the approvals; Orbit already hears it from the card.
+     */
+    /** [key] identifies the card and the choice, so pressing the same card again replaces its entry. */
+    suspend fun recordPermission(context: Context, orbitId: String, chatId: String, key: String, title: String,
+        detail: String, granted: Boolean) {
+        withContext(Dispatchers.IO) {
+            lock(orbitId).withLock {
+                val now = System.currentTimeMillis()
+                val id = "p-" + UUID.nameUUIDFromBytes(key.toByteArray()).toString().take(8)
+                val entry = Approval(id, PERMISSION, SOURCE_ORBIT, title.take(MAX_TITLE),
+                    detail.take(MAX_DETAIL), chatId, if (granted) APPROVED else DENIED, "", now, now, true)
+                write(context, orbitId, trim(read(context, orbitId).filterNot { it.id == id } + entry))
             }
         }
     }

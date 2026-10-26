@@ -973,7 +973,9 @@ private fun LazyListScope.approvalsSection(
         item(key = "actions-title") { SectionTitle(stringResource(R.string.orbit_profile_approval_records)) }
         items(records, key = { "record-${it.id}" }) { a ->
             val vault = a.kind == com.ai.assistance.operit.features.orbit.OrbitApprovals.VAULT_SAVED
-            val denied = a.state == com.ai.assistance.operit.features.orbit.OrbitApprovals.DENIED
+            // "Don't remind me" on a permission card is a choice, not a refusal, so it is not shown in red.
+            val denied = a.state == com.ai.assistance.operit.features.orbit.OrbitApprovals.DENIED &&
+                a.kind != com.ai.assistance.operit.features.orbit.OrbitApprovals.PERMISSION
             OrbitListRow(
                 icon = orbitIcon(approvalIcon(a)),
                 title = if (vault) stringResource(R.string.orbit_approval_vault_row, a.title) else a.title,

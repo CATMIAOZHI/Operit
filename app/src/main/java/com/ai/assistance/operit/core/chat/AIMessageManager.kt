@@ -398,6 +398,7 @@ object AIMessageManager {
         systemPromptOverride: String? = null,
         collaborationHistory: List<com.ai.assistance.operit.core.chat.hooks.PromptTurn> = emptyList(),
         collaborationInput: Boolean = false,
+        perfStart: LlmPerfStart? = null,
     ): SharedStream<String> {
         val totalStartTime = messageTimingNow()
         val chatKey = chatId ?: DEFAULT_CHAT_KEY
@@ -494,6 +495,7 @@ object AIMessageManager {
                     chatId = chatId,
                     chatHistory = collaborationHistory + memoryForRequest,
                     collaborationInput = collaborationInput,
+                    perfStart = perfStart,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
                     functionType = functionType,
