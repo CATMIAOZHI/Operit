@@ -13,6 +13,7 @@
     <string name="orbit_settings_skills">Skill review interval</string>
     <string name="orbit_settings_delay">Learning delay</string>
     <string name="orbit_settings_developer">Developer mode</string>
+    <string name="orbit_settings_message_notifications">Message notifications</string>
     <string name="orbit_settings_launch">Default app mode</string>
     <string name="orbit_settings_pause">Pause Orbit</string>
     <string name="orbit_settings_missing">This Orbit has been removed or is being removed.</string>

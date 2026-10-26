@@ -24,7 +24,9 @@
     <string name="orbit_mode_light">Light</string>
     <string name="orbit_mode_dark">Dark</string>
     <string name="orbit_notification_settings">Notifications</string>
-    <string name="orbit_notification_settings_note">Control whether reminders and task results can appear in phone notifications. This uses the system notification permission for Operit.</string>
+    <string name="orbit_notification_settings_note">The system permission decides whether Operit can post notifications at all; the switch below decides whether messages also show as their own notification.</string>
+    <string name="orbit_message_notify_title">Message notifications</string>
+    <string name="orbit_message_notify_note">While the app is closed, messages from %1$s also show as their own notification with its picture. Turn this off to keep them in the chat only.</string>
     <string name="orbit_phone_permissions">Permissions</string>
     <string name="orbit_phone_permissions_row">SMS, contacts, notification access, and more</string>
     <string name="orbit_phone_permissions_note">Enable only what you need. These system permissions are shared with the main Operit app. Manage sending notifications under Notifications in settings.</string>

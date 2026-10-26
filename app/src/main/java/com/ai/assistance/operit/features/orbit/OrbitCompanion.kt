@@ -341,10 +341,15 @@ object OrbitCompanion {
     /** Makes the Orbit's chat again when the user deleted it; everything else stays. */
     private suspend fun ensureChatLocked(context: Context, orbit: OrbitProfile): OrbitProfile {
         val spaceId = OrbitMemoryScope.ensureInitialized(context, orbit)
-        if (core(context).chatExists(orbit.chatId)) return orbit.copy(memorySpaceId = spaceId)
+        if (core(context).chatExists(orbit.chatId)) {
+            // Context compaction always follows Orbit's fixed rules, whatever was saved before.
+            OrbitContextSettings.enforce(context, orbit)
+            return orbit.copy(memorySpaceId = spaceId)
+        }
         val recreated = orbit.copy(chatId = createChat(context, null, orbit.name), memorySpaceId = spaceId,
             ownedChatIds = orbit.ownedChatIds + orbit.chatId)
         OrbitPreferences.getInstance(context).putOrbit(recreated)
+        OrbitContextSettings.enforce(context, recreated)
         OrbitExecutionGate.serialized {
             val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
             // Tasks made in a side chat keep reporting there.

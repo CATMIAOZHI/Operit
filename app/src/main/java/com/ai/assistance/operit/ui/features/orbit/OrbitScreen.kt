@@ -911,7 +911,7 @@ private fun OrbitChatPage(
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
-                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(onBack = back)
+                OrbitSubPage.NOTIFICATION_SETTINGS -> OrbitNotificationSettingsPage(orbit, onBack = back)
                 OrbitSubPage.USAGE -> OrbitUsagePage(orbit, onBack = back,
                     onOpenTrends = { push(OrbitSubPage.USAGE_TRENDS) })
                 OrbitSubPage.USAGE_TRENDS -> OrbitUsageTrendsPage(orbit, onBack = back)

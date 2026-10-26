@@ -4,7 +4,9 @@
     <string name="orbit_context_row">Summarize earlier messages when a chat gets long</string>
     <string name="orbit_context_note">When a chat with %1$s gets long, earlier messages are summarized so the chat can go on within what the model can read. This applies to the main chat and every side chat. The assistant model writes the summary by default; advanced mode under Models can pick another one.</string>
     <string name="orbit_context_now">The main model reads up to %1$sK. Compaction now starts at about %2$sK.</string>
-    <string name="orbit_context_now_off">The main model reads up to %1$sK. Automatic compaction is off, so a very long chat may fail.</string>
+    <string name="orbit_context_budget">Chat context budget</string>
+    <string name="orbit_context_recommend_flash">The main model is DeepSeek Flash; %1$dK is recommended.</string>
+    <string name="orbit_context_auto_fixed">Automatic compaction is always on, and the app picks where it starts from the budget.</string>
     <string name="orbit_context_no_model">First pick a main model for %1$s under Models.</string>
     <string name="orbit_context_saved">Saved for the main chat and every side chat.</string>
     <string name="orbit_context_compact_now">Compact now</string>
@@ -13,11 +15,6 @@
     <string name="orbit_context_busy">%1$s is replying or tidying up. Compact once it is done.</string>
     <string name="orbit_context_compact_done">Compacted.</string>
     <string name="orbit_context_compact_failed">Nothing was compacted. The chat may be too short, or something went wrong.</string>
-    <string name="orbit_settings_context_full">Use the main model\'s full context</string>
-    <string name="orbit_settings_context_window">Context length</string>
-    <string name="orbit_settings_context_auto">Automatic compaction</string>
-    <string name="orbit_settings_context_at">Compaction starts at</string>
-    <string name="orbit_settings_context_auto_point">Automatic</string>
-    <string name="orbit_settings_context_at_off">Automatic compaction is off, so this point has no effect for now.</string>
-    <string name="orbit_settings_context_scope">Context compaction changes apply to the main chat and every side chat.</string>
+    <string name="orbit_settings_context_window">Chat context budget</string>
+    <string name="orbit_settings_context_scope">Context budget changes apply to the main chat and every side chat.</string>
 </resources>

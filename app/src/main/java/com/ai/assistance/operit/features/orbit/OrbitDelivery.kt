@@ -16,6 +16,7 @@ import com.ai.assistance.operit.pet.PetTasks
 import com.ai.assistance.operit.ui.main.MainActivity
 import com.ai.assistance.operit.util.WaifuMessageProcessor
 import kotlinx.coroutines.flow.update
+import kotlinx.coroutines.launch
 
 object OrbitDelivery {
     internal suspend fun dueAt(context: Context, item: com.ai.assistance.operit.data.model.OrbitDeliveryEntity, now: Long): Long {
@@ -155,28 +156,46 @@ object OrbitDelivery {
      */
     fun announce(context: Context, chatId: String, title: String, text: String) {
         unread.update { it + chatId }
-        notify(context, "said-$chatId-${System.currentTimeMillis()}", chatId, title, text)
+        // Reading the picture may take a moment, so the notification is built off the caller's thread.
+        val key = "said-$chatId-${System.currentTimeMillis()}"
+        notifyScope.launch { runCatching { notify(context.applicationContext, key, chatId, title, text) } }
     }
 
-    private fun notify(context: Context, key: String, chatId: String, title: String, body: String) {
-        if (ActivityLifecycleManager.getCurrentActivity() != null ||
-            !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
-        val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        val channel = "orbit_check_in"
-        manager.createNotificationChannel(NotificationChannel(channel,
-            context.getString(R.string.orbit_notification_channel), NotificationManager.IMPORTANCE_DEFAULT))
+    private val notifyScope = kotlinx.coroutines.CoroutineScope(
+        kotlinx.coroutines.SupervisorJob() + kotlinx.coroutines.Dispatchers.IO)
+
+    /** Opens [chatId] in the Orbit page when tapped; [key] keeps each notification's intent apart. */
+    fun openChatIntent(context: Context, chatId: String, key: String): PendingIntent {
         val intent = Intent(context, MainActivity::class.java).apply {
             action = PetTasks.ACTION_OPEN_CHAT
             data = Uri.parse("operit://orbit-delivery/${Uri.encode(key)}")
             putExtra(PetTasks.EXTRA_CHAT_ID, chatId)
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
         }
-        val pending = PendingIntent.getActivity(context, 0, intent,
+        return PendingIntent.getActivity(context, 0, intent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
+    }
+
+    private fun notify(context: Context, key: String, chatId: String, title: String, body: String) {
+        if (ActivityLifecycleManager.getCurrentActivity() != null ||
+            !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
+        // The Orbit's own switch: off keeps what it says in the chat only.
+        val orbit = runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) }.getOrNull()
+        if (orbit?.messageNotifications == false) return
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return
+        val channel = "orbit_check_in"
+        manager.createNotificationChannel(NotificationChannel(channel,
+            context.getString(R.string.orbit_notification_channel), NotificationManager.IMPORTANCE_DEFAULT))
+        val pending = openChatIntent(context, chatId, key)
         val text = WaifuMessageProcessor.cleanContentForWaifu(body).ifBlank { body }
         manager.notify("orbit:$key", 0, NotificationCompat.Builder(context, channel)
             .setSmallIcon(R.drawable.ic_launcher_simple_foreground).setContentTitle(title)
             .setContentText(text).setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .apply {
+                orbit?.let { OrbitNotificationIcon.of(it) { uri ->
+                    com.ai.assistance.operit.api.chat.AIForegroundService.loadBitmapFromUri(context, uri, OrbitNotificationIcon.SIZE)
+                } }?.let(::setLargeIcon)
+            }
             .setContentIntent(pending).setAutoCancel(true).setOnlyAlertOnce(true).build())
     }
 }
