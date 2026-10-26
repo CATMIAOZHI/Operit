@@ -63,9 +63,15 @@ class SkillVisibilityPreferences private constructor(private val context: Contex
         return true
     }
 
-    fun setSkillVisibleToAi(skillName: String, visible: Boolean) {
-        if (skillName.isBlank()) return
-        prefs.edit().putBoolean(keyForSkillName(skillName), visible).apply()
+    /**
+     * [durable] writes before returning, for a caller that records something else right after it,
+     * and returns whether the write landed.
+     */
+    fun setSkillVisibleToAi(skillName: String, visible: Boolean, durable: Boolean = false): Boolean {
+        if (skillName.isBlank()) return false
+        val edit = prefs.edit().putBoolean(keyForSkillName(skillName), visible)
+        val saved = if (durable) edit.commit() else { edit.apply(); true }
         LearningPromptSnapshotRepository.markChanged(context, orbitId?.let { "skills:orbit_$it" } ?: "settings")
+        return saved
     }
 }

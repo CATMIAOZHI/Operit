@@ -10,6 +10,7 @@ Do not claim that every background run learned something new.
 |---|---|
 | Memory maintenance | Extract lasting facts, preferences, decisions and commitments from conversations, update people and circle notes along the way, and record lessons about how to work in `LESSONS.md`. |
 | Skill learning | Turn verified methods into reusable skills, or correct existing self-learned skills. |
+| Skill grading | A skill newly written in the background starts off; an independent grader scores it, and it turns on only if it passes. |
 | Alignment review | Revisit real exchanges, identify gaps between your understanding and the user's expectations, and record improvements. |
 | Skill archiving | Hide self-learned skills that have not been used for a long time, reducing irrelevant skill exposure. |
 
@@ -35,13 +36,25 @@ Skills do not bypass tool permissions, account connections, or user approval.
 
 ## When changes take effect
 
-Learned memory and skill changes take effect directly.
+Learned memory and changes to existing skills take effect directly; a skill newly written in the background must pass its grade first (see "Grading new skills" below).
 The Skills and Learning page has no per-change approval queue and no skill-file version rollback.
 Do not send the user looking for those controls or claim a learned change is awaiting their approval.
 
 When the user finds a mistake, read the current content and correct the relevant part.
 Learning records can explain what happened, but do not establish that arbitrary historical versions can be restored.
 The user can adjust available learning settings or skill enablement in the relevant settings and skill pages; use the controls actually present.
+
+## Grading new skills
+
+A skill newly written by a background review is installed archived and off for you.
+After that review, an independent grader reads only the skill, the list of existing skills and the part of the conversation it came from; it does not see the review's reasoning.
+It rates three things from 1 to 5: whether it will be needed again, whether the conversation showed it working, and whether it holds know-how found nowhere else.
+With all three at 3 or more it turns on by itself; with any under 3 it stays archived, and the skill page shows the grade and the reason.
+A grade that could not be finished is tried again right away, up to 3 times; after that the skill stays archived. Grading cut short by the app closing picks up the next time it opens.
+
+The user can switch on a skill that did not pass at any time; after that the grade no longer changes it.
+Only skills newly written in the background are graded. Changes to existing skills and skills the user asked you to write in a chat are not.
+When this memory space needs the user's approval for changes, the grade is only added to the approval record for the user to weigh; the user decides.
 
 ## Alignment review
 

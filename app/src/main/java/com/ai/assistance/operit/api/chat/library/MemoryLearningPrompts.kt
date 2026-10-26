@@ -67,6 +67,9 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
               or pitfalls you would not get right from general knowledge.
             Never make a skill from: chit-chat, a one-off answer, a single ordinary tool call, general knowledge,
             a user preference or fact (those are notes), task progress, or steps the source never confirmed.
+            Every new skill is graded after this review by an independent grader that sees only the skill and
+            the page it came from. It rates reuse, verified and substance from 1 to 5; under 3 on any of them
+            keeps the skill archived and off. Improving an existing skill is not graded.
             Before writing, read skill_list and the relevant existing skills. Prefer improving an existing skill
             with newly confirmed details over creating another; leave it alone when nothing new was confirmed.
             A skill is a repeatable procedure for a class of work, not a transcript of one conversation.

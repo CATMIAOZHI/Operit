@@ -54,6 +54,9 @@ fun registerAllTools(handler: AIToolHandler, context: Context) {
     ).forEach { name ->
         handler.registerTool(name=name,executor=com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator::execute)
     }
+    // Hidden: only the skill grader's isolated turn is shown this tool.
+    handler.registerTool(name = com.ai.assistance.operit.api.chat.library.SkillScorer.NAME,
+        executor = com.ai.assistance.operit.api.chat.library.SkillScorer::execute)
 
     // Hidden control-plane tool. It is never added to ordinary model tool prompts; permission
     // review turns expose it explicitly through an isolated per-turn tool override.

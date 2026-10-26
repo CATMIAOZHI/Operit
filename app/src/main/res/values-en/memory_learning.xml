@@ -158,7 +158,14 @@
     <string name="skill_folder_collapsed">Collapsed</string>
     <string name="skill_visible_to_ai">Visible to AI: %1$s</string>
     <string name="skill_folder_archived">Archived</string>
-    <string name="skill_folder_archived_desc">Unused for 4 weeks, so hidden from the AI. Switch one on to restore it.</string>
+    <string name="skill_folder_archived_desc">Hidden from the AI for now: unused for 4 weeks, or a new skill still being graded or that did not pass. Switch one on to restore it.</string>
+    <string name="skill_score_run">Skill grade: %1$s</string>
+    <string name="skill_score_waiting">New skill being graded; it turns on once it passes</string>
+    <string name="skill_score_failed">Did not pass its grade (reuse %1$d, verified %2$d, substance %3$d, out of 5): %4$s</string>
+    <string name="skill_score_unscored">Could not be graded, so it stays archived</string>
+    <string name="skill_score_not_finished">The grader gave no grade</string>
+    <string name="skill_score_audit">Independent grade: reuse %1$d, verified %2$d, substance %3$d (out of 5; all three need 3 to pass). %4$s</string>
+    <string name="skill_score_audit_failed">The independent grade did not finish; please judge it yourself</string>
     <plurals name="skill_folder_count">
         <item quantity="one">%1$d skill</item>
         <item quantity="other">%1$d skills</item>

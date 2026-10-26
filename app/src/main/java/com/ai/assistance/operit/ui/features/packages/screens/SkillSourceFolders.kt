@@ -64,6 +64,25 @@ internal enum class SkillSource(val icon: String, val title: Int, val descriptio
 
 private fun lucideIcon(name: String): ImageVector = CardIcons.get("lucide:$name") ?: Icons.Filled.Build
 
+/** The line under a new learned skill that is off because of its grade; null when there is nothing to say. */
+@Composable
+internal fun skillScoreNote(score: com.ai.assistance.operit.data.preferences.LearnedSkillRepository.Score): String? =
+    when (score.state) {
+        com.ai.assistance.operit.data.preferences.LearnedSkillRepository.SCORE_PENDING ->
+            stringResource(R.string.skill_score_waiting)
+        com.ai.assistance.operit.data.preferences.LearnedSkillRepository.SCORE_FAILED ->
+            stringResource(R.string.skill_score_failed, score.reuse, score.verified, score.substance, score.reason)
+        com.ai.assistance.operit.data.preferences.LearnedSkillRepository.SCORE_UNSCORED ->
+            stringResource(R.string.skill_score_unscored)
+        else -> null
+    }
+
+@Composable
+internal fun SkillScoreNote(text: String) {
+    Text(text, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+        maxLines = 3, overflow = TextOverflow.Ellipsis)
+}
+
 private val FolderCorner = 20.dp
 private val WholeCard = RoundedCornerShape(FolderCorner)
 private val TopOfCard = RoundedCornerShape(topStart = FolderCorner, topEnd = FolderCorner)
@@ -83,6 +102,8 @@ internal fun SkillSourceFolders(
     skills: List<SkillPackage>,
     learnedNames: Set<String>,
     archivedNames: Set<String>,
+    /** A short line per skill name, shown under its description. */
+    notes: Map<String, String> = emptyMap(),
     builtInNames: Set<String>,
     searching: Boolean,
     /** Each skill's saved switch, read off the main thread by the caller. */
@@ -135,7 +156,7 @@ internal fun SkillSourceFolders(
                             .padding(start = 8.dp, end = 8.dp, bottom = if (last) 6.dp else 0.dp),
                     ) {
                         SettingsRowDivider()
-                        SkillRow(skill, source, visibleToAi[skill.name] ?: true, { onVisibleChange(skill.name, it) }, onRestore = { onRestore(skill.name) },
+                        SkillRow(skill, source, notes[skill.name], visibleToAi[skill.name] ?: true, { onVisibleChange(skill.name, it) }, onRestore = { onRestore(skill.name) },
                             onShown = { onShown(skill.name) }) { onOpen(skill) }
                     }
                 }
@@ -194,6 +215,7 @@ private fun FolderHeader(
 private fun SkillRow(
     skill: SkillPackage,
     source: SkillSource,
+    note: String?,
     visible: Boolean,
     onVisibleChange: (Boolean) -> Unit,
     onRestore: () -> Unit,
@@ -224,6 +246,7 @@ private fun SkillRow(
                 Text(skill.description, style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            if (note != null) SkillScoreNote(note)
         }
         Spacer(Modifier.width(8.dp))
         val switchLabel = stringResource(

@@ -79,7 +79,14 @@ data class MemoryReviewChange(
     val origin: String = "legacy",
     val learningGeneration: Long = 0,
     val evidence: String = "",
-    val restoredFrom: String = ""
+    val restoredFrom: String = "",
+    /**
+     * A new skill written by the background review: applied automatically it is installed archived
+     * and stays off until the independent scorer passes it. A user's approval switches it on directly.
+     */
+    val holdForScore: Boolean = false,
+    /** Key of the conversation excerpt the scorer reads for this change (one per change, never per name). */
+    val scoreEvidence: String = ""
 )
 
 internal fun skillFileRestoreTarget(change: MemoryReviewChange, beforeChange: Boolean): Pair<String, Boolean> {
@@ -159,7 +166,8 @@ class MemoryReviewRepository internal constructor(
                 obj.optString("reviewer"), obj.optString("reason"), obj.optString("audits"),
                 obj.optString("path","SKILL.md"),obj.optString("operation","write"),obj.optBoolean("automatic"),
                 readFiles(obj), obj.optString("origin", "legacy"), obj.optLong("learningGeneration"),
-                obj.optString("evidence"), obj.optString("restoredFrom"))
+                obj.optString("evidence"), obj.optString("restoredFrom"),
+                holdForScore = obj.optBoolean("holdForScore"), scoreEvidence = obj.optString("scoreEvidence"))
         }
     }
     private fun write(items: List<MemoryReviewChange>) {
@@ -196,6 +204,8 @@ class MemoryReviewRepository internal constructor(
         .put("path",d.path).put("operation",d.operation).put("automatic",d.automatic)
         .put("files", JSONObject(d.files)).put("origin", d.origin)
         .put("learningGeneration", d.learningGeneration).put("evidence", d.evidence).put("restoredFrom", d.restoredFrom)
+        .put("holdForScore", d.holdForScore)
+        .put("scoreEvidence", d.scoreEvidence)
 
     /**
      * What a learning run is told about its own proposal. The full before/after snapshots stay on
@@ -368,7 +378,8 @@ class MemoryReviewRepository internal constructor(
         path=obj.optString("path","SKILL.md"), operation=obj.optString("operation","write"),
         automatic=obj.optBoolean("automatic"), files=readFiles(obj),
         origin=obj.optString("origin","legacy"), learningGeneration=obj.optLong("learningGeneration"),
-        evidence=obj.optString("evidence"), restoredFrom=obj.optString("restoredFrom")
+        evidence=obj.optString("evidence"), restoredFrom=obj.optString("restoredFrom"),
+        holdForScore=obj.optBoolean("holdForScore"), scoreEvidence=obj.optString("scoreEvidence")
     )
 
     suspend fun proposeSkill(draft: SkillDraft, onCreated: () -> Unit = {},
@@ -579,9 +590,16 @@ class MemoryReviewRepository internal constructor(
                                 context.getString(com.ai.assistance.operit.R.string.skill_draft_duplicate)
                             }
                         }
+                        val held = change.holdForScore && reviewer != "user"
+                        // Switched off before it exists, so no crash can leave a held skill shown to the AI.
+                        if (held) check(com.ai.assistance.operit.data.skill.SkillRepository.forMemorySpace(context, profileId)
+                            .skillVisibilityPreferences.setSkillVisibleToAi(change.title, false, durable = true)) {
+                            "Could not switch the new skill off"
+                        }
                         installSkill(context, change)
                         skillInstalled = true
                         LearnedSkillRepository(context, profileId).register(change.title,profileId)
+                        if (held) LearnedSkillRepository(context, profileId).holdForScore(change.title, change.scoreEvidence)
                     }
                     // Any catalog change invalidates a frozen prefix, including one the background
                     // learner made: without this the new skill is invisible to existing chats.

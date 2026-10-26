@@ -158,7 +158,14 @@
     <string name="skill_folder_collapsed">已收起</string>
     <string name="skill_visible_to_ai">对 AI 可见：%1$s</string>
     <string name="skill_folder_archived">已归档</string>
-    <string name="skill_folder_archived_desc">4 周没用过，已对 AI 关闭；打开开关即可恢复</string>
+    <string name="skill_folder_archived_desc">暂时对 AI 关闭：4 周没用过，或新技能正在打分、没通过打分；打开开关即可恢复</string>
+    <string name="skill_score_run">技能打分：%1$s</string>
+    <string name="skill_score_waiting">新技能，正在打分，通过后自动开启</string>
+    <string name="skill_score_failed">没通过打分（会再用 %1$d、验证过 %2$d、有干货 %3$d，满分 5）：%4$s</string>
+    <string name="skill_score_unscored">没能完成打分，先放在归档里</string>
+    <string name="skill_score_not_finished">打分代理没有给出分数</string>
+    <string name="skill_score_audit">独立打分：会再用 %1$d、验证过 %2$d、有干货 %3$d（满分 5，三项都到 3 才算合格）。%4$s</string>
+    <string name="skill_score_audit_failed">独立打分没完成，请你自己判断</string>
     <plurals name="skill_folder_count">
         <item quantity="other">%1$d 个技能</item>
     </plurals>

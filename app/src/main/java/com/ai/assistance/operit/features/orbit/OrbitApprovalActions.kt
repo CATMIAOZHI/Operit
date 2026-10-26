@@ -227,12 +227,16 @@ internal object OrbitApprovalActions {
         val shown = mutableListOf<String>()
         val hidden = mutableListOf<String>()
         val unchanged = linkedMapOf<String, String>()
-        fun apply(name: String, visible: Boolean) {
+        val learned = com.ai.assistance.operit.data.preferences.LearnedSkillRepository(context, space)
+        suspend fun apply(name: String, visible: Boolean) {
             when {
                 name !in available -> unchanged[name] = if (english) "no such skill any more" else "这个技能已经不在了"
                 visibility.isSkillVisibleToAi(name) == visible -> unchanged[name] =
                     if (english) "already ${if (visible) "shown" else "hidden"}" else "原本就${if (visible) "显示" else "隐藏"}"
                 else -> {
+                    // Shown with the user's approval: out of the archive first, so a grade still pending
+                    // can no longer switch it back off.
+                    if (visible) learned.unarchive(name)
                     visibility.setSkillVisibleToAi(name, visible)
                     if (visible) shown += name else hidden += name
                 }
