@@ -111,11 +111,6 @@ internal class WebSessionBrowserHost(
     private var watchLocked = false
     /** The Orbit chat whose watch screen showed last; when its work ends the browser closes instead of unlocking. */
     private var lastWatchTalk: String? = null
-    /**
-     * The orientation the user asked Orbit's watch screen for (sideways or upright), or null for none;
-     * only while it shows.
-     */
-    private var watchOrientation: Int? = null
     private var a11yHiddenWebView: java.lang.ref.WeakReference<WebView>? = null
     fun ensureCreated(initialExpanded: Boolean = false) {
         if (rootView != null) {
@@ -168,15 +163,13 @@ internal class WebSessionBrowserHost(
                     val locked = watch != null && !watch.controlling
                     androidx.compose.runtime.SideEffect {
                         setWatchLocked(locked)
-                        if (watch == null && watchOrientation != null) requestWatchOrientation(null)
-                        // Back closes the watch screen like the X; a user driving the page goes back
-                        // in the page first, and closes it (handing it back) from its first page.
-                        val canGoBack = hostState.browserState.canGoBack
+                        // The phone's back key closes the watch screen like the X, also while the user
+                        // drives the page: going back in the page is the back button in its controls.
+                        // A dialog the page put up is dismissed first, like any popup.
                         root.onBackKey = watch?.let { w ->
                             when {
                                 w.controlling && hostState.browserState.pendingDialog != null ->
                                     ({ callbacks.onHandlePendingDialog(false, null) })
-                                w.controlling && canGoBack -> callbacks::onBack
                                 else -> w.onClose
                             }
                         }
@@ -278,7 +271,6 @@ internal class WebSessionBrowserHost(
         backgroundViews = null
         overlayParams = null
         indicatorParams = null
-        watchOrientation = null
         webViewHost.clear()
     }
 
@@ -451,13 +443,6 @@ internal class WebSessionBrowserHost(
         } else if (com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watching.value == null) {
             com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.watchSession(hostState.browserState.activeSessionId)
         }
-        // Put away, the browser no longer holds the screen sideways or upright.
-        val leftLandscape = !expanded &&
-            watchOrientation == android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-        if (!expanded && watchOrientation != null) {
-            watchOrientation = null
-            params.screenOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        }
 
         isExpanded = expanded
         hostState =
@@ -485,13 +470,10 @@ internal class WebSessionBrowserHost(
 
             root.descendantFocusability = ViewGroup.FOCUS_BLOCK_DESCENDANTS
             val displayMetrics = appContext.resources.displayMetrics
-            // Turning back upright has not happened yet, so the screen still measures sideways.
-            val longSide = maxOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
-            val shortSide = minOf(displayMetrics.widthPixels, displayMetrics.heightPixels)
             root.setMinimizedMeasure(
                 enabled = true,
-                fakeWidth = if (leftLandscape) shortSide else displayMetrics.widthPixels,
-                fakeHeight = if (leftLandscape) longSide else displayMetrics.heightPixels
+                fakeWidth = displayMetrics.widthPixels,
+                fakeHeight = displayMetrics.heightPixels
             )
             root.setBackgroundColor(AndroidColor.TRANSPARENT)
             compose.alpha = 0.01f
@@ -532,23 +514,6 @@ internal class WebSessionBrowserHost(
     }
 
     /**
-     * Holds the watch screen sideways or upright, or ([orientation] null) lets it turn freely again.
-     * The overlay window asks for the orientation itself, so it works over any app and ends when the
-     * window goes away. Upright is asked for explicitly, so the button keeps its word even with
-     * auto-rotate on and the phone held sideways.
-     */
-    private fun requestWatchOrientation(orientation: Int?) {
-        if (watchOrientation == orientation) return
-        watchOrientation = orientation
-        val params = overlayParams ?: return
-        params.screenOrientation = orientation ?: android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
-        val root = rootView ?: return
-        if (root.windowToken != null) {
-            windowManager.updateViewLayout(root, params)
-        }
-    }
-
-    /**
      * The Orbit work the tab in front belongs to. A user in control keeps the watch screen on any
      * tab they reach (a page may open a new one), so the hand-back button never disappears.
      */
@@ -579,12 +544,6 @@ internal class WebSessionBrowserHost(
             controlling = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.USER,
             waiting = work.control == com.ai.assistance.operit.features.orbit.OrbitBrowserWatch.Control.WAITING,
             finished = work.finished,
-            onTurn = { landscape ->
-                requestWatchOrientation(
-                    if (landscape) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
-                    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
-                )
-            },
             onClose = { watch.close(work.executorChatId) },
             onTakeOver = { watch.takeOver(work.executorChatId) },
             onHandBack = { watch.handBack(work.executorChatId) },

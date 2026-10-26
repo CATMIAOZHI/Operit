@@ -144,6 +144,14 @@ internal class WebSessionWebViewHost {
         if (webView.parent !== target) {
             return
         }
+        // The page draws through its own renderer; clip it at the container, or a zoomed picture
+        // spills over the title and address bars around it.
+        if (target.width > 0 && target.height > 0) {
+            val clip = target.clipBounds
+            if (clip == null || clip.left != 0 || clip.top != 0 || clip.right != target.width || clip.bottom != target.height) {
+                target.clipBounds = android.graphics.Rect(0, 0, target.width, target.height)
+            }
+        }
 
         val requestedWidth = viewportWidthCssPx
         val requestedHeight = viewportHeightCssPx
