@@ -37,10 +37,11 @@ internal object OrbitModelTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "List the app's model configurations and which ones you use, look up the models a provider offers, " +
-            "ask the user to add a configuration (they type the API key and pick the models on the card), or to switch the model you use. " +
-            "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请切换你用的模型（都要用户批准）。",
+            "ask the user to add a configuration (they type the API key and pick the models on the card), or to switch the model you use, " +
+            "or put a card that opens the model settings so the user can change a key. " +
+            "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请切换你用的模型（都要用户批准）、放卡片让用户去改密钥。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list / discover / request_create / request_use", required = true),
+            ToolParameterSchema("action", description = "list / discover / request_create / request_use / open_settings", required = true),
             ToolParameterSchema("config", description = "discover, request_use: a configuration name from list", required = false),
             ToolParameterSchema("query", description = "discover: optional word to filter model names, e.g. flash", required = false),
             ToolParameterSchema("name", description = "request_create: a short name for the configuration, e.g. DeepSeek (at most $MAX_NAME characters)", required = false),
@@ -57,6 +58,7 @@ internal object OrbitModelTools {
   - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
   - request_create: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. It returns at once; end the turn with one short line. You get a hidden note with what was added.
+  - open_settings puts a card in the chat that opens the model settings page, where the user changes the API key, endpoint or models of an existing configuration themselves (the key never reaches you). Use it when a key stopped working (wrong key, out of balance) or the user wants to change one. End the turn with one short line.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
   - Accounts that sign in instead of using a key are not added here. Put a sign-in card with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). After signing in, the user adds the model configuration from that card's "Add model" button; then request_use can switch to it.
@@ -203,7 +205,14 @@ internal object OrbitModelTools {
                             ". End this turn now with one short line. You get a hidden note with what was added.")
                         .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
                 }
-                else -> error("action must be list, discover, request_create or request_use")
+                "open_settings" -> {
+                    inChat()
+                    JSONObject().put("card", "placed")
+                        .put("note", "A card that opens the model settings page is now in the chat. End this turn with one short line; " +
+                            "the user changes the key there. Check with action=list afterwards if needed.")
+                        .put(OrbitChatCards.KEY, OrbitChatCards.openPage(orbit.id, OrbitChatCards.PAGE_MODEL_CONFIG))
+                }
+                else -> error("action must be list, discover, request_create, request_use or open_settings")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {

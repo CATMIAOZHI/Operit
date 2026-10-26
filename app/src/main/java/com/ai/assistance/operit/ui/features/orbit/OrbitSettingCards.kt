@@ -55,7 +55,7 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
-internal enum class OrbitCardPage { SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS }
+internal enum class OrbitCardPage { SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS }
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
 internal val LocalOrbitOpenPage = compositionLocalOf<((OrbitCardPage) -> Unit)?> { null }
@@ -175,6 +175,27 @@ internal fun OrbitSpeechSettingsCard() {
         CardButton(stringResource(R.string.orbit_speech_card_open), enabled = openPage != null) {
             openPage?.invoke(OrbitCardPage.SPEECH_SETTINGS)
         }
+    }
+}
+
+/** Opens one settings page from the chat: the WeChat link, the role cards, or the model settings. */
+@Composable
+internal fun OrbitOpenPageCard(card: JSONObject) {
+    val openPage = LocalOrbitOpenPage.current
+    data class Look(val icon: String, val title: Int, val sub: Int, val button: Int, val page: OrbitCardPage)
+    val look = when (card.optString("page")) {
+        OrbitChatCards.PAGE_WEIXIN -> Look("message-circle", R.string.orbit_page_card_weixin_title,
+            R.string.orbit_page_card_weixin_sub, R.string.orbit_page_card_weixin_open, OrbitCardPage.WEIXIN)
+        OrbitChatCards.PAGE_ROLE_CARDS -> Look("square-user", R.string.orbit_page_card_roles_title,
+            R.string.orbit_page_card_roles_sub, R.string.orbit_page_card_roles_open, OrbitCardPage.ROLE_CARDS)
+        OrbitChatCards.PAGE_MODEL_CONFIG -> Look("key-round", R.string.orbit_page_card_models_title,
+            R.string.orbit_page_card_models_sub, R.string.orbit_page_card_models_open, OrbitCardPage.MODEL_CONFIG)
+        else -> return
+    }
+    CardColumn {
+        CardHeading(look.icon, stringResource(look.title), stringResource(look.sub))
+        Spacer(Modifier.height(14.dp))
+        CardButton(stringResource(look.button), enabled = openPage != null) { openPage?.invoke(look.page) }
     }
 }
 

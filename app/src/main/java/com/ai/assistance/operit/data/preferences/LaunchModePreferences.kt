@@ -31,7 +31,13 @@ class LaunchModePreferences private constructor(context: Context) {
         // Persist this before agreement acceptance, so recreation between the two pages keeps
         // the new-install choice. Existing users, including those on an older agreement, skip it.
         if (!preferences.contains(KEY_SELECTION_COMPLETED)) {
-            preferences.edit().putBoolean(KEY_SELECTION_COMPLETED, hasAcceptedAnyAgreement).apply()
+            val editor = preferences.edit().putBoolean(KEY_SELECTION_COMPLETED, hasAcceptedAnyAgreement)
+            // Users upgrading from a version without Orbit keep opening the screen they know.
+            if (hasAcceptedAnyAgreement && !preferences.contains(KEY_MODE)) {
+                editor.putString(KEY_MODE, AppLaunchMode.STANDARD.name)
+                mutableMode.value = AppLaunchMode.STANDARD
+            }
+            editor.apply()
         }
     }
 

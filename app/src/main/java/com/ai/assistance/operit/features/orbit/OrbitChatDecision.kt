@@ -44,6 +44,7 @@ object OrbitChatDecision {
         val label = context.getString(when (value.optString("outcome")) {
             "send" -> R.string.orbit_decision_chat_spoke
             "skip" -> R.string.orbit_decision_chat_quiet
+            "failed" -> R.string.orbit_decision_chat_failed
             else -> R.string.orbit_decision_chat_pending
         }, name)
         return value.optString("reason").takeIf { it.isNotBlank() }?.let { "$label\n$it" } ?: label

@@ -301,8 +301,9 @@ object OrbitCompanion {
                 avatarUri = null,
                 createdAt = System.currentTimeMillis(),
             )
-        preferences.putOrbit(profile)
+        // The caller records the id before the Orbit is saved, so a setup cut off in between can undo it.
         onCreated(orbitId)
+        preferences.putOrbit(profile)
         val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
         return profile.copy(memorySpaceId = memorySpaceId)
     }

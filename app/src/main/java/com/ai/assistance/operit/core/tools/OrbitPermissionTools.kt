@@ -101,6 +101,16 @@ internal object OrbitPermissionTools {
             result.put("level", access.level?.name?.lowercase() ?: "not_set")
                 .put("level_working", access.working)
         }
+        if (permission == OrbitPermissionCards.NOTIFY) {
+            // Three separate switches: the app may notify, Orbit's own system channel, and the
+            // user's choice in Orbit's settings whether your messages show as notifications.
+            val switch = OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbits.firstOrNull { it.id == orbitId }?.messageNotifications
+            result.put("app_notifications", androidx.core.app.NotificationManagerCompat.from(context).areNotificationsEnabled())
+                .put("orbit_channel", com.ai.assistance.operit.features.orbit.OrbitDelivery.channelOn(context))
+                .put("message_notifications_switch", switch != false)
+            if (switch == false) result.put("switch_note", "The user turned off message notifications in Orbit settings > " +
+                "Notifications. That is their choice: no card changes it; mention it only if they ask why nothing arrives.")
+        }
         val on = access?.working ?: OrbitPermissionCards.isOn(context, permission)
         val ready = on && (location == null || location.optBoolean("location_services"))
         result.put("can_continue", ready)

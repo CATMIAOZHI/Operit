@@ -34,6 +34,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
 import androidx.compose.material3.TextFieldDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -83,12 +84,30 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var error by remember { mutableStateOf<String?>(null) }
+    // The provider's own words behind [error], shown only when the user asks for them.
+    var errorDetail by remember { mutableStateOf<String?>(null) }
+    var showDetail by remember { mutableStateOf(false) }
+    // When the provider cannot list its models, the user types the model names instead.
+    var manual by remember(providerId) { mutableStateOf(false) }
+    var manualMain by remember(providerId) { mutableStateOf("") }
+    var manualAssistant by remember(providerId) { mutableStateOf("") }
+    // Models the main app already uses, offered so a user who set them up need not type a key again.
+    var existing by remember { mutableStateOf<OrbitSetup.Existing?>(null) }
+    LaunchedEffect(Unit) { existing = OrbitSetup.existing(context) }
     var pickProvider by remember { mutableStateOf(false) }
     val needsKey = OrbitSetup.requiresKey(provider, endpoint)
     val endpointOk = endpoint.trim().matches(Regex("https?://\\S{3,300}"))
     SecureWindow()
 
-    fun resetModels() { models = null; main = null; assistant = null }
+    fun resetModels() { models = null; main = null; assistant = null; manual = false }
+
+    fun showError(message: String, detail: String? = null) {
+        error = message
+        errorDetail = detail?.takeIf { it.isNotBlank() }
+        showDetail = false
+    }
+
+    fun problemText(problem: OrbitSetup.Problem): String = OrbitSetup.describe(context, problem)
 
     fun fetch() {
         busy = true
@@ -99,19 +118,33 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             busy = false
             result.onSuccess { list ->
                 if (list.isEmpty()) {
-                    error = context.getString(R.string.orbit_setup_no_models)
+                    manual = true
+                    showError(context.getString(R.string.orbit_setup_no_models))
                 } else {
+                    manual = false
                     models = list
                     main = OrbitSetup.suggestMain(list)
                     assistant = OrbitSetup.suggestAssistant(list, main)
                 }
-            }.onFailure { error = context.getString(R.string.orbit_setup_fetch_failed) }
+            }.onFailure { e ->
+                val raw = e.message.orEmpty().let { if (key.length >= 6) it.replace(key, "***") else it }.take(300)
+                when (OrbitSetup.problemOf(raw)) {
+                    // A wrong key or no network needs fixing first; anything else may just be a
+                    // provider that does not list models, so the names can be typed instead.
+                    OrbitSetup.Problem.KEY -> showError(context.getString(R.string.orbit_setup_problem_key), raw)
+                    OrbitSetup.Problem.NETWORK -> showError(context.getString(R.string.orbit_setup_problem_network), raw)
+                    else -> {
+                        manual = true
+                        showError(context.getString(R.string.orbit_setup_fetch_failed), raw)
+                    }
+                }
+            }
         }
     }
 
     fun start() {
-        val m = main ?: return
-        val a = assistant ?: m
+        val m = (if (manual) manualMain.trim() else main)?.takeIf { it.isNotEmpty() } ?: return
+        val a = (if (manual) manualAssistant.trim() else assistant)?.takeIf { it.isNotEmpty() } ?: m
         busy = true
         testing = true
         error = null
@@ -123,8 +156,25 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             busy = false
             testing = false
             result.onSuccess { key = "" }.onFailure { e ->
-                error = context.getString(R.string.orbit_setup_test_failed,
-                    (e as? OrbitSetup.SetupException)?.message?.takeIf { it.isNotBlank() } ?: context.getString(R.string.orbit_setup_unknown))
+                val failure = e as? OrbitSetup.SetupException
+                val reason = problemText(failure?.problem ?: OrbitSetup.Problem.OTHER)
+                showError(
+                    failure?.model?.let { context.getString(R.string.orbit_setup_helper_failed, it, reason) } ?: reason,
+                    failure?.detail ?: e.message,
+                )
+            }
+        }
+    }
+
+    fun useExisting() {
+        busy = true
+        error = null
+        scope.launch {
+            val result = runCatching { OrbitSetup.startWithExisting(context) }
+            if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) return@launch
+            busy = false
+            result.onFailure { e ->
+                showError(context.getString(R.string.orbit_setup_problem_other), (e as? OrbitSetup.SetupException)?.detail ?: e.message)
             }
         }
     }
@@ -148,6 +198,30 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             Text(stringResource(R.string.orbit_setup_subtitle), style = MaterialTheme.typography.bodyMedium,
                 color = colors.onSurfaceVariant, textAlign = TextAlign.Center)
             Spacer(Modifier.height(28.dp))
+
+            existing?.let { found ->
+                Surface(shape = RoundedCornerShape(22.dp), color = colors.primaryContainer.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(18.dp)) {
+                        Text(stringResource(R.string.orbit_setup_existing_title), style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(6.dp))
+                        Text(stringResource(R.string.orbit_setup_existing_main, found.main), style = MaterialTheme.typography.bodySmall,
+                            color = colors.onSurfaceVariant)
+                        Text(stringResource(R.string.orbit_setup_existing_assistant, found.assistant),
+                            style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
+                        Spacer(Modifier.height(12.dp))
+                        Button(onClick = ::useExisting, enabled = !busy, shape = RoundedCornerShape(50),
+                            modifier = Modifier.fillMaxWidth().heightIn(min = 46.dp)) {
+                            Text(stringResource(R.string.orbit_setup_existing_use))
+                        }
+                    }
+                }
+                Spacer(Modifier.height(18.dp))
+                Text(stringResource(R.string.orbit_setup_existing_or), style = MaterialTheme.typography.labelLarge,
+                    color = colors.onSurfaceVariant)
+                Spacer(Modifier.height(18.dp))
+            }
 
             SetupLabel(stringResource(R.string.orbit_setup_provider))
             Box {
@@ -227,17 +301,42 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 ModelDropdown(list, assistant, enabled = !busy) { assistant = it }
                 Text(stringResource(R.string.orbit_setup_assistant_note), style = MaterialTheme.typography.bodySmall,
                     color = colors.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 4.dp))
+            } else if (manual) {
+                Spacer(Modifier.height(20.dp))
+                SetupLabel(stringResource(R.string.orbit_setup_main))
+                SetupTextField(manualMain, { manualMain = it.take(200) }, enabled = !busy,
+                    placeholder = stringResource(R.string.orbit_setup_model_name_hint), keyboardType = KeyboardType.Uri)
+                Text(stringResource(R.string.orbit_setup_manual_note), style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 4.dp))
+                Spacer(Modifier.height(14.dp))
+                SetupLabel(stringResource(R.string.orbit_setup_assistant))
+                SetupTextField(manualAssistant, { manualAssistant = it.take(200) }, enabled = !busy,
+                    placeholder = stringResource(R.string.orbit_setup_same_as_main), keyboardType = KeyboardType.Uri)
+                Text(stringResource(R.string.orbit_setup_assistant_note), style = MaterialTheme.typography.bodySmall,
+                    color = colors.onSurfaceVariant, modifier = Modifier.fillMaxWidth().padding(start = 6.dp, top = 4.dp))
             }
 
             error?.let {
                 Spacer(Modifier.height(14.dp))
                 Text(it, style = MaterialTheme.typography.bodyMedium, color = colors.error, textAlign = TextAlign.Center,
                     modifier = Modifier.fillMaxWidth())
+                errorDetail?.let { detail ->
+                    TextButton(onClick = { showDetail = !showDetail }) {
+                        Text(stringResource(if (showDetail) R.string.orbit_setup_hide_detail else R.string.orbit_setup_show_detail),
+                            style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
+                    }
+                    if (showDetail) {
+                        Text(detail, style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant,
+                            modifier = Modifier.fillMaxWidth())
+                    }
+                }
             }
+            val listing = list == null && !manual
             Spacer(Modifier.height(24.dp))
             Button(
-                onClick = { if (list == null) fetch() else start() },
-                enabled = !busy && endpointOk && (!needsKey || key.isNotBlank()) && (list == null || main != null),
+                onClick = { if (listing) fetch() else start() },
+                enabled = !busy && endpointOk && (!needsKey || key.isNotBlank()) &&
+                    (listing || (if (manual && list == null) manualMain.isNotBlank() else main != null)),
                 shape = RoundedCornerShape(50),
                 // While working the button stays in its normal colors so the spinner is easy to see.
                 colors = if (busy) androidx.compose.material3.ButtonDefaults.buttonColors(
@@ -252,7 +351,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 Text(
                     stringResource(when {
                         testing -> R.string.orbit_setup_testing
-                        list == null -> R.string.orbit_setup_check
+                        listing -> R.string.orbit_setup_check
                         else -> R.string.orbit_setup_start
                     }),
                     style = MaterialTheme.typography.titleMedium,

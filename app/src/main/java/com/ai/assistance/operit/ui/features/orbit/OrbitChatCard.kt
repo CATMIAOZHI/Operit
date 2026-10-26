@@ -84,6 +84,7 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.ACCOUNT_LOGIN -> OrbitAccountLoginCard(card)
         OrbitChatCards.SPEECH_SETTINGS -> OrbitSpeechSettingsCard()
         OrbitChatCards.DATA_EXPORT -> OrbitDataExportCard(card)
+        OrbitChatCards.OPEN_PAGE -> OrbitOpenPageCard(card)
     }
 }
 

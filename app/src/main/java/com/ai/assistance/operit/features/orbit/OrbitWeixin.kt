@@ -538,7 +538,13 @@ internal object OrbitWeixin {
             } catch (e: OrbitWeixinApi.ApiException) {
                 online = false
                 if (e.code == OrbitWeixinApi.STALE_TOKEN) {
-                    update(context, orbitId) { it.copy(staleSince = System.currentTimeMillis(), lastError = EXPIRED) }
+                    // Decided under the state lock, so a reply failing at the same moment cannot tell it twice.
+                    var first = false
+                    update(context, orbitId) {
+                        first = it.staleSince == 0L
+                        it.copy(staleSince = System.currentTimeMillis(), lastError = EXPIRED)
+                    }
+                    if (first) tellExpired(context, orbitId)
                     continue
                 }
                 failures++
@@ -555,6 +561,52 @@ internal object OrbitWeixin {
 
     private const val NET = "network: "
     const val EXPIRED = "login_expired"
+
+    /** Hidden note to Orbit in its main chat; the user does not see it. Waits for a quiet chat in the background. */
+    private fun tellOrbit(context: Context, orbitId: String, chatId: String?, zh: String, en: String) {
+        val app = context.applicationContext
+        scope.launch {
+            try {
+                val orbit = OrbitPreferences.getInstance(app).current().orbits
+                    .firstOrNull { it.id == orbitId && !it.deleting && it.chatId.isNotBlank() } ?: return@launch
+                val target = chatId?.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
+                val note = if (english(app)) en else zh
+                val deadline = android.os.SystemClock.elapsedRealtime() + 10 * 60_000L
+                while (true) {
+                    val left = deadline - android.os.SystemClock.elapsedRealtime()
+                    if (left <= 0) break
+                    if (OrbitWake.tell(app, orbit, target, note, left, left, announce = false) != OrbitWake.Told.BUSY) break
+                    delay(1_500)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w(TAG, "Could not tell Orbit about WeChat: ${e.message}")
+            }
+        }
+    }
+
+    private fun tellExpired(context: Context, orbitId: String) = tellOrbit(context, orbitId, null,
+        "[orbit-weixin] 微信连接过期了\n这是 App 发给你的说明，不是用户说的，用户也看不到。微信那边的登录过期了：用户在微信里发的消息你收不到，" +
+            "你的回复也发不过去，要重新扫码才能恢复。找合适的时机用一句话告诉用户，并调用 orbit_channel action=open_page 放一张卡片，" +
+            "让他点一下去重新连接。他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
+        "[orbit-weixin] The WeChat link expired\nThis is a note from the app, not from the user; they cannot see it. The WeChat " +
+            "login expired: you no longer get what the user writes there, and your replies cannot reach them until they scan " +
+            "the code again. When it fits, tell them in one line and call orbit_channel action=open_page to put a card in the " +
+            "chat that takes them to reconnect. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
+
+    private fun tellUndelivered(context: Context, orbitId: String, item: Outbound) {
+        val what = when (item.kind) {
+            "text" -> item.text.replace(Regex("\\s+"), " ").take(120)
+            else -> item.name.take(80)
+        }
+        tellOrbit(context, orbitId, null,
+            "[orbit-weixin] 有一条微信回复没发出去\n这是 App 发给你的说明，不是用户说的，用户也看不到。微信多次拒收，已放弃发送：「$what」。" +
+                "用户在微信里看不到它，在 App 的聊天里能看到。用户下次在微信里找你时，如果这件事还要紧，就简短再说一次；现在不用提，调用 orbit_nothing_to_do 就好。",
+            "[orbit-weixin] A WeChat reply was not delivered\nThis is a note from the app, not from the user; they cannot see it. " +
+                "WeChat refused it several times, so it was dropped: \"$what\". The user cannot see it in WeChat, only in the app's " +
+                "chat. When they next write to you in WeChat and it still matters, say it again briefly; for now call orbit_nothing_to_do.")
+    }
 
     private fun mimeOf(file: File): String {
         val bytes = ByteArray(12)
@@ -922,7 +974,9 @@ internal object OrbitWeixin {
                 val tries = if (refused) item.tries + 1 else item.tries
                 val setAside = refused && tries >= MAX_SEND_TRIES
                 val giveUp = setAside && item.parks + 1 >= MAX_PARKS
+                var firstStale = false
                 update(context, orbitId) { st ->
+                    firstStale = stale && st.staleSince == 0L
                     st.copy(
                         outbox = if (giveUp) st.outbox.filterNot { it.id == item.id }
                             else st.outbox.map {
@@ -935,6 +989,8 @@ internal object OrbitWeixin {
                     )
                 }
                 AppLogger.w(TAG, "WeChat reply not sent (refused $tries): ${e.message}")
+                if (giveUp) tellUndelivered(context, orbitId, item)
+                else if (firstStale) tellExpired(context, orbitId)
                 if (setAside) continue
                 if (stale) return 5 * 60_000L
                 if (refused) return minOf(60_000L shl (tries - 1).coerceAtMost(5), 30 * 60_000L)

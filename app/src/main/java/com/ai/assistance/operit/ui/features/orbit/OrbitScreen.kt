@@ -185,7 +185,16 @@ fun OrbitScreen(
     // It stays up while setup runs, even after the new Orbit is saved, until every step is done.
     val setupRunning by com.ai.assistance.operit.features.orbit.OrbitSetup.inProgress.collectAsState()
     var showSetup by rememberSaveable { mutableStateOf(!com.ai.assistance.operit.features.orbit.OrbitSetup.skipped(context)) }
-    if (setupRunning || (activeOrbitId == null && showSetup && loadedSettings.orbits.isEmpty())) {
+    // A setup the app was closed in the middle of is undone first, then the setup page runs again.
+    var recovering by remember { mutableStateOf(com.ai.assistance.operit.features.orbit.OrbitSetup.interrupted(context)) }
+    if (recovering) LaunchedEffect(Unit) {
+        com.ai.assistance.operit.features.orbit.OrbitSetup.recoverInterrupted(context)
+        showSetup = true
+        recovering = false
+    }
+    // A welcome that never reached Orbit (the app closed first) is sent now.
+    LaunchedEffect(Unit) { com.ai.assistance.operit.features.orbit.OrbitSetup.resumeWelcome(context) }
+    if (setupRunning || recovering || (activeOrbitId == null && showSetup && loadedSettings.orbits.isEmpty())) {
         val setupBack = rememberOrbitBackMotion()
         // Opened again from the list: back returns to the list. On first start it leaves the app.
         val fromList = com.ai.assistance.operit.features.orbit.OrbitSetup.skipped(context)
@@ -271,6 +280,7 @@ fun OrbitScreen(
                     orbit = orbit,
                     settings = loadedSettings,
                     hasBackgroundImage = false,
+                    onManageRoleCards = onManageRoleCards,
                     chatContent = chatContent,
                 )
             }
@@ -283,6 +293,7 @@ private fun OrbitChatPage(
     orbit: OrbitProfile,
     settings: OrbitSettings,
     hasBackgroundImage: Boolean,
+    onManageRoleCards: () -> Unit,
     chatContent: @Composable (chatId: String, header: @Composable () -> Unit) -> Unit,
 ) {
     val context = LocalContext.current
@@ -303,15 +314,21 @@ private fun OrbitChatPage(
     fun push(page: OrbitSubPage) { stackNames = (stack + page).joinToString(",") { it.name } }
     fun pop() { stackNames = stack.dropLast(1).joinToString(",") { it.name } }
     // Chat cards open pages over the chat; this reads the stack when tapped, so it can be kept.
+    val manageRoleCards by androidx.compose.runtime.rememberUpdatedState(onManageRoleCards)
     val openCardPage: (OrbitCardPage) -> Unit = remember(orbit.id) {
         { page ->
             val sub = when (page) {
                 OrbitCardPage.SPEECH_SETTINGS -> OrbitSubPage.SPEECH_SETTINGS
                 OrbitCardPage.MODEL_CONFIG -> OrbitSubPage.MODEL_CONFIG
                 OrbitCardPage.DEVICE_ACCESS -> OrbitSubPage.DEVICE_ACCESS
+                OrbitCardPage.WEIXIN -> OrbitSubPage.WEIXIN
+                // Role cards are managed in the app's role card page; back returns here.
+                OrbitCardPage.ROLE_CARDS -> null
             }
-            val current = stackNames.split(',').filter { it.isNotEmpty() }
-            if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
+            if (sub == null) manageRoleCards() else {
+                val current = stackNames.split(',').filter { it.isNotEmpty() }
+                if (current.lastOrNull() != sub.name) stackNames = (current + sub.name).joinToString(",")
+            }
         }
     }
     // Answers the user gave while Orbit could not hear them (the app closed while it was busy).
@@ -1767,7 +1784,8 @@ private fun OrbitHome(
         // There is one Orbit: a new one can be made only when there is none.
         if (settings.orbits.isEmpty()) Button(
             enabled = !starting && removingId == null,
-            onClick = { start { OrbitCompanion.start(context) } },
+            // Starts with the main app's models and greets the user, like the setup page does.
+            onClick = { start { com.ai.assistance.operit.features.orbit.OrbitSetup.startWithExisting(context) } },
             modifier = Modifier.fillMaxWidth().heightIn(min = 52.dp),
         ) {
             if (starting) {

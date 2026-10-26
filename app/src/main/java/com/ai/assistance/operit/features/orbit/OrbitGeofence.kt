@@ -145,6 +145,8 @@ object OrbitGeofence {
         // fence's broadcast has only a few seconds to record its transition.
         val fix = if (needsBaseline && permissionProblem(context) == null)
             currentLocation(context, System.currentTimeMillis()) else null
+        // Reminders that stopped or came back during this sync; Orbit hears about them afterwards.
+        val changes = mutableListOf<Pair<OrbitTaskEntity, String?>>()
         lock.withLock {
         val app = context.applicationContext
         val store = prefs(app)
@@ -159,7 +161,7 @@ object OrbitGeofence {
             remove(app, manager, old)
             val id = old.substringBefore('/')
             work.cancelUniqueWork(confirmation(id))
-            if (wanted.none { it.id == id }) store.edit().remove("state:$id").remove("problem:$id").apply()
+            if (wanted.none { it.id == id }) store.edit().remove("state:$id").remove("problem:$id").remove("told:$id").apply()
             else readState(app, id)?.let { state ->
                 state.remove("candidate")
                 store.edit().putString("state:$id", state.toString()).apply()
@@ -175,6 +177,7 @@ object OrbitGeofence {
         val live = mutableSetOf<String>()
         for (task in wanted) {
             val token = key(task)
+            val wasLive = token in previous
             try {
                 check(permissionProblem(app) == null) { permissionProblem(app).orEmpty() }
                 val definition = OrbitGeofenceDefinition.parse(task.source)
@@ -199,6 +202,11 @@ object OrbitGeofence {
                 }
                 live += token
                 store.edit().remove("problem:${task.id}").apply()
+                // It had stopped and Orbit was told: tell it the reminder works again.
+                if (store.getBoolean("told:${task.id}", false)) {
+                    store.edit().remove("told:${task.id}").apply()
+                    changes += task to null
+                }
                 // WorkManager and preferences cannot share a transaction. Recover a candidate
                 // saved just before the process died, even when its first enqueue never persisted.
                 enqueueConfirmation(app, task, state, ExistingWorkPolicy.KEEP)
@@ -206,11 +214,62 @@ object OrbitGeofence {
             catch (e: Exception) {
                 remove(app, manager, token)
                 work.cancelUniqueWork(confirmation(task.id))
+                val problem = e.message ?: app.getString(R.string.orbit_geofence_unavailable)
                 store.edit().remove("state:${task.id}").putString("problem:${task.id}",
-                    e.message ?: app.getString(R.string.orbit_geofence_unavailable)).apply()
+                    problem).apply()
+                // A reminder that was working stopped (permission or location turned off): Orbit
+                // is told once, so it can help the user turn it back on. One that never started
+                // was already reported when it was made.
+                if (wasLive && !store.getBoolean("told:${task.id}", false)) {
+                    store.edit().putBoolean("told:${task.id}", true).apply()
+                    changes += task to problem
+                }
             }
         }
         store.edit().putStringSet("registered", live).apply()
+        }
+        if (changes.isNotEmpty()) scope.launch { tell(context.applicationContext, changes) }
+    }
+
+    /** Hidden notes to Orbit about reminders that stopped ([Pair.second] is why) or work again (null). */
+    private suspend fun tell(app: Context, changes: List<Pair<OrbitTaskEntity, String?>>) {
+        val english = com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(app)
+        val orbits = com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(app).current().orbits
+        for ((orbitId, items) in changes.groupBy { it.first.orbitId }) {
+            val orbit = orbits.firstOrNull { it.id == orbitId && !it.deleting && it.chatId.isNotBlank() } ?: continue
+            val lines = items.joinToString("\n") { (task, problem) ->
+                val title = task.title.replace(Regex("\\s+"), " ").take(80)
+                if (problem == null) {
+                    if (english) "- 「$title」 works again." else "- 「$title」已经恢复了。"
+                } else {
+                    if (english) "- 「$title」 stopped: ${problem.take(200)}" else "- 「$title」停了：${problem.take(200)}"
+                }
+            }
+            val stopped = items.any { it.second != null }
+            val note = if (english) {
+                "[orbit-geofence] Location reminders changed\nThis is a note from the app, not from the user; they cannot see it.\n$lines\n" +
+                    (if (stopped) "A stopped reminder will not fire until location access is back. When it fits, tell the user in one line " +
+                        "and call orbit_permission_card permission=geofence so they can turn it on again. If they said before they " +
+                        "don't want reminders about this, call orbit_nothing_to_do to stay quiet." else "Say so only if the user was waiting on it; otherwise call orbit_nothing_to_do.")
+            } else {
+                "[orbit-geofence] 位置提醒有变化\n这是 App 发给你的说明，不是用户说的，用户也看不到。\n$lines\n" +
+                    (if (stopped) "停了的提醒在位置权限恢复前不会响。找合适的时机用一句话告诉用户，并调用 orbit_permission_card " +
+                        "permission=geofence 让他一键打开。他以前说过不用提醒这类事的话，就调用 orbit_nothing_to_do 保持安静。" else "用户在等这个的话就说一声，否则调用 orbit_nothing_to_do。")
+            }
+            val chatId = items.first().first.chatId.takeIf { it in orbit.talkChatIds } ?: orbit.chatId
+            try {
+                val deadline = SystemClock.elapsedRealtime() + 10 * 60_000L
+                while (true) {
+                    val left = deadline - SystemClock.elapsedRealtime()
+                    if (left <= 0) break
+                    if (OrbitWake.tell(app, orbit, chatId, note, left, left, announce = false) != OrbitWake.Told.BUSY) break
+                    delay(1_500)
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                com.ai.assistance.operit.util.AppLogger.w("OrbitGeofence", "Could not tell Orbit about reminders: ${e.message}")
+            }
         }
     }
 
