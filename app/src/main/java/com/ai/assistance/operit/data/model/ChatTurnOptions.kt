@@ -67,6 +67,8 @@ data class ChatTurnOptions(
      * [ChatMessageTimestampAllocator] just before the send, so it still sorts after earlier rows.
      */
     val userMessageTimestamp: Long? = null,
+    /** In-process only: when the send entry took this message, for the request timing log (LlmPerf). */
+    val perfStartMs: Long? = null,
 )
 
 /**
