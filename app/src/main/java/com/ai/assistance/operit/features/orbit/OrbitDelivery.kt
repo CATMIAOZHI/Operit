@@ -176,6 +176,16 @@ object OrbitDelivery {
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
     }
 
+    /** The notification channel for what Orbit says while the app is in the background. */
+    const val CHANNEL = "orbit_check_in"
+
+    /** False when the user turned off Orbit's own notification channel in the system settings. */
+    fun channelOn(context: Context): Boolean {
+        if (android.os.Build.VERSION.SDK_INT < 26) return true
+        val channel = context.getSystemService(NotificationManager::class.java)?.getNotificationChannel(CHANNEL) ?: return true
+        return channel.importance != NotificationManager.IMPORTANCE_NONE
+    }
+
     private fun notify(context: Context, key: String, chatId: String, title: String, body: String) {
         if (ActivityLifecycleManager.getCurrentActivity() != null ||
             !NotificationManagerCompat.from(context).areNotificationsEnabled()) return
@@ -183,7 +193,7 @@ object OrbitDelivery {
         val orbit = runCatching { OrbitPreferences.getInstance(context).loadedSettingsBlocking().orbitForChat(chatId) }.getOrNull()
         if (orbit?.messageNotifications == false) return
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
-        val channel = "orbit_check_in"
+        val channel = CHANNEL
         manager.createNotificationChannel(NotificationChannel(channel,
             context.getString(R.string.orbit_notification_channel), NotificationManager.IMPORTANCE_DEFAULT))
         val pending = openChatIntent(context, chatId, key)

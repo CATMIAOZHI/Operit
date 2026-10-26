@@ -87,7 +87,11 @@ internal object OrbitModelSwitch {
     fun title(context: Context, r: Request): String =
         context.getString(R.string.orbit_model_switch_title, roleLabel(context, r.role), r.model)
 
-    /** Makes the approved switch, checking again that the configuration and model still exist. */
+    /**
+     * Makes the approved switch, checking again that the configuration and model still exist. A
+     * chat model (main or assistant) must answer a short test first; when it does not, nothing is
+     * switched and a model added for it is taken out again.
+     */
     suspend fun run(context: Context, orbit: OrbitProfile, action: JSONObject, english: Boolean): String {
         val r = request(action)
         val configs = ModelConfigManager(context)
@@ -116,6 +120,26 @@ internal object OrbitModelSwitch {
         fun label(ref: OrbitModelRef?) = ref?.let { x -> summaries.firstOrNull { it.id == x.configId }?.name?.let { "$it / ${x.modelName}" } }
             ?: if (english) "none" else "无"
         val old = label(ref(before, r.role))
+        if (r.role != ROLE_MULTIMODAL) {
+            val full = checkNotNull(configs.getModelConfig(config.id))
+            val index = getModelList(full.modelName).indexOf(r.model)
+            val failure = try {
+                OrbitSetup.checkModel(context.applicationContext, configs, full, index, null) { it.take(200) }
+                null
+            } catch (e: OrbitSetup.SetupException) {
+                e
+            }
+            if (failure != null) {
+                if (added) runCatching {
+                    val now = checkNotNull(configs.getModelConfig(config.id))
+                    configs.saveModelConfig(now.copy(modelName = getModelList(now.modelName).filter { it != r.model }.joinToString(",")))
+                }
+                val why = OrbitSetup.describe(context, failure.problem)
+                // Settled as answered: the user and Orbit both see why nothing changed, and nothing is retried.
+                return if (english) "$name / ${r.model} did not answer a test message, so nothing was switched; you still use $old. $why"
+                    else "$name / ${r.model} 没通过测试，所以没有切换，还在用 $old。$why"
+            }
+        }
         val next = OrbitModelRef(config.id, r.model)
         prefs.update(orbit.id) { s ->
             val switched = when (r.role) {

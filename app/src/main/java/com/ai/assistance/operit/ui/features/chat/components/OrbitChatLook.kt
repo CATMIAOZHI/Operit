@@ -341,6 +341,7 @@ object OrbitSpeech {
     val CARD_TOOLS = listOf(
         "orbit_vault", "orbit_file", "orbit_request_approval", "orbit_permission_card", "orbit_packages",
         "orbit_models", "orbit_components", "orbit_settings", "orbit_skills", "orbit_voice",
+        "orbit_channel", "orbit_soul",
     )
     private val cardToolResult = Regex(
         "^<tool_result[A-Za-z0-9_]*\\s[^>]*\\bname=\"(?:${CARD_TOOLS.joinToString("|")})\"[^>]*\\bstatus=\"success\"",

@@ -205,7 +205,8 @@ internal object OrbitPermissionCards {
     /** Whether the phone permission is on now. Reads system settings; call it off the main thread. */
     fun isOn(context: Context, permission: String): Boolean = when (permission) {
         DEVICE_ACCESS -> deviceAccess(context).working
-        NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled()
+        // The app may notify, and the user has not turned off Orbit's own channel.
+        NOTIFY -> NotificationManagerCompat.from(context).areNotificationsEnabled() && OrbitDelivery.channelOn(context)
         NOTIFICATION_READ -> context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
         // The approximate location is enough for Orbit's "where am I".
         LOCATION -> granted(context, Manifest.permission.ACCESS_COARSE_LOCATION) || granted(context, Manifest.permission.ACCESS_FINE_LOCATION)
@@ -218,7 +219,12 @@ internal object OrbitPermissionCards {
         requestPermissions(context, permission).let { list -> list.isNotEmpty() && !list.all { granted(context, it) } }
 
     private fun settingsIntent(context: Context, permission: String): Intent = when (permission) {
-        NOTIFY -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+        // Only Orbit's channel is off: open that channel's own screen.
+        NOTIFY -> if (Build.VERSION.SDK_INT >= 26 && NotificationManagerCompat.from(context).areNotificationsEnabled() &&
+            !OrbitDelivery.channelOn(context))
+            Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+                .putExtra(Settings.EXTRA_CHANNEL_ID, OrbitDelivery.CHANNEL)
+        else Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         NOTIFICATION_READ -> Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
         GEOFENCE -> locationStatus(context).let { status ->
             if (status.optBoolean("fine") && status.optBoolean("background") && !status.optBoolean("location_services"))

@@ -274,8 +274,11 @@ object OrbitTaskRunner {
         } catch (e: Exception) {
             // Cut short by used-up allowances: the task waits and tries again, it is not paused.
             // A review that stopped without its result keeps what it wrote down and goes on later.
-            if (!stopForQuota(context, state) && !continueReview(context, state)) {
-                dao.interrupt(token, System.currentTimeMillis(), context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+            // A model that failed (network, key, balance) skips only this run of a repeating task.
+            if (!stopForQuota(context, state) && !continueReview(context, state) && !skipForModelFailure(context, state, e)) {
+                dao.interrupt(token, System.currentTimeMillis(), (e as? ModelTurnFailed)?.let {
+                    context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_paused, it.reason(context))
+                } ?: context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
             }
         } finally {
             withContext(NonCancellable) {
@@ -349,6 +352,32 @@ object OrbitTaskRunner {
     } catch (e: Exception) {
         com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Run not put back for the allowance: ${e.message}")
         false
+    }
+
+    /** The model turn of a run ended in an error; [detail] is the provider's own text. */
+    private class ModelTurnFailed(val detail: String) : Exception(detail) {
+        fun reason(context: Context): String = OrbitSetup.describe(context, OrbitSetup.problemOf(detail))
+    }
+
+    /**
+     * A repeating task whose model failed (no network, a wrong key, no balance) gives up only this
+     * run and goes on at its next time, with the reason kept on the run; it is not paused, so a model
+     * that works again needs no resume. A one-time task, or a run with an unconfirmed effect, returns
+     * false and is paused for the user to check, with the same reason.
+     */
+    private suspend fun skipForModelFailure(context: Context, state: ActiveRun, e: Exception): Boolean {
+        val failure = e as? ModelTurnFailed ?: return false
+        return try {
+            val now = System.currentTimeMillis()
+            AppDatabase.getDatabase(context).orbitTaskDao().stopForQuota(
+                state.token, now + QUOTA_RETRY_MS, OrbitTaskRepository.nextAt(state.task, now), now,
+                context.getString(com.ai.assistance.operit.R.string.orbit_run_model_failed_skipped, failure.reason(context)))
+        } catch (c: CancellationException) {
+            throw c
+        } catch (x: Exception) {
+            com.ai.assistance.operit.util.AppLogger.w("OrbitTasks", "Run not skipped after a model failure: ${x.message}")
+            false
+        }
     }
 
     /**
@@ -428,12 +457,25 @@ object OrbitTaskRunner {
         if (told.sent) {
             val outcome = when {
                 told == OrbitWake.Told.SPOKE -> "send"
+                told == OrbitWake.Told.FAILED -> "failed"
                 decision.confirmed -> "skip"
                 else -> "pending"
             }
             dao.recordChatDecision(state.token.id, state.token.generation, state.token.owner,
                 OrbitChatDecision.encode(outcome, decision.reason))
             if (told == OrbitWake.Told.SPOKE) dao.touchDelivered(orbit.id, System.currentTimeMillis())
+            // A one-time reminder must still reach the user when Orbit's reply failed (the model
+            // was down): its own words go into the chat, and out as a notification when the app is closed.
+            if (told == OrbitWake.Told.FAILED && (task.kind == "ONCE" || task.scheduleMode == "ONCE") &&
+                task.instruction.isNotBlank()) {
+                val text = context.getString(com.ai.assistance.operit.R.string.orbit_reminder_fallback,
+                    task.instruction.trim().take(300), orbit.name)
+                runCatching {
+                    ChatRuntimeHolder.getInstance(context).getCore(ChatRuntimeSlot.MAIN).getChatHistoryDelegate()
+                        .addMessageToChat(com.ai.assistance.operit.data.model.ChatMessage(sender = "ai", content = text), chatId)
+                }.onFailure { if (it is kotlinx.coroutines.CancellationException) throw it }
+                OrbitDelivery.announce(context, chatId, orbit.name, text)
+            }
             // A wait that ran out is not evidence that Orbit chose silence.
             if (decision.confirmed) logRun(context, state, observation, "", if (told == OrbitWake.Told.SPOKE) "-" else "")
         }
@@ -549,7 +591,12 @@ object OrbitTaskRunner {
                 Say why in decision, whether you draft or stay quiet.
                 Call $FINISH with an observation, the userMessage (empty for silence) and the decision.
             """.trimIndent()
-            val result = ChatTurnDispatcher().dispatch(core, ChatTurnDispatchRequest(
+            // A model that cannot be reached or whose stream breaks is a model failure, however it shows.
+            suspend fun <T> modelStep(step: suspend () -> T): T = try { step() }
+                catch (e: kotlinx.coroutines.CancellationException) { throw e }
+                catch (e: ModelTurnFailed) { throw e }
+                catch (e: Exception) { throw ModelTurnFailed(e.message ?: e.javaClass.simpleName) }
+            val result = modelStep { ChatTurnDispatcher().dispatch(core, ChatTurnDispatchRequest(
                 chatId = chatId, message = prompt,
                 roleCardId = CharacterCardManager.DEFAULT_CHARACTER_CARD_ID, proxySenderName = null,
                 turnOptions = ChatTurnOptions(persistTurn = true, notifyReply = false,
@@ -557,11 +604,16 @@ object OrbitTaskRunner {
                     toolsEnabled = true,
                     terminalToolNames = setOf(FINISH, OrbitTaskActionTools.WAIT)),
                 responseStreamAcquireTimeoutMs = 30_000, responseTimeoutMs = timeoutMinutes * 60_000L,
-            ))
-            session = (result as? ChatTurnDispatchResult.Started)?.session
-                ?: error((result as ChatTurnDispatchResult.Failed).error)
-            session.responseStream.collect { /* Ordinary output is never delivered. */ }
-            check(session.awaitTerminalSignal() is ChatTurnTerminalSignal.Completed)
+            )) }
+            val started = (result as? ChatTurnDispatchResult.Started)?.session
+                ?: throw ModelTurnFailed((result as ChatTurnDispatchResult.Failed).error.toString())
+            session = started
+            modelStep { started.responseStream.collect { /* Ordinary output is never delivered. */ } }
+            when (val end = started.awaitTerminalSignal()) {
+                is ChatTurnTerminalSignal.Completed -> Unit
+                is ChatTurnTerminalSignal.Failed -> throw ModelTurnFailed(end.error)
+                else -> error("The model turn was cancelled")
+            }
         } finally {
             withContext(NonCancellable) {
                 session?.let { runCatching { it.cancelAndAwaitTermination() } }

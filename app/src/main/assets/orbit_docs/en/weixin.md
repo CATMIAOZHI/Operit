@@ -10,7 +10,7 @@ After tapping Connect, the user sees a QR code, scans it with WeChat on their ph
 WeChat sometimes asks for a numeric code; the page shows where to enter it.
 If the QR code expires, connect again.
 
-When the user asks how to connect, point them to this entry and these steps. Do not say you have connected it for them.
+When the user wants to connect or reconnect, use `orbit_channel action=open_page` to put a card in the chat that takes them to the link page with one tap; you can also point them to this entry and these steps. Do not say you have connected it for them.
 
 ## Your name and picture in WeChat
 

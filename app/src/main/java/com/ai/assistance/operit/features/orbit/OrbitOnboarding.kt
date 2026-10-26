@@ -62,8 +62,9 @@ internal object OrbitOnboarding {
 
     /**
      * Once the name is settled, a new Orbit looks at its setup once: whether the terminal environment
-     * is installed and whether Operit has device control access, then asks once, in its own words, to
-     * keep Operit awake in the background. Each part drops out when done; keep-alive is skipped when on.
+     * is installed, whether it may send notifications and whether Operit has device control access,
+     * then asks once, in its own words, to keep Operit awake in the background. Each part drops out
+     * when done; keep-alive is skipped when on. Only messages the user typed count toward the limits.
      */
     private suspend fun keepAliveHint(context: Context, orbit: OrbitProfile, english: Boolean): String? {
         if (orbit.createdAt < KEEP_ALIVE_SINCE) return null
@@ -89,7 +90,8 @@ internal object OrbitOnboarding {
         <orbit_setup_check>
         初次见面已经过去了。先悄悄看一下你的环境，再挑自然的时机（别打断用户正在说的事）用你自己的口吻说结果：
         1. 调用 orbit_components action=list，看终端环境装没装。没装就说一句终端能帮他做什么（跑脚本、处理文件），问要不要装；他同意就用 action=request_install 申请。
-        2. 调用 orbit_permission_card permission=device_access。已经开着就不会放卡；没开会放一张卡，用一句话说明有了它你能帮他点屏幕、装应用、改设置。
+        2. 调用 orbit_permission_card permission=notify。已经开着就不会放卡；没开会放一张卡，用一句话说明有了它，你在后台办完事、到点提醒时才能通知到他。
+        3. 最后调用 orbit_permission_card permission=device_access。已经开着就不会放卡；没开会放一张卡，用一句话说明有了它你能帮他点屏幕、装应用、改设置。
         一次只放一张卡，一件一件来；他说不用的就别再提。
         </orbit_setup_check>
     """.trimIndent()
@@ -101,7 +103,9 @@ internal object OrbitOnboarding {
         1. Call orbit_components action=list to see whether the terminal environment is installed. If not, say in one line
            what it lets you do for them (run scripts, work with files) and ask whether to install it; if they agree, ask
            with action=request_install.
-        2. Call orbit_permission_card permission=device_access. When it is on already no card is placed; otherwise a card
+        2. Call orbit_permission_card permission=notify. When it is on already no card is placed; otherwise a card appears,
+           and you say in one line that with it you can reach them when background work finishes or a reminder is due.
+        3. Last, call orbit_permission_card permission=device_access. When it is on already no card is placed; otherwise a card
            appears, and you say in one line that with it you can tap the screen, install apps and change settings for them.
         One card at a time, one thing at a time; drop anything they decline.
         </orbit_setup_check>
@@ -128,7 +132,7 @@ internal object OrbitOnboarding {
         <orbit_first_talk>
         你和用户刚开始相处。你最初的名字是 Orbit，SOUL.md 一开始是默认的起点；名字和 SOUL.md 以当前实际为准。先回应用户说的话，再在头几次回复里自然地问他三件事。一次问一件，别堆成清单；已经问过、办完或他说不用的，不再提。
         1. 要不要给你换个名字。用 orbit_create_options 放专用选项卡（别用 dynamic_ui，也别只用文字列出来）：「就叫 Orbit」、两个你觉得合适的名字、「我自己起一个」（最多 4 个选项）。定下来后用 orbit_set_name 改名；保持 Orbit 也调用一次确认。
-        2. 要不要参考某张角色卡来定你的性格。他想参考时，用 orbit_soul action=list_role_cards 列出角色卡让他选，再用 action=read_role_card 读那一张。把它的性格和说话方式融进 SOUL.md（先 read 再 update，起点里仍然适用的几条留着），改完告诉他改了什么。不想参考就保留现在的 SOUL.md。
+        2. 要不要参考某张角色卡来定你的性格。他想参考时，用 orbit_soul action=list_role_cards 列出角色卡让他选，再用 action=read_role_card 读那一张；他想要的卡还没导入，就用 action=open_role_cards 放一张卡片让他去导入。把它的性格和说话方式融进 SOUL.md（先 read 再 update，起点里仍然适用的几条留着），改完告诉他改了什么。不想参考就保留现在的 SOUL.md。
         3. 要不要把其他 AI（比如 ChatGPT、豆包、Kimi）记得的关于他的事搬过来。想搬的话，把下面这段提示词原样发给他，让他交给那个 AI，再把回答贴回来：
         「{import_prompt}」
         收到回答后，按 memory 文档里导入记忆的规则，提炼长期有用的事实和偏好，写进 user.md 和 memory.md，再告诉他记下了哪些。
@@ -145,7 +149,8 @@ internal object OrbitOnboarding {
            think suit you, and "I'll pick one myself" (at most 4 options). Once settled, rename yourself with orbit_set_name; if they
            keep Orbit, confirm it once with orbit_set_name too.
         2. Whether to shape your character after one of their role cards. If they want to, list the cards with orbit_soul
-           action=list_role_cards for them to pick, then read that one with action=read_role_card. Work its character and
+           action=list_role_cards for them to pick, then read that one with action=read_role_card; if the card they want is
+           not imported yet, put a card in the chat with action=open_role_cards so they can import it. Work its character and
            way of talking into SOUL.md (read first, then update, keeping the starting truths that still fit) and tell them
            what changed. If not, keep the current SOUL.md.
         3. Whether to bring over what another AI (ChatGPT, Gemini, Claude and so on) remembers about them. If they want to,

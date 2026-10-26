@@ -47,9 +47,11 @@ object OrbitWake {
         /** Sent, and Orbit said something to the user. */
         SPOKE,
         /** Sent; Orbit stayed quiet, or had not finished within the time allowed. */
-        QUIET;
+        QUIET,
+        /** Sent, but Orbit's turn ended in an error (the model failed), so it said nothing. */
+        FAILED;
 
-        val sent get() = this == SPOKE || this == QUIET
+        val sent get() = this == SPOKE || this == QUIET || this == FAILED
     }
 
     /** The task title of a stored notice, or null when the message is not one. */
@@ -283,6 +285,7 @@ object OrbitWake {
         val left = totalWaitMs - (android.os.SystemClock.elapsedRealtime() - startedAt)
         if (terminal != null) {
             val signal = withTimeoutOrNull(left.coerceAtLeast(0)) { terminal!!.await() }
+            if (signal is ChatTurnTerminalSignal.Failed) return Told.FAILED
             // Failed/cancelled/timed-out turns do not borrow a later reply as their result.
             if (signal !is ChatTurnTerminalSignal.Completed) return Told.QUIET
             decision?.confirmed = true

@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="orbit_decision_chat_failed">已叫醒 %1$s，但这次回复出错了（多半是模型出了问题）</string>
+    <string name="orbit_reminder_fallback">提醒：%1$s\n（%2$s 这次没能回复，可能是模型出了问题。）</string>
+    <string name="orbit_run_model_failed_skipped">这次没跑成：%1$s 下次会按时再试。</string>
+    <string name="orbit_run_model_failed_paused">没跑成，先暂停了：%1$s 处理好以后，在任务里点恢复就行。</string>
+    <string name="orbit_page_card_weixin_title">连接微信</string>
+    <string name="orbit_page_card_weixin_sub">扫码连上后，就能在微信里找我</string>
+    <string name="orbit_page_card_weixin_open">去连接</string>
+    <string name="orbit_page_card_roles_title">角色卡</string>
+    <string name="orbit_page_card_roles_sub">导入或管理角色卡，弄好后按返回回到这里</string>
+    <string name="orbit_page_card_roles_open">打开角色卡</string>
+    <string name="orbit_page_card_models_title">模型配置</string>
+    <string name="orbit_page_card_models_sub">在这里改 API 密钥、地址和模型，密钥不会进聊天</string>
+    <string name="orbit_page_card_models_open">打开模型配置</string>
+</resources>

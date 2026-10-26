@@ -34,6 +34,12 @@ internal object OrbitChatCards {
     const val SPEECH_SETTINGS = "speech_settings"
     /** Exports this Orbit's data as one zip and hands it to the share sheet. */
     const val DATA_EXPORT = "data_export"
+    /** Opens a settings page from the chat: the WeChat link, role cards, or model settings. */
+    const val OPEN_PAGE = "open_page"
+    const val PAGE_WEIXIN = "weixin"
+    const val PAGE_ROLE_CARDS = "role_cards"
+    const val PAGE_MODEL_CONFIG = "model_config"
+    val pages = listOf(PAGE_WEIXIN, PAGE_ROLE_CARDS, PAGE_MODEL_CONFIG)
 
     /** Account sign-ins a card can offer: the id Orbit passes, and the account it stands for. */
     val accountProviders: Map<String, com.ai.assistance.operit.data.api.AccountProvider> = mapOf(
@@ -74,6 +80,12 @@ internal object OrbitChatCards {
                 (accountProviders[o?.optString("provider")]?.let(::accountLabel).orEmpty())
             SPEECH_SETTINGS -> (if (english) "Voice settings card" else "语音设置卡片") to ""
             DATA_EXPORT -> (if (english) "Data export card" else "数据导出卡片") to ""
+            OPEN_PAGE -> (if (english) "Settings card" else "设置卡片") to when (o?.optString("page")) {
+                PAGE_WEIXIN -> if (english) "WeChat" else "微信"
+                PAGE_ROLE_CARDS -> if (english) "Role cards" else "角色卡"
+                PAGE_MODEL_CONFIG -> if (english) "Model settings" else "模型配置"
+                else -> ""
+            }
             IMAGE -> (if (english) "Picture" else "图片") to field("name")
             FILE -> (if (english) "File" else "文件") to field("name")
             else -> (if (english) "Card" else "卡片") to ""
@@ -165,6 +177,11 @@ internal object OrbitChatCards {
     fun dataExport(orbitId: String): JSONObject = JSONObject()
         .put("kind", DATA_EXPORT)
         .put("orbit_id", orbitId)
+
+    fun openPage(orbitId: String, page: String): JSONObject = JSONObject()
+        .put("kind", OPEN_PAGE)
+        .put("orbit_id", orbitId)
+        .put("page", page)
 
     /** The entry sheet a vault card opens, or null when [card] is not a complete vault card. */
     fun vaultRequest(card: JSONObject): OrbitVault.Request? {

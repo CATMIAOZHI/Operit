@@ -10,16 +10,17 @@ import org.json.JSONObject
 internal object OrbitSoulTools {
     const val NAME = "orbit_soul"
     val prompt = ToolPrompt(name = NAME,
-        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份；也能列出、读取用户的角色卡，用来参考性格。更新直接生效，只保留当前内容；不改变工具权限。",
+        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份；也能列出、读取用户的角色卡，用来参考性格，或放一张卡片带用户去导入角色卡。更新直接生效，只保留当前内容；不改变工具权限。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "read/update/list_role_cards/read_role_card", required = true),
+            ToolParameterSchema("action", description = "read/update/list_role_cards/read_role_card/open_role_cards", required = true),
             ToolParameterSchema("file", description = "soul（默认）或 identity", required = false),
             ToolParameterSchema("body", description = "update：完整文件内容，最多24000字符", required = false),
             ToolParameterSchema("reason", description = "soul update 必填：解释为什么修改，最多2000字符；identity 不需要", required = false),
             ToolParameterSchema("version", description = "soul update 必填：先 read，再原样传入 read 返回的当前 version；identity 不需要", required = false),
             ToolParameterSchema("role_card_id", description = "read_role_card 必填：list_role_cards 返回的 id", required = false)),
         details = "修改 SOUL.md 前必须先 action=read；action=update 必须带完整 body、read 返回的 version 和修改理由 reason。IDENTITY.md 的 update 只需完整 body。\n" +
-            "list_role_cards 列出用户的角色卡（id、名字、简介）；read_role_card 读一张卡的人设全文。读角色卡不会改变你自己，要参考它就再 update SOUL.md。")
+            "list_role_cards 列出用户的角色卡（id、名字、简介）；read_role_card 读一张卡的人设全文。读角色卡不会改变你自己，要参考它就再 update SOUL.md。\n" +
+            "用户想用的角色卡还没导入（列表里没有），或想导入、管理角色卡时，用 open_role_cards 在聊天里放一张卡片，他点一下就到角色卡页面，导入后按返回回到聊天。卡片放出后用一句话结束这一轮；他回来说好了，再 list_role_cards。")
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller)) { "orbit_soul works only inside an Orbit chat" }
@@ -30,6 +31,15 @@ internal object OrbitSoulTools {
         val repository = OrbitSoulRepository(context, orbit.id)
         val args = tool.parameters.associate { it.name to it.value }
         val action = args["action"]?.trim()?.lowercase().orEmpty()
+        if (action == "open_role_cards") {
+            check(com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(context).current()
+                .orbitForChat(caller) != null) { "Cards only work in a chat with the user" }
+            val result = JSONObject().put("card", "placed")
+                .put("note", "A card that opens the role card page is now in the chat. End this turn with one short line. " +
+                    "When the user says they are done, call action=list_role_cards again.")
+                .put(OrbitChatCards.KEY, OrbitChatCards.openPage(orbit.id, OrbitChatCards.PAGE_ROLE_CARDS))
+            return@runBlockingIoPreservingToolRuntimeContext ToolResult(tool.name, true, StringResultData(result.toString()))
+        }
         if (action == "list_role_cards" || action == "read_role_card") {
             val cards = com.ai.assistance.operit.data.preferences.CharacterCardManager.getInstance(context)
             val result = if (action == "list_role_cards") {
