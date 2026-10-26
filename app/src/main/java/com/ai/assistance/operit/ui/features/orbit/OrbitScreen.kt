@@ -1636,6 +1636,8 @@ private fun OrbitSettingsPage(
                 }
             }
 
+            OrbitLogExportSection(cardColor = cardColor)
+
             Column {
                 SettingsSectionTitle(
                     text = stringResource(R.string.orbit_section_developer),
