@@ -529,6 +529,14 @@ class ChatViewModel(private val context: Context) : ViewModel() {
             MutableStateFlow(false)
         }
     }
+    /** Messages the user sent that wait for their chat's history summary, by chat. */
+    val summaryHeldSends: StateFlow<Map<String, com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend>> by lazy {
+        if (::messageCoordinationDelegate.isInitialized) {
+            messageCoordinationDelegate.summaryHeldSends
+        } else {
+            MutableStateFlow(emptyMap())
+        }
+    }
 
     // 添加一个用于跟踪附件面板状态的变量
     private val _attachmentPanelState = MutableStateFlow(false)
@@ -746,6 +754,10 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                     }
 
                     override fun getReplyToMessage(): ChatMessage? = replyToMessage.value
+
+                    override fun restoreReplyToMessage(message: ChatMessage) {
+                        this@ChatViewModel.setReplyToMessage(message)
+                    }
                 }
         )
         mainChatCore.setSpeakMessageHandler(::speakMessage)

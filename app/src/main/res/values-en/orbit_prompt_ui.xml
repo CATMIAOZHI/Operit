@@ -91,13 +91,14 @@
     <string name="orbit_browser_watch_waiting">Waiting for %1$s to pause…</string>
     <string name="orbit_browser_watch_stop">Stop task</string>
     <string name="orbit_browser_watch_close">Close</string>
-    <string name="orbit_browser_watch_landscape">View in landscape</string>
-    <string name="orbit_browser_watch_portrait">View in portrait</string>
     <string name="orbit_browser_watch_busy">The browser is busy with something else. Try again shortly.</string>
     <string name="orbit_review_read_tool">Read the review\'s chats</string>
     <string name="orbit_decision_review_continues">Not finished this time (%1$s read and written down); it goes on at the next review</string>
     <string name="orbit_review_continues_observation">The alignment review is partway through: %1$s read and written down; it goes on next run</string>
     <string name="orbit_activity_working">Working hard</string>
+    <string name="orbit_activity_compacting">Tidying up the conversation</string>
+    <string name="chat_steer_after_compaction">Tidying up the conversation; this sends once it is done</string>
+    <string name="chat_held_send_build_failed">The message was not sent; it is back in the input box</string>
     <string name="orbit_activity_browsing">Browsing the web</string>
     <string name="orbit_activity_searching">Searching</string>
     <string name="orbit_activity_files">Looking at files</string>

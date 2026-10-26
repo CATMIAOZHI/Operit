@@ -55,8 +55,13 @@ internal fun rememberOrbitActivity(orbit: OrbitProfile, currentChatId: String?):
             val tasks = taskChats.filterValues { it == orbitId }.keys
             val roots = talkIds.toSet() + tasks
             // Each window keeps old states of chats it once ran; only the window running a chat speaks for it.
-            val states = floatingStates.filterKeys { it in floatingStreaming } + mainStates.filterKeys { it in mainStreaming }
-            val mine = (mainStreaming + floatingStreaming).distinct()
+            // A chat summarizing its history before a send runs no turn yet, but Orbit is busy with it.
+            // Each window is asked on its own: an old idle state in one must not hide the other's summary.
+            fun summarizingIn(states: Map<String, InputProcessingState>) =
+                states.filter { (id, state) -> state is InputProcessingState.Summarizing && id in roots }
+            val summarizing = summarizingIn(floatingStates) + summarizingIn(mainStates)
+            val states = summarizing + floatingStates.filterKeys { it in floatingStreaming } + mainStates.filterKeys { it in mainStreaming }
+            val mine = (mainStreaming + floatingStreaming + summarizing.keys).distinct()
                 .filter { it in roots || coordinator.rootChatOf(it) in roots }
             val ordered = listOfNotNull(currentChatId?.takeIf { it in mine }) + mine
             orbitLiveActivity(ordered.map { states[it] }, tasks.isNotEmpty())
@@ -70,7 +75,7 @@ internal fun orbitLiveActivity(states: List<InputProcessingState?>, hasBackgroun
     return when {
         tool != null -> OrbitLiveActivity(tool, PetActivity.TOOL)
         states.any { it is InputProcessingState.Summarizing } ->
-            OrbitLiveActivity(R.string.orbit_activity_working, PetActivity.SUMMARIZING)
+            OrbitLiveActivity(R.string.orbit_activity_compacting, PetActivity.SUMMARIZING)
         else -> OrbitLiveActivity(R.string.orbit_activity_working, PetActivity.THINKING)
     }
 }

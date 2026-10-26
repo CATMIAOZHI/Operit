@@ -40,6 +40,7 @@ import com.ai.assistance.operit.util.ChatMarkupRegex
 import com.ai.assistance.operit.util.ChatUtils
 import com.ai.assistance.operit.util.LocaleUtils
 import com.ai.assistance.operit.data.repository.MemoryAutoSaveCandidateRepository
+import com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
@@ -50,7 +51,9 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.CancellationException
@@ -95,6 +98,25 @@ class MessageCoordinationDelegate(
 
     private val _sendTriggeredSummarizingChatId = MutableStateFlow<String?>(null)
     val sendTriggeredSummarizingChatId: StateFlow<String?> = _sendTriggeredSummarizingChatId.asStateFlow()
+
+    /**
+     * A message the user sent that waits for the chat's history to be summarized first. It is shown
+     * in the chat right away, and taken out of the input box so it cannot be sent a second time.
+     * [content]: the message as it will be sent, once built (attachments and reply included).
+     * [heldAt]: when it was sent, for the time line above it. [sentAfter]: once handed to the turn,
+     * the newest history time before it; the real message is the user's first one after that time,
+     * and the waiting copy hides when it shows up.
+     */
+    data class SummaryHeldSend(
+        val id: Long,
+        val text: String,
+        val content: String? = null,
+        val heldAt: Long = System.currentTimeMillis(),
+        val sentAfter: Long? = null,
+    )
+    private val heldSendIds = java.util.concurrent.atomic.AtomicLong()
+    private val _summaryHeldSends = MutableStateFlow<Map<String, SummaryHeldSend>>(emptyMap())
+    val summaryHeldSends: StateFlow<Map<String, SummaryHeldSend>> = _summaryHeldSends.asStateFlow()
 
     // 保存总结任务的 Job 引用，用于取消
     private var summaryJob: Job? = null
@@ -761,13 +783,20 @@ class MessageCoordinationDelegate(
                 false
             }
 
-            fun sendPreparedMessage(afterSummary: Boolean = false): Boolean {
+            fun sendPreparedMessage(
+                afterSummary: Boolean = false,
+                composerTaken: Boolean = false,
+                prebuiltOverride: ChatMessage? = null,
+                userMessageTimestamp: Long? = null,
+                /** The model [prebuiltOverride] was built for, so it is not sent to another one. */
+                prebuiltFor: MessageProcessingDelegate.UserTurnContent? = null,
+            ): Boolean {
                 // 调用messageProcessingDelegate发送消息，并传递附件信息和工作区路径
                 val accepted = messageProcessingDelegate.sendUserMessage(
                     attachments = currentAttachments,
                     chatId = chatId,
                     messageTextOverride = if (afterSummary || prepareAsynchronously) pendingText else effectiveMessageTextOverride,
-                    prebuiltUserMessage = prebuiltUserMessage,
+                    prebuiltUserMessage = prebuiltOverride ?: prebuiltUserMessage,
                     proxySenderNameOverride = proxySenderName,
                     workspacePath = workspacePath,
                     workspaceEnv = workspaceEnv,
@@ -781,16 +810,18 @@ class MessageCoordinationDelegate(
                     isAutoContinuation = isAutoContinuation,
                     enableSummary = !turnOptions.isCollaborationAgent && !summaryDisabled && !isBackgroundSend &&
                         chatHistoryDelegate.currentChatId.value == chatId && chatContextSettings.enableSummary,
-                    chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
-                    chatModelIndexOverride = resolvedChatModelIndexOverride,
+                    chatModelConfigIdOverride = prebuiltFor?.configId ?: resolvedChatModelConfigIdOverride,
+                    chatModelIndexOverride = prebuiltFor?.modelIndex ?: resolvedChatModelIndexOverride,
                     memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
                     suppressUserMessageInHistory = suppressUserMessageInHistory,
                     isGroupOrchestrationTurn = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
                     turnOptions = (orbitReasoningLevel?.let { turnOptions.copy(chatReasoningLevel = it) } ?: turnOptions)
-                        .copy(perfStartMs = perfMark)
+                        .copy(perfStartMs = perfMark, userMessageTimestamp = userMessageTimestamp ?: turnOptions.userMessageTimestamp)
                 )
 
+                // The input box was already emptied when the summary began; what is in it now is new.
+                if (composerTaken) return accepted
                 if (accepted && prepareAsynchronously && shouldReadComposerState && effectiveMessageTextOverride == null) {
                     messageProcessingDelegate.clearSubmittedDraft(chatId, pendingText)
                 }
@@ -841,6 +872,64 @@ class MessageCoordinationDelegate(
                     val beforeTimestamp = snapshotMessages.getOrNull(insertPosition - 1)?.timestamp
                     val afterTimestamp = snapshotMessages.getOrNull(insertPosition)?.timestamp
 
+                    // The summary takes a while. Take the message out of the input box now and show it
+                    // as sent, so the user does not send it again; it goes out once the summary is in.
+                    val takesComposer = shouldReadComposerState && effectiveMessageTextOverride == null && !isContinuation
+                    // A message the user sent from the input box or the queue goes back to the input box
+                    // if it cannot be sent; one sent by a tool or in the background has no box to go to.
+                    val restoresToComposer = shouldReadComposerState && !isContinuation
+                    val heldReply = pendingReply?.takeIf { restoresToComposer }
+                    val heldAttachments = currentAttachments.takeIf { restoresToComposer }.orEmpty()
+                    if (takesComposer) {
+                        messageProcessingDelegate.clearSubmittedDraft(chatId, pendingText)
+                        if (attachmentsOverride == null) {
+                            // One by one: an attachment still being imported must stay in the box.
+                            heldAttachments.forEach { attachmentDelegate.removeAttachment(it.filePath) }
+                            uiBridge.resetAttachmentPanelState()
+                        }
+                        if (heldReply != null && turnOptions.useComposerReply && uiBridge.getReplyToMessage() == heldReply) {
+                            uiBridge.clearReplyToMessage()
+                        }
+                    }
+                    val showsHeld = !turnOptions.hideUserMessage && !turnOptions.deliveredByTool && !turnOptions.isSubTask
+                    val newestBefore = snapshotMessages.maxOfOrNull { it.timestamp } ?: 0L
+                    // The sent message keeps this time, so the waiting copy and it look the same. It is
+                    // after every message so far and after the summary, which goes in among them.
+                    val held = SummaryHeldSend(
+                        heldSendIds.incrementAndGet(),
+                        pendingText.trim(),
+                        heldAt = ChatMessageTimestampAllocator.next(maxOf(System.currentTimeMillis(), newestBefore + 2)),
+                    ).takeIf { showsHeld }
+                    if (held != null) _summaryHeldSends.update { it + (chatId to held) }
+                    // Built now with its attachments and reply, so the waiting message shows what the
+                    // sent one will, and is sent with exactly that.
+                    val heldBuild =
+                        if (held != null && prebuiltUserMessage == null && !isGroupOrchestrationTurn) {
+                            coroutineScope.async(Dispatchers.IO) {
+                                try {
+                                    messageProcessingDelegate.buildUserTurnContent(
+                                        chatId = chatId, messageText = pendingText, attachments = currentAttachments,
+                                        workspacePath = workspacePath, workspaceEnv = workspaceEnv,
+                                        replyToMessage = pendingReply, proxySenderName = proxySenderName,
+                                        roleCardId = roleCardId,
+                                        chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
+                                        chatModelIndexOverride = resolvedChatModelIndexOverride,
+                                        turnOptions = turnOptions,
+                                    ).also { built ->
+                                        _summaryHeldSends.update { sends ->
+                                            sends[chatId]?.takeIf { it.id == held.id }
+                                                ?.let { sends + (chatId to it.copy(content = built.content)) } ?: sends
+                                        }
+                                    }
+                                } catch (e: CancellationException) {
+                                    throw e
+                                } catch (e: Exception) {
+                                    AppLogger.w(TAG, "Could not build the waiting message ahead: ${e.message}")
+                                    null
+                                }
+                            }
+                        } else null
+
                     // 总结完成并保存后才发送；协程等待不会阻塞 UI 线程。
                     var sentAfterSummary = false
                     launchSummaryBeforeSend(
@@ -852,8 +941,39 @@ class MessageCoordinationDelegate(
                         chatModelConfigIdOverride = resolvedChatModelConfigIdOverride,
                         chatModelIndexOverride = resolvedChatModelIndexOverride,
                         memorySpaceIdOverride = resolvedMemorySpaceIdOverride,
-                        onReady = { sentAfterSummary = sendPreparedMessage(afterSummary = true) },
-                        onSettled = { cause -> if (!sentAfterSummary) logUnsent(cause, "等总结后没发出") },
+                        // Waits for the one build already under way, still as part of the summary (cancelable,
+                        // other sends held back); building again would run its hooks twice.
+                        beforeReady = { heldBuild?.await() },
+                        onReady = {
+                            @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
+                            val built = heldBuild?.getCompleted()
+                            if (heldBuild != null && built == null) {
+                                // Could not be built: it goes back to the input box (onSettled), not sent half-made.
+                                if (restoresToComposer) uiStateDelegate.showErrorMessage(context.getString(R.string.chat_held_send_build_failed))
+                            } else {
+                                sentAfterSummary = sendPreparedMessage(
+                                    afterSummary = true,
+                                    composerTaken = takesComposer,
+                                    prebuiltOverride = built?.let { ChatMessage(sender = "user", content = it.content) },
+                                    userMessageTimestamp = held?.heldAt,
+                                    prebuiltFor = built,
+                                )
+                                if (sentAfterSummary && held != null) releaseHeldSendWhenShown(chatId, held, newestBefore)
+                            }
+                        },
+                        onSettled = { cause ->
+                            heldBuild?.cancel()
+                            if (!sentAfterSummary) {
+                                logUnsent(cause, "等总结后没发出")
+                                if (held != null) dropHeldSend(chatId, held)
+                                // Not sent: give the whole message back to the input box, never drop it.
+                                if (restoresToComposer) {
+                                    coroutineScope.launch(Dispatchers.Main.immediate) {
+                                        restoreHeldComposer(chatId, pendingText, heldAttachments, heldReply)
+                                    }
+                                }
+                            }
+                        },
                     )
 
                     return true
@@ -1826,6 +1946,46 @@ class MessageCoordinationDelegate(
         lastSendRoutes.remove(chatId)
     }
 
+    /** The held message went to its turn: hide the waiting copy once the turn is over (its real message is in by then). */
+    private fun releaseHeldSendWhenShown(chatId: String, held: SummaryHeldSend, newestBefore: Long) {
+        _summaryHeldSends.update { sends ->
+            sends[chatId]?.takeIf { it.id == held.id }?.let { sends + (chatId to it.copy(sentAfter = newestBefore)) } ?: sends
+        }
+        coroutineScope.launch {
+            messageProcessingDelegate.activeStreamingChatIds.first { chatId !in it }
+            dropHeldSend(chatId, held)
+        }
+    }
+
+    private fun dropHeldSend(chatId: String, held: SummaryHeldSend) {
+        _summaryHeldSends.update { if (it[chatId]?.id == held.id) it - chatId else it }
+    }
+
+    /**
+     * Puts a message that could not be sent back in the input box. Whatever the user wrote there in
+     * the meantime stays, after it; their attachments are kept alongside the message's own.
+     */
+    private fun restoreHeldComposer(
+        chatId: String,
+        text: String,
+        attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo>,
+        reply: ChatMessage?,
+    ) {
+        val restoredText = text.trim()
+        if (restoredText.isNotEmpty()) {
+            val draft = messageProcessingDelegate.draftForChat(chatId).trim()
+            val merged = if (draft.isEmpty() || draft == restoredText) restoredText else "$restoredText\n\n$draft"
+            messageProcessingDelegate.setDraftForChat(
+                chatId,
+                androidx.compose.ui.text.input.TextFieldValue(merged, androidx.compose.ui.text.TextRange(merged.length)),
+            )
+        }
+        // Attachments and the reply belong to the one input box, not to a chat; switching chats
+        // never cleared them, so they come back even when another chat is open now.
+        attachmentDelegate.addAttachments(attachments)
+        if (reply != null && uiBridge.getReplyToMessage() == null) uiBridge.restoreReplyToMessage(reply)
+    }
+
     private fun launchSummaryBeforeSend(
         snapshotMessages: List<ChatMessage>,
         beforeTimestamp: Long?,
@@ -1835,6 +1995,8 @@ class MessageCoordinationDelegate(
         chatModelConfigIdOverride: String? = null,
         chatModelIndexOverride: Int? = null,
         memorySpaceIdOverride: String? = null,
+        /** Runs at the end of the summary work, before its state is cleared; may wait. */
+        beforeReady: suspend () -> Unit = {},
         onReady: () -> Unit,
         /** Called once the summary is over, whether or not [onReady] ran; the cause is null on a normal end. */
         onSettled: (Throwable?) -> Unit = {},
@@ -1897,6 +2059,7 @@ class MessageCoordinationDelegate(
                     chatModelIndexOverride = chatModelIndexOverride,
                     memorySpaceIdOverride = memorySpaceIdOverride
                 )
+                beforeReady()
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

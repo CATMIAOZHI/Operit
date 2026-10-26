@@ -13,23 +13,13 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.displayCutout
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
-import androidx.compose.foundation.layout.systemBars
-import androidx.compose.foundation.layout.union
-import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -37,7 +27,6 @@ import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.ScreenRotation
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +37,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
@@ -95,46 +85,6 @@ internal fun WebSessionWatchScreen(
     onBrowserArea: (width: Int, height: Int) -> Unit,
 ) {
     val colors = MaterialTheme.colorScheme
-    // The layout follows how the screen really stands, so it matches even when the system rotates.
-    val configuration = androidx.compose.ui.platform.LocalConfiguration.current
-    val landscape = configuration.screenWidthDp > configuration.screenHeightDp
-    if (landscape) {
-        // Sideways the page gets the full height; the title and buttons move to a column beside it.
-        Row(
-            Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) }
-                .windowInsetsPadding(WindowInsets.systemBars.union(WindowInsets.displayCutout)),
-        ) {
-            Column(Modifier.weight(1f).fillMaxHeight()) {
-                if (watch.controlling) {
-                    WatchControls(url, isLoading, canGoBack, canGoForward, onNavigate, onBack, onForward, onRefreshOrStop)
-                }
-                WatchBrowserArea(watch, webViewHost, hasSession, onBrowserArea, Modifier.weight(1f).fillMaxWidth())
-            }
-            // Buttons sit at the bottom; when the keyboard leaves too little height, the column scrolls.
-            androidx.compose.foundation.layout.BoxWithConstraints(Modifier.width(220.dp).fillMaxHeight()) {
-                val columnHeight = maxHeight
-                Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState())) {
-                    Column(
-                        Modifier.heightIn(min = columnHeight).padding(horizontal = 12.dp, vertical = 10.dp),
-                        verticalArrangement = Arrangement.SpaceBetween,
-                    ) {
-                        Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                WatchCloseButton(watch)
-                                Spacer(Modifier.weight(1f))
-                                WatchRotateButton(watch, landscape = true)
-                            }
-                            WatchTitle(watch, Modifier.fillMaxWidth())
-                        }
-                        Column(Modifier.padding(top = 10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                            WatchActions(watch)
-                        }
-                    }
-                }
-            }
-        }
-        return
-    }
     Column(
         Modifier.fillMaxSize().background(colors.background).onSizeChanged { onTotalHeight(it.height) },
     ) {
@@ -144,7 +94,7 @@ internal fun WebSessionWatchScreen(
         ) {
             WatchCloseButton(watch)
             WatchTitle(watch, Modifier.weight(1f).padding(horizontal = 8.dp))
-            WatchRotateButton(watch, landscape = false)
+            Spacer(Modifier.size(48.dp))
         }
         // Once the user drives the page, they get a browser's own controls.
         if (watch.controlling) {
@@ -175,6 +125,8 @@ private fun WatchBrowserArea(
     val margin = MaterialTheme.colorScheme.background.toArgb()
     Box(
         modifier
+            // A zoomed picture is bigger than its area; it must not draw over the bars above and below.
+            .clipToBounds()
             .onSizeChanged { onBrowserArea(it.width, it.height) }
             .pointerInput(webViewHost) {
                 // Seen before the page: once a second finger lands the gesture is the picture's,
@@ -203,6 +155,7 @@ private fun WatchBrowserArea(
                 factory = { context ->
                     FrameLayout(context).apply {
                         setBackgroundColor(margin)
+                        clipChildren = true
                         webViewHost.attachContainer(this)
                     }
                 },
@@ -232,16 +185,6 @@ private fun androidx.compose.ui.geometry.Offset.isSpecified(): Boolean =
 @Composable
 private fun WatchCloseButton(watch: BrowserWatchUi) {
     WatchRoundButton(Icons.Filled.Close, stringResource(R.string.orbit_browser_watch_close), 26, watch.onClose)
-}
-
-/** Turns the screen sideways for a bigger page picture, and back upright: always the other way from now. */
-@Composable
-private fun WatchRotateButton(watch: BrowserWatchUi, landscape: Boolean) {
-    WatchRoundButton(
-        Icons.Filled.ScreenRotation,
-        stringResource(if (landscape) R.string.orbit_browser_watch_portrait else R.string.orbit_browser_watch_landscape),
-        22,
-    ) { watch.onTurn(!landscape) }
 }
 
 @Composable

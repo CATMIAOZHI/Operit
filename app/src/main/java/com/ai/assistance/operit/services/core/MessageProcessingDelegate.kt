@@ -465,6 +465,49 @@ class MessageProcessingDelegate(
         finalMessageContent
     }
 
+    /** A user message's content and the model it was built for; it goes to that model. */
+    data class UserTurnContent(val content: String, val configId: String, val modelIndex: Int)
+
+    /**
+     * The content [sendUserMessage] gives a user message, built ahead and the same way: a send that
+     * waits for a history summary shows exactly it meanwhile, then goes out with it.
+     */
+    suspend fun buildUserTurnContent(
+        chatId: String?,
+        messageText: String,
+        attachments: List<AttachmentInfo>,
+        workspacePath: String?,
+        workspaceEnv: String?,
+        replyToMessage: ChatMessage?,
+        proxySenderName: String?,
+        roleCardId: String?,
+        chatModelConfigIdOverride: String?,
+        chatModelIndexOverride: Int?,
+        turnOptions: ChatTurnOptions,
+    ): UserTurnContent = withContext(Dispatchers.IO) {
+        val mapping = functionalConfigManager.getConfigMappingForFunction(FunctionType.CHAT)
+        val overrideConfigId = chatModelConfigIdOverride?.takeIf { it.isNotBlank() }
+        val configId = overrideConfigId ?: mapping.configId
+        val modelIndex = if (overrideConfigId != null) chatModelIndexOverride ?: 0 else mapping.modelIndex
+        val capabilities = modelConfigManager.getModelConfigFlow(configId).first().multimodalCapabilitiesForModel(modelIndex)
+        val content = AIMessageManager.buildUserMessageContent(
+            context = context,
+            messageText = messageText.trim(),
+            proxySenderName = proxySenderName,
+            attachments = attachments,
+            workspacePath = workspacePath,
+            workspaceEnv = workspaceEnv,
+            replyToMessage = replyToMessage,
+            enableDirectAudioProcessing = capabilities.audio,
+            enableDirectVideoProcessing = capabilities.video,
+            chatId = chatId,
+            roleCardId = roleCardId,
+            isSubTask = turnOptions.isSubTask,
+            promptHooksEnabled = turnOptions.promptHooksEnabled,
+        )
+        UserTurnContent(content, configId, modelIndex)
+    }
+
     fun getResponseStream(chatId: String): SharedStream<String>? {
         return chatRuntimes[chatKey(chatId)]?.responseStream
     }

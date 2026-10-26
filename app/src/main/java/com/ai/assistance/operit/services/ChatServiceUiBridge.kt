@@ -7,6 +7,8 @@ interface ChatServiceUiBridge {
     fun resetAttachmentPanelState()
     fun clearReplyToMessage()
     fun getReplyToMessage(): ChatMessage?
+    /** Shows [message] as the one being replied to again, after a send that used it did not go out. */
+    fun restoreReplyToMessage(message: ChatMessage) = Unit
 }
 
 object EmptyChatServiceUiBridge : ChatServiceUiBridge {

@@ -189,6 +189,8 @@ fun ChatArea(
     activeRunStartedAt: Long? = null,
     /** The running turn answers what the user said themselves (Orbit shows its typing dots only then). */
     orbitUserWaiting: Boolean = false,
+    /** A message the user sent that waits for this chat's history summary; shown as sent meanwhile. */
+    summaryHeldSend: com.ai.assistance.operit.services.core.MessageCoordinationDelegate.SummaryHeldSend? = null,
     enableDialogs: Boolean = true,
     allowTranscriptMutation: Boolean = true,
     enableToolDetailDialogs: Boolean? = null,  // 工具详情弹窗开关，null 时跟随 enableDialogs
@@ -462,6 +464,62 @@ fun ChatArea(
             }
         },
         footer = {
+            // The user's message waiting for the summary shows at once; it hides when the real one is in.
+            val heldShown = remember(summaryHeldSend, chatHistory, hasNewerDisplayHistory) {
+                summaryHeldSend?.takeIf { held ->
+                    !hasNewerDisplayHistory && (held.sentAfter == null ||
+                        chatHistory.none { it.sender == "user" && it.timestamp > held.sentAfter })
+                }
+            }
+            val heldWaiting = summaryHeldSend != null && summaryHeldSend.sentAfter == null
+            // Drawn by the same parts as a sent user message, so nothing moves when the real one takes its place.
+            // Text only until its full content (attachments, reply) is built, a moment after sending.
+            val heldContent = heldShown?.let { it.content ?: it.text }?.takeIf { it.isNotBlank() }
+            val heldMessage = remember(heldContent) {
+                heldContent?.let { ChatMessage(sender = "user", content = it, timestamp = -1L) }
+            }
+            // Like a sent message's row: a time line after a pause, and the space after the message.
+            val heldTimeLine = heldShown?.heldAt?.takeIf { at ->
+                orbitLook && orbitShown.lastOrNull()?.let { at - chatHistory[it].timestamp >= ORBIT_CHAT_TIME_GAP_MS } != false
+            }
+            val heldBubble: @Composable () -> Unit = {
+                heldMessage?.let { held ->
+                    heldTimeLine?.let { OrbitChatTimeLine(it) }
+                    when (chatStyle) {
+                        ChatStyle.CURSOR -> CursorStyleChatMessage(
+                            message = held,
+                            userMessageColor = userMessageColor,
+                            userMessageLiquidGlassEnabled = cursorUserBubbleLiquidGlass,
+                            userMessageWaterGlassEnabled = cursorUserBubbleWaterGlass,
+                            aiMessageColor = aiMessageColor,
+                            userTextColor = userTextColor,
+                            aiTextColor = aiTextColor,
+                            systemMessageColor = systemMessageColor,
+                            systemTextColor = systemTextColor,
+                            thinkingBackgroundColor = thinkingBackgroundColor,
+                            thinkingTextColor = thinkingTextColor,
+                            enableDialogs = false,
+                        )
+                        ChatStyle.BUBBLE -> BubbleStyleChatMessage(
+                            message = held,
+                            userMessageColor = userMessageColor,
+                            aiMessageColor = aiMessageColor,
+                            userTextColor = userTextColor,
+                            aiTextColor = aiTextColor,
+                            systemMessageColor = systemMessageColor,
+                            systemTextColor = systemTextColor,
+                            userMessageLiquidGlassEnabled = bubbleUserBubbleLiquidGlass,
+                            userMessageWaterGlassEnabled = bubbleUserBubbleWaterGlass,
+                            userBubbleImageStyle = bubbleUserImageStyle,
+                            bubbleUserRoundedCornersEnabled = bubbleUserRoundedCornersEnabled,
+                            bubbleUserContentPaddingLeft = bubbleUserContentPaddingLeft,
+                            bubbleUserContentPaddingRight = bubbleUserContentPaddingRight,
+                            enableDialogs = false,
+                        )
+                    }
+                    Spacer(Modifier.height(8.dp))
+                }
+            }
             if (orbitLook) {
                 // A chat with no shown message yet still shows its cards.
                 if (orbitShown.isEmpty() && !hasNewerDisplayHistory && !hasOlderDisplayHistory) {
@@ -469,10 +527,12 @@ fun ChatArea(
                         LocalOrbitChatFooter.current?.invoke(aiMessageColor, OrbitCardSlot(Long.MIN_VALUE, Long.MIN_VALUE, null, emptySet()))
                     }
                 }
+                heldBubble()
                 // Orbit is typing for as long as it works on a reply to the user, like a person would be.
                 // A reply started by a reaction, an approval, a background task or a subagent result
-                // shows no dots; the status under Orbit's name still says what it is doing.
-                if (isLoading && orbitUserWaiting && !hasNewerDisplayHistory) {
+                // shows no dots; the status under Orbit's name still says what it is doing. A message
+                // waiting for the summary is the user's too, so the dots show while it waits.
+                if (((isLoading && orbitUserWaiting) || heldWaiting) && !hasNewerDisplayHistory) {
                     val typing = stringResource(R.string.orbit_typing, currentOrbitName())
                     Surface(
                         shape = RoundedCornerShape(topStart = 4.dp, topEnd = 20.dp, bottomEnd = 20.dp, bottomStart = 20.dp),
@@ -485,8 +545,11 @@ fun ChatArea(
                         Box(Modifier.padding(horizontal = 14.dp, vertical = 8.dp), contentAlignment = Alignment.CenterStart) { LoadingDotsIndicator(aiTextColor) }
                     }
                 }
-            } else if (showLoadingIndicator && showChatFloatingDotsAnimation) {
-                Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
+            } else {
+                heldBubble()
+                if (showLoadingIndicator && showChatFloatingDotsAnimation) {
+                    Box(Modifier.padding(start = 16.dp)) { LoadingDotsIndicator(aiTextColor) }
+                }
             }
             if (!orbitLook && isLoading && !hasNewerDisplayHistory && activeRunStartedAt != null) {
                 LiveResponseTimer(activeRunStartedAt)

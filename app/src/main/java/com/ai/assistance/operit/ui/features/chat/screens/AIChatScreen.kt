@@ -1924,7 +1924,10 @@ private fun ChatInputBottomBar(
         val chatId = currentChatId ?: return
         val expectedTurnId = actualViewModel.steeringTurnId(chatId)
         if (expectedTurnId == null) {
-            actualViewModel.showToast(context.getString(R.string.chat_steer_unavailable))
+            // While the history is summarized before a send, the message waits in the queue and
+            // goes out after that reply.
+            actualViewModel.showToast(context.getString(
+                if (isSendTriggeredSummarizing) R.string.chat_steer_after_compaction else R.string.chat_steer_unavailable))
             return
         }
         val item = removePendingQueueMessageById(id) ?: return
