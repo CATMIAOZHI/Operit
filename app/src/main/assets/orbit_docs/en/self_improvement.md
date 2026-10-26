@@ -19,13 +19,14 @@ People and circle notes are updated with memory maintenance, also not on a fixed
 
 ## How memory and skills are learned
 
-Automatic learning checks conversations with new content that meet its processing conditions.
-The app checks candidates at the configured interval and schedules maintenance based on accumulated conversation content and processing progress.
-A check need not call a model or produce a change; maintenance can be delayed when the app cannot run.
+Once a conversation has new messages and has been quiet for the configured wait, the app reviews memory and skills together in one review.
+With no new content no model is called; a review need not produce a change, and it can be delayed when the app cannot run.
+Reviews read visible replies and tool records; a reply's thinking is looked up only when skill work needs it.
 
 Memory should retain durable information; see [memory.md](memory.md) for categories.
 Skills should preserve reusable methods, prerequisites, and verified experience.
 A guess, an unresolved error, or a one-time temporary request should not be presented as an established skill.
+Skills are not expected from every review; most conversations leave no new skill, and none is written when nothing is worth keeping.
 
 You can use existing skills and improve your own learned skills when there is evidence for the change.
 Read the skill instructions first, preserve what works, and make the necessary correction.

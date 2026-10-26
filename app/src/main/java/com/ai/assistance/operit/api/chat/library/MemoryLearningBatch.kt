@@ -96,6 +96,8 @@ internal class MemoryLearningJournal(
         synchronized(lock) {
             reload()
             state.put("horizon",maxOf(horizon,horizon()))
+            // When the chat last added messages: a background review waits until it has been quiet.
+            state.put("last_turn_at",System.currentTimeMillis())
             if (restart) {
                 if (notes) state.put("notes",LearningCursor().json())
                 if (skills) state.put("skills",LearningCursor().json())
@@ -114,11 +116,25 @@ internal class MemoryLearningJournal(
             save()
         }
     }
+    /**
+     * When messages were last added to the range. A journal written before this was kept gets the
+     * current time once, so an unknown time is not taken as long quiet; the age limit still lets an
+     * old range through.
+     */
+    fun lastTurnAt(): Long = synchronized(lock) {
+        reload()
+        state.optLong("last_turn_at",0).takeIf { it > 0 } ?: System.currentTimeMillis().also {
+            state.put("last_turn_at",it)
+            save()
+        }
+    }
     /** True while pending work has been waiting at least [millis]. */
-    fun pendingForAtLeast(millis: Long): Boolean {
+    fun pendingForAtLeast(millis: Long): Boolean = pendingAge()?.let { it >= millis } ?: false
+    /** How long pending work has been waiting; null when nothing is pending. */
+    fun pendingAge(): Long? {
         synchronized(lock) {
             reload()
-            if (!pending("notes") && !pending("skills") && !state.has("export")) return false
+            if (!pending("notes") && !pending("skills") && !state.has("export")) return null
             var since = state.optLong("enqueued_at",0)
             if (since <= 0) {
                 // Journals written before this field existed carry no age. Stamping them now keeps the
@@ -127,7 +143,7 @@ internal class MemoryLearningJournal(
                 state.put("enqueued_at",since)
                 save()
             }
-            return System.currentTimeMillis()-since >= millis
+            return (System.currentTimeMillis()-since).coerceAtLeast(0)
         }
     }
     /**
@@ -146,6 +162,10 @@ internal class MemoryLearningJournal(
             paths.forEach {
                 state.put(it,next.json()).put("pending_$it",more || (newerEnqueued && state.optBoolean("pending_$it")))
             }
+            // The reviewed range is done and only messages added during the run are left: they start
+            // their own age, so they get the quiet wait instead of inheriting the old range's overdue age.
+            if (!more && newerEnqueued && listOf("notes","skills").none { it !in paths && state.optBoolean("pending_$it") })
+                state.put("enqueued_at",System.currentTimeMillis())
             if (carry != null) state.put("carry",carry).put("carry_generation",carryGeneration)
             state.put("export",JSONArray().apply { changes.forEach { put(reviews.toJson(it)) } })
             save()

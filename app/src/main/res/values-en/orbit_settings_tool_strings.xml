@@ -9,8 +9,6 @@
     <string name="orbit_settings_extra_weekly">Reset extra allowance weekly</string>
     <string name="orbit_settings_refill">Refill extra allowance</string>
     <string name="orbit_settings_login">Browser account environment</string>
-    <string name="orbit_settings_memory">Memory review interval</string>
-    <string name="orbit_settings_skills">Skill review interval</string>
     <string name="orbit_settings_delay">Learning delay</string>
     <string name="orbit_settings_developer">Developer mode</string>
     <string name="orbit_settings_message_notifications">Message notifications</string>
@@ -42,8 +40,6 @@
     <string name="orbit_settings_on">On</string>
     <string name="orbit_settings_off">Off</string>
     <string name="orbit_settings_tokens">%1$s tokens</string>
-    <string name="orbit_settings_turns">%1$s turns</string>
-    <string name="orbit_settings_iterations">%1$s iterations</string>
     <string name="orbit_settings_minutes">%1$s minutes</string>
     <string name="orbit_settings_extra_used">%1$s extra tokens used</string>
     <string name="orbit_settings_refilled">Zero extra tokens used</string>

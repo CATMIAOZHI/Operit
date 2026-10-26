@@ -9,8 +9,6 @@
     <string name="orbit_settings_extra_weekly">额外额度每周重置</string>
     <string name="orbit_settings_refill">补满额外额度</string>
     <string name="orbit_settings_login">浏览器登录环境</string>
-    <string name="orbit_settings_memory">记忆整理轮数</string>
-    <string name="orbit_settings_skills">技能整理迭代数</string>
     <string name="orbit_settings_delay">学习延迟</string>
     <string name="orbit_settings_developer">开发者模式</string>
     <string name="orbit_settings_message_notifications">消息通知</string>
@@ -42,8 +40,6 @@
     <string name="orbit_settings_on">开启</string>
     <string name="orbit_settings_off">关闭</string>
     <string name="orbit_settings_tokens">%1$s token</string>
-    <string name="orbit_settings_turns">%1$s 轮</string>
-    <string name="orbit_settings_iterations">%1$s 次迭代</string>
     <string name="orbit_settings_minutes">%1$s 分钟</string>
     <string name="orbit_settings_extra_used">已用 %1$s token</string>
     <string name="orbit_settings_refilled">额外额度已用量归零</string>

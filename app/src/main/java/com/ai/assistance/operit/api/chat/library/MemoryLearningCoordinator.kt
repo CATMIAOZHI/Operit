@@ -49,8 +49,8 @@ object MemoryLearningCoordinator {
     private val deletedProfiles = ConcurrentHashMap.newKeySet<String>()
     private val lifecycleLocks = ConcurrentHashMap<String,Mutex>()
     private fun lifecycle(profile: String) = lifecycleLocks.computeIfAbsent(profile) { Mutex() }
-    private data class Prepared(val profile: String, val iterations: Int)
-    private val prepared = ConcurrentHashMap<Pair<String,String>,Prepared>()
+    /** Memory space of a finished turn whose messages are not saved yet, keyed by chat and turn. */
+    private val prepared = ConcurrentHashMap<Pair<String,String>,String>()
     private val foreground = ConcurrentHashMap.newKeySet<String>()
     private val manualClaims = ConcurrentHashMap.newKeySet<String>()
     /** Backlog that is still pending after a full round keeps draining without another idle wait. */
@@ -60,7 +60,8 @@ object MemoryLearningCoordinator {
     /**
      * A range that has been pending this long is dispatched even while another conversation is
      * generating. Without it a device whose owner chats continuously never reaches an idle state,
-     * the backlog grows without bound and no review ever runs.
+     * the backlog grows without bound and no review ever runs. The same age also skips the quiet
+     * wait, so a chat that never pauses for that long is still reviewed.
      */
     private const val MAX_PENDING_AGE_MS = 30 * 60_000L
     /** Progress records are rewritten after each tool call; the clock keeps that from flooding IO. */
@@ -69,7 +70,7 @@ object MemoryLearningCoordinator {
     suspend fun deleteSpace(context: Context, profile: String) {
         lifecycle(profile).withLock {
             deletedProfiles.add(profile)
-            prepared.entries.removeAll { it.value.profile==profile }
+            prepared.entries.removeAll { it.value==profile }
         }
         val targets=jobProfiles.filterValues { it==profile }.keys.flatMap {
             listOfNotNull(jobs[it],cancellingJobs[it])
@@ -164,6 +165,13 @@ object MemoryLearningCoordinator {
             job.cancel()
         }
     }
+    /**
+     * A live turn holds a background review back between pages. An overdue range ([ignoreBusy]) no
+     * longer waits for other chats, but its own chat still stops it: that turn may rewrite messages
+     * the review is reading.
+     */
+    private fun heldBack(chatId: String, ignoreBusy: Boolean) =
+        chatId in foreground || (!ignoreBusy && foreground.isNotEmpty())
     fun foregroundEnded(context: Context, chatId: String?) {
         if (chatId != null) {
             foreground.remove(chatId)
@@ -214,10 +222,9 @@ object MemoryLearningCoordinator {
         }
     }
 
-    suspend fun prepareReview(context: Context, profileId: String, chatId: String, turnKey: String?,
-                              toolIterations: Int = 0) {
+    suspend fun prepareReview(context: Context, profileId: String, chatId: String, turnKey: String?) {
         if (profileId in deletedProfiles || !reviewEnabled(context, profileId)) return
-        if (turnKey != null) prepared[chatId to turnKey]=Prepared(profileId,toolIterations)
+        if (turnKey != null) prepared[chatId to turnKey]=profileId
     }
 
     /**
@@ -228,13 +235,17 @@ object MemoryLearningCoordinator {
         MemorySearchSettingsPreferences.isOrbitSpace(profileId) ||
             ApiPreferences.getInstance(context).enableMemoryAutoUpdateFlow.first()
 
-    /** Called only after the matching foreground turn's final messages have been persisted. */
+    /**
+     * Called only after the matching foreground turn's final messages have been persisted. Every
+     * finished turn makes its new messages pending; the review starts once the chat has been quiet
+     * for the configured wait (see [schedule]), with no turn or tool-call count to reach first.
+     */
     suspend fun sourceCommitted(context: Context, chatId: String, turnKey: String, revisedTimestamp: Long? = null) {
-        val metadata=prepared.remove(chatId to turnKey) ?: return
-        val profileId=metadata.profile
+        val profileId=prepared.remove(chatId to turnKey) ?: return
         val settings = MemorySearchSettingsPreferences(context,profileId)
         cancellingJobs[chatId]?.join()
-        val tick = settings.advanceLearningCadence(chatId, metadata.iterations)
+        val notes = settings.shouldExtractNewMemory()
+        val skills = settings.shouldExtractSkills()
         val dao=AppDatabase.getDatabase(context).chatContentDao()
         val horizon=dao.learningSourceHorizon(chatId)
         val revisedId=revisedTimestamp?.let { dao.learningMessageId(chatId,it) }
@@ -242,8 +253,8 @@ object MemoryLearningCoordinator {
             if (profileId in deletedProfiles) return
             val journal=MemoryLearningJournal(context,profileId,chatId)
             revisedId?.let { journal.rewind(it) }
-            if (!tick.notes && !tick.skills && !journal.pending("notes") && !journal.pending("skills")) return
-            journal.enqueue(tick.notes,tick.skills,horizon)
+            if (!notes && !skills && !journal.pending("notes") && !journal.pending("skills")) return
+            journal.enqueue(notes,skills,horizon)
         }
         foreground.remove(chatId)
         schedule(context,profileId,chatId)
@@ -262,9 +273,6 @@ object MemoryLearningCoordinator {
         val settings = MemorySearchSettingsPreferences(context,profileId)
         val job = scope.launch(start=CoroutineStart.LAZY) {
             try {
-                // The idle period is waited for once per run; a run that still has backlog keeps
-                // draining it instead of paying another full idle wait for every round.
-                delay(settings.learningDelayMinutes() * 60_000L)
                 while (true) {
                     if (profileId in deletedProfiles) return@launch
                     if (!reviewEnabled(context, profileId)) return@launch
@@ -275,20 +283,32 @@ object MemoryLearningCoordinator {
                     // lost behind a range that is no longer reviewable.
                     if (exportFinishedBatch(context,profileId,chatId,journal)!=null) return@launch
                     if (!notes && !skills) return@launch
-                    if (foreground.isNotEmpty() && !journal.pendingForAtLeast(MAX_PENDING_AGE_MS)) {
+                    // Every review starts only once the chat has been quiet this long since its last saved
+                    // reply, including replies saved while an earlier review was running. The wait never
+                    // runs past the age limit, so a long setting or a chat that keeps going cannot hold a
+                    // range back for longer.
+                    val quiet = settings.learningDelayMinutes() * 60_000L -
+                        (System.currentTimeMillis() - journal.lastTurnAt()).coerceAtLeast(0)
+                    val wait = minOf(quiet, MAX_PENDING_AGE_MS - (journal.pendingAge() ?: 0L))
+                    if (wait > 0) {
+                        delay(wait)
+                        continue
+                    }
+                    val overdue = journal.pendingForAtLeast(MAX_PENDING_AGE_MS)
+                    if (foreground.isNotEmpty() && !overdue) {
                         // Any live turn means the machine is not idle, so this waits and re-checks
                         // instead of dropping the backlog. Work that has waited past the age limit is
                         // dispatched anyway, so a constantly busy device cannot starve extraction.
                         delay(BUSY_RETRY_MS)
                         continue
                     }
-                    settings.consumePendingLearning(chatId)
-                    review(context.applicationContext,profileId,chatId,reviewNotes=notes,reviewSkills=skills)
+                    review(context.applicationContext,profileId,chatId,reviewNotes=notes,reviewSkills=skills,
+                        ignoreBusy=overdue)
                     val remaining=MemoryLearningJournal(context,profileId,chatId)
                     if (!(remaining.pending("notes") && settings.shouldExtractNewMemory()) &&
                         !(remaining.pending("skills") && settings.shouldExtractSkills())) return@launch
-                    // Backlog is still pending, so the run continues after a short pause rather than
-                    // waiting for another full idle period.
+                    // Backlog the run did not finish continues after a short pause; the quiet check at the
+                    // top still holds back messages saved while it ran.
                     delay(BACKLOG_RETRY_MS)
                 }
             }
@@ -306,8 +326,9 @@ object MemoryLearningCoordinator {
         job.start()
     }
 
+    /** [ignoreBusy]: the range waited past the age limit, so other live chats no longer hold it back. */
     suspend fun review(context: Context, profileId: String, chatId: String, manual: Boolean = false,
-                       reviewNotes: Boolean = true, reviewSkills: Boolean = true) {
+                       reviewNotes: Boolean = true, reviewSkills: Boolean = true, ignoreBusy: Boolean = false) {
         val resolvedSpace = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.resolve(context, chatId, profileId)
         if (resolvedSpace != profileId) {
             val reason = context.getString(R.string.orbit_memory_learning_scope_changed)
@@ -349,11 +370,17 @@ object MemoryLearningCoordinator {
         val journal=MemoryLearningJournal(context,profileId,chatId)
         if (manual) journal.enqueue(notes,skills,db.chatContentDao().learningSourceHorizon(chatId))
         exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
+        // Pages never carry thinking: notes do not need it, and a skill review looks up the thinking of
+        // the messages it cares about with history include_thinking=true.
+        // The source's horizon is read with this enqueue count; the whole run compares against it, so a
+        // range enqueued meanwhile keeps its pending mark.
+        val reviewedGeneration = journal.generation()
         MemoryLearningSource(context,db.chatContentDao(),chatId,journal.horizon(),
-            settings.shouldIncludeThinking(), profileId).use { source ->
+            false, profileId).use { source ->
             // The machine can become busy again before the run starts, so the pause this run promised is
-            // checked here too. A manual review is the user's explicit request, so it is never paused.
-            if (!manual && foreground.isNotEmpty()) return
+            // checked here too. A manual review is the user's explicit request, and an overdue range has
+            // waited long enough, so neither is paused.
+            if (!manual && heldBack(chatId, ignoreBusy)) return
             val paths=listOfNotNull("notes".takeIf { notes && journal.pending(it) },
                 "skills".takeIf { skills && journal.pending(it) })
             if (paths.isEmpty()) return
@@ -366,8 +393,7 @@ object MemoryLearningCoordinator {
             val fixedBytes=instructions.toByteArray().size +
                 runHead(journal.cursor(first).messageId,journal.carry(generation).take(CARRY_LIMIT)).toByteArray().size
             val config = try {
-                MemoryLearningSnapshot.build(context,emptyList(),fixedBytes,
-                    settings.shouldIncludeThinking(), chatId = chatId)
+                MemoryLearningSnapshot.build(context,emptyList(),fixedBytes,false,chatId = chatId)
             } catch (e: CancellationException) { throw e }
             catch (e: Exception) {
                 // A window that cannot even hold the instructions will not become reviewable by
@@ -383,7 +409,20 @@ object MemoryLearningCoordinator {
             // context as it goes. A page is a share of the window, so a few fit between compactions.
             val pageBudget=(MemoryLearningSnapshot.sourceBudget(config.contextWindow,fixedBytes)/2)
                 .coerceAtLeast(MemoryLearningSnapshot.MIN_SOURCE_BYTES)
-            reviewRun(context,profileId,chatId,selected,source,pageBudget,journal,manual)
+            // Only empty or skipped messages are new: move past them without paying for a reviewer.
+            // A read error is left to the run, which records why the range cannot be reviewed. The
+            // first page with content is handed to the run, so it is not read twice.
+            var firstPage: MemoryLearningSource.Batch? = null
+            while (true) {
+                val peek = try { source.next(journal.cursor(first),pageBudget) }
+                    catch (e: CancellationException) { throw e } catch (e: Exception) { break }
+                if (peek.text.isNotBlank()) { firstPage = peek; break }
+                journal.complete(selected,peek.next,peek.more,emptyList(),reviewed=reviewedGeneration)
+                exportFinishedBatch(context,profileId,chatId,journal)?.let { if (manual) error(it); return }
+                if (!peek.more) return
+            }
+            reviewRun(context,profileId,chatId,selected,source,pageBudget,journal,manual,ignoreBusy,reviewedGeneration,
+                firstPage)
         }
     }
 
@@ -431,7 +470,8 @@ object MemoryLearningCoordinator {
      * by a later review; committed pages are never lost.
      */
     private suspend fun reviewRun(context: Context, profileId: String, chatId: String, paths: List<String>,
-        source: MemoryLearningSource, pageBudget: Int, journal: MemoryLearningJournal, manual: Boolean) {
+        source: MemoryLearningSource, pageBudget: Int, journal: MemoryLearningJournal, manual: Boolean,
+        ignoreBusy: Boolean, reviewedGeneration: Int, firstPage: MemoryLearningSource.Batch?) {
         val notes="notes" in paths
         val skills="skills" in paths
         val logRepo = MemoryExtractionLogRepository(context,profileId)
@@ -446,9 +486,7 @@ object MemoryLearningCoordinator {
         // Until the subagent exists there is no transcript to audit, so the row must not offer one.
         var auditable = false
         var pages = 0
-        // The source's horizon was read with this enqueue count; every page compares against it, so a
-        // range enqueued during the run keeps its pending mark even after a later page's export reload.
-        val reviewedGeneration = journal.generation()
+        var peeked = firstPage
         var carryGeneration = 0L
         // Each page has its own round and tool-call budget; these keep the whole run's counts for the log.
         var pastRequests = 0
@@ -475,13 +513,18 @@ object MemoryLearningCoordinator {
                 session.page?.let { return pageResult(it, pages, again = true) }
                 if (session.stopped != null) return stopResult(session.stopped!!)
                 // A live turn elsewhere means the machine is busy: the rest waits for a later review.
-                if (!manual && foreground.isNotEmpty()) {
+                if (!manual && heldBack(chatId, ignoreBusy)) {
                     session.stopped = "The device is busy with another conversation."
                     return stopResult(session.stopped!!)
                 }
                 while (true) {
                     currentCoroutineContext().ensureActive()
-                    val batch = try {
+                    // The page read before the run started is used once, unless memory was corrected
+                    // since, which changes what may be read.
+                    val reused = peeked?.takeIf { page -> page.guard == null || page.guard.generation ==
+                        com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.guard(context, profileId).generation }
+                    peeked = null
+                    val batch = reused ?: try {
                         source.next(journal.cursor(paths.first()),pageBudget)
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) {

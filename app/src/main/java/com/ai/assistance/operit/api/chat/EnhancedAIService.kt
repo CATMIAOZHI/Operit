@@ -512,7 +512,6 @@ class EnhancedAIService private constructor(
         val chatReasoningLevel: Int? = null,
         val toolSequence: AssistantToolSequence = AssistantToolSequence(toolTimingScopeId),
         val emittedReplayCharCount: AtomicInteger = AtomicInteger(0),
-        val learningToolIterations: AtomicInteger = AtomicInteger(0),
         val subagentToolLoopGuard: ToolExecutionManager.SubagentToolLoopGuard =
             ToolExecutionManager.SubagentToolLoopGuard(),
         var modelExecutionSnapshot: ModelExecutionSnapshot? = null,
@@ -2331,8 +2330,7 @@ class EnhancedAIService private constructor(
                 } else {
                     com.ai.assistance.operit.api.chat.library.MemoryLearningCoordinator.prepareReview(
                         this@EnhancedAIService.context,profileId,currentChatId,
-                        turnKey = context.toolTimingScopeId,
-                        toolIterations = context.learningToolIterations.get()
+                        turnKey = context.toolTimingScopeId
                     )
                     val memoryPreferences = com.ai.assistance.operit.data.preferences.ApiPreferences.getInstance(this@EnhancedAIService.context)
                     if (enableMemoryAutoUpdate && memoryPreferences.enableMemoryAutoUpdateFlow.first() &&
@@ -2448,8 +2446,6 @@ class EnhancedAIService private constructor(
         }
 
         if (!isSubTask && toolInvocations.isNotEmpty()) {
-            // One tool batch is one iteration, regardless of the number of parallel calls.
-            context.learningToolIterations.incrementAndGet()
             withContext(Dispatchers.Main) {
                 val toolNames = toolInvocations.joinToString(", ") { resolveToolDisplayName(it.tool) }
                 _inputProcessingState.value = InputProcessingState.ExecutingTool(toolNames)

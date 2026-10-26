@@ -26,7 +26,10 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
             then call the action commit, which saves that page's changes and moves on. Do not read everything first.
             Keep going until read_next says more=false, then call $finish.
             A long message can span pages. Do not treat a fragment as a complete result.
-            Included assistant thinking contains tentative plans, not proof that an action succeeded.
+            Pages show visible messages and tool records only, never the assistant's thinking. When a change
+            depends on why the assistant did something (mostly skill work), read that one message's thinking
+            with history mode=message message_id=<id> include_thinking=true. Thinking holds tentative plans,
+            not proof that an action succeeded. Notes never need it.
             When something here depends on earlier talk (a name, "that plan", a decision made before), look it up
             with history (session_id=$chatId with a query, or a query alone to search the user's other chats)
             instead of guessing. Use history with a query or offset to verify missing details too.
@@ -53,7 +56,19 @@ internal fun buildMemoryLearningInstructions(chatId: String, notes: Boolean, ski
         else appendLine("Note extraction is not scheduled for this run. Do not read or change memory/user documents; they are not a prerequisite for skill work.")
         if (skills) appendLine("""
             Scope: reusable skills.
-            Read skill_list, then read relevant existing skills. Prefer improving an existing skill over creating another.
+            Skills are optional. Most pages create or change no skill, and that is the expected outcome: never
+            write a skill just because this scope is enabled. A weak skill is worse than none, because its
+            index line costs every future session.
+            Write or improve a skill only when ALL of these hold:
+            - The source shows a multi-step procedure that actually worked (a confirmed result, not a plan or a
+              failed attempt), or a fix that the user confirmed.
+            - The same kind of task is likely to come back, and the procedure would save real effort next time.
+            - It holds concrete, non-obvious knowledge: exact commands, paths, endpoints, settings, order of steps
+              or pitfalls you would not get right from general knowledge.
+            Never make a skill from: chit-chat, a one-off answer, a single ordinary tool call, general knowledge,
+            a user preference or fact (those are notes), task progress, or steps the source never confirmed.
+            Before writing, read skill_list and the relevant existing skills. Prefer improving an existing skill
+            with newly confirmed details over creating another; leave it alone when nothing new was confirmed.
             A skill is a repeatable procedure for a class of work, not a transcript of one conversation.
             Authoring standard. The skill index (name plus description) is loaded into every session, so follow this exactly:
             - name: 3-64 lowercase ASCII letters, digits or hyphens, starting with a letter.
@@ -197,6 +212,7 @@ internal fun memoryLearningActionDescription(notes: Boolean, skills: Boolean, or
         skill_remove_file deletes one companion file under references/, scripts/, templates/ or assets/;
         SKILL.md is never removable, delete the whole skill with skill_delete instead.
     """.trimIndent())
-    appendLine("history accepts query/session_id/message_id/mode=message/offset/char_offset/window/role/profile/after/before/literal.")
+    appendLine("history accepts query/session_id/message_id/mode=message/offset/char_offset/window/role/profile/after/before/literal/include_thinking.")
+    appendLine("include_thinking=true adds the assistant's thinking to what history returns (default false); use it with mode=message on the few messages you need.")
     appendLine("Omit history query to browse recent sessions. Date filters accept ISO dates or relative 7d/24h.")
 }.trim()

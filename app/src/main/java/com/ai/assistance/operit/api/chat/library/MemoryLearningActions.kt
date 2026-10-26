@@ -85,11 +85,18 @@ class MemoryLearningActions(
             "history" -> {
                 val boundary = if (background)
                     com.ai.assistance.operit.features.orbit.OrbitLearningBoundary.forSpace(context, profileId) else null
+                // Thinking only on request (mostly for skill work), and only where the space allows it.
+                val wantsThinking = arg("include_thinking").trim().lowercase() == "true"
+                val thinkingAllowed = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking()
                 val run = suspend {
                     ChatRecallRepository(context, sourceChatId, if (background) (learningGuard?.cutoff ?: 0) + 1 else 0,
                         if (background && (learningGuard?.generation ?: 0) > 0) learningGuard!!.cutoffTimestamp + 1 else 0)
-                        .execute(args, filterAssistantThinking = true,
-                            includeThinking = MemorySearchSettingsPreferences(context, profileId).shouldIncludeThinking())
+                        .execute(args - "include_thinking", filterAssistantThinking = true,
+                            includeThinking = wantsThinking && thinkingAllowed)
+                        .apply {
+                            if (wantsThinking && !thinkingAllowed) put("thinking_unavailable",
+                                "This memory space does not allow reading thinking; the result has visible text only.")
+                        }
                 }
                 if (boundary == null) run() else boundary.learn(learningGuard?.generation ?: 0, run)
             }

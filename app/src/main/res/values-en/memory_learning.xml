@@ -2,10 +2,8 @@
     <string name="disable_memory_notes">Disable memory.md</string>
     <string name="disable_memory_notes_desc">Exclude this space’s memory.md from the system prompt, without deleting notes or disabling extraction. New chats apply this immediately; existing chats retain their snapshot until rebuilding or compression.</string>
     <string name="memory_automation_title">Automatic saving</string>
-    <string name="memory_learning_delay">Notes and skills extraction delay</string>
-    <string name="memory_learning_delay_desc">Counted per chat: by default, memory needs 10 user turns and skills need 10 tool iterations (one batch counts once). Once eligible it waits 5 minutes and then for the whole device to be idle; if chats keep generating it starts anyway after 30 minutes. Eligible paths share one review. Settings apply from the next reply.</string>
-    <string name="memory_review_interval">Memory interval (user turns)</string>
-    <string name="skill_review_interval">Skill interval (tool iterations)</string>
+    <string name="memory_learning_delay">Wait before reviewing</string>
+    <string name="memory_learning_delay_desc">After a chat has new messages, review of memory and skills starts once it has been quiet this long; both are reviewed together. If other chats are still replying it waits a bit longer, but no more than 30 minutes. With no new messages nothing runs and no tokens are used.</string>
     <string name="memory_learning_delay_minutes">%1$d min</string>
     <string name="memory_auto_master_off">The master switch is off, so notes and skills are not organized automatically. The settings below are kept.</string>
     <string name="memory_graph_path_desc">When the master switch is on, periodically organize conversations into the legacy memory graph. This path switch applies to all spaces.</string>
@@ -13,7 +11,7 @@
     <string name="memory_skills_path_desc">When the master switch is on, extract reusable skills in this space. Installation follows auto-approval; continuous revision uses the switch below.</string>
     <string name="memory_auto_approve">Automatically approve AI changes (this space)</string>
     <string name="memory_auto_approve_desc">On by default. New notes, global user.md and skill additions, edits and deletions from this space apply automatically, with full history. Turn off for manual review. Existing pending changes are not approved in bulk.</string>
-    <string name="memory_orbit_learning_fixed">%1$s always reviews its memory, learns and revises skills, reads its thinking while doing so, and applies changes on its own. Here you only set how often.</string>
+    <string name="memory_orbit_learning_fixed">%1$s always reviews its memory and learns or revises a skill only when something is worth keeping; changes apply on their own. Thinking is left out by default and looked up only when a skill needs it. Here you only set how long to wait after a chat before reviewing.</string>
     <string name="memory_learned_hint_orbit">Skills %1$s learned from its chats. It keeps revising them in the background, and every change keeps its history.</string>
     <string name="memory_review_auto_applied">Change approved and written to disk. The memory shown at the top of this chat refreshes from the next turn; use read to check it now.</string>
     <string name="memory_graph_title">Memory graph</string>
@@ -117,8 +115,6 @@
     <string name="memory_extraction_running">Started; no completion recorded</string>
     <string name="memory_extraction_result">%1$d seconds · %2$d recorded changes</string>
     <string name="memory_review_delete_skill">Approval deletes this skill and all supporting files. The manifest above identifies the file versions to delete.</string>
-    <string name="memory_interval_unit_turns">turns</string>
-    <string name="memory_interval_unit_iterations">tool iterations</string>
     <string name="memory_graph_empty">No legacy memory here. Legacy memory is read-only; new memories go into the new memory automatically.</string>
     <string name="memory_legacy_read_only_banner">Legacy memory can be viewed and searched, but no longer added or changed</string>
     <string name="memory_graph_empty_search">No memory matched this search. Try another keyword.</string>
