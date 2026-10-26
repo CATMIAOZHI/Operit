@@ -34,6 +34,24 @@ This needs notification reading access. If missing, use `orbit_permission_card p
 Reading notifications does not provide other apps' chat history, accounts, or every private message.
 An app may hide content, the user may clear a notification, or only part of a message may be visible. An empty result does not prove no message arrived.
 
+## Notification history
+
+`get_notifications` only sees what is in the tray right now. To look back, use the notification history commands of `orbit_device`:
+while notification reading is on and an Orbit exists, the app keeps the notifications other apps post in the background (those already in the tray when it was turned on are added too) for 30 days, even after the user clears the tray.
+Ongoing notifications (music, downloads, running services) and group summaries are not kept; an update that repeats the same content is kept once.
+
+- `notifications.search`: look back in time, newest first. `hours` is 1-720, default 24 (168 is a week, 720 a month); `app` takes an app name or package; `query` searches the title and text, up to 80 characters; `limit` is 1-50, default 20.
+- `notifications.apps`: lists the apps that posted in a time window, with counts, so you know what to put in `app`.
+- When `has_more=true`, put `next_before` unchanged into the next `params.before`; text over 1000 characters is marked `cut=true`, and `notifications.read` with its `id` returns it in full; up to 4000 characters are kept per notification, and `stored_cut=true` means the original was longer and the rest was not kept.
+
+Notifications cleared before the permission was turned on are not recorded. When a result says `recording=false`, new notifications are not being kept right now, and `recording_note` says why. Finding nothing does not prove nothing arrived: the app may not have posted one, or showed only part of it.
+Use what you read only for the current task and do not save it to memory unless the user asks. Deleting the Orbit clears the history.
+
+## See your own permissions
+
+`permissions` in `orbit_device action=describe` lists whether each permission is on, using the same names as `orbit_permission_card`; `notification_history` shows whether the history is recording and when its oldest entry arrived.
+The app reads these itself, with no ADB, Shizuku or terminal needed; check them there instead of running terminal commands.
+
 ## Watch phone messages and events
 
 When the user asks to hear about a kind of message, use `orbit_task action=create` with `kind=WATCH`, `schedule_mode=INTERVAL`, and `notify_policy=CHANGES`.

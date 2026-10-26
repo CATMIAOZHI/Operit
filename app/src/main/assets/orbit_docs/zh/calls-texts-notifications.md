@@ -34,6 +34,24 @@
 读取通知不等于获得其他应用的聊天历史、账号或所有私信。
 通知可能被应用隐藏、被用户清除或只显示部分内容；空结果不能证明没有收到消息。
 
+## 通知历史
+
+`get_notifications` 只看通知栏里现在还在的通知。要往回查，用 `orbit_device` 的通知历史命令：
+开着通知读取权限、并且有 Orbit 时，应用会在后台把其他应用发来的通知记下来（开启时通知栏里已有的也会补记），保留 30 天；用户清掉通知栏也还在。
+常驻通知（音乐、下载、正在运行的服务）和分组摘要不记；同一条通知更新成一样的内容只记一次。
+
+- `notifications.search`：按时间往回查，最新的在前。`hours` 为 1～720，默认 24（168 是一周，720 是一个月）；`app` 可填应用名或包名；`query` 搜标题和正文，最多 80 字符；`limit` 为 1～50，默认 20。
+- `notifications.apps`：列出一段时间内发过通知的应用和条数，方便确定 `app` 填什么。
+- 有 `has_more=true` 时，把 `next_before` 原样填入下一次的 `params.before`；正文超过 1000 字符会标 `cut=true`，用 `notifications.read` 加 `id` 读全文；每条最多存 4000 字符，`stored_cut=true` 表示原文更长，后面的部分没有存下。
+
+开启权限之前已经被清掉的通知没有记录。结果里 `recording=false` 时表示现在没在记新通知，原因写在 `recording_note`。没查到不代表没收到：应用可能没发通知，或只显示了部分内容。
+读到的内容只用在当前任务里，不写进记忆，除非用户要求。删除 Orbit 时历史一起清空。
+
+## 查看自己的权限
+
+`orbit_device action=describe` 的 `permissions` 列出每项权限现在开没开，名字和 `orbit_permission_card` 的一样；`notification_history` 显示通知历史是否在记录、最早一条是什么时候。
+这些由应用自己读，不需要 ADB、Shizuku 或终端；想知道有什么权限时看它，不要用终端命令查。
+
 ## 监测手机消息与事件
 
 用户要求“有某类消息就告诉我”时，用 `orbit_task action=create`，设置 `kind=WATCH`、`schedule_mode=INTERVAL` 和 `notify_policy=CHANGES`。

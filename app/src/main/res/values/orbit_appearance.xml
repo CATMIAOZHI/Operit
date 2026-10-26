@@ -33,7 +33,7 @@
     <string name="orbit_phone_notify">发送通知</string>
     <string name="orbit_phone_notify_note">在手机通知栏接收提醒和任务结果</string>
     <string name="orbit_phone_notification_read">读取通知</string>
-    <string name="orbit_phone_notification_read_note">读取其他应用发来的通知，例如快递提醒</string>
+    <string name="orbit_phone_notification_read_note">读取并记录其他应用发来的通知（保留 30 天），例如快递提醒</string>
     <string name="orbit_phone_sms">短信</string>
     <string name="orbit_phone_sms_note">读取短信内容，例如取件码和行程信息</string>
     <string name="orbit_phone_contacts">通讯录</string>

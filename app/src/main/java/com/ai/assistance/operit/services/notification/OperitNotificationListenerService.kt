@@ -5,6 +5,7 @@ import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.ai.assistance.operit.core.tools.NotificationData
+import com.ai.assistance.operit.features.orbit.OrbitNotificationHistory
 
 object OperitNotificationStore {
     private data class Entry(
@@ -112,9 +113,13 @@ object OperitNotificationStore {
 class OperitNotificationListenerService : NotificationListenerService() {
     override fun onListenerConnected() {
         OperitNotificationStore.connected = true
+        OrbitNotificationHistory.listenerConnected()
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             try {
-                activeNotifications?.forEach { OperitNotificationStore.upsert(it) }
+                activeNotifications?.forEach {
+                    OperitNotificationStore.upsert(it)
+                    OrbitNotificationHistory.record(this, it)
+                }
             } catch (_: Exception) {
             }
         }
@@ -126,9 +131,11 @@ class OperitNotificationListenerService : NotificationListenerService() {
 
     override fun onNotificationPosted(sbn: StatusBarNotification) {
         OperitNotificationStore.upsert(sbn)
+        OrbitNotificationHistory.record(this, sbn)
     }
 
     override fun onNotificationRemoved(sbn: StatusBarNotification) {
         OperitNotificationStore.remove(sbn)
+        OrbitNotificationHistory.removed(sbn)
     }
 }
