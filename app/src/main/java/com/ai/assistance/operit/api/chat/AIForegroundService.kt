@@ -258,11 +258,31 @@ class AIForegroundService : Service() {
             return channelId
         }
 
-        private fun loadBitmapFromUri(context: Context, uriString: String): Bitmap? {
+        /**
+         * Decodes a picture for a notification. With [maxSide] the picture is read at a reduced
+         * size (a power of two at least that large), so a big photo never needs its full pixels.
+         */
+        internal fun loadBitmapFromUri(context: Context, uriString: String, maxSide: Int? = null): Bitmap? {
             return try {
+                val sample = maxSide?.let { side ->
+                    val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                    openPictureStream(context, uriString)?.use { BitmapFactory.decodeStream(it, null, bounds) }
+                    var size = 1
+                    while (bounds.outWidth / (size * 2) >= side && bounds.outHeight / (size * 2) >= side) size *= 2
+                    size
+                } ?: 1
+                openPictureStream(context, uriString)?.use { stream ->
+                    BitmapFactory.decodeStream(stream, null, BitmapFactory.Options().apply { inSampleSize = sample })
+                }
+            } catch (e: Exception) {
+                AppLogger.e(TAG, "从URI加载Bitmap失败: ${e.message}", e)
+                null
+            }
+        }
+
+        private fun openPictureStream(context: Context, uriString: String): InputStream? {
                 val uri = Uri.parse(uriString)
-                val inputStream: InputStream? =
-                    when (uri.scheme) {
+                return when (uri.scheme) {
                         "file" -> {
                             val path = uri.path
                             if (path != null && path.startsWith("/android_asset/")) {
@@ -286,13 +306,6 @@ class AIForegroundService : Service() {
                         }
                         else -> context.contentResolver.openInputStream(uri)
                     }
-                inputStream?.use { stream ->
-                    BitmapFactory.decodeStream(stream)
-                }
-            } catch (e: Exception) {
-                AppLogger.e(TAG, "从URI加载Bitmap失败: ${e.message}", e)
-                null
-            }
         }
 
         fun notifyReplyCompleted(
@@ -313,14 +326,22 @@ class AIForegroundService : Service() {
 
                 val appContext = context.applicationContext
                 val displayPreferences = DisplayPreferencesManager.getInstance(appContext)
-                val globalEnableReplyNotification = runBlocking {
-                    displayPreferences.enableReplyNotification.first()
+                // An Orbit chat follows that Orbit's own message-notification switch, under its
+                // name and picture, instead of the app's reply-notification setting.
+                val orbit = runCatching {
+                    com.ai.assistance.operit.data.preferences.OrbitPreferences.getInstance(appContext)
+                        .loadedSettingsBlocking().orbitForChat(chatId)
+                }.getOrNull()
+                val shouldNotify = if (orbit != null) {
+                    notifyReplyOverride != false && orbit.messageNotifications
+                } else {
+                    notifyReplyOverride ?: runBlocking { displayPreferences.enableReplyNotification.first() }
                 }
-                val shouldNotify = notifyReplyOverride ?: globalEnableReplyNotification
                 if (!shouldNotify) {
                     AppLogger.d(TAG, "回复通知已禁用，跳过发送")
                     return
                 }
+                val title = orbit?.name?.ifBlank { null } ?: characterName
 
                 if (rawReplyContent.isNullOrBlank()) {
                     AppLogger.d(TAG, "回复内容为空，跳过发送回复通知: chatId=$chatId")
@@ -352,7 +373,7 @@ class AIForegroundService : Service() {
                     NotificationCompat.Builder(appContext, replyChannelId)
                         .setSmallIcon(android.R.drawable.ic_dialog_info)
                         .setContentTitle(
-                            characterName
+                            title
                                 ?: appContext.getString(R.string.notification_ai_reply_title)
                         )
                         .setContentText(
@@ -365,7 +386,11 @@ class AIForegroundService : Service() {
                         .setPriority(NotificationCompat.PRIORITY_HIGH)
                         .setDefaults(notificationDefaults)
                         .setCategory(NotificationCompat.CATEGORY_STATUS)
-                        .setContentIntent(createMainActivityPendingIntent(appContext))
+                        .setContentIntent(
+                            if (orbit != null && chatId != null)
+                                com.ai.assistance.operit.features.orbit.OrbitDelivery.openChatIntent(appContext, chatId, "reply-$chatId")
+                            else createMainActivityPendingIntent(appContext)
+                        )
                         .setAutoCancel(true)
 
                 if (cleanedReplyContent.isNotEmpty()) {
@@ -373,13 +398,17 @@ class AIForegroundService : Service() {
                         NotificationCompat.BigTextStyle()
                             .bigText(cleanedReplyContent)
                             .setBigContentTitle(
-                                characterName
+                                    title
                                     ?: appContext.getString(R.string.notification_ai_reply_title)
                             )
                     )
                 }
 
-                if (!avatarUri.isNullOrEmpty()) {
+                if (orbit != null) {
+                    com.ai.assistance.operit.features.orbit.OrbitNotificationIcon
+                        .of(orbit) { loadBitmapFromUri(appContext, it, com.ai.assistance.operit.features.orbit.OrbitNotificationIcon.SIZE) }
+                        ?.let(notificationBuilder::setLargeIcon)
+                } else if (!avatarUri.isNullOrEmpty()) {
                     val bitmap = loadBitmapFromUri(appContext, avatarUri)
                     if (bitmap != null) {
                         notificationBuilder.setLargeIcon(bitmap)

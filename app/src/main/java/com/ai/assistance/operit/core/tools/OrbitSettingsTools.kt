@@ -35,6 +35,8 @@ import org.json.JSONObject
 internal object OrbitSettingsTools {
     const val NAME = "orbit_settings"
     private const val MAX_CHANGES_JSON = 8_000
+    /** How many items an already approved card may carry; above today's settings to allow removed ones. */
+    private const val MAX_APPROVED_ITEMS = 32
     private val intervals = listOf(5L, 10L, 20L, 50L)
     private val delays = listOf(1L, 5L, 10L, 30L, 60L)
 
@@ -57,10 +59,8 @@ internal object OrbitSettingsTools {
         DELAY("learning_delay_minutes", R.string.orbit_settings_delay),
         DEVELOPER("developer_mode", R.string.orbit_settings_developer, true),
         LAUNCH("launch_mode", R.string.orbit_settings_launch, true, listOf("orbit", "standard")),
-        CONTEXT_FULL("context_use_full_window", R.string.orbit_settings_context_full),
+        NOTIFY("message_notifications", R.string.orbit_settings_message_notifications),
         CONTEXT_WINDOW("context_window_k", R.string.orbit_settings_context_window),
-        CONTEXT_AUTO("context_auto_compact", R.string.orbit_settings_context_auto),
-        CONTEXT_AT("context_compact_at_k", R.string.orbit_settings_context_at),
         // Kept last: all other changes finish before the current companion is stopped.
         PAUSE("pause", R.string.orbit_settings_pause, true),
     }
@@ -68,7 +68,7 @@ internal object OrbitSettingsTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "Read Orbit and app settings, ask to change several with one approval card, or put a data export card in the chat. " +
-            "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式、上下文压缩或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
+            "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "get / request_change / request_export", required = true),
             ToolParameterSchema("changes", "string",
@@ -77,8 +77,9 @@ internal object OrbitSettingsTools {
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
         details = """
-  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, learning cadence and context compaction belong to this Orbit.
-  - Context compaction applies to the main chat and every side chat together. Sizes are K tokens measured against your main model. context_compact_at_k=0 means automatic; get also returns where compaction starts now. context_window_k has no effect while context_use_full_window is true.
+  - get returns current values, allowed values/ranges, units and shared_by_all_orbits. Quotas, developer mode, launch mode and pausing are shared; appearance, browser login choice, learning cadence, message notifications and the context budget belong to this Orbit.
+  - context_window_k is the context budget for the main chat and every side chat together, in K tokens measured against your main model. Automatic compaction is always on and the app picks where it starts (get returns it); neither can be changed. For DeepSeek Flash models 400K is recommended.
+  - message_notifications=true lets your messages also appear as their own phone notification while the app is closed; false keeps them in the chat only. It is separate from the system notification permission, which orbit_permission_card notify asks for.
   - request_change validates every item, including unknown keys, invalid values and unchanged values; correct all reported errors and ask again. Token limits use raw tokens, never millions or currency. Only get's allowlisted settings can be changed.
   - The approval card lists old → new values. End this turn with one short line after the card appears. Only after approval does the app recheck and apply each item, then send you a hidden result. Read each result; an outdated or failed item may be skipped.
   - browser_shares_main_login=true uses the main app's browser account environment; false returns to this Orbit's separate environment. This tool never reads or returns cookies. Unsupported WebViews cannot switch.
@@ -113,11 +114,8 @@ internal object OrbitSettingsTools {
             Setting.DELAY -> memory.learningDelayMinutes().toLong()
             Setting.DEVELOPER -> settings.developerMode
             Setting.LAUNCH -> launchMode.name.lowercase(Locale.ROOT)
-            Setting.CONTEXT_FULL -> context?.policy?.maxMode ?: JSONObject.NULL
+            Setting.NOTIFY -> orbit.messageNotifications
             Setting.CONTEXT_WINDOW -> context?.policy?.windowK?.let(::kValue) ?: JSONObject.NULL
-            Setting.CONTEXT_AUTO -> context?.policy?.autoCompact ?: JSONObject.NULL
-            Setting.CONTEXT_AT -> context?.let { state -> state.policy.compactAtK?.let(::kValue) ?: 0L }
-                ?: JSONObject.NULL
             Setting.PAUSE -> settings.activeOrbitId == null
         }
     }
@@ -237,14 +235,14 @@ internal object OrbitSettingsTools {
                             put("unit", if (setting == Setting.MEMORY) "turns" else "iterations")
                         }
                         Setting.DELAY -> { put("options", JSONArray(delays)); put("unit", "minutes") }
-                        Setting.CONTEXT_WINDOW, Setting.CONTEXT_AT -> {
-                            put("min", if (setting == Setting.CONTEXT_AT) 0L else 1L)
+                        Setting.CONTEXT_WINDOW -> {
+                            put("min", 1L)
                             state.context?.let { put("max", capacityK(it)) }
                             put("unit", "K tokens")
                         }
-                        Setting.CONTEXT_FULL, Setting.CONTEXT_AUTO -> put("options", JSONArray(listOf(false, true)))
                         Setting.REFILL, Setting.PAUSE -> put("options", JSONArray(listOf(true)))
-                        Setting.EXTRA_WEEKLY, Setting.LOGIN, Setting.DEVELOPER -> put("options", JSONArray(listOf(false, true)))
+                        Setting.EXTRA_WEEKLY, Setting.LOGIN, Setting.DEVELOPER, Setting.NOTIFY ->
+                            put("options", JSONArray(listOf(false, true)))
                         else -> put("options", JSONArray(setting.choices))
                     }
                     if (setting == Setting.LOGIN) {
@@ -260,14 +258,16 @@ internal object OrbitSettingsTools {
                         put("current_means", "extra_used_tokens")
                         put("note", text.getString(R.string.orbit_settings_refill_note))
                     }
-                    if (setting.name.startsWith("CONTEXT_")) {
+                    if (setting == Setting.CONTEXT_WINDOW) {
                         put("can_change", state.context != null)
                         state.contextError?.let { put("note", it) }
-                    }
-                    if (setting == Setting.CONTEXT_AT) state.context?.let {
-                        put("main_model_max_k", capacityK(it))
-                        put("effective_compact_at_k", Math.round(it.compactAtK).toLong())
-                        if (!it.policy.autoCompact) put("note", text.getString(R.string.orbit_settings_context_at_off))
+                        state.context?.let {
+                            put("main_model_max_k", capacityK(it))
+                            put("effective_compact_at_k", Math.round(it.compactAtK).toLong())
+                            if (OrbitContextSettings.isDeepSeekFlash(it.modelName)) {
+                                put("recommended_k", OrbitContextSettings.DEEPSEEK_FLASH_BUDGET_K)
+                            }
+                        }
                     }
                 }
         }
@@ -289,17 +289,12 @@ internal object OrbitSettingsTools {
             }
             return checkNotNull(value)
         }
-        if (setting.name.startsWith("CONTEXT_")) {
+        if (setting == Setting.CONTEXT_WINDOW) {
             val current = state.context ?: throw IllegalArgumentException(state.contextError)
-            if (setting == Setting.CONTEXT_WINDOW || setting == Setting.CONTEXT_AT) {
-                val value = integer(text, raw)
-                val min = if (setting == Setting.CONTEXT_AT) 0L else 1L
-                val max = capacityK(current)
-                require(value in min..max) { text.getString(R.string.orbit_settings_range, min.toString(), max.toString()) }
-                return value
-            }
-            require(raw is Boolean) { text.getString(R.string.orbit_settings_boolean) }
-            return raw
+            val value = integer(text, raw)
+            val max = capacityK(current)
+            require(value in 1L..max) { text.getString(R.string.orbit_settings_range, "1", max.toString()) }
+            return value
         }
         return when (setting) {
             Setting.WEEKLY, Setting.EXTRA -> {
@@ -386,8 +381,6 @@ internal object OrbitSettingsTools {
             Setting.SKILLS -> text.getString(R.string.orbit_settings_iterations, value.toString())
             Setting.DELAY -> text.getString(R.string.orbit_settings_minutes, value.toString())
             Setting.CONTEXT_WINDOW -> "${value}K"
-            Setting.CONTEXT_AT -> if ((value as? Number)?.toDouble() == 0.0) text.getString(R.string.orbit_settings_context_auto_point)
-                else "${value}K"
             else -> text.getString(if (value == true) R.string.orbit_settings_on else R.string.orbit_settings_off)
         }
     }
@@ -404,7 +397,7 @@ internal object OrbitSettingsTools {
                 if (setting == Setting.REFILL) append(text.getString(R.string.orbit_settings_refill_note)).append('\n')
                 if (setting == Setting.PAUSE) append(text.getString(R.string.orbit_settings_pause_note)).append('\n')
             }
-            if (Setting.entries.any { it.name.startsWith("CONTEXT_") && changes.has(it.key) }) {
+            if (changes.has(Setting.CONTEXT_WINDOW.key)) {
                 append(text.getString(R.string.orbit_settings_context_scope)).append('\n')
             }
         }.trim()
@@ -414,7 +407,9 @@ internal object OrbitSettingsTools {
         val text = textContext(context)
         val changes = action.getJSONObject("changes")
         val expected = action.getJSONObject("expected")
-        require(changes.length() in 1..Setting.entries.size && changes.toString().length <= MAX_CHANGES_JSON)
+        // A card approved before a setting was removed may list more items than exist now; those
+        // are skipped one by one below instead of failing the whole card.
+        require(changes.length() in 1..MAX_APPROVED_ITEMS && changes.toString().length <= MAX_CHANGES_JSON)
         val results = mutableListOf<String>()
         val unknown = changes.keys().asSequence().filter { key -> Setting.entries.none { it.key == key } }.toList()
         unknown.forEach { key ->
@@ -473,14 +468,8 @@ internal object OrbitSettingsTools {
             Setting.DEVELOPER -> preferences.setDeveloperMode(value as Boolean)
             Setting.LAUNCH -> LaunchModePreferences.getInstance(context).setMode(
                 AppLaunchMode.valueOf((value as String).uppercase(Locale.ROOT)))
-            Setting.CONTEXT_FULL -> OrbitContextSettings.update(context, state.orbit.id) { it.copy(maxMode = value as Boolean) }
-            Setting.CONTEXT_WINDOW -> OrbitContextSettings.update(context, state.orbit.id) {
-                it.copy(windowK = (value as Long).toFloat())
-            }
-            Setting.CONTEXT_AUTO -> OrbitContextSettings.update(context, state.orbit.id) { it.copy(autoCompact = value as Boolean) }
-            Setting.CONTEXT_AT -> OrbitContextSettings.update(context, state.orbit.id) {
-                it.copy(compactAtK = (value as Long).takeIf { k -> k > 0L }?.toFloat())
-            }
+            Setting.NOTIFY -> preferences.setMessageNotifications(state.orbit.id, value as Boolean)
+            Setting.CONTEXT_WINDOW -> OrbitContextSettings.setBudget(context, state.orbit.id, (value as Long).toFloat())
             Setting.PAUSE -> OrbitCompanion.pause(context, state.orbit.id)
         }
     }

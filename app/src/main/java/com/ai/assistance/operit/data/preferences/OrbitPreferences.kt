@@ -64,6 +64,11 @@ data class OrbitProfile(
      * while sharing, so turning this off brings them back.
      */
     val browserSharesMainLogin: Boolean = false,
+    /**
+     * When true, what Orbit says while the app is closed also shows as its own phone notification.
+     * Separate from the system notification permission, which the app needs either way.
+     */
+    val messageNotifications: Boolean = true,
     /** Live pet avatar; avatarUri remains its still fallback if the pet is removed. */
     val avatarPetId: String? = null,
     val appearance: OrbitAppearance = OrbitAppearance(),
@@ -329,6 +334,10 @@ class OrbitPreferences private constructor(context: Context) {
         updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(browserSharesMainLogin = shared) else it } }
     }
 
+    suspend fun setMessageNotifications(orbitId: String, enabled: Boolean) {
+        updateOrbits { orbits -> orbits.map { if (it.id == orbitId) it.copy(messageNotifications = enabled) else it } }
+    }
+
     suspend fun bindMemory(orbitId: String, memorySpaceId: String) {
         updateOrbits { orbits ->
             check(orbits.any { it.id == orbitId }) { "Orbit no longer exists" }
@@ -586,6 +595,7 @@ class OrbitPreferences private constructor(context: Context) {
                             }
                         }.orEmpty(),
                         browserSharesMainLogin = item.optBoolean("browserSharesMainLogin", false),
+                        messageNotifications = item.optBoolean("messageNotifications", true),
                     )
                 }
             }.getOrDefault(emptyList())
@@ -615,6 +625,7 @@ class OrbitPreferences private constructor(context: Context) {
                                     } }
                             }))
                             put("browserSharesMainLogin", orbit.browserSharesMainLogin)
+                            put("messageNotifications", orbit.messageNotifications)
                         }
                     )
                 }

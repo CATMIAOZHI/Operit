@@ -37,6 +37,8 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.chat.AIForegroundService
 import com.ai.assistance.operit.data.preferences.DisplayPreferencesManager
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitPermissionCards
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -71,21 +73,61 @@ internal fun OrbitPhonePermissionsPage(onBack: () -> Unit, onOpenDeviceAccess: (
     )
 }
 
+/**
+ * The system notification permission, then this Orbit's own choice: whether what it says while
+ * the app is closed also shows as a notification. The permission only allows notifications at all.
+ */
 @Composable
-internal fun OrbitNotificationSettingsPage(onBack: () -> Unit) {
+internal fun OrbitNotificationSettingsPage(orbit: OrbitProfile, onBack: () -> Unit) {
+    val app = LocalContext.current.applicationContext
+    val scope = rememberCoroutineScope()
+    var enabled by remember(orbit.id, orbit.messageNotifications) { mutableStateOf(orbit.messageNotifications) }
+    var saving by remember { mutableStateOf(false) }
+    val name = orbitName(orbit)
     PhonePermissionsPage(
         entries = listOf(PhonePermission.NOTIFY),
         title = R.string.orbit_notification_settings,
         help = R.string.orbit_notification_settings_note,
         includeKeepAlive = false,
         onBack = onBack,
-    )
+    ) {
+        val label = stringResource(R.string.orbit_message_notify_title)
+        Surface(shape = RoundedCornerShape(24.dp), color = MaterialTheme.colorScheme.surface) {
+            Row(Modifier.fillMaxWidth().padding(18.dp), verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(label, style = MaterialTheme.typography.titleMedium)
+                    Text(stringResource(R.string.orbit_message_notify_note, name), Modifier.padding(top = 8.dp),
+                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Spacer(Modifier.width(12.dp))
+                Switch(modifier = Modifier.semantics { contentDescription = label },
+                    checked = enabled, enabled = !saving, onCheckedChange = { on ->
+                        val before = enabled
+                        enabled = on
+                        saving = true
+                        scope.launch {
+                            try {
+                                OrbitPreferences.getInstance(app).setMessageNotifications(orbit.id, on)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: Exception) {
+                                enabled = before
+                                Toast.makeText(app, R.string.orbit_phone_settings_failed, Toast.LENGTH_SHORT).show()
+                            } finally {
+                                saving = false
+                            }
+                        }
+                    })
+            }
+        }
+    }
 }
 
 @Composable
 private fun PhonePermissionsPage(
     entries: List<PhonePermission>, title: Int, help: Int, includeKeepAlive: Boolean, onBack: () -> Unit,
     onOpenDeviceAccess: (() -> Unit)? = null,
+    trailing: (@Composable () -> Unit)? = null,
 ) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
@@ -246,6 +288,7 @@ private fun PhonePermissionsPage(
                 }
             }
         }
+        if (trailing != null) item("trailing") { trailing() }
     }
 }
 

@@ -13,6 +13,7 @@
     <string name="orbit_settings_skills">技能整理迭代数</string>
     <string name="orbit_settings_delay">学习延迟</string>
     <string name="orbit_settings_developer">开发者模式</string>
+    <string name="orbit_settings_message_notifications">消息通知</string>
     <string name="orbit_settings_launch">打开 App 默认进入</string>
     <string name="orbit_settings_pause">暂停整个 Orbit</string>
     <string name="orbit_settings_missing">这个 Orbit 已删除或正在删除。</string>

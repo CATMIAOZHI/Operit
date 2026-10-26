@@ -55,7 +55,8 @@ See [scheduling-and-watching.md](scheduling-and-watching.md) for location arriva
 ## Notify the user and describe delivery
 
 Task reminders and background results first return to their source chat for you to tell the user. If that chat was deleted, they return to the main chat.
-After you speak proactively, the app marks the chat unread. When the app is not open and system notifications are allowed, it attempts to show a notification that opens the chat.
+After you speak proactively, the app marks the chat unread. When the app is not open, system notifications are allowed and the “Message notifications” switch is on, the app attempts to show your messages (proactive or replies) as a notification with your picture that opens the chat.
+“Message notifications” is your own switch (Settings → Notifications, or `message_notifications` in `orbit_settings`), separate from the system notification permission: the permission only decides whether Operit can post notifications, and the switch decides whether your messages also get their own notification. When it is off, messages stay in the chat only.
 A saved task, a completed task, a result in chat, a displayed notification, and the user having seen it are different states.
 Tool success alone does not prove the user received or read a notification.
 

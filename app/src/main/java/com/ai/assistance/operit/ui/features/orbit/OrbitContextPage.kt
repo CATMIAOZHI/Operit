@@ -16,8 +16,8 @@ import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
 import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import com.ai.assistance.operit.features.orbit.OrbitContextSettings
-import com.ai.assistance.operit.ui.features.chat.components.ChatContextPolicyEditor
 import com.ai.assistance.operit.ui.features.chat.util.formatContextK
+import com.ai.assistance.operit.ui.features.chat.util.parseContextK
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCard
 import com.ai.assistance.operit.ui.features.settings.components.settingsCardColor
 import kotlinx.coroutines.CancellationException
@@ -25,7 +25,14 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 
-/** One compaction setting for the main chat and its side chats, and a button to compact now. */
+/** Budgets offered as one-tap choices; any other value can still be typed. */
+private val BUDGET_PRESETS = listOf(200f, 300f, 400f, 500f)
+
+/**
+ * The context budget for the main chat and its side chats, and a button to compact now. Orbit
+ * always compacts on its own and the app picks where, so the budget is the only choice.
+ */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 internal fun OrbitContextPage(orbit: OrbitProfile, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
@@ -68,26 +75,61 @@ internal fun OrbitContextPage(orbit: OrbitProfile, onBack: () -> Unit) {
             return@Column
         }
         Text(
-            if (current.policy.autoCompact) stringResource(R.string.orbit_context_now,
-                formatContextK(current.capacityK), formatContextK(current.compactAtK.roundOne()))
-            else stringResource(R.string.orbit_context_now_off, formatContextK(current.capacityK)),
+            stringResource(R.string.orbit_context_now,
+                formatContextK(current.capacityK), formatContextK(current.compactAtK.roundOne())),
             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         SettingsCard(backgroundColor = settingsCardColor(false), contentPadding = PaddingValues(16.dp)) {
-            ChatContextPolicyEditor(current.policy, saving = saving, onSave = { policy ->
-                saving = true
-                saved = false
-                scope.launch {
-                    try {
-                        OrbitContextSettings.update(context, orbit.id) { policy }
-                        error = null
-                        saved = true
-                        reload++
-                    } catch (e: CancellationException) { throw e }
-                    catch (e: Exception) { error = e.message }
-                    finally { saving = false }
+            var budget by remember(current.policy.windowK) { mutableStateOf("${formatContextK(current.policy.windowK)}K") }
+            val budgetK = parseContextK(budget)?.takeIf { it > 0f && it <= 1_000_000f }
+            OutlinedTextField(
+                value = budget, onValueChange = { budget = it }, singleLine = true, enabled = !saving,
+                label = { Text(stringResource(R.string.orbit_context_budget)) },
+                supportingText = { Text(stringResource(R.string.chat_context_budget_hint)) },
+                isError = budgetK == null,
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
+            )
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                BUDGET_PRESETS.forEach { preset ->
+                    FilterChip(
+                        selected = budgetK == preset,
+                        onClick = { budget = "${formatContextK(preset)}K" },
+                        label = { Text("${formatContextK(preset)}K") },
+                        enabled = !saving,
+                    )
                 }
-            })
+            }
+            if (OrbitContextSettings.isDeepSeekFlash(current.modelName)) {
+                Text(stringResource(R.string.orbit_context_recommend_flash, OrbitContextSettings.DEEPSEEK_FLASH_BUDGET_K),
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.padding(top = 4.dp))
+            }
+            Text(stringResource(R.string.orbit_context_auto_fixed),
+                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 12.dp))
+            Spacer(Modifier.height(12.dp))
+            Button(
+                enabled = !saving && budgetK != null && budgetK != current.policy.windowK,
+                onClick = {
+                    val value = budgetK ?: return@Button
+                    saving = true
+                    saved = false
+                    scope.launch {
+                        try {
+                            OrbitContextSettings.setBudget(context, orbit.id, value)
+                            error = null
+                            saved = true
+                            reload++
+                        } catch (e: CancellationException) { throw e }
+                        catch (e: Exception) { error = e.message }
+                        finally { saving = false }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(14.dp),
+            ) {
+                if (saving) CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                else Text(stringResource(R.string.save))
+            }
             if (saved) {
                 Text(stringResource(R.string.orbit_context_saved), style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.primary, modifier = Modifier.padding(top = 8.dp))

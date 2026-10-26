@@ -24,7 +24,9 @@
     <string name="orbit_mode_light">浅色</string>
     <string name="orbit_mode_dark">深色</string>
     <string name="orbit_notification_settings">通知</string>
-    <string name="orbit_notification_settings_note">管理提醒和任务结果能否发送到手机通知栏。此设置使用 Operit 的系统通知权限。</string>
+    <string name="orbit_notification_settings_note">系统通知权限决定 Operit 能不能发通知；下面的开关决定要不要把消息单独发到通知栏。</string>
+    <string name="orbit_message_notify_title">消息通知</string>
+    <string name="orbit_message_notify_note">App 没打开时，%1$s 发来的消息会在通知栏单独提醒你，显示它的头像。关掉后消息只留在聊天里。</string>
     <string name="orbit_phone_permissions">权限</string>
     <string name="orbit_phone_permissions_row">短信、通讯录、读取通知等授权</string>
     <string name="orbit_phone_permissions_note">按需要开启即可。这些是 Operit 共用的系统权限，授权状态也会影响主应用。发送通知请在设置中的「通知」管理。</string>
