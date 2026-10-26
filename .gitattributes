@@ -1,0 +1,25 @@
+# Text files are stored and checked out with LF on every platform.
+* text=auto eol=lf
+
+# Windows scripts need CRLF.
+*.bat text eol=crlf
+*.cmd text eol=crlf
+gradlew text eol=lf
+*.sh text eol=lf
+
+# Binary files: never converted.
+*.png -text
+*.jpg -text
+*.jpeg -text
+*.webp -text
+*.gif -text
+*.ico -text
+*.jar -text
+*.apk -text
+*.zip -text
+*.toolpkg -text
+*.mp3 -text
+*.mp4 -text
+*.pyc -text
+*.jks -text
+*.keystore -text
