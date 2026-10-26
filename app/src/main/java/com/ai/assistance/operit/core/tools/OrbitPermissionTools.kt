@@ -35,6 +35,7 @@ internal object OrbitPermissionTools {
         ),
         details = """
   - Checks what is on first. When it is already on, no card is placed and the result says so.
+  - To see every permission at once without placing any card, call orbit_device action=describe and read its permissions; the app reads them itself, so no ADB, Shizuku or terminal command is needed.
   - device_access opens Operit's own access page over the chat (pick a level there and follow its steps). The result gives the picked level and whether it answers now.
   - Otherwise the card shows the setting with a button that opens the system prompt or settings screen, and a "Don't remind me" button; then it returns at once. End the turn with one short line.
   - After the user opens permission controls from the card and returns, the app checks again. Only an off-to-on change sends a hidden note to this original chat, so you can continue the work. A denial or unchanged setting sends nothing. "Don't remind me" also sends a hidden note.

@@ -33,7 +33,7 @@
     <string name="orbit_phone_notify">Send notifications</string>
     <string name="orbit_phone_notify_note">Receive reminders and task results in phone notifications</string>
     <string name="orbit_phone_notification_read">Read notifications</string>
-    <string name="orbit_phone_notification_read_note">Read notifications from other apps, such as delivery updates</string>
+    <string name="orbit_phone_notification_read_note">Read and keep 30 days of notifications from other apps, such as delivery updates</string>
     <string name="orbit_phone_sms">SMS</string>
     <string name="orbit_phone_sms_note">Read messages such as pickup codes and travel updates</string>
     <string name="orbit_phone_contacts">Contacts</string>

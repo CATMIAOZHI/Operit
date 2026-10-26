@@ -108,6 +108,10 @@ object OrbitCompanion {
         chatIds.addAll(orbitDescendants(chatIds, chats.map { it.id to it.parentChatId }))
         chatIds.forEach { preferences.rememberChatOwner(it, orbitId) }
         preferences.markDeleting(orbitId)
+        // The phone's notification history is kept for the Orbit only. Cleared now, before the Orbit's
+        // settings go, and waited for, so a new Orbit never finds it; marked deleting, nothing new is kept.
+        // A failure stops the deletion here, leaving it marked deleting so it can be tried again.
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { OrbitNotificationHistory.clear(appContext) }
         stopInFlightUnlessActive(appContext)
         OrbitTaskRunner.cancelOrbit(orbitId)
         com.ai.assistance.operit.data.db.AppDatabase.getDatabase(appContext).orbitTaskDao().removeOrbit(orbitId)

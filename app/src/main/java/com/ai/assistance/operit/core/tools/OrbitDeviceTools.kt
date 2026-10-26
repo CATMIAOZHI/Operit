@@ -17,6 +17,11 @@ import com.ai.assistance.operit.data.model.ToolParameterSchema
 import com.ai.assistance.operit.data.model.ToolPrompt
 import com.ai.assistance.operit.data.model.ToolResult
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+import com.ai.assistance.operit.features.orbit.OrbitNotificationHistory
+import com.ai.assistance.operit.features.orbit.OrbitPermissionCards
+import com.ai.assistance.operit.features.orbit.OrbitTaskBlock
+import com.ai.assistance.operit.services.notification.OperitNotificationStore
+import androidx.core.app.NotificationManagerCompat
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -31,7 +36,9 @@ import java.util.Locale
 internal object OrbitDeviceTools {
     const val NAME = "orbit_device"
 
-    private class Command(val id: String, val description: String, val params: String, val permissions: List<String>)
+    /** [card] is the orbit_permission_card kind that turns the command on. */
+    private class Command(val id: String, val description: String, val params: String, val permissions: List<String>,
+                          val card: String = id.substringBefore('.'))
 
     private val commands = listOf(
         Command("contacts.search", "Find people in the phone's contacts by name, number or email.",
@@ -47,12 +54,24 @@ internal object OrbitDeviceTools {
         Command("location.get", "The phone's current location.",
             "high_accuracy true/false (default false)",
             listOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)),
+        Command("notifications.search", "Search the phone's notification history, newest first. It holds what other apps " +
+            "posted while notification reading was on, for the last ${OrbitNotificationHistory.KEEP_DAYS} days, even after the user cleared them.",
+            "hours back from now 1-${OrbitNotificationHistory.MAX_HOURS} (default 24; 168 = a week, 720 = a month), " +
+                "app (optional: app name or package, see notifications.apps), query (optional: words in the title or text), " +
+                "limit 1-50 (default 20), before (optional: next_before from the last result, for older ones)",
+            emptyList(), OrbitPermissionCards.NOTIFICATION_READ),
+        Command("notifications.apps", "Which apps posted notifications in a time window, with counts; use it to pick the app for notifications.search.",
+            "hours back from now 1-${OrbitNotificationHistory.MAX_HOURS} (default 24)",
+            emptyList(), OrbitPermissionCards.NOTIFICATION_READ),
+        Command("notifications.read", "Read one notification from the history in full; use it when notifications.search marked one as cut.",
+            "id (required, from notifications.search)",
+            emptyList(), OrbitPermissionCards.NOTIFICATION_READ),
     )
 
     val prompt = ToolPrompt(
         name = NAME,
-        description = "读取用户这台手机上的数据：通讯录、日历、短信、位置。先 describe 看有哪些命令、参数和是否已授权，再用 invoke 调用。" +
-            "没授权的命令在调用时会弹框请用户批准。",
+        description = "读取用户这台手机上的数据：通讯录、日历、短信、位置、通知历史。先 describe 看有哪些命令、参数、是否已授权，" +
+            "以及手机上每项权限现在开没开，再用 invoke 调用。没授权的命令在调用时会弹框请用户批准。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "describe / invoke", required = true),
             ToolParameterSchema("command", description = "invoke：命令名，来自 describe，如 contacts.search", required = false),
@@ -60,8 +79,10 @@ internal object OrbitDeviceTools {
         ),
         details = """
   - 只在用户的请求需要时读，比如「给小王打电话前查下他的号码」「我下周有什么安排」「我现在在哪」。短信只在用户明确要求时读。
+  - describe 的 permissions 列出每项权限现在开没开（名字和 orbit_permission_card 的一样），由 App 自己读，不需要 ADB、Shizuku 或终端；想知道自己有什么权限就看它，不要用终端命令去查。
   - 结果是这一刻从手机上实时读的。用户拒绝授权时不要换别的办法绕过去；他之后想开，用 orbit_permission_card 放一张对应的权限卡。
   - 时间都是手机本地时间（结果里有 timezone）。has_more=true 说明还有没返回的：通讯录和日历请缩小 query 或天数，短信把 next_before 原样放进 params.before 往前翻。短信标了 cut=true 时用 sms.read 加它的 id 读全文；一次最多20000字，next_start_char 不为空时放进 params.start_char 接着读。
+  - 通知历史要开着「读取通知」（notification_read）才会记录：开启时通知栏里还在的和之后收到的，保留 ${OrbitNotificationHistory.KEEP_DAYS} 天；常驻通知（音乐、下载、正在运行）不记。用户问「刚才谁找我」「今天快递到了没」「最近一周银行发了什么」时用 notifications.search；按应用筛就填 app（应用名或包名，不确定先 notifications.apps 看有哪些应用）。翻页同短信（next_before 原样放进 params.before）；cut=true 时用 notifications.read 读全文，每条最多存 4000 字，stored_cut=true 说明原文更长、后面没存下来。没查到不代表没收到：应用可能没发通知，或只显示了部分内容。
   - 读到的号码、地址、消息只用在当前任务里，不要写进记忆，除非用户让你记。
 """,
     )
@@ -71,7 +92,7 @@ internal object OrbitDeviceTools {
             val runtime = ToolExecutionManager.currentToolRuntimeContext()
             checkNotNull(OrbitMemoryScope.owner(context, runtime?.callerChatId)) { "This is not an Orbit chat" }
             val args = tool.parameters.associate { it.name to it.value }
-            val result = when (args["action"]) {
+            val result = when (args["action"]?.trim()) {
                 "describe" -> describe(context)
                 "invoke" -> {
                     val command = commands.firstOrNull { it.id == args["command"]?.trim() }
@@ -85,6 +106,9 @@ internal object OrbitDeviceTools {
                         "calendar.search" -> calendar(context, params)
                         "sms.search" -> sms(context, params)
                         "sms.read" -> smsRead(context, params)
+                        "notifications.search" -> notificationSearch(context, params)
+                        "notifications.apps" -> notificationApps(context, params)
+                        "notifications.read" -> notificationRead(context, params)
                         else -> location(context, params)
                     }
                 }
@@ -98,23 +122,58 @@ internal object OrbitDeviceTools {
         }
     }
 
-    private fun granted(context: Context, command: Command) = command.permissions.any {
-        ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
-    }
+    private fun notificationReading(context: Context) =
+        context.packageName in NotificationManagerCompat.getEnabledListenerPackages(context)
 
-    private fun describe(context: Context): String = JSONObject()
+    private fun granted(context: Context, command: Command) =
+        if (command.card == OrbitPermissionCards.NOTIFICATION_READ) notificationReading(context)
+        else command.permissions.any { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }
+
+    private suspend fun describe(context: Context): String = JSONObject()
         .put("device", "this phone")
         .put("model", "${Build.MANUFACTURER} ${Build.MODEL}")
         .put("android", Build.VERSION.RELEASE)
         .put("commands", JSONArray(commands.map {
             JSONObject().put("id", it.id).put("description", it.description).put("params", it.params)
                 .put("allowed", granted(context, it))
-        })).toString()
+        }))
+        .put("permissions", permissions(context))
+        .put("notification_history", recordingNote(context).let { (recording, note) ->
+            JSONObject().put("recording", recording)
+                .apply { if (note != null) put("recording_note", note) }
+                .put("kept_days", OrbitNotificationHistory.KEEP_DAYS)
+                .put("oldest", OrbitNotificationHistory.oldest(context)?.let { time(it) } ?: JSONObject.NULL)
+        })
+        .toString()
+
+    /** Every setting orbit_permission_card can ask for, read by the app itself; no ADB or Shizuku needed. */
+    private suspend fun permissions(context: Context): JSONObject {
+        val out = JSONObject()
+        val keep = OrbitTaskBlock.status(context)
+        out.put(OrbitPermissionCards.KEEP_ALIVE, JSONObject().put("on", keep.allOn)
+            .put("background_keep_alive", keep.keepAlive).put("battery_exemption", keep.battery))
+        val access = runCatching { OrbitPermissionCards.deviceAccess(context) }.getOrNull()
+        out.put(OrbitPermissionCards.DEVICE_ACCESS, JSONObject().put("on", access?.working ?: false)
+            .put("level", access?.level?.name?.lowercase() ?: "not_set"))
+        for (kind in OrbitPermissionCards.phoneKinds) {
+            val entry = JSONObject().put("on", runCatching { OrbitPermissionCards.isOn(context, kind) }.getOrDefault(false))
+            if (kind == OrbitPermissionCards.GEOFENCE) {
+                val location = OrbitPermissionCards.locationStatus(context)
+                for (key in listOf("fine", "background", "location_services")) entry.put(key, location.get(key))
+            }
+            out.put(kind, entry)
+        }
+        return out
+    }
 
     /** Asks the user on the spot when the app is open; in the background the user cannot be asked. */
     private suspend fun ensureAllowed(context: Context, command: Command) {
         if (granted(context, command)) return
-        val card = "orbit_permission_card (permission=${command.id.substringBefore('.')})"
+        val card = "orbit_permission_card (permission=${command.card})"
+        check(command.card != OrbitPermissionCards.NOTIFICATION_READ) {
+            "Notification reading is off, so no notifications are recorded and ${command.id} cannot run. " +
+                "If the user wants it, put $card in the chat; history starts from when they turn it on."
+        }
         val activity = ActivityLifecycleManager.getCurrentActivity()
         val visible = activity != null && !activity.isFinishing && activity.hasWindowFocus()
         check(visible) {
@@ -261,6 +320,92 @@ internal object OrbitDeviceTools {
             }
         }
         error("No text message with id $id; search again")
+    }
+
+    private fun hours(params: JSONObject): Int {
+        val raw = params.opt("hours")?.toString()?.trim()?.takeIf { it.isNotEmpty() && it != "null" } ?: return 24
+        val hours = raw.toDoubleOrNull()?.toInt() ?: error("hours must be a whole number from 1 to ${OrbitNotificationHistory.MAX_HOURS}; got \"$raw\"")
+        return hours.coerceIn(1, OrbitNotificationHistory.MAX_HOURS)
+    }
+
+    /** Whether new notifications are being kept right now, and a line for the AI when they are not. */
+    private fun recordingNote(context: Context): Pair<Boolean, String?> = when {
+        !notificationReading(context) -> false to "Notification reading is off, so nothing new is kept. orbit_permission_card " +
+            "(permission=notification_read) turns it on if the user wants it."
+        !OperitNotificationStore.connected -> false to "Notification reading is on, but the phone has not connected the listener " +
+            "yet (for example right after a restart), so new notifications are not kept at the moment. It usually reconnects by itself."
+        else -> true to null
+    }
+
+    private const val PAGE_TEXT_BUDGET = 20_000
+
+    private fun notificationSearch(context: Context, params: JSONObject): String {
+        val app = params.optString("app").trim()
+        val query = params.optString("query").trim()
+        require(app.length <= 120) { "app is at most 120 characters" }
+        require(query.length <= 80) { "query is at most 80 characters" }
+        val limit = params.optInt("limit", 20).coerceIn(1, 50)
+        // The cursor is "since:time:id": the window's start stays where the first page put it.
+        val cursor = params.optString("before").trim().takeIf { it.isNotEmpty() }?.let { raw ->
+            val parts = raw.split(':').map { it.toLongOrNull() }
+            require(parts.size == 3 && parts.all { it != null }) { "before must be the next_before value from the last notifications.search" }
+            Triple(parts[0]!!, parts[1]!!, parts[2]!!)
+        }
+        val since = cursor?.first ?: (System.currentTimeMillis() - hours(params) * 3_600_000L)
+        val page = OrbitNotificationHistory.search(context, since, app, query, limit, cursor?.let { it.second to it.third })
+        val list = JSONArray()
+        var used = 0
+        var more = page.more
+        var last: OrbitNotificationHistory.Item? = null
+        for (item in page.items) {
+            val text = item.body.take(1000)
+            // Keeps the page well under the tool result limit; the cursor follows the last item shown.
+            if (last != null && used + item.title.length + text.length > PAGE_TEXT_BUDGET) { more = true; break }
+            used += item.title.length + text.length
+            last = item
+            list.put(JSONObject().put("id", item.id).put("time", time(item.time)).put("app", item.app).put("package", item.pkg)
+                .put("title", item.title).put("text", text)
+                .apply { if (item.body.length > 1000 || item.storedCut) put("cut", true).put("chars", item.chars) })
+        }
+        val (recording, note) = recordingNote(context)
+        return JSONObject().put("source", "history").put("timezone", zone()).put("from", time(since))
+            .put("recording", recording)
+            .apply { if (note != null) put("recording_note", note) }
+            .put("returned", list.length()).put("has_more", more)
+            .put("next_before", if (more && last != null) "$since:${last.time}:${last.id}" else JSONObject.NULL)
+            .apply {
+                if (list.length() == 0) put("note", "Nothing matches. Kept are the notifications still in the tray when notification " +
+                    "reading was turned on and those that arrived after, for ${OrbitNotificationHistory.KEEP_DAYS} days (oldest kept: " +
+                    "${OrbitNotificationHistory.oldest(context)?.let { time(it) } ?: "none yet"}), and an app may not post one at all. " +
+                    "Try more hours, fewer words, or notifications.apps for the app names.")
+            }
+            .put("notifications", list).toString()
+    }
+
+    private fun notificationApps(context: Context, params: JSONObject): String {
+        val since = System.currentTimeMillis() - hours(params) * 3_600_000L
+        val found = OrbitNotificationHistory.apps(context, since, 51)
+        val apps = found.take(50)
+        return JSONObject().put("source", "history").put("timezone", zone()).put("from", time(since))
+            .put("returned", apps.size).put("has_more", found.size > 50)
+            .apply { if (found.size > 50) put("note", "Only the 50 apps with the most notifications are listed; others posted too. Use fewer hours to narrow it.") }
+            .put("apps", JSONArray(apps.map {
+                JSONObject().put("app", it.app).put("package", it.pkg).put("count", it.count).put("latest", time(it.latest))
+            })).toString()
+    }
+
+    private fun notificationRead(context: Context, params: JSONObject): String {
+        val id = params.optString("id").trim().toLongOrNull() ?: error("notifications.read needs id from notifications.search")
+        val item = OrbitNotificationHistory.read(context, id) ?: error("No notification with id $id in the history (it may be older " +
+            "than ${OrbitNotificationHistory.KEEP_DAYS} days); search again")
+        return JSONObject().put("source", "history").put("timezone", zone()).put("id", item.id).put("time", time(item.time))
+            .put("app", item.app).put("package", item.pkg).put("title", item.title).put("chars", item.chars)
+            .put("stored_cut", item.storedCut)
+            .apply {
+                if (item.storedCut) put("note", "Part of it was cut when it arrived: ${item.body.length} of about ${item.chars} " +
+                    "characters were kept (very long parts and lines are shortened), and the rest is not recorded anywhere.")
+            }
+            .put("text", item.body).toString()
     }
 
     private fun location(context: Context, params: JSONObject): String {
