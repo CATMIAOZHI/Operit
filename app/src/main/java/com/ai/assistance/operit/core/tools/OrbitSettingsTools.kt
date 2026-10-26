@@ -70,9 +70,10 @@ internal object OrbitSettingsTools {
         description = "Read Orbit and app settings, ask to change several with one approval card, or put a data export card in the chat. " +
             "查看设置，申请修改外观、额度、共用登录、学习频率、开发者模式、启动模式、消息通知、上下文预算或暂停 Orbit，用户批准后由 App 执行；也能放一张数据导出卡片。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "get / request_change / request_export", required = true),
+            ToolParameterSchema("action", description = "get / request_change / request_export / open_page", required = true),
             ToolParameterSchema("changes", "string",
                 "request_change: JSON object of setting names and new values, e.g. {\"color_mode\":\"dark\",\"weekly_limit\":1000000000}. Read get for keys/options first.", false),
+            ToolParameterSchema("page", description = "open_page: tool_access, tool_permissions, models or notifications", required = false),
             ToolParameterSchema("title", description = "request_change: optional short title in the user's language", required = false),
             ToolParameterSchema("reason", description = "request_change: explain why these changes help, in the user's language", required = false),
         ),
@@ -86,7 +87,8 @@ internal object OrbitSettingsTools {
   - pause accepts only true. Approval stops the current Orbit and its background work; only the user can resume it manually. An old approval cannot pause another Orbit.
   - refill_extra accepts only true and clears extra allowance usage, without changing usage history or the weekly allowance. There is no weekly-usage reset.
   - request_export puts a data export card in the chat. The user taps it, confirms, and the app packs this Orbit's files, memory, tasks, goals and chats into one zip and opens the share sheet. You never get the zip or its path. End this turn with one short line after the card appears.
-  - 不开放工具权限和全访问模式。语音设置用 orbit_voice 的 request_settings，技能开关用 orbit_skills 的 request_visibility，账号登录用 orbit_vault 的 request_account_login。设置必须等卡片批准，不要自行编辑偏好文件。
+  - open_page puts a card in the chat that opens one Orbit settings page; the user changes it there themselves: tool_access (full access mode), tool_permissions (ask / allow / deny for each tool), models (which model you use for each job, thinking strength), notifications (notification switch, quiet hours at night, how often reports are sent). End this turn with one short line after the card appears.
+  - 工具权限和全访问模式你不能改，用户想改时用 open_page 放卡片带他过去，由他自己决定。语音设置用 orbit_voice 的 request_settings，技能开关用 orbit_skills 的 request_visibility，账号登录用 orbit_vault 的 request_account_login。设置必须等卡片批准，不要自行编辑偏好文件。
 """,
     )
 
@@ -169,6 +171,28 @@ internal object OrbitSettingsTools {
                             "you are not told whether they did. End this turn now with one short line.")
                         .put(OrbitChatCards.KEY, OrbitChatCards.dataExport(orbit.id))
                 }
+                "open_page" -> {
+                    check(OrbitPreferences.getInstance(context).current().orbitForChat(caller)?.id == orbit.id) {
+                        "Cards only work in a chat with the user"
+                    }
+                    val page = when (arg("page").lowercase(Locale.ROOT)) {
+                        "tool_access" -> OrbitChatCards.PAGE_TOOL_ACCESS
+                        "tool_permissions" -> {
+                            require(state.settings.developerMode) {
+                                "The per-tool permission page only shows in developer mode, which is off. Use page=tool_access, " +
+                                    "or ask with request_change {\"developer_mode\":true} first if the user wants per-tool choices."
+                            }
+                            OrbitChatCards.PAGE_TOOL_PERMISSIONS
+                        }
+                        "models" -> OrbitChatCards.PAGE_ORBIT_MODELS
+                        "notifications" -> OrbitChatCards.PAGE_NOTIFICATIONS
+                        else -> error("page must be tool_access, tool_permissions, models or notifications")
+                    }
+                    JSONObject().put("card", "placed")
+                        .put("note", "A card that opens this settings page is now in the chat. The user changes it there; " +
+                            "you are not told what they chose (read get or orbit_models list afterwards if needed). End this turn now with one short line.")
+                        .put(OrbitChatCards.KEY, OrbitChatCards.openPage(orbit.id, page))
+                }
                 "request_change" -> {
                     check(OrbitPreferences.getInstance(context).current().orbitForChat(caller)?.id == orbit.id) {
                         "Approval cards only work in a chat with the user"
@@ -209,7 +233,7 @@ internal object OrbitSettingsTools {
                         .put("note", text.getString(R.string.orbit_settings_requested))
                         .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
                 }
-                else -> error("action must be get, request_change or request_export")
+                else -> error("action must be get, request_change, request_export or open_page")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: CancellationException) {

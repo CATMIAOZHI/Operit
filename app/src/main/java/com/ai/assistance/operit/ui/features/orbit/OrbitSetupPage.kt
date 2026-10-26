@@ -128,15 +128,13 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 }
             }.onFailure { e ->
                 val raw = e.message.orEmpty().let { if (key.length >= 6) it.replace(key, "***") else it }.take(300)
+                // Some providers refuse to list models but still chat, so the names can always be typed;
+                // the chat test then shows whether the key works.
+                manual = true
                 when (OrbitSetup.problemOf(raw)) {
-                    // A wrong key or no network needs fixing first; anything else may just be a
-                    // provider that does not list models, so the names can be typed instead.
                     OrbitSetup.Problem.KEY -> showError(context.getString(R.string.orbit_setup_problem_key), raw)
                     OrbitSetup.Problem.NETWORK -> showError(context.getString(R.string.orbit_setup_problem_network), raw)
-                    else -> {
-                        manual = true
-                        showError(context.getString(R.string.orbit_setup_fetch_failed), raw)
-                    }
+                    else -> showError(context.getString(R.string.orbit_setup_fetch_failed), raw)
                 }
             }
         }

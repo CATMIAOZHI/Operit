@@ -366,6 +366,7 @@ class ChatServiceCore(
         characterCardId: String? = null,
         withOpeningMessage: Boolean = true,
         onCreated: ((String) -> Unit)? = null,
+        chatId: String? = null,
     ) {
         chatHistoryDelegate.createNewChat(
             characterCardName = characterCardName,
@@ -375,6 +376,7 @@ class ChatServiceCore(
             characterCardId = characterCardId,
             withOpeningMessage = withOpeningMessage,
             onCreated = onCreated,
+            chatId = chatId,
         )
     }
 

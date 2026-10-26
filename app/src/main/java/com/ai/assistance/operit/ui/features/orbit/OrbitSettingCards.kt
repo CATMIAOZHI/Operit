@@ -30,6 +30,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -55,7 +56,9 @@ import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /** Orbit pages a chat card can open over the chat. */
-internal enum class OrbitCardPage { SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS }
+internal enum class OrbitCardPage {
+    SPEECH_SETTINGS, MODEL_CONFIG, DEVICE_ACCESS, WEIXIN, ROLE_CARDS, TOOL_ACCESS, TOOL_PERMISSIONS, ORBIT_MODELS, NOTIFICATIONS,
+}
 
 /** Opens an Orbit page from a card; null where the chat cannot open pages (then the button is off). */
 internal val LocalOrbitOpenPage = compositionLocalOf<((OrbitCardPage) -> Unit)?> { null }
@@ -114,6 +117,9 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
         value = withContext(Dispatchers.IO) { ProviderAccountManager.get(context.applicationContext, provider) }
     }
     val signedIn = manager?.account?.collectAsState()?.value != null
+    // Asked to sign in again: an old sign-in is saved but no longer works. Done once a new one is made here.
+    var relogged by rememberSaveable { mutableStateOf(false) }
+    val relogin = card.optBoolean("relogin") && !relogged
     val orbit = remember { OrbitPreferences.getInstance(context).settingsFlow }
         .collectAsState(initial = null).value?.orbits?.firstOrNull { it.id == orbitId }
     val openPage = LocalOrbitOpenPage.current
@@ -121,9 +127,15 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
     var open by remember { mutableStateOf(false) }
     CardColumn {
         CardHeading("log-in", stringResource(R.string.orbit_account_card_title, label),
-            stringResource(if (signedIn) R.string.orbit_account_card_done else R.string.orbit_account_card_sub))
+            stringResource(when {
+                relogin -> R.string.orbit_login_card_relogin_sub
+                signedIn -> R.string.orbit_account_card_done
+                else -> R.string.orbit_account_card_sub
+            }))
         Spacer(Modifier.height(14.dp))
-        if (signedIn) {
+        if (relogin) {
+            CardButton(stringResource(R.string.orbit_login_card_relogin), enabled = manager != null && orbit != null) { open = true }
+        } else if (signedIn) {
             CardButton(stringResource(R.string.orbit_account_card_add_model), enabled = openPage != null) {
                 openPage?.invoke(OrbitCardPage.MODEL_CONFIG)
             }
@@ -149,6 +161,7 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
                     // Called after a sign-in or a sign-out; only a sign-in made here tells Orbit.
                     if (current.account.value != null) {
                         open = false
+                        relogged = true
                         orbit?.let { OrbitVaultNotice.sendAccountLogin(context, it, chatId, label, provider.type.name) }
                     }
                     scope.launch {
@@ -190,6 +203,14 @@ internal fun OrbitOpenPageCard(card: JSONObject) {
             R.string.orbit_page_card_roles_sub, R.string.orbit_page_card_roles_open, OrbitCardPage.ROLE_CARDS)
         OrbitChatCards.PAGE_MODEL_CONFIG -> Look("key-round", R.string.orbit_page_card_models_title,
             R.string.orbit_page_card_models_sub, R.string.orbit_page_card_models_open, OrbitCardPage.MODEL_CONFIG)
+        OrbitChatCards.PAGE_TOOL_ACCESS -> Look("shield-check", R.string.orbit_page_card_access_title,
+            R.string.orbit_page_card_access_sub, R.string.orbit_page_card_access_open, OrbitCardPage.TOOL_ACCESS)
+        OrbitChatCards.PAGE_TOOL_PERMISSIONS -> Look("sliders-horizontal", R.string.orbit_page_card_tools_title,
+            R.string.orbit_page_card_tools_sub, R.string.orbit_page_card_tools_open, OrbitCardPage.TOOL_PERMISSIONS)
+        OrbitChatCards.PAGE_ORBIT_MODELS -> Look("brain", R.string.orbit_page_card_orbit_models_title,
+            R.string.orbit_page_card_orbit_models_sub, R.string.orbit_page_card_orbit_models_open, OrbitCardPage.ORBIT_MODELS)
+        OrbitChatCards.PAGE_NOTIFICATIONS -> Look("bell", R.string.orbit_page_card_notify_title,
+            R.string.orbit_page_card_notify_sub, R.string.orbit_page_card_notify_open, OrbitCardPage.NOTIFICATIONS)
         else -> return
     }
     CardColumn {

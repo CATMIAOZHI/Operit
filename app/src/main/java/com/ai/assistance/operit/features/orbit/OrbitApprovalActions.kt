@@ -492,12 +492,26 @@ internal object OrbitApprovalActions {
         val existed = configs.getAllConfigSummaries().any { it.id == id }
         if (!existed) configs.createConfig(m.name, id)
         var auto = ModelAutoConfig.Result(emptyList(), emptyList())
+        // Why the model was not put to use: it did not answer a short test.
+        var failed: String? = null
         // Anything after the config exists that fails, or a cancel, takes the config away again.
         try {
             configs.updateModelConfig(id, key, m.endpoint, m.models.joinToString(","), m.provider)
             auto = ModelAutoConfig.fill(context, id)
             val first = m.models.first()
-            when (m.useAs) {
+            // A model put to use must answer a short test first; otherwise it is kept but not used.
+            if (m.useAs == USE_MAIN || m.useAs == USE_ASSISTANT) {
+                val full = checkNotNull(configs.getModelConfig(id)) { "The model configuration could not be read" }
+                failed = try {
+                    OrbitSetup.checkModel(context.applicationContext, configs, full, 0, null) {
+                        (if (key.length >= 6) it.replace(key, "***") else it).take(200)
+                    }
+                    null
+                } catch (e: OrbitSetup.SetupException) {
+                    OrbitSetup.describe(context, e.problem)
+                }
+            }
+            if (failed == null) when (m.useAs) {
                 USE_MAIN -> OrbitModelPreferences(context).update(orbit.id) { it.copy(main = OrbitModelRef(id, first)) }
                 USE_ASSISTANT -> OrbitModelPreferences(context).update(orbit.id) { it.copy(assistant = OrbitModelRef(id, first)) }
             }
@@ -509,7 +523,8 @@ internal object OrbitApprovalActions {
         return if (english) {
             "Added the model configuration \"${m.name}\" (${m.provider.name}, ${m.endpoint}, models ${m.models.joinToString()})" +
                 (if (key.isNotEmpty()) " with the API key the user typed" else "") + "." + autoConfigNote(auto, m.models, true) +
-                when (m.useAs) {
+                if (failed != null) " $first did not answer a test message, so it was not put to use; your models are unchanged. $failed"
+                else when (m.useAs) {
                     USE_MAIN -> " It is now your main model, $first. If replies fail, tell the user to switch back in Orbit settings > Models."
                     USE_ASSISTANT -> " It is now your assistant model, $first."
                     else -> " It is not in use yet; the user can pick it in Orbit settings > Models."
@@ -517,7 +532,8 @@ internal object OrbitApprovalActions {
         } else {
             "已新建模型配置「${m.name}」（${m.provider.name}，${m.endpoint}，模型 ${m.models.joinToString("、")}）" +
                 (if (key.isNotEmpty()) "，API 密钥是用户亲手填的" else "") + "。" + autoConfigNote(auto, m.models, false) +
-                when (m.useAs) {
+                if (failed != null) "但 $first 没通过试聊，所以没有换上，原来的模型不变。$failed"
+                else when (m.useAs) {
                     USE_MAIN -> "已设为你的主模型 $first。要是回复出错，请用户到 Orbit 设置 > 模型 换回去。"
                     USE_ASSISTANT -> "已设为你的辅助模型 $first。"
                     else -> "还没启用，用户可以在 Orbit 设置 > 模型 里选它。"

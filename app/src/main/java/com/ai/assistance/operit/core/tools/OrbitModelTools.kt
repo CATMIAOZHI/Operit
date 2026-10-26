@@ -42,7 +42,7 @@ internal object OrbitModelTools {
             "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请切换你用的模型（都要用户批准）、放卡片让用户去改密钥。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "list / discover / request_create / request_use / open_settings", required = true),
-            ToolParameterSchema("config", description = "discover, request_use: a configuration name from list", required = false),
+            ToolParameterSchema("config", description = "discover, request_use: a configuration's select from list (its name, or name#1, name#2 when names repeat)", required = false),
             ToolParameterSchema("query", description = "discover: optional word to filter model names, e.g. flash", required = false),
             ToolParameterSchema("name", description = "request_create: a short name for the configuration, e.g. DeepSeek (at most $MAX_NAME characters)", required = false),
             ToolParameterSchema("provider", description = "request_create, or discover without config: provider id from list's providers, e.g. DEEPSEEK, OPENAI_GENERIC, ANTHROPIC, OPENROUTER", required = false),
@@ -55,7 +55,7 @@ internal object OrbitModelTools {
             ToolParameterSchema("reason", description = "request_create: one sentence telling the user why", required = false),
         ),
         details = """
-  - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in.
+  - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in. Pass a configuration's select as config; it is the name, or name#1, name#2 … when several share a name.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
   - request_create: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. It returns at once; end the turn with one short line. You get a hidden note with what was added.
   - open_settings puts a card in the chat that opens the model settings page, where the user changes the API key, endpoint or models of an existing configuration themselves (the key never reaches you). Use it when a key stopped working (wrong key, out of balance) or the user wants to change one. End the turn with one short line.
@@ -78,24 +78,30 @@ internal object OrbitModelTools {
             val configs = ModelConfigManager(context)
             configs.initializeIfNeeded()
             suspend fun named(name: String): ModelConfigSummary {
-                require(name.isNotEmpty()) { "Give config: a configuration name from list" }
-                return configs.getAllConfigSummaries().firstOrNull { it.name == name }
-                    ?: error("No configuration named \"$name\"; use a name exactly as list shows it")
+                require(name.isNotEmpty()) { "Give config: a configuration's select from list" }
+                val all = configs.getAllConfigSummaries()
+                val picks = selectors(all)
+                all.firstOrNull { picks[it.id] == name }?.let { return it }
+                require(all.none { it.name == name }) {
+                    "Several configurations are named \"$name\"; pass config exactly as list's select shows it, e.g. \"$name#1\""
+                }
+                error("No configuration \"$name\"; use a select exactly as list shows it")
             }
             val result: JSONObject = when (arg("action")) {
                 "list" -> {
                     val mine = OrbitModelPreferences(context).current(orbit.id)
                     val list = JSONArray()
                     val summaries = configs.getAllConfigSummaries()
+                    val picks = selectors(summaries)
                     summaries.forEach { s ->
                         val full = configs.getModelConfig(s.id)
-                        list.put(JSONObject().put("name", s.name).put("provider", s.apiProviderTypeId)
+                        list.put(JSONObject().put("select", picks[s.id]).put("name", s.name).put("provider", s.apiProviderTypeId)
                             .put("endpoint", full?.apiEndpoint.orEmpty())
                             .put("models", JSONArray(getModelList(s.modelName)))
                             .put("has_key", !full?.apiKey.isNullOrBlank()))
                     }
                     fun label(ref: com.ai.assistance.operit.data.preferences.OrbitModelRef?): String =
-                        ref?.let { r -> summaries.firstOrNull { it.id == r.configId }?.name?.let { "$it / ${r.modelName}" } }.orEmpty()
+                        ref?.let { r -> picks[r.configId]?.let { "$it / ${r.modelName}" } }.orEmpty()
                     JSONObject().put("configurations", list)
                         .put("your_main", label(mine.main)).put("your_assistant", label(mine.assistant))
                         .put("your_multimodal", label(mine.multimodal))
@@ -220,6 +226,27 @@ internal object OrbitModelTools {
         } catch (e: Exception) {
             ToolResult(NAME, false, StringResultData(""), error = e.message ?: e.toString())
         }
+    }
+
+    /**
+     * How Orbit names each configuration (by id) when it passes it back: its name when no other one has
+     * it, otherwise name#1, name#2 … in list order, skipping any pick already taken (even a real name
+     * like "A#2"), so every pick is different and a repeated name never silently picks the first one.
+     */
+    private fun selectors(all: List<ModelConfigSummary>): Map<String, String> {
+        val counts = all.groupingBy { it.name }.eachCount()
+        val picks = LinkedHashMap<String, String>()
+        all.filter { counts[it.name] == 1 }.forEach { picks[it.id] = it.name }
+        val used = picks.values.toMutableSet()
+        all.filter { counts[it.name] != 1 }.groupBy { it.name }.forEach { (name, same) ->
+            var n = 1
+            same.forEach { config ->
+                while ("$name#$n" in used) n++
+                picks[config.id] = "$name#$n"
+                used += "$name#$n"
+            }
+        }
+        return picks
     }
 
     /** Whether each sign-in account is signed in; never a token or an email. */

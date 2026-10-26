@@ -34,12 +34,17 @@ internal object OrbitChatCards {
     const val SPEECH_SETTINGS = "speech_settings"
     /** Exports this Orbit's data as one zip and hands it to the share sheet. */
     const val DATA_EXPORT = "data_export"
-    /** Opens a settings page from the chat: the WeChat link, role cards, or model settings. */
+    /** Opens a settings page from the chat: the WeChat link, role cards, model settings, tool access, models, notifications. */
     const val OPEN_PAGE = "open_page"
     const val PAGE_WEIXIN = "weixin"
     const val PAGE_ROLE_CARDS = "role_cards"
     const val PAGE_MODEL_CONFIG = "model_config"
-    val pages = listOf(PAGE_WEIXIN, PAGE_ROLE_CARDS, PAGE_MODEL_CONFIG)
+    const val PAGE_TOOL_ACCESS = "tool_access"
+    const val PAGE_TOOL_PERMISSIONS = "tool_permissions"
+    const val PAGE_ORBIT_MODELS = "orbit_models"
+    const val PAGE_NOTIFICATIONS = "notifications"
+    val pages = listOf(PAGE_WEIXIN, PAGE_ROLE_CARDS, PAGE_MODEL_CONFIG, PAGE_TOOL_ACCESS, PAGE_TOOL_PERMISSIONS,
+        PAGE_ORBIT_MODELS, PAGE_NOTIFICATIONS)
 
     /** Account sign-ins a card can offer: the id Orbit passes, and the account it stands for. */
     val accountProviders: Map<String, com.ai.assistance.operit.data.api.AccountProvider> = mapOf(
@@ -84,6 +89,10 @@ internal object OrbitChatCards {
                 PAGE_WEIXIN -> if (english) "WeChat" else "微信"
                 PAGE_ROLE_CARDS -> if (english) "Role cards" else "角色卡"
                 PAGE_MODEL_CONFIG -> if (english) "Model settings" else "模型配置"
+                PAGE_TOOL_ACCESS -> if (english) "Full access" else "全访问模式"
+                PAGE_TOOL_PERMISSIONS -> if (english) "Tool permissions" else "工具权限"
+                PAGE_ORBIT_MODELS -> if (english) "Models" else "模型"
+                PAGE_NOTIFICATIONS -> if (english) "Notifications" else "通知"
                 else -> ""
             }
             IMAGE -> (if (english) "Picture" else "图片") to field("name")
@@ -156,19 +165,24 @@ internal object OrbitChatCards {
         .put("permission", permission)
         .put("card_id", cardId)
 
-    /** A card that signs in to ChatGPT; [requestedAt] tells a login made from it from an older one. */
-    fun chatGptLogin(orbitId: String, chatId: String, requestedAt: Long): JSONObject = JSONObject()
+    /**
+     * A card that signs in to ChatGPT; [requestedAt] tells a login made from it from an older one.
+     * [relogin] lets the user sign in again while an old, no longer working sign-in is still saved.
+     */
+    fun chatGptLogin(orbitId: String, chatId: String, requestedAt: Long, relogin: Boolean = false): JSONObject = JSONObject()
         .put("kind", CHATGPT_LOGIN)
         .put("orbit_id", orbitId)
         .put("chat_id", chatId)
         .put("requested_at", requestedAt)
+        .put("relogin", relogin)
 
-    /** A card that signs in to the account [provider] (a key of [accountProviders]). */
-    fun accountLogin(orbitId: String, chatId: String, provider: String): JSONObject = JSONObject()
+    /** A card that signs in to the account [provider] (a key of [accountProviders]); [relogin] as in [chatGptLogin]. */
+    fun accountLogin(orbitId: String, chatId: String, provider: String, relogin: Boolean = false): JSONObject = JSONObject()
         .put("kind", ACCOUNT_LOGIN)
         .put("orbit_id", orbitId)
         .put("chat_id", chatId)
         .put("provider", provider)
+        .put("relogin", relogin)
 
     fun speechSettings(orbitId: String): JSONObject = JSONObject()
         .put("kind", SPEECH_SETTINGS)
