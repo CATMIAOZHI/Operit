@@ -58,6 +58,8 @@ internal fun OrbitModelPicker(
     enabled: Boolean,
     onFetch: () -> Unit,
     onToggle: (String) -> Unit,
+    /** Shown instead of the usual "check the key and endpoint" when fetching failed. */
+    failedText: String? = null,
 ) {
     val colors = MaterialTheme.colorScheme
     val listed = (state as? ModelListState.Loaded)?.models.orEmpty()
@@ -83,7 +85,8 @@ internal fun OrbitModelPicker(
             when (state) {
                 ModelListState.Idle, ModelListState.Failed -> {
                     Text(
-                        stringResource(
+                        if (state == ModelListState.Failed && failedText != null) failedText
+                        else stringResource(
                             when {
                                 state == ModelListState.Failed -> R.string.orbit_model_pick_failed
                                 canFetch -> R.string.orbit_model_pick_hint

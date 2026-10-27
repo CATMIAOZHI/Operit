@@ -46,10 +46,60 @@ internal object OrbitApprovalActions {
     const val USE_MAIN = "main"
     const val USE_ASSISTANT = "assistant"
 
-    /** Signing in to these is done on the provider's account page, not with an API key. */
-    val ACCOUNT_PROVIDERS = setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT,
-        ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT,
-        ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
+    /**
+     * Used with a signed-in account instead of an API key. Orbit can add these once the user has
+     * signed in on its login card; the models come from the account.
+     */
+    val SIGN_IN_PROVIDERS = setOf(ApiProviderType.OPENAI_CODEX, ApiProviderType.GROK_ACCOUNT,
+        ApiProviderType.COMMAND_CODE, ApiProviderType.GOOGLE_ANTIGRAVITY, ApiProviderType.CLAUDE_ACCOUNT)
+
+    /** Models run on the phone; set up in the app's model settings (model files, downloads). */
+    val LOCAL_PROVIDERS = setOf(ApiProviderType.MNN, ApiProviderType.LLAMA_CPP)
+
+    /** Providers that work without an API key: sign-in accounts and models on the phone. */
+    val ACCOUNT_PROVIDERS = SIGN_IN_PROVIDERS + LOCAL_PROVIDERS
+
+    /** Whether the user is signed in to the account [provider] uses. */
+    fun signedIn(context: Context, provider: ApiProviderType): Boolean = runCatching {
+        if (provider == ApiProviderType.OPENAI_CODEX) {
+            com.ai.assistance.operit.data.preferences.CodexAuthPreferences.getInstance(context).currentState() != null
+        } else {
+            val account = checkNotNull(com.ai.assistance.operit.data.api.AccountProvider.from(provider))
+            com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, account).account.value != null
+        }
+    }.getOrDefault(false)
+
+    /** The login card Orbit puts for [provider]'s account, for messages that tell it to sign in first. */
+    fun signInWith(provider: ApiProviderType): String =
+        if (provider == ApiProviderType.OPENAI_CODEX) "orbit_vault request_chatgpt_login"
+        else OrbitChatCards.accountProviders.entries.firstOrNull { it.value.type == provider }
+            ?.let { "orbit_vault request_account_login provider=${it.key}" } ?: "orbit_vault request_account_login"
+
+    /** The models the signed-in account offers, the same way the app's model settings ask. */
+    private suspend fun accountModels(context: Context, provider: ApiProviderType): List<com.ai.assistance.operit.data.model.ModelOption> {
+        if (provider == ApiProviderType.OPENAI_CODEX) {
+            return com.ai.assistance.operit.api.chat.llmprovider.CodexModelListFetcher.getModelsList(context).getOrThrow()
+        }
+        val account = checkNotNull(com.ai.assistance.operit.data.api.AccountProvider.from(provider)) { "Not an account provider" }
+        val manager = com.ai.assistance.operit.data.api.ProviderAccountManager.get(context, account)
+        return when (account) {
+            com.ai.assistance.operit.data.api.AccountProvider.GROK -> manager.availableGrokModels()
+            com.ai.assistance.operit.data.api.AccountProvider.COMMAND_CODE -> manager.availableCommandCodeModels()
+            com.ai.assistance.operit.data.api.AccountProvider.ANTIGRAVITY ->
+                com.ai.assistance.operit.api.chat.llmprovider.AntigravityTransport(manager, "").models()
+            com.ai.assistance.operit.data.api.AccountProvider.CLAUDE -> try {
+                com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher.getModelsList(
+                    context, manager.validAccount().accessToken, defaultEndpoint(provider), provider,
+                ).getOrThrow()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                // Subscription accounts do not always list their models; fall back to the known list.
+                com.ai.assistance.operit.data.api.ClaudeOAuthProtocol.SUBSCRIPTION_MODELS
+                    .map { com.ai.assistance.operit.data.model.ModelOption(id = it, name = it) }
+            }
+        }
+    }
 
     /** Packages that use the app's ChatGPT login instead of a key. */
     private val CHATGPT_PACKAGES = setOf("codex_draw")
@@ -74,9 +124,11 @@ internal object OrbitApprovalActions {
      */
     suspend fun fetchModels(context: Context, provider: ApiProviderType, endpoint: String, key: String,
         customHeaders: Map<String, String> = emptyMap()): List<String> =
-        com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
-            .getModelsList(context, key.trim(), endpoint, provider, customHeaders = customHeaders)
-            .getOrThrow().map { it.id.trim() }.filter { it.isNotEmpty() }.distinct()
+        // The account store is encrypted and read from disk, so the lookup stays off the main thread.
+        (if (provider in SIGN_IN_PROVIDERS) withContext(kotlinx.coroutines.Dispatchers.IO) { accountModels(context, provider) }
+        else com.ai.assistance.operit.api.chat.llmprovider.ModelListFetcher
+            .getModelsList(context, key.trim(), endpoint, provider, customHeaders = customHeaders).getOrThrow())
+            .map { it.id.trim() }.filter { it.isNotEmpty() }.distinct()
 
     fun packageManager(context: Context): PackageManager =
         PackageManager.getInstance(context, AIToolHandler.getInstance(context))
@@ -564,8 +616,8 @@ internal object OrbitApprovalActions {
         }
     }
 
-    /** Providers Orbit may add, for the tool's list. */
-    fun providers(): List<String> = ApiProviderType.values().filter { it !in ACCOUNT_PROVIDERS }.map { it.name }
+    /** Providers Orbit may add, for the tool's list. Sign-in accounts need the user signed in first. */
+    fun providers(): List<String> = ApiProviderType.values().filter { it !in LOCAL_PROVIDERS }.map { it.name }
 
     fun defaultEndpoint(provider: ApiProviderType): String = ApiProviderConfigs.getDefaultApiEndpoint(provider)
 

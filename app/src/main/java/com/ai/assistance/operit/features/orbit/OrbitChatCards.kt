@@ -12,7 +12,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /**
- * Cards Orbit puts in the chat with a tool, like Muse: a secure entry card for a login or an API
+ * Cards Orbit puts in the chat with a tool: a secure entry card for a login or an API
  * key, and a picture or file it sends. The tool's result carries the card under [KEY]; the Orbit
  * chat draws it where the tool ran. Nothing secret is ever in a card.
  */
@@ -384,13 +384,16 @@ internal object OrbitVaultNotice {
         val notice = if (LocaleUtils.usesEnglishPrompt(app)) {
             "$MARKER ChatGPT login done\n" +
                 "The user signed in to ChatGPT from your card. This is not a message from the user and they cannot see this note.\n" +
-                "Codex models and the codex_draw package can be used now. If you were in the middle of something that needed it, " +
+                "Codex models and the codex_draw package can be used now. To use a Codex model, check orbit_models list for a " +
+                "configuration with provider OPENAI_CODEX; if there is none, add one with orbit_models request_create provider=OPENAI_CODEX " +
+                "(leave endpoint and models out). If you were in the middle of something that needed it, " +
                 "carry on now; otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO}. " +
                 "Do not mention hidden notes."
         } else {
             "$MARKER 已登录 ChatGPT\n" +
                 "用户用你放的卡片登录了 ChatGPT。这不是用户发的消息，用户也看不到这段话。\n" +
-                "Codex 模型和 codex_draw 工具包现在可以用了。刚才有事情正等着它的话现在接着做；没有就简短回一句，" +
+                "Codex 模型和 codex_draw 工具包现在可以用了。要用 Codex 模型，先用 orbit_models 的 list 看有没有服务商为 OPENAI_CODEX 的配置；" +
+                "没有就用 orbit_models 的 request_create provider=OPENAI_CODEX 申请新建（endpoint 和 models 都不用填）。刚才有事情正等着它的话现在接着做；没有就简短回一句，" +
                 "或者调用 ${OrbitReactionNotice.NOTHING_TO_DO}。不要提“隐藏消息”这些内部说法。"
         }
         scope.launch {
@@ -413,14 +416,16 @@ internal object OrbitVaultNotice {
             "$MARKER $label account signed in\n" +
                 "The user signed in to their $label account from your card. This is not a message from the user and they cannot see this note.\n" +
                 "Signing in alone does not make it a model you use. A model configuration with provider $providerType is needed: " +
-                "check orbit_models list; if there is none, the user adds it from the card's \"Add model\" button (Orbit settings > Models > Model configs), " +
-                "then you can ask to switch with orbit_models request_use. If you were in the middle of something that needed it, carry on now; " +
+                "check orbit_models list; if there is none, add it yourself with orbit_models request_create provider=$providerType " +
+                "(leave endpoint and models out; the user picks the models on the card). With one in place, orbit_models request_use switches to it. " +
+                "If you were in the middle of something that needed it, carry on now; " +
                 "otherwise reply with one short line, or call ${OrbitReactionNotice.NOTHING_TO_DO}. Do not mention hidden notes."
         } else {
             "$MARKER 已登录 $label 账号\n" +
                 "用户用你放的卡片登录了 $label 账号。这不是用户发的消息，用户也看不到这段话。\n" +
                 "光登录还不能直接当模型用，需要一个服务商为 $providerType 的模型配置：先用 orbit_models 的 list 看有没有；" +
-                "没有的话，用户点卡片上的「添加模型」（Orbit 设置 > 模型 > 模型配置）去加，加好后你可以用 orbit_models 的 request_use 申请切换。" +
+                "没有的话，你自己用 orbit_models 的 request_create provider=$providerType 申请新建（endpoint 和 models 都不用填，用户在卡片上从账号的模型列表里勾）。" +
+                "有了配置，再用 orbit_models 的 request_use 申请切换。" +
                 "刚才有事情正等着它的话现在接着做；没有就简短回一句，或者调用 ${OrbitReactionNotice.NOTHING_TO_DO}。不要提“隐藏消息”这些内部说法。"
         }
         scope.launch {

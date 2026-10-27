@@ -737,6 +737,11 @@ private fun renderNodeContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(vertical = 2.dp),
                 )
+            } else if (language.trim().lowercase() in com.ai.assistance.operit.ui.features.orbit.ORBIT_COPY_BLOCK_LANGUAGES &&
+                com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook.current
+            ) {
+                // Plain text Orbit hands over for copying, e.g. a prompt to paste into another AI.
+                com.ai.assistance.operit.ui.features.orbit.OrbitCopyBlock(codeContent, textColor)
             } else EnhancedCodeBlock(
                 code = codeContent,
                 language = language,

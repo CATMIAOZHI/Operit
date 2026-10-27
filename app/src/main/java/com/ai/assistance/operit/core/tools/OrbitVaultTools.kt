@@ -77,7 +77,7 @@ internal object OrbitVaultTools {
   - 工具包要 API 密钥（use_package 或 orbit_packages list 提示缺环境变量）：用 request_api_key 加 package_name 和 env_name（那个包要的变量名，原样大写），provider 写服务名，不传 api_hosts，不需要 env_reason。用户保存后，这个包运行时会读到它，别的包和终端都拿不到；不用把它填进主程序的环境变量。
   - 要用 ChatGPT 账号的功能（Codex 模型、codex_draw 绘图）还没登录时，用 request_chatgpt_login 放一张登录卡片，用户点它登录，成功后你会收到隐藏通知。已经登录会直接告诉你。
   - “已经登录”只表示 App 里存着账号，不保证还能用。用这个账号时报登录失效、401、需要重新登录，就再调一次并加 relogin=true，放一张重新登录卡片。
-  - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：用户点卡片上的「添加模型」去加，再用 orbit_models 的 request_use 申请切换。
+  - 用户想用 Claude、Grok、Antigravity 或 Command Code 账号（订阅登录，不用 API 密钥）时，用 request_account_login 加 provider 放一张账号登录卡片。用户在卡片里登录，成功后你会收到隐藏通知；已经登录会直接告诉你。登录后还要有对应的模型配置才能当模型用：没有就由你用 orbit_models 的 request_create 加对应 provider 申请新建（endpoint、models 不用填，用户在卡片上勾模型），再用 request_use 申请切换。
 """,
     )
 
@@ -107,7 +107,8 @@ internal object OrbitVaultTools {
                     when {
                         signedIn && !relogin -> JSONObject().put("already_logged_in", true)
                             .put("note", "The $label account is already signed in in this app. To use it as a model, check orbit_models list " +
-                                "for a configuration with provider ${provider.type.name}. If using it fails with a sign-in error (401, " +
+                                "for a configuration with provider ${provider.type.name}; if there is none, request one with orbit_models " +
+                                "request_create provider=${provider.type.name} (leave endpoint and models out). If using it fails with a sign-in error (401, " +
                                 "sign in again), the saved sign-in stopped working: call again with relogin=true.")
                         sentCards.putIfAbsent(key, now) != null -> JSONObject().put("already_sent", true)
                             .put("note", "The $label login card is already in the chat above. Do not send another. End this turn now.")

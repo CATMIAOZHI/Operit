@@ -102,7 +102,7 @@ private fun CardColumn(content: @Composable () -> Unit) {
     }
 }
 
-/** Signs in to a provider account (Claude, Grok, …); once signed in, offers to add its model. */
+/** Signs in to a provider account (Claude, Grok, …); once signed in, Orbit adds its model from the chat. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun OrbitAccountLoginCard(card: JSONObject) {
@@ -122,25 +122,24 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
     val relogin = card.optBoolean("relogin") && !relogged
     val orbit = remember { OrbitPreferences.getInstance(context).settingsFlow }
         .collectAsState(initial = null).value?.orbits?.firstOrNull { it.id == orbitId }
-    val openPage = LocalOrbitOpenPage.current
     val scope = rememberCoroutineScope()
     var open by remember { mutableStateOf(false) }
+    val who = orbit?.let { orbitName(it) } ?: stringResource(R.string.nav_orbit)
     CardColumn {
         CardHeading("log-in", stringResource(R.string.orbit_account_card_title, label),
-            stringResource(when {
-                relogin -> R.string.orbit_login_card_relogin_sub
-                signedIn -> R.string.orbit_account_card_done
-                else -> R.string.orbit_account_card_sub
-            }))
-        Spacer(Modifier.height(14.dp))
+            when {
+                relogin -> stringResource(R.string.orbit_login_card_relogin_sub)
+                signedIn -> stringResource(R.string.orbit_account_card_done, who)
+                else -> stringResource(R.string.orbit_account_card_sub)
+            })
         if (relogin) {
+            Spacer(Modifier.height(14.dp))
             CardButton(stringResource(R.string.orbit_login_card_relogin), enabled = manager != null && orbit != null) { open = true }
-        } else if (signedIn) {
-            CardButton(stringResource(R.string.orbit_account_card_add_model), enabled = openPage != null) {
-                openPage?.invoke(OrbitCardPage.MODEL_CONFIG)
-            }
-        } else {
+        } else if (!signedIn) {
+            Spacer(Modifier.height(14.dp))
             CardButton(stringResource(R.string.orbit_chatgpt_card_login), enabled = manager != null && orbit != null) { open = true }
+        } else {
+            Spacer(Modifier.height(4.dp))
         }
     }
     val current = manager

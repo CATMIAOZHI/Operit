@@ -191,8 +191,9 @@ public:
                     e.plugin->reset();
                 }
 
-                // Reprocess current char as idle (do NOT advance global offset again)
-                pendingChars_.push_front({c, globalIndex});
+                // Reprocess current char as idle (do NOT advance global offset again), keeping
+                // whether it began a line: a '<' that ends a quote must still open a line-start tag.
+                pendingChars_.push_front({c, globalIndex, atStartOfLine});
                 return;
             }
 
@@ -337,17 +338,18 @@ public:
             char16_t c;
             int forcedIndex = -1;
 
+            bool sol = atStartOfLine;
             if (!pendingChars_.empty()) {
                 PendingChar pc = pendingChars_.front();
                 pendingChars_.pop_front();
                 c = pc.c;
                 forcedIndex = pc.globalIndex;
+                sol = pc.atStartOfLine;
             } else {
                 c = static_cast<char16_t>(chars[i]);
                 i += 1;
             }
 
-            const bool sol = atStartOfLine;
             atStartOfLine = (c == u'\n');
             processOne(c, sol, forcedIndex);
         }
@@ -399,6 +401,7 @@ private:
     struct PendingChar {
         char16_t c;
         int globalIndex;
+        bool atStartOfLine;
     };
 
     std::vector<PluginEntry> plugins_;

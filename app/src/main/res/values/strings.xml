@@ -9818,8 +9818,7 @@
     <string name="orbit_chatgpt_card_device">用设备码登录</string>
     <string name="orbit_account_card_title">登录 %1$s 账号</string>
     <string name="orbit_account_card_sub">用账号登录，不用 API 密钥</string>
-    <string name="orbit_account_card_done">已登录，下一步添加模型</string>
-    <string name="orbit_account_card_add_model">添加模型</string>
+    <string name="orbit_account_card_done">已登录，%1$s 会帮你把模型加上</string>
     <string name="orbit_speech_card_title">语音设置</string>
     <string name="orbit_speech_card_sub">朗读：%1$s · 语音输入：%2$s</string>
     <string name="orbit_speech_card_open">打开语音设置</string>

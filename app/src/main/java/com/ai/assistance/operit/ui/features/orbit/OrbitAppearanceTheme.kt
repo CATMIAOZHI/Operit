@@ -134,6 +134,11 @@ internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -
         onDispose { pageAppearance?.value = null }
     }
     SideEffect { pageAppearance?.value = OpaquePageAppearance(scheme.background, dark) }
+    // Download prompts and progress live outside this page; they follow its colors while it shows.
+    DisposableEffect(scheme) {
+        OrbitActiveTheme.scheme = scheme
+        onDispose { if (OrbitActiveTheme.scheme === scheme) OrbitActiveTheme.scheme = null }
+    }
     CompositionLocalProvider(LocalOrbitBubbleColor provides bubble, LocalOrbitAvatarColor provides avatarColor) {
         MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, content = content)
     }

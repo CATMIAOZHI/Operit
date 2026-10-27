@@ -9841,8 +9841,7 @@
     <string name="orbit_chatgpt_card_device">Sign in with a device code</string>
     <string name="orbit_account_card_title">Sign in to %1$s</string>
     <string name="orbit_account_card_sub">Sign in with your account, no API key</string>
-    <string name="orbit_account_card_done">Signed in. Next, add the model</string>
-    <string name="orbit_account_card_add_model">Add model</string>
+    <string name="orbit_account_card_done">Signed in. %1$s will add the model for you</string>
     <string name="orbit_speech_card_title">Voice settings</string>
     <string name="orbit_speech_card_sub">Read aloud: %1$s · Voice input: %2$s</string>
     <string name="orbit_speech_card_open">Open voice settings</string>

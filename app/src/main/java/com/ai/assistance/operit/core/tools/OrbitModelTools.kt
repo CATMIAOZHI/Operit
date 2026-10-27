@@ -37,7 +37,7 @@ internal object OrbitModelTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "List the app's model configurations and which ones you use, look up the models a provider offers, " +
-            "ask the user to add a configuration (they type the API key and pick the models on the card), or to switch the model you use, " +
+            "ask the user to add a configuration (they type the API key, or use a signed-in account, and pick the models on the card), or to switch the model you use, " +
             "or put a card that opens the model settings so the user can change a key. " +
             "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请切换你用的模型（都要用户批准）、放卡片让用户去改密钥。",
         parametersStructured = listOf(
@@ -51,18 +51,19 @@ internal object OrbitModelTools {
             ToolParameterSchema("model", description = "request_use: the model name, from the configuration's models or from discover", required = false),
             ToolParameterSchema("use_as", description = "request_create: none (default), main or assistant. request_use (required): main, assistant or multimodal. Only when the user wants it", required = false),
             ToolParameterSchema("thinking", description = "request_use with use_as assistant: optional thinking strength low / medium / high / xhigh / max", required = false),
-            ToolParameterSchema("needs_key", description = "request_create: true (default for providers that need one) or false for a local server without a key", required = false),
+            ToolParameterSchema("needs_key", description = "request_create: true (default for providers that need one) or false for a local server without a key. Ignored for sign-in accounts", required = false),
             ToolParameterSchema("reason", description = "request_create: one sentence telling the user why", required = false),
         ),
         details = """
   - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in. Pass a configuration's select as config; it is the name, or name#1, name#2 … when several share a name.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
-  - request_create: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. It returns at once; end the turn with one short line. You get a hidden note with what was added.
+  - request_create for an API-key provider: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. For a sign-in account see below. It returns at once; end the turn with one short line. You get a hidden note with what was added.
   - open_settings puts a card in the chat that opens the model settings page, where the user changes the API key, endpoint or models of an existing configuration themselves (the key never reaches you). Use it when a key stopped working (wrong key, out of balance) or the user wants to change one. End the turn with one short line.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
-  - Accounts that sign in instead of using a key are not added here. Put a sign-in card with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). After signing in, the user adds the model configuration from that card's "Add model" button; then request_use can switch to it.
-  - 模型名别靠猜：已有配置用 discover 查；新建时让用户在卡片里填密钥后从服务商列表里勾。用户在卡片里填密钥，你看不到。
+  - Sign-in accounts (OPENAI_CODEX, GROK_ACCOUNT, CLAUDE_ACCOUNT, GOOGLE_ANTIGRAVITY, COMMAND_CODE) use no key. list's accounts shows which are signed in. Not signed in: put a sign-in card first with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). Signed in: add it yourself with request_create provider=<that id> (leave endpoint and models out); the user picks the models from the account's list on the card. discover with that provider also lists the account's models.
+  - Models that run on the phone (MNN, LLAMA_CPP) are set up in the app's model settings; use open_settings for those.
+  - 模型名别靠猜：已有配置用 discover 查；新建时让用户在卡片里填密钥（账号登录型不用填）后从服务商列表里勾。用户在卡片里填密钥，你看不到。
 """,
     )
 
@@ -117,11 +118,16 @@ internal object OrbitModelTools {
                     } else {
                         val provider = provider(arg("provider"))
                         val endpoint = endpoint(provider, arg("endpoint"))
-                        require(!OrbitApprovalActions.requiresKey(provider, endpoint)) {
+                        signedInFor(context, provider)
+                        require(provider in OrbitApprovalActions.SIGN_IN_PROVIDERS || !OrbitApprovalActions.requiresKey(provider, endpoint)) {
                             "This provider needs an API key. Use request_create (models can be left out): the user types the key " +
                                 "on the card and picks from the provider's list there. For a configuration that already has a key, pass config."
                         }
-                        "${provider.name} $endpoint" to fetch(context) { OrbitApprovalActions.fetchModels(context, provider, endpoint, "") }
+                        "${provider.name} $endpoint" to if (provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) {
+                            fetchAccount(provider) { OrbitApprovalActions.fetchModels(context, provider, endpoint, "") }
+                        } else {
+                            fetch(context) { OrbitApprovalActions.fetchModels(context, provider, endpoint, "") }
+                        }
                     }
                     val query = arg("query").lowercase()
                     val matching = models.filter { query.isEmpty() || it.lowercase().contains(query) }
@@ -181,7 +187,10 @@ internal object OrbitModelTools {
                     val name = arg("name").replace(Regex("\\s+"), " ")
                     require(name.isNotEmpty() && name.length <= MAX_NAME) { "name must be 1-$MAX_NAME characters" }
                     val provider = provider(arg("provider"))
-                    val endpoint = endpoint(provider, arg("endpoint"))
+                    signedInFor(context, provider)
+                    val signIn = provider in OrbitApprovalActions.SIGN_IN_PROVIDERS
+                    // An account's endpoint is fixed by the app; it is not Orbit's to change.
+                    val endpoint = if (signIn) endpoint(provider, "") else endpoint(provider, arg("endpoint"))
                     val models = OrbitApprovalActions.splitModels(arg("models"))
                     require(models.size <= MAX_MODELS && models.all { it.length <= 120 }) {
                         "models may suggest at most $MAX_MODELS model names, or be left out"
@@ -190,7 +199,7 @@ internal object OrbitModelTools {
                     require(useAs in setOf(OrbitApprovalActions.USE_NONE, OrbitApprovalActions.USE_MAIN, OrbitApprovalActions.USE_ASSISTANT)) {
                         "use_as must be none, main or assistant"
                     }
-                    val needsKey = when (arg("needs_key").lowercase()) {
+                    val needsKey = if (signIn) false else when (arg("needs_key").lowercase()) {
                         "true" -> true
                         "false" -> false
                         else -> OrbitApprovalActions.requiresKey(provider, endpoint)
@@ -268,8 +277,20 @@ internal object OrbitModelTools {
     }
 
     private fun provider(id: String): ApiProviderType =
-        ApiProviderType.fromProviderTypeId(id)?.takeIf { it !in OrbitApprovalActions.ACCOUNT_PROVIDERS }
-            ?: error("provider must be one of list's providers")
+        ApiProviderType.fromProviderTypeId(id)?.also {
+            require(it !in OrbitApprovalActions.LOCAL_PROVIDERS) {
+                "${it.name} runs a model on the phone and is set up in the app's model settings; put a card with action=open_settings"
+            }
+        } ?: error("provider must be one of list's providers")
+
+    /** A sign-in account must be signed in before Orbit can add it or list its models. */
+    private fun signedInFor(context: Context, provider: ApiProviderType) {
+        if (provider !in OrbitApprovalActions.SIGN_IN_PROVIDERS) return
+        require(OrbitApprovalActions.signedIn(context, provider)) {
+            "The user is not signed in to the ${provider.name} account. Put a sign-in card with " +
+                "${OrbitApprovalActions.signInWith(provider)} first; after they sign in you get a note, then call request_create again."
+        }
+    }
 
     private fun endpoint(provider: ApiProviderType, given: String): String {
         val endpoint = given.ifEmpty { OrbitApprovalActions.defaultEndpoint(provider) }
@@ -282,8 +303,12 @@ internal object OrbitModelTools {
     /** The provider's models for a saved configuration; the saved key is used here and never returned. */
     private suspend fun remoteModels(context: Context, full: ModelConfigData): List<String> {
         val provider = ApiProviderType.fromProviderTypeId(full.apiProviderTypeId) ?: full.apiProviderType
-        require(provider !in OrbitApprovalActions.ACCOUNT_PROVIDERS) {
-            "\"${full.name}\" signs in with an account; its models are picked in Orbit settings > Models"
+        require(provider !in OrbitApprovalActions.LOCAL_PROVIDERS) {
+            "\"${full.name}\" runs a model on the phone; its models are set up in the app's model settings"
+        }
+        if (provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) {
+            signedInFor(context, provider)
+            return fetchAccount(provider) { OrbitApprovalActions.fetchModels(context, provider, full.apiEndpoint, "") }
         }
         val key = full.apiKey.ifBlank { full.apiKeyPool.firstOrNull { it.isEnabled }?.key.orEmpty() }
         return fetch(context, key) {
@@ -291,6 +316,18 @@ internal object OrbitModelTools {
                 com.ai.assistance.operit.api.chat.llmprovider.parseProviderCustomHeaders(full.customHeaders))
         }
     }
+
+    /** A sign-in account's model list failed: often an expired sign-in, fixed by signing in again from a card. */
+    private suspend fun fetchAccount(provider: ApiProviderType, block: suspend () -> List<String>): List<String> =
+        try {
+            block()
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            val why = (e.message ?: e.javaClass.simpleName).take(200)
+            error("The ${provider.name} account did not return its model list ($why). If it is a sign-in error (401, expired, " +
+                "sign in again), put a sign-in card with ${OrbitApprovalActions.signInWith(provider)} relogin=true; otherwise try again later.")
+        }
 
     /** A failed lookup says why without ever echoing the key. */
     private suspend fun fetch(context: Context, key: String = "", block: suspend () -> List<String>): List<String> =

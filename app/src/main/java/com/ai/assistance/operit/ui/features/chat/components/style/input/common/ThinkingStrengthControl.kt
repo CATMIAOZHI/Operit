@@ -43,6 +43,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -69,6 +70,9 @@ import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.data.preferences.ApiPreferences
+import com.ai.assistance.operit.ui.features.chat.components.LocalOrbitChatLook
+import com.ai.assistance.operit.ui.features.orbit.OrbitDialog
+import com.ai.assistance.operit.ui.features.orbit.OrbitDialogAction
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
@@ -113,6 +117,17 @@ fun ThinkingStrengthControl(
     // tap, so the popup would look stuck.
     val popupOffset =
         with(LocalDensity.current) { IntOffset(x = 48.dp.roundToPx(), y = -84.dp.roundToPx()) }
+    // In Orbit, turning thinking off first shows a short warning: most models answer worse without it.
+    val orbit = LocalOrbitChatLook.current
+    var confirmOff by remember { mutableStateOf(false) }
+    val setThinkingMode: (Boolean) -> Unit = { on ->
+        if (!on && orbit) {
+            visibility.targetState = false
+            confirmOff = true
+        } else {
+            onSetThinkingMode(on)
+        }
+    }
 
     Box(modifier = modifier) {
         Row(
@@ -177,13 +192,57 @@ fun ThinkingStrengthControl(
                         thinkingEnabled = thinkingEnabled,
                         activeColor = activeColor,
                         idleColor = idleColor,
-                        onSetThinkingMode = onSetThinkingMode,
+                        onSetThinkingMode = setThinkingMode,
                         onQualityLevelChange = onQualityLevelChange,
                     )
                 }
             }
         }
     }
+
+    if (confirmOff) {
+        ThinkingOffWarning(
+            onLower = {
+                confirmOff = false
+                onQualityLevelChange(minLevel)
+            },
+            onTurnOff = {
+                confirmOff = false
+                onSetThinkingMode(false)
+            },
+            onDismiss = { confirmOff = false },
+        )
+    }
+}
+
+private const val THINKING_OFF_WAIT_SECONDS = 3
+
+/** Asks before thinking goes off; "turn off" only unlocks after a few seconds of reading. */
+@Composable
+private fun ThinkingOffWarning(onLower: () -> Unit, onTurnOff: () -> Unit, onDismiss: () -> Unit) {
+    var secondsLeft by remember { mutableIntStateOf(THINKING_OFF_WAIT_SECONDS) }
+    LaunchedEffect(Unit) {
+        while (secondsLeft > 0) {
+            delay(1_000)
+            secondsLeft--
+        }
+    }
+    OrbitDialog(
+        onDismissRequest = onDismiss,
+        title = stringResource(R.string.orbit_thinking_off_title),
+        text = { Text(stringResource(R.string.orbit_thinking_off_message)) },
+        confirmButton = {
+            OrbitDialogAction(onClick = onLower) { Text(stringResource(R.string.orbit_thinking_off_lower)) }
+        },
+        dismissButton = {
+            OrbitDialogAction(onClick = onTurnOff, enabled = secondsLeft == 0, secondary = true) {
+                Text(
+                    if (secondsLeft > 0) stringResource(R.string.orbit_thinking_off_wait, secondsLeft)
+                    else stringResource(R.string.orbit_thinking_off_confirm),
+                )
+            }
+        },
+    )
 }
 
 @Composable

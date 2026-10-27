@@ -433,6 +433,12 @@ internal fun OrbitApprovalSheet(
                     picked = picked,
                     canFetch = !needsKey || key.isNotBlank(),
                     enabled = !busy,
+                    // A sign-in account has no key or address to fix; a failed list usually means signing in again.
+                    failedText = if (modelRequest.provider in OrbitApprovalActions.SIGN_IN_PROVIDERS) {
+                        stringResource(R.string.orbit_model_pick_failed_account, orbit.name.ifBlank { stringResource(R.string.nav_orbit) })
+                    } else {
+                        null
+                    },
                     onFetch = ::fetchModels,
                     onToggle = { name ->
                         picked = if (name in picked) picked - name

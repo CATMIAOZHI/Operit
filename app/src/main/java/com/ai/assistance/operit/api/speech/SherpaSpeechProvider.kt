@@ -37,6 +37,8 @@ import kotlin.math.max
 @SuppressLint("MissingPermission")
 class SherpaSpeechProvider(private val context: Context) : SpeechService {
     override val supportsContinuousRecognition = true
+    // A pause only closes a sentence; dictation keeps listening until the user stops it.
+    override val supportsContinuousDictation = true
     companion object {
         private const val TAG = "SherpaSpeechProvider"
     }
@@ -363,6 +365,9 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                         val bufferSize = minBufferSize
                         val audioBuffer = ShortArray(bufferSize)
                         var lastText = ""
+                        // Each spoken segment gets its own number, so two segments with the same
+                        // words are still two results (the state flow drops equal values).
+                        var segment = 0
 
                         val vadInstance = try {
                             (vad ?: OnnxSileroVad(context = context, speechDurationMs = 0)).also { created ->
@@ -409,16 +414,18 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                                         if (isEndpoint) {
                                             lastText = text
                                             _recognitionResult.value =
-                                                SpeechService.RecognitionResult(text = text, isFinal = true)
+                                                SpeechService.RecognitionResult(text = text, isFinal = true, segment = segment)
                                         } else if (partialResults && lastText != text) {
                                             lastText = text
                                             _recognitionResult.value =
-                                                SpeechService.RecognitionResult(text = text, isFinal = false)
+                                                SpeechService.RecognitionResult(text = text, isFinal = false, segment = segment)
                                         }
                                     }
 
                                     if (isEndpoint) {
                                         recognizerInstance.reset(false)
+                                        lastText = ""
+                                        segment++
                                         if (!continuousMode) {
                                             _recognitionState.value = SpeechService.RecognitionState.IDLE
                                             return@launch
@@ -448,7 +455,7 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                                                 if (partialResults && text.isNotBlank() && lastText != text) {
                                                     lastText = text
                                                     _recognitionResult.value =
-                                                        SpeechService.RecognitionResult(text = text, isFinal = false)
+                                                        SpeechService.RecognitionResult(text = text, isFinal = false, segment = segment)
                                                 }
                                             } else if (vadSpeechActive) {
                                                 recognizerInstance.inputFinished()
@@ -460,12 +467,14 @@ class SherpaSpeechProvider(private val context: Context) : SpeechService {
                                                 if (finalText.isNotBlank()) {
                                                     lastText = finalText
                                                     _recognitionResult.value =
-                                                        SpeechService.RecognitionResult(text = finalText, isFinal = true)
+                                                        SpeechService.RecognitionResult(text = finalText, isFinal = true, segment = segment)
                                                 }
 
                                                 recognizerInstance.reset(false)
                                                 vadInstance.reset()
                                                 vadSpeechActive = false
+                                                lastText = ""
+                                                segment++
 
                                                 if (!continuousMode) {
                                                     _recognitionState.value = SpeechService.RecognitionState.IDLE

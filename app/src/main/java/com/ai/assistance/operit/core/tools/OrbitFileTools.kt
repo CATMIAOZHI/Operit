@@ -40,7 +40,8 @@ internal object OrbitFileTools {
         ),
         details = """
   - 人物：memory/people/<名字>.md，一人一份；圈子与关系：memory/groups/<圈子名>.md，一圈一份，记录家人、同事、朋友等圈子的成员、彼此关系、用户在其中的角色及共同经历，不是创建聊天群。只为用户明确提到的人和圈子建档，不靠推断新建；只记录已知事实，不猜测关系。第一行写「# 名字」，下面写关系、近况、要记住的事。INDEX.md 由应用自动维护，不用写。
-  - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察，最多 600 字，换行会变成空格。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事用记忆工具写进 memory.md（memory.md 不归这个工具管）。
+  - 每日流水：daily 往今天的 memory/YYYY-MM-DD.md 追加一行观察，最多 600 字，换行会变成空格。后台任务的运行结果会自动记进去。流水不是长期记忆，长期要记的事用记忆工具写进 memory.md。
+  - user.md 和 memory.md 只能用 read 查看（它们本来就全文在你的上下文里）；要改用 memory_review。SOUL.md、IDENTITY.md 用 orbit_soul。
   - LESSONS.md：做事的约定和教训。踩过坑、用户纠正过做法时，用 append 记一条。
   - PROACTIVE_PREFERENCES.md：用户对主动消息的偏好，四节：想听的、别跟我说、什么时候、怎么说。只改相关的那一节；一次拒绝不写成长期禁令。
   - timezones.yaml：用户的长期时区（home）和常联系的人的时区（others）。

@@ -303,10 +303,31 @@ object OrbitCompanion {
                 name = DEFAULT_NAME,
                 avatarUri = null,
                 createdAt = System.currentTimeMillis(),
+                appearance = systemLogoColors(context),
             )
         preferences.putOrbit(profile)
         val memorySpaceId = OrbitMemoryScope.ensureInitialized(context, profile)
         return profile.copy(memorySpaceId = memorySpaceId)
+    }
+
+    /**
+     * The new Orbit's logo takes the user's color from the phone's own theme (Android 12+ wallpaper
+     * colors): the core stands for the user. When that color sits too near the ring's blue, the ring
+     * takes the theme's contrasting color so the two still read apart. Older phones keep the defaults.
+     */
+    private fun systemLogoColors(context: Context): com.ai.assistance.operit.data.preferences.OrbitAppearance {
+        val base = com.ai.assistance.operit.data.preferences.OrbitAppearance()
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.S) return base
+        return runCatching {
+            val user = context.getColor(android.R.color.system_accent1_600)
+            val ringDefault = android.graphics.Color.parseColor(com.ai.assistance.operit.ui.features.orbit.OrbitLogoDefaults.ORBIT_HEX)
+            fun hsv(c: Int) = FloatArray(3).also { android.graphics.Color.colorToHSV(c, it) }
+            val userHsv = hsv(user)
+            val gap = kotlin.math.abs(userHsv[0] - hsv(ringDefault)[0]).let { minOf(it, 360f - it) }
+            fun hex(c: Int) = String.format(java.util.Locale.ROOT, "#%06X", c and 0xFFFFFF)
+            val ring = if (userHsv[1] >= 0.15f && gap < 35f) hex(context.getColor(android.R.color.system_accent3_600)) else null
+            base.copy(logoUserColor = hex(user), logoOrbitColor = ring)
+        }.getOrDefault(base)
     }
 
     /**
