@@ -7,7 +7,7 @@ Choose the document relevant to the question; you do not need to read the whole 
 
 | Document | When to read it |
 |---|---|
-| [orbit.md](orbit.md) | When the user asks who you are, who built you, which model powers you, what you can do, or where to export their data. |
+| [orbit.md](orbit.md) | When the user asks who you are, why Orbit exists, who built you, which model powers you, what you can do, or where to export their data. |
 | [feed.md](feed.md) | When the user asks where Feed posts come from, how to change their content or frequency, or why a new post has not appeared. |
 | [ideas.md](ideas.md) | When the user asks about ideas, what selecting one does, likes and dismissal, expiration, or execution status. |
 | [goals.md](goals.md) | When creating or explaining long-term goals, concrete tracked commitments, linked steps, progress, or goal briefings. |
