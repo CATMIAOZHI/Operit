@@ -37,12 +37,12 @@ internal object OrbitModelTools {
     val prompt = ToolPrompt(
         name = NAME,
         description = "List the app's model configurations and which ones you use, look up the models a provider offers, " +
-            "ask the user to add a configuration (they type the API key, or use a signed-in account, and pick the models on the card), or to switch the model you use, " +
-            "or put a card that opens the model settings so the user can change a key. " +
-            "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请切换你用的模型（都要用户批准）、放卡片让用户去改密钥。",
+            "ask the user to add a configuration (they type the API key, or use a signed-in account, and pick the models on the card), " +
+            "to give an existing configuration a new API key (typed on the card), or to switch the model you use. " +
+            "查看模型配置、查询服务商有哪些模型、申请新建模型配置、申请给已有配置换密钥、申请切换你用的模型（都要用户批准）。",
         parametersStructured = listOf(
-            ToolParameterSchema("action", description = "list / discover / request_create / request_use / open_settings", required = true),
-            ToolParameterSchema("config", description = "discover, request_use: a configuration's select from list (its name, or name#1, name#2 when names repeat)", required = false),
+            ToolParameterSchema("action", description = "list / discover / request_create / request_key / request_use / open_settings", required = true),
+            ToolParameterSchema("config", description = "discover, request_key, request_use: a configuration's select from list (its name, or name#1, name#2 when names repeat)", required = false),
             ToolParameterSchema("query", description = "discover: optional word to filter model names, e.g. flash", required = false),
             ToolParameterSchema("name", description = "request_create: a short name for the configuration, e.g. DeepSeek (at most $MAX_NAME characters)", required = false),
             ToolParameterSchema("provider", description = "request_create, or discover without config: provider id from list's providers, e.g. DEEPSEEK, OPENAI_GENERIC, ANTHROPIC, OPENROUTER", required = false),
@@ -52,13 +52,14 @@ internal object OrbitModelTools {
             ToolParameterSchema("use_as", description = "request_create: none (default), main or assistant. request_use (required): main, assistant or multimodal. Only when the user wants it", required = false),
             ToolParameterSchema("thinking", description = "request_use with use_as assistant: optional thinking strength low / medium / high / xhigh / max", required = false),
             ToolParameterSchema("needs_key", description = "request_create: true (default for providers that need one) or false for a local server without a key. Ignored for sign-in accounts", required = false),
-            ToolParameterSchema("reason", description = "request_create: one sentence telling the user why", required = false),
+            ToolParameterSchema("reason", description = "request_create, request_key, request_use: one sentence telling the user why", required = false),
         ),
         details = """
   - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in. Pass a configuration's select as config; it is the name, or name#1, name#2 … when several share a name.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
   - request_create for an API-key provider: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. For a sign-in account see below. It returns at once; end the turn with one short line. You get a hidden note with what was added.
-  - open_settings puts a card in the chat that opens the model settings page, where the user changes the API key, endpoint or models of an existing configuration themselves (the key never reaches you). Use it when a key stopped working (wrong key, out of balance) or the user wants to change one. End the turn with one short line.
+  - request_key puts an approval card in the chat where the user types a new API key for an existing configuration (config=...), e.g. when its key stopped working (wrong key, 401, out of balance) or the user wants to change it. The key goes straight into the configuration and never reaches you. After approval the app tries the configuration's first model and the hidden note says whether the key works. End the turn with one short line.
+  - open_settings puts a card that opens the model settings page. Only for what the chat cannot do: a configuration that uses several keys, or models that run on the phone. End the turn with one short line.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
   - Sign-in accounts (OPENAI_CODEX, GROK_ACCOUNT, CLAUDE_ACCOUNT, GOOGLE_ANTIGRAVITY, COMMAND_CODE) use no key. list's accounts shows which are signed in. Not signed in: put a sign-in card first with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). Signed in: add it yourself with request_create provider=<that id> (leave endpoint and models out); the user picks the models from the account's list on the card. discover with that provider also lists the account's models.
@@ -220,6 +221,31 @@ internal object OrbitModelTools {
                             ". End this turn now with one short line. You get a hidden note with what was added.")
                         .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
                 }
+                "request_key" -> {
+                    inChat()
+                    val config = named(arg("config"))
+                    val full = checkNotNull(configs.getModelConfig(config.id)) { "Configuration \"${config.name}\" could not be read" }
+                    val provider = ApiProviderType.fromProviderTypeId(full.apiProviderTypeId) ?: full.apiProviderType
+                    require(provider !in OrbitApprovalActions.SIGN_IN_PROVIDERS) {
+                        "\"${config.name}\" uses a signed-in account, not a key. If it stopped working, put a sign-in card with " +
+                            "${OrbitApprovalActions.signInWith(provider)} relogin=true"
+                    }
+                    require(provider !in OrbitApprovalActions.LOCAL_PROVIDERS) {
+                        "\"${config.name}\" runs a model on the phone and has no key"
+                    }
+                    require(!full.useMultipleApiKeys) {
+                        "\"${config.name}\" uses several keys; put a card with action=open_settings so the user changes them there"
+                    }
+                    val title = context.getString(com.ai.assistance.operit.R.string.orbit_approval_key_title, config.name)
+                        .take(OrbitApprovals.MAX_TITLE)
+                    val detail = OrbitApprovalActions.keyDetail(context, config.name, provider.name, full.apiEndpoint, arg("reason").take(300))
+                    val approval = OrbitApprovals.request(context, orbit.id, caller.orEmpty(), title, detail,
+                        OrbitApprovalActions.keyAction(config.id, config.name))
+                    JSONObject().put("approval_id", approval.id).put("state", approval.state)
+                        .put("note", "An approval card is now in the chat; the user types the new API key on it. End this turn now " +
+                            "with one short line. You get a hidden note saying whether the new key passed a short test.")
+                        .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
+                }
                 "open_settings" -> {
                     inChat()
                     JSONObject().put("card", "placed")
@@ -227,7 +253,7 @@ internal object OrbitModelTools {
                             "the user changes the key there. Check with action=list afterwards if needed.")
                         .put(OrbitChatCards.KEY, OrbitChatCards.openPage(orbit.id, OrbitChatCards.PAGE_MODEL_CONFIG))
                 }
-                else -> error("action must be list, discover, request_create, request_use or open_settings")
+                else -> error("action must be list, discover, request_create, request_key, request_use or open_settings")
             }
             ToolResult(NAME, true, StringResultData(result.toString()))
         } catch (e: kotlinx.coroutines.CancellationException) {
@@ -337,6 +363,7 @@ internal object OrbitModelTools {
             throw e
         } catch (e: Exception) {
             val why = (e.message ?: e.javaClass.simpleName).let { if (key.length >= 6) it.replace(key, "***") else it }.take(200)
-            error("The provider did not return its model list ($why). Check the endpoint; if it is a key problem, the user can fix the key in the app's model settings.")
+            error("The provider did not return its model list ($why). Check the endpoint; if it is a key problem (401, invalid key), " +
+                "ask the user for a new key with action=request_key.")
         }
 }

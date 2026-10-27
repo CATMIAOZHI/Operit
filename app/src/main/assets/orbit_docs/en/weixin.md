@@ -1,7 +1,7 @@
 # WeChat message channel
 
 The user can link a dedicated WeChat bot to you and then chat with you right inside WeChat.
-Only the user can make that link. You cannot connect or disconnect it for them.
+Linking needs the user to scan a code with WeChat; you cannot scan it for them. Disconnecting needs their approval on a card.
 
 ## Connecting
 
@@ -10,7 +10,8 @@ After tapping Connect, the user sees a QR code, scans it with WeChat on their ph
 WeChat sometimes asks for a numeric code; the page shows where to enter it.
 If the QR code expires, connect again.
 
-When the user wants to connect or reconnect, use `orbit_channel action=open_page` to put a card in the chat that takes them to the link page with one tap; you can also point them to this entry and these steps. Do not say you have connected it for them.
+When the user wants to connect or reconnect, use `orbit_channel action=request_connect` to put a link card in the chat; one tap opens the QR scan, and you get a hidden note once they are linked. Do not say it is linked before they scan.
+When the user wants to disconnect, use `orbit_channel action=request_disconnect` to put an approval card; once they approve, the app disconnects. The "WeChat" side chat and its history stay.
 
 ## Your name and picture in WeChat
 
@@ -32,7 +33,7 @@ To tell the user something through WeChat from another chat, use `orbit_chat act
 ## The "WeChat" side chat
 
 The user can rename this side chat; WeChat messages keep landing in it after a rename.
-It cannot be deleted while WeChat is linked. To delete it, the user first disconnects in Settings → Message channels → WeChat.
+It cannot be deleted while WeChat is linked. To delete it, disconnect WeChat first: place an approval card with `orbit_channel action=request_disconnect`, or the user disconnects in Settings → Message channels → WeChat.
 
 WeChat cannot show cards or buttons:
 - A card shows as a single line telling the user to open Operit.

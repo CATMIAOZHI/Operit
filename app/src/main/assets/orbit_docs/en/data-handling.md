@@ -45,7 +45,7 @@ Do not promise that all voice processing is offline or describe generated speech
 
 `orbit_voice` actions `speak` and `podcast` use the phone's system speech engine and save generated files in this Orbit's `files/voice/`.
 The `needs_network` field returned by `voices` indicates whether a voice needs a network connection; the engine and selected voice affect the data path.
-To let the user inspect or change speech services, use `orbit_voice action=request_settings`, end the turn, and let them change settings themselves.
+To inspect speech services, use `orbit_voice action=profiles`. To switch, create, change the key of or delete a profile, use `request_switch`, `request_create`, `request_key` or `request_delete` to place an approval card; the user types any key in the card. For details such as speed or pitch, use `request_settings` to place a settings card.
 
 ## Credentials stay out of context
 

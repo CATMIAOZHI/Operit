@@ -34,6 +34,8 @@ internal object OrbitChatCards {
     const val SPEECH_SETTINGS = "speech_settings"
     /** Exports this Orbit's data as one zip and hands it to the share sheet. */
     const val DATA_EXPORT = "data_export"
+    /** Links the user's WeChat: the QR scan opens right from the card. */
+    const val WEIXIN_LOGIN = "weixin_login"
     /** Opens a settings page from the chat: the WeChat link, role cards, model settings, tool access, models, notifications. */
     const val OPEN_PAGE = "open_page"
     const val PAGE_WEIXIN = "weixin"
@@ -84,6 +86,7 @@ internal object OrbitChatCards {
             ACCOUNT_LOGIN -> (if (english) "Account login card" else "账号登录卡片") to
                 (accountProviders[o?.optString("provider")]?.let(::accountLabel).orEmpty())
             SPEECH_SETTINGS -> (if (english) "Voice settings card" else "语音设置卡片") to ""
+            WEIXIN_LOGIN -> (if (english) "WeChat link card" else "连接微信卡片") to ""
             DATA_EXPORT -> (if (english) "Data export card" else "数据导出卡片") to ""
             OPEN_PAGE -> (if (english) "Settings card" else "设置卡片") to when (o?.optString("page")) {
                 PAGE_WEIXIN -> if (english) "WeChat" else "微信"
@@ -187,6 +190,11 @@ internal object OrbitChatCards {
     fun speechSettings(orbitId: String): JSONObject = JSONObject()
         .put("kind", SPEECH_SETTINGS)
         .put("orbit_id", orbitId)
+
+    fun weixinLogin(orbitId: String, chatId: String): JSONObject = JSONObject()
+        .put("kind", WEIXIN_LOGIN)
+        .put("orbit_id", orbitId)
+        .put("chat_id", chatId)
 
     fun dataExport(orbitId: String): JSONObject = JSONObject()
         .put("kind", DATA_EXPORT)
@@ -403,6 +411,36 @@ internal object OrbitVaultNotice {
                 throw e
             } catch (e: Exception) {
                 AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about the ChatGPT login: ${e.message}")
+            }
+        }
+    }
+
+    /** The user linked WeChat from a card in [chatId]; Orbit hears it once the chat is free. */
+    fun sendWeixinConnected(context: Context, orbit: OrbitProfile, chatId: String) {
+        val target = chatId.ifBlank { orbit.chatId }
+        if (target.isBlank()) return
+        val app = context.applicationContext
+        val notice = if (LocaleUtils.usesEnglishPrompt(app)) {
+            "$MARKER WeChat linked\n" +
+                "The user scanned the code on your card and linked WeChat. This is not a message from the user and they cannot see this note.\n" +
+                "What they send you in WeChat now arrives in a side chat titled \"WeChat\", and what you say there goes back to WeChat. " +
+                "Check it with orbit_channel status if needed. If you were in the middle of something that needed it, carry on now; " +
+                "otherwise reply with one short line (for example, invite them to send you a message in WeChat), " +
+                "or call ${OrbitReactionNotice.NOTHING_TO_DO}. Do not mention hidden notes."
+        } else {
+            "$MARKER 已连接微信\n" +
+                "用户扫了你卡片上的码，连好了微信。这不是用户发的消息，用户也看不到这段话。\n" +
+                "用户以后在微信里发的话会进一个标题为「微信」的侧聊，你在那个侧聊里说的话会发回微信。需要时用 orbit_channel 的 status 看状态。" +
+                "刚才有事情正等着它的话现在接着做；没有就简短回一句（比如请用户在微信里给你发句话试试），或者调用 " +
+                "${OrbitReactionNotice.NOTHING_TO_DO}。不要提“隐藏消息”这些内部说法。"
+        }
+        scope.launch {
+            try {
+                deliver(app, orbit, target, notice)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitVaultNotice", "Could not tell Orbit about the WeChat link: ${e.message}")
             }
         }
     }

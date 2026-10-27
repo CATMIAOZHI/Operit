@@ -17,9 +17,10 @@ See [weixin.md](weixin.md) for connection steps and channel limits.
 ## Read-aloud and voice settings
 
 Chat offers message read-aloud and automatic read-aloud options, using the app's current speech service configuration.
-When the user wants to change the read-aloud service, voice, speed, pitch, input recognition service, or related service keys, use `orbit_voice action=request_settings`.
-It places a voice settings card in chat for the user to open and edit themselves.
-End the turn with one short line after placing it. You cannot change these settings for the user or see service keys, and you are not automatically told what they changed.
+Voice profiles come in two kinds: read-aloud (tts) and voice input (stt). Each kind can have several profiles, one in use at a time.
+Use `orbit_voice action=profiles` to see them and which is in use (no keys, only has_key).
+To switch, add, change a key or delete, use `request_switch`, `request_create`, `request_key` or `request_delete`. Each places an approval card; when a key is needed the user types it on the card and you never see it. End the turn with one short line; after approval you get a hidden note with the result.
+For details such as speed, pitch or headers, or when the user wants to adjust things themselves, use `orbit_voice action=request_settings` to place a voice settings card they open and edit.
 
 Audio file generation uses the phone's system TTS engine described below. Do not promise it uses the service or voice selected for message read-aloud.
 

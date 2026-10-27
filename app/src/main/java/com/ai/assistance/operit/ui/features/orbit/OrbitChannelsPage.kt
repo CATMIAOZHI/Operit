@@ -269,10 +269,13 @@ private fun qrBitmap(content: String, size: Int = 720): Bitmap {
     return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.ARGB_8888)
 }
 
-/** The QR scan, the number check WeChat may ask for, and the result, in one sheet. */
+/**
+ * The QR scan, the number check WeChat may ask for, and the result, in one sheet. [onConnected]
+ * runs once when a link made in this sheet is done.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
+internal fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit, onConnected: (() -> Unit)? = null) {
     val context = LocalContext.current
     val app = context.applicationContext
     val scope = rememberCoroutineScope()
@@ -280,6 +283,14 @@ private fun WeixinConnectSheet(orbit: OrbitProfile, onDismiss: () -> Unit) {
     val login = remember(attempt) { OrbitWeixin.Login(app, orbit.id) }
     LaunchedEffect(login) { login.run() }
     val step by login.step.collectAsState()
+    val connected by rememberUpdatedState(onConnected)
+    var told by remember { mutableStateOf(false) }
+    LaunchedEffect(step) {
+        if (step == OrbitWeixin.Login.Step.Done && !told) {
+            told = true
+            connected?.invoke()
+        }
+    }
     OrbitModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
