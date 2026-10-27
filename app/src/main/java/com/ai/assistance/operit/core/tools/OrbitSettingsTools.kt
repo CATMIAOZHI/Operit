@@ -85,7 +85,7 @@ internal object OrbitSettingsTools {
   - refill_extra accepts only true and clears extra allowance usage, without changing usage history or the weekly allowance. There is no weekly-usage reset.
   - request_export puts a data export card in the chat. The user taps it, confirms, and the app packs this Orbit's files, memory, tasks, goals and chats into one zip and opens the share sheet. You never get the zip or its path. End this turn with one short line after the card appears.
   - open_page puts a card in the chat that opens one Orbit settings page; the user changes it there themselves: tool_access (full access mode), tool_permissions (ask / allow / deny for each tool), models (which model you use for each job, thinking strength), notifications (notification switch, quiet hours at night, how often reports are sent). End this turn with one short line after the card appears.
-  - 工具权限和全访问模式你不能改，用户想改时用 open_page 放卡片带他过去，由他自己决定。语音配置用 orbit_voice 的 request_switch / request_create / request_key / request_delete，已有模型换密钥用 orbit_models 的 request_key，微信连接和断开用 orbit_channel 的 request_connect / request_disconnect，技能开关用 orbit_skills 的 request_visibility，账号登录用 orbit_vault 的 request_account_login。设置必须等卡片批准，不要自行编辑偏好文件。
+  - 工具权限和全访问模式你不能改，用户想改时用 open_page 放卡片带他过去，由他自己决定。语音配置用 orbit_voice 的 request_switch / request_create / request_key / request_delete；模型的新密钥优先用 orbit_models 的 request_create 新建配置，替换某个配置的密钥才用 request_key（要指明配置）；微信连接和断开用 orbit_channel 的 request_connect / request_disconnect，技能开关用 orbit_skills 的 request_visibility，账号登录用 orbit_vault 的 request_account_login。设置必须等卡片批准，不要自行编辑偏好文件。
 """,
     )
 

@@ -378,7 +378,7 @@ internal object OrbitApprovalActions {
             INSTALL_COMPONENTS -> OrbitComponents.start(context, orbit, approval.chatId, action, english)
             CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
             TOGGLE_SKILLS -> toggleSkills(context, orbit, action, english)
-            UPDATE_MODEL_KEY -> updateModelKey(context, action, secret, english)
+            UPDATE_MODEL_KEY -> updateModelKey(context, orbit, action, secret, english)
             VOICE_PROFILE -> OrbitVoiceProfiles.apply(context, action, secret, english)
             WEIXIN_DISCONNECT -> {
                 OrbitWeixin.disconnect(context, orbit.id)
@@ -561,19 +561,24 @@ internal object OrbitApprovalActions {
     fun keyAction(configId: String, name: String): String = JSONObject()
         .put("type", UPDATE_MODEL_KEY).put("config_id", configId).put("config_name", name).toString()
 
-    fun keyDetail(context: Context, name: String, provider: String, endpoint: String, reason: String): String = buildString {
+    fun keyDetail(context: Context, name: String, provider: String, endpoint: String, models: List<String>,
+        roles: List<String>, reason: String): String = buildString {
         append(context.getString(R.string.orbit_approval_key_config, name, provider))
         if (endpoint.isNotEmpty()) append("\n").append(context.getString(R.string.orbit_approval_model_endpoint, endpoint))
+        if (models.isNotEmpty()) append("\n").append(context.getString(R.string.orbit_approval_key_models,
+            models.take(5).joinToString("、") + if (models.size > 5) " …" else ""))
+        if (roles.isNotEmpty()) append("\n").append(context.getString(R.string.orbit_approval_key_in_use, roles.joinToString("、")))
         append("\n").append(context.getString(R.string.orbit_approval_key_note))
         if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
     }
 
     /**
-     * Puts the key the user typed into an existing configuration, then tries its first model with a
-     * short test. The new key is kept even if the test fails (the network may be down); the result
-     * says how the test went, so Orbit can ask for another key when this one is wrong.
+     * Tries the key the user typed on every model of this configuration that Orbit uses (or its
+     * first model when Orbit uses none), and only puts it into the configuration when all of them
+     * answer. A wrong key, or one without access to the model Orbit talks with, is never saved.
      */
-    private suspend fun updateModelKey(context: Context, action: JSONObject, secret: String?, english: Boolean): String {
+    private suspend fun updateModelKey(context: Context, orbit: OrbitProfile, action: JSONObject, secret: String?,
+        english: Boolean): String {
         val key = secret?.trim().orEmpty()
         require(key.isNotEmpty()) { "API key missing" }
         require(key.length <= 4000) { "API key too long" }
@@ -586,31 +591,41 @@ internal object OrbitApprovalActions {
         require(!before.useMultipleApiKeys) {
             if (english) "This configuration uses several keys now; change them in the model settings" else "这个配置现在用的是多个密钥，请到模型配置页里改"
         }
+        val models = getModelList(before.modelName)
+        val name = action.optString("config_name").ifEmpty { before.name }
+        if (models.isEmpty()) {
+            return if (english) "Did not change the key of \"$name\": it has no models to test the new key with. The old key is unchanged."
+            else "没有换「$name」的密钥：它还没有模型，没法用新密钥试聊。旧密钥保持不变。"
+        }
+        val mine = OrbitModelPreferences(context).current(orbit.id)
+        val tested = listOfNotNull(mine.main, mine.assistant, mine.multimodal)
+            .filter { it.configId == id }.map { it.modelName }.filter { it in models }.distinct()
+            .ifEmpty { listOf(models.first()) }
+        for (model in tested) {
+            val failed = try {
+                OrbitSetup.checkModel(context.applicationContext, configs, before.copy(apiKey = key), models.indexOf(model), null) {
+                    (if (key.length >= 6) it.replace(key, "***") else it).take(200)
+                }
+                null
+            } catch (e: OrbitSetup.SetupException) {
+                OrbitSetup.describe(context, e.problem)
+            }
+            if (failed != null) {
+                return if (english) {
+                    "Did not change the key of \"$name\": $model did not answer a test message with the new key: $failed " +
+                        "The new key was not saved; the old key is unchanged."
+                } else {
+                    "没有换「$name」的密钥：用新密钥试聊 $model 没通过：$failed 新密钥没有保存，旧密钥保持不变。"
+                }
+            }
+        }
         configs.updateSingleApiKey(id, key)
         runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) }
-        val models = getModelList(before.modelName)
-        val failed = if (models.isEmpty()) null else try {
-            val full = checkNotNull(configs.getModelConfig(id)) { "The model configuration could not be read" }
-            OrbitSetup.checkModel(context.applicationContext, configs, full, 0, null) {
-                (if (key.length >= 6) it.replace(key, "***") else it).take(200)
-            }
-            null
-        } catch (e: OrbitSetup.SetupException) {
-            OrbitSetup.describe(context, e.problem)
-        }
-        val name = before.name
+        val passed = tested.joinToString(if (english) ", " else "、")
         return if (english) {
-            "Saved the new API key the user typed for the model configuration \"$name\"." + when {
-                models.isEmpty() -> " It has no models to test yet."
-                failed == null -> " ${models.first()} answered a test message, so the key works."
-                else -> " But ${models.first()} did not answer a test message: $failed If the key is wrong, it can be changed again."
-            }
+            "Saved the new API key the user typed for the model configuration \"$name\". $passed answered a test message, so the key works."
         } else {
-            "已为模型配置「$name」存好用户亲手填的新 API 密钥。" + when {
-                models.isEmpty() -> "它还没有模型，没法试聊。"
-                failed == null -> "${models.first()} 通过了试聊，密钥能用。"
-                else -> "但 ${models.first()} 没通过试聊：$failed 如果是密钥不对，可以再换一次。"
-            }
+            "已为模型配置「$name」存好用户亲手填的新 API 密钥。$passed 通过了试聊，密钥能用。"
         }
     }
 
