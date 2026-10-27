@@ -374,13 +374,15 @@ object OrbitTaskRunner {
         OrbitNotices.once(context, state.orbitId, "${modelKey(state)}$problem",
             "[orbit-task] 后台任务的模型出错了\n这是 App 发给你的说明，不是用户说的，用户也看不到。后台任务「$title」这次没跑成：$reason" +
                 "重复的任务下次到点会再试，一次性的任务先暂停了。模型修好之前，其他后台工作（动态、点子、提醒、整理）也可能一样失败。" +
-                "找合适的时机用一句话告诉用户，并调用 orbit_models action=open_settings 放一张卡片，让他去检查模型和密钥。" +
+                "找合适的时机用一句话告诉用户。是密钥的问题（401、密钥无效、余额不足）就用 orbit_models action=request_key 放卡片请他填新密钥；" +
+                "其他问题用 orbit_models action=list 看看，必要时换个模型或放 open_settings 卡片请他检查。" +
                 "他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
             "[orbit-task] A background task's model failed\nThis is a note from the app, not from the user; they cannot see it. " +
                 "The background task \"$title\" did not run this time: $reason Repeating tasks try again at their next time; a " +
                 "one-time task is paused. Until the model works, other background work (feed, ideas, reminders, tidying) may fail too. " +
-                "When it fits, tell the user in one line and call orbit_models action=open_settings to put a card in the chat for " +
-                "checking the model and key. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
+                "When it fits, tell the user in one line. If it is the key (401, invalid key, out of balance), use orbit_models " +
+                "action=request_key to put a card where they type a new key; otherwise check orbit_models action=list and switch models, " +
+                "or put an open_settings card for them to check. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
     }
 
     private fun modelKey(state: ActiveRun) = "task_model:${OrbitModels.taskRole(state.task)}:"

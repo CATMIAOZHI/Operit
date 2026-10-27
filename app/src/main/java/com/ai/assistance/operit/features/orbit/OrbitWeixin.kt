@@ -588,12 +588,12 @@ internal object OrbitWeixin {
 
     private fun tellExpired(context: Context, orbitId: String) = tellOrbit(context, orbitId, null,
         "[orbit-weixin] 微信连接过期了\n这是 App 发给你的说明，不是用户说的，用户也看不到。微信那边的登录过期了：用户在微信里发的消息你收不到，" +
-            "你的回复也发不过去，要重新扫码才能恢复。找合适的时机用一句话告诉用户，并调用 orbit_channel action=open_page 放一张卡片，" +
-            "让他点一下去重新连接。他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
+            "你的回复也发不过去，要重新扫码才能恢复。找合适的时机用一句话告诉用户，并调用 orbit_channel action=request_connect 放一张卡片，" +
+            "让他点一下直接扫码重新连接。他以前说过不用提醒这个的话，就调用 orbit_nothing_to_do 保持安静。",
         "[orbit-weixin] The WeChat link expired\nThis is a note from the app, not from the user; they cannot see it. The WeChat " +
             "login expired: you no longer get what the user writes there, and your replies cannot reach them until they scan " +
-            "the code again. When it fits, tell them in one line and call orbit_channel action=open_page to put a card in the " +
-            "chat that takes them to reconnect. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
+            "the code again. When it fits, tell them in one line and call orbit_channel action=request_connect to put a card in the " +
+            "chat that opens the scan to reconnect. If they said before they don't want reminders about this, call orbit_nothing_to_do to stay quiet.")
 
     private fun tellUndelivered(context: Context, orbitId: String, item: Outbound) {
         val what = when (item.kind) {
@@ -1027,7 +1027,7 @@ internal object OrbitWeixin {
     /** For Orbit's tool: the link as Orbit should understand it. */
     suspend fun describe(context: Context, orbitId: String, callerChatId: String?): JSONObject {
         val s = load(context, orbitId) ?: return JSONObject().put("channel", "weixin").put("connected", false)
-            .put("note", "WeChat is not linked. The user links it in Orbit settings → Message channels → WeChat by scanning a QR code; Orbit cannot link it.")
+            .put("note", "WeChat is not linked. Put a card with orbit_channel request_connect; the user taps it and scans a QR code with WeChat.")
         return JSONObject()
             .put("channel", "weixin")
             .put("connected", true)

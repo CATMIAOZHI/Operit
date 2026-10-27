@@ -35,6 +35,11 @@ internal object OrbitApprovalActions {
     const val INSTALL_COMPONENTS = "install_components"
     const val CHANGE_SETTINGS = "change_settings"
     const val TOGGLE_SKILLS = "toggle_skills"
+    /** A new API key for a model configuration that already exists; the user types it on the card. */
+    const val UPDATE_MODEL_KEY = "update_model_key"
+    /** Switch, add, delete a voice profile or change its key ([OrbitVoiceProfiles]). */
+    const val VOICE_PROFILE = "voice_profile"
+    const val WEIXIN_DISCONNECT = "weixin_disconnect"
 
     /** At most this many packages, and this many files, in one request. */
     const val MAX_ITEMS = 20
@@ -108,8 +113,18 @@ internal object OrbitApprovalActions {
 
     /** The approval needs the user to type an API key before it can be approved. */
     fun needsSecret(action: String): Boolean =
-        runCatching { JSONObject(action).let { it.optString("type") == CREATE_MODEL && it.optBoolean("needs_key") } }
-            .getOrDefault(false)
+        runCatching {
+            JSONObject(action).let {
+                when (it.optString("type")) {
+                    CREATE_MODEL, VOICE_PROFILE -> it.optBoolean("needs_key")
+                    UPDATE_MODEL_KEY -> true
+                    else -> false
+                }
+            }
+        }.getOrDefault(false)
+
+    /** The key typed on this card goes into a voice profile rather than a model configuration. */
+    fun secretForVoice(action: String): Boolean = type(action) == VOICE_PROFILE
 
     /** The user picks the models on the sheet, from the provider's own list, before approving. */
     fun picksModels(action: String): Boolean = type(action) == CREATE_MODEL
@@ -363,6 +378,13 @@ internal object OrbitApprovalActions {
             INSTALL_COMPONENTS -> OrbitComponents.start(context, orbit, approval.chatId, action, english)
             CHANGE_SETTINGS -> com.ai.assistance.operit.core.tools.OrbitSettingsTools.applyApproved(context, orbit, action)
             TOGGLE_SKILLS -> toggleSkills(context, orbit, action, english)
+            UPDATE_MODEL_KEY -> updateModelKey(context, action, secret, english)
+            VOICE_PROFILE -> OrbitVoiceProfiles.apply(context, action, secret, english)
+            WEIXIN_DISCONNECT -> {
+                OrbitWeixin.disconnect(context, orbit.id)
+                if (english) "WeChat is disconnected; messages sent there no longer reach you. The \"WeChat\" side chat and its history stay."
+                else "微信已断开，用户在微信里发的消息不会再送到你这里。「微信」侧聊和记录都还在。"
+            }
             CREATE_MODEL -> {
                 val asked = modelRequest(action)
                 val picked = models.orEmpty().map { it.trim() }.filter { it.isNotEmpty() }.distinct()
@@ -534,6 +556,62 @@ internal object OrbitApprovalActions {
             unchanged.forEach { (name, reason) -> parts += "$name 没变：$reason。" }
         }
         return parts.joinToString("\n")
+    }
+
+    fun keyAction(configId: String, name: String): String = JSONObject()
+        .put("type", UPDATE_MODEL_KEY).put("config_id", configId).put("config_name", name).toString()
+
+    fun keyDetail(context: Context, name: String, provider: String, endpoint: String, reason: String): String = buildString {
+        append(context.getString(R.string.orbit_approval_key_config, name, provider))
+        if (endpoint.isNotEmpty()) append("\n").append(context.getString(R.string.orbit_approval_model_endpoint, endpoint))
+        append("\n").append(context.getString(R.string.orbit_approval_key_note))
+        if (reason.isNotBlank()) append("\n\n").append(context.getString(R.string.orbit_approval_reason, reason.trim()))
+    }
+
+    /**
+     * Puts the key the user typed into an existing configuration, then tries its first model with a
+     * short test. The new key is kept even if the test fails (the network may be down); the result
+     * says how the test went, so Orbit can ask for another key when this one is wrong.
+     */
+    private suspend fun updateModelKey(context: Context, action: JSONObject, secret: String?, english: Boolean): String {
+        val key = secret?.trim().orEmpty()
+        require(key.isNotEmpty()) { "API key missing" }
+        require(key.length <= 4000) { "API key too long" }
+        val configs = ModelConfigManager(context)
+        configs.initializeIfNeeded()
+        val id = action.getString("config_id")
+        val before = checkNotNull(configs.getModelConfig(id)) {
+            if (english) "That model configuration was deleted" else "这个模型配置已经被删掉了"
+        }
+        require(!before.useMultipleApiKeys) {
+            if (english) "This configuration uses several keys now; change them in the model settings" else "这个配置现在用的是多个密钥，请到模型配置页里改"
+        }
+        configs.updateSingleApiKey(id, key)
+        runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) }
+        val models = getModelList(before.modelName)
+        val failed = if (models.isEmpty()) null else try {
+            val full = checkNotNull(configs.getModelConfig(id)) { "The model configuration could not be read" }
+            OrbitSetup.checkModel(context.applicationContext, configs, full, 0, null) {
+                (if (key.length >= 6) it.replace(key, "***") else it).take(200)
+            }
+            null
+        } catch (e: OrbitSetup.SetupException) {
+            OrbitSetup.describe(context, e.problem)
+        }
+        val name = before.name
+        return if (english) {
+            "Saved the new API key the user typed for the model configuration \"$name\"." + when {
+                models.isEmpty() -> " It has no models to test yet."
+                failed == null -> " ${models.first()} answered a test message, so the key works."
+                else -> " But ${models.first()} did not answer a test message: $failed If the key is wrong, it can be changed again."
+            }
+        } else {
+            "已为模型配置「$name」存好用户亲手填的新 API 密钥。" + when {
+                models.isEmpty() -> "它还没有模型，没法试聊。"
+                failed == null -> "${models.first()} 通过了试聊，密钥能用。"
+                else -> "但 ${models.first()} 没通过试聊：$failed 如果是密钥不对，可以再换一次。"
+            }
+        }
     }
 
     private suspend fun createModel(context: Context, orbit: OrbitProfile, approvalId: String, m: ModelRequest,

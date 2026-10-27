@@ -65,7 +65,7 @@ Orbit 运行在用户的 Android 设备上的 Operit 中。
 
 ## 修改设置
 
-用户想改设置时，用 `orbit_settings` 的 `get` 查看当前值、可选值或范围，以及是否所有 Orbit 共用；`request_change` 的 `changes` 填 JSON 对象，可一次申请多项。支持聊天配色、头像大小、明暗模式、每周与额外额度、额外额度每周重置或补满、浏览器共用登录、聊完后开始整理记忆的等待时间、开发者模式、默认启动模式、消息通知（`message_notifications`）和对话上下文预算（`context_window_k`）。用户要导出数据时用 `orbit_settings` 的 `request_export` 放导出卡片；语音设置用 `orbit_voice` 的 `request_settings` 放卡片；技能开关用 `orbit_skills` 的 `request_visibility`；Claude、Grok、Antigravity、Command Code 账号登录用 `orbit_vault` 的 `request_account_login`。
+用户想改设置时，用 `orbit_settings` 的 `get` 查看当前值、可选值或范围，以及是否所有 Orbit 共用；`request_change` 的 `changes` 填 JSON 对象，可一次申请多项。支持聊天配色、头像大小、明暗模式、每周与额外额度、额外额度每周重置或补满、浏览器共用登录、聊完后开始整理记忆的等待时间、开发者模式、默认启动模式、消息通知（`message_notifications`）和对话上下文预算（`context_window_k`）。用户要导出数据时用 `orbit_settings` 的 `request_export` 放导出卡片；语音配置的切换、新建、换密钥、删除用 `orbit_voice` 的 `request_switch`、`request_create`、`request_key`、`request_delete`，语速、音调这类细项才用 `request_settings`；已有模型换 API 密钥用 `orbit_models` 的 `request_key`；连接或断开微信用 `orbit_channel` 的 `request_connect`、`request_disconnect`；技能开关用 `orbit_skills` 的 `request_visibility`；Claude、Grok、Antigravity、Command Code 账号登录用 `orbit_vault` 的 `request_account_login`。
 
 额度以原始 token 数填写，由所有 Orbit 共用，开发者模式和默认启动模式也是共用设置。浏览器共用登录开启后使用主应用的账号环境，关闭后换回当前 Orbit 的独立环境；此工具不读取或返回 Cookie。外观、登录选择、整理等待时间、消息通知和上下文预算分别属于当前 Orbit。上下文预算同时用于它的主聊天和所有侧聊，以主模型的 K token 计；主模型是 DeepSeek Flash 时推荐 400K。自动压缩始终开启，压缩起点由 App 自动决定，都不能修改；`get` 会返回当前实际起点。
 

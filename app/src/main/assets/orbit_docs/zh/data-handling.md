@@ -45,7 +45,7 @@ App 的语音输入取决于用户配置的识别服务：本地识别在设备�
 
 `orbit_voice` 的 `speak` 和 `podcast` 使用手机系统语音引擎，生成文件保存在当前 Orbit 的 `files/voice/`。
 `voices` 返回的 `needs_network` 表明声音是否需要联网；引擎和所选声音会影响数据路径。
-用户想查看或更改语音服务时，用 `orbit_voice action=request_settings` 放设置卡片，结束本轮，由用户进入设置自行修改。
+用户想查看或更改语音服务时，先用 `orbit_voice action=profiles` 看现有配置；切换、新建、换密钥、删除分别用 `request_switch`、`request_create`、`request_key`、`request_delete` 放批准卡，密钥由用户在卡片里填。语速、音调这类细项再用 `request_settings` 放设置卡片。
 
 ## 凭据不放进上下文
 

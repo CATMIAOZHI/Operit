@@ -83,6 +83,7 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.CHATGPT_LOGIN -> ChatGptLoginCard(card)
         OrbitChatCards.ACCOUNT_LOGIN -> OrbitAccountLoginCard(card)
         OrbitChatCards.SPEECH_SETTINGS -> OrbitSpeechSettingsCard()
+        OrbitChatCards.WEIXIN_LOGIN -> OrbitWeixinLoginCard(card)
         OrbitChatCards.DATA_EXPORT -> OrbitDataExportCard(card)
         OrbitChatCards.OPEN_PAGE -> OrbitOpenPageCard(card)
     }

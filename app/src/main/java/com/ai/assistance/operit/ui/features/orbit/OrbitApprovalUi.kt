@@ -71,6 +71,9 @@ internal fun approvalIcon(a: OrbitApprovals.Approval?): String = when {
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.USE_MODEL -> "cpu"
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.INSTALL_COMPONENTS -> "download"
     OrbitApprovalActions.type(a.action) == OrbitApprovalActions.CHANGE_SETTINGS -> "settings"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.UPDATE_MODEL_KEY -> "key-round"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.VOICE_PROFILE -> "volume-2"
+    OrbitApprovalActions.type(a.action) == OrbitApprovalActions.WEIXIN_DISCONNECT -> "message-circle"
     else -> "shield-question"
 }
 
@@ -420,7 +423,10 @@ internal fun OrbitApprovalSheet(
                 Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.Top) {
                     Icon(orbitIcon("shield-check"), null, Modifier.size(16.dp).padding(top = 2.dp), tint = colors.primary)
                     Spacer(Modifier.width(8.dp))
-                    Text(stringResource(R.string.orbit_approval_model_key_promise, orbit.name.ifBlank { stringResource(R.string.nav_orbit) }),
+                    Text(stringResource(
+                        if (OrbitApprovalActions.secretForVoice(approval.action)) R.string.orbit_approval_voice_key_promise
+                        else R.string.orbit_approval_model_key_promise,
+                        orbit.name.ifBlank { stringResource(R.string.nav_orbit) }),
                         style = MaterialTheme.typography.bodySmall, color = colors.onSurfaceVariant)
                 }
             }

@@ -172,6 +172,48 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
     }
 }
 
+/** Links WeChat right from the chat: the QR scan opens over the chat, and Orbit hears once it is done. */
+@Composable
+internal fun OrbitWeixinLoginCard(card: JSONObject) {
+    val context = LocalContext.current
+    val orbitId = card.optString("orbit_id")
+    val chatId = card.optString("chat_id")
+    if (orbitId.isBlank()) return
+    val orbit = remember { OrbitPreferences.getInstance(context).settingsFlow }
+        .collectAsState(initial = null).value?.orbits?.firstOrNull { it.id == orbitId }
+    androidx.compose.runtime.LaunchedEffect(orbitId) {
+        com.ai.assistance.operit.features.orbit.OrbitWeixin.refreshStatus(context.applicationContext, orbitId)
+    }
+    val status = com.ai.assistance.operit.features.orbit.OrbitWeixin.status.collectAsState().value
+        ?.takeIf { it.orbitId == orbitId }
+    val linked = status?.connected == true && !status.loginExpired
+    var open by remember { mutableStateOf(false) }
+    val who = orbit?.let { orbitName(it) } ?: stringResource(R.string.nav_orbit)
+    CardColumn {
+        CardHeading("message-circle", stringResource(R.string.orbit_weixin_card_title),
+            when {
+                linked -> stringResource(R.string.orbit_weixin_card_done, who)
+                status?.loginExpired == true -> stringResource(R.string.orbit_weixin_expired)
+                else -> stringResource(R.string.orbit_weixin_card_sub, who)
+            })
+        if (!linked) {
+            Spacer(Modifier.height(14.dp))
+            CardButton(
+                stringResource(if (status?.loginExpired == true) R.string.orbit_weixin_reconnect else R.string.orbit_weixin_connect),
+                enabled = orbit != null && status != null,
+            ) { open = true }
+        } else {
+            Spacer(Modifier.height(4.dp))
+        }
+    }
+    val current = orbit
+    if (open && current != null) {
+        WeixinConnectSheet(current, onDismiss = { open = false }, onConnected = {
+            OrbitVaultNotice.sendWeixinConnected(context, current, chatId)
+        })
+    }
+}
+
 /** Shows which voice services are in use and opens the voice settings page inside Orbit. */
 @Composable
 internal fun OrbitSpeechSettingsCard() {

@@ -54,4 +54,7 @@
     <string name="orbit_weixin_fail_timeout">That took too long. Scan again.</string>
     <string name="orbit_weixin_fail_chats">There are too many side chats. Delete a few, then connect.</string>
     <string name="orbit_weixin_fail_network">Could not reach WeChat. Check your connection and try again.</string>
+    <string name="orbit_weixin_card_title">Link WeChat</string>
+    <string name="orbit_weixin_card_sub">Scan a code to chat with %1$s in WeChat</string>
+    <string name="orbit_weixin_card_done">Linked. You can now chat with %1$s in WeChat</string>
 </resources>
