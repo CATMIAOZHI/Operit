@@ -52,6 +52,8 @@ data class OrbitActionRow(
 
 /** Marks an event put back because Orbit's token allowance ran out; see [OrbitTaskDao.stopForQuota]. */
 private const val QUOTA_RETRY_KEY = ":quota-retry:"
+/** How many generations a resumable run gets after process deaths before only that run is given up. */
+private const val MAX_RESUMES = 3
 
 @Dao
 interface OrbitTaskDao {
@@ -439,6 +441,14 @@ interface OrbitTaskDao {
     @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId AND sender = 'ai'")
     suspend fun latestAiTimestamp(chatId: String): Long?
 
+    /** When the newest turn in [chatId] began: its last user message, typed or sent in by the app. */
+    @Query("SELECT MAX(timestamp) FROM messages WHERE chatId = :chatId AND sender = 'user'")
+    suspend fun latestUserTimestamp(chatId: String): Long?
+
+    /** Whether the user message stamped [timestamp] is saved in [chatId]. */
+    @Query("SELECT EXISTS(SELECT 1 FROM messages WHERE chatId = :chatId AND sender = 'user' AND timestamp = :timestamp)")
+    suspend fun hasUserMessageAt(chatId: String, timestamp: Long): Boolean
+
     /** Orbit's messages in [chatId] written after [after], oldest first; one reply can be several. */
     @Query("SELECT content FROM messages WHERE chatId = :chatId AND sender = 'ai' AND timestamp > :after ORDER BY timestamp ASC")
     suspend fun aiSaidAfter(chatId: String, after: Long): List<String>
@@ -709,6 +719,14 @@ interface OrbitTaskDao {
         event: OrbitEventEntity, owner: String, bootId: String,
         now: Long, elapsed: Long, leaseMs: Long,
         interruptedMessage: String = "Execution interrupted. Check previous results before continuing.",
+        /**
+         * Set for a run that may safely start over after its process died mid-turn: a review that
+         * keeps its own reading position and notes (the alignment review). Its run is given a new
+         * generation instead of pausing the routine; after [MAX_RESUMES] tries it gives up only this
+         * run and the routine goes on at [resumeNextRunAt].
+         */
+        resumable: Boolean = false,
+        resumeNextRunAt: Long = 0,
     ): OrbitRunEntity? {
         val task = task(event.taskId)?.takeIf { it.state == "ACTIVE" && it.version == event.taskVersion }
             ?: return null
@@ -734,8 +752,16 @@ interface OrbitTaskDao {
             return null
         }
         if (old != null && bindings(old.id, old.generation).isNotEmpty()) {
-            interrupt(old, now, interruptedMessage)
-            return null
+            if (resumable && old.generation >= MAX_RESUMES) {
+                updateRun(old.copy(state = "INTERRUPTED", error = interruptedMessage, finishedAt = now))
+                deleteEvent(old.eventId)
+                updateTask(task.copy(nextRunAt = resumeNextRunAt.coerceAtLeast(now), updatedAt = now))
+                return null
+            }
+            if (!resumable) {
+                interrupt(old, now, interruptedMessage)
+                return null
+            }
         }
         val run = if (old == null) OrbitRunEntity(
             id = event.id, eventId = event.id, taskId = task.id, taskVersion = task.version,

@@ -23,5 +23,6 @@
     <string name="orbit_model_switch_none">not set</string>
     <string name="orbit_model_switch_adds">Adds %1$s to the models of \"%2$s\"</string>
     <string name="orbit_model_switch_thinking">Assistant thinking strength: %1$s → %2$s</string>
+    <string name="orbit_model_switch_image_unsupported">%1$s / %2$s does not have picture support enabled, so nothing was switched and your picture model is unchanged. Choose a model that supports pictures. If this model is confirmed to support pictures, enable vision in the app model configuration, then request the switch again.</string>
     <string name="orbit_model_pick_full">Up to %1$d models</string>
 </resources>

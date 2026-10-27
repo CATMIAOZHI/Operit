@@ -93,11 +93,20 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             val labels = linkedMapOf(orbit.chatId to "main")
             orbit.sideChats.forEach { labels[it.chatId] = "side: ${it.title.take(40)}" }
             val ids = labels.keys.toList()
-            val users = dao.reviewCount(ids, since, now, listOf("user"))
+            // A reply still being written keeps its timestamp but not its text, so a window must end
+            // before any turn that is still running; that turn is read whole by the next review.
+            val holder = com.ai.assistance.operit.api.chat.ChatRuntimeHolder.getInstance(context)
+            val running = com.ai.assistance.operit.api.chat.ChatRuntimeSlot.values()
+                .flatMap { holder.getCore(it).activeStreamingChatIds.value }.toSet()
+            val until = ids.filter { it in running }
+                .mapNotNull { dao.latestUserTimestamp(it)?.minus(1) }
+                .fold(now) { a, b -> minOf(a, b) }
+            if (until <= since) return@locked null
+            val users = dao.reviewCount(ids, since, until, listOf("user"))
             if (users == 0) return@locked null
-            session = JSONObject().put("since", since).put("until", now)
+            session = JSONObject().put("since", since).put("until", until)
                 .put("chats", JSONObject(labels as Map<*, *>))
-                .put("total", dao.reviewCount(ids, since, now, listOf("user", "ai"))).put("user_total", users)
+                .put("total", dao.reviewCount(ids, since, until, listOf("user", "ai"))).put("user_total", users)
                 .put("read", Pos(since, Long.MAX_VALUE).json()).put("committed", Pos(since, Long.MAX_VALUE).json())
                 .put("read_n", 0).put("committed_n", 0)
                 .put("pages", 0).put("pending_pages", 0).put("pending_users", JSONArray()).put("pending_ids", JSONArray())
@@ -105,7 +114,7 @@ internal class OrbitReviewReader private constructor(private val context: Contex
             // The fresh notes file is started through the same saved-then-written step as a commit, so a
             // run stopped in between never takes the last window's notes for this one's.
             val time = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US)
-            session.put("writing", "# Review notes ${time.format(Date(since))} -> ${time.format(Date(now))}\n\n")
+            session.put("writing", "# Review notes ${time.format(Date(since))} -> ${time.format(Date(until))}\n\n")
                 .put("writing_new", true)
             state.put("session", session)
             save(state)

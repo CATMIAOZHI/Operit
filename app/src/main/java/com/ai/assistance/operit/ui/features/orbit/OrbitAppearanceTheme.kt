@@ -51,7 +51,11 @@ internal fun orbitPaletteColor(palette: OrbitChatPalette, avatar: Color): Color 
  * is the user, and the theme, including the user's own message bubbles, is the user's color.
  */
 @Composable
-internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -> Unit) {
+internal fun OrbitAppearanceTheme(
+    orbit: OrbitProfile,
+    updateAppAppearance: Boolean = true,
+    content: @Composable () -> Unit,
+) {
     val context = LocalContext.current.applicationContext
     val avatar = orbitPictureUri(orbit)
     val logoCore = orbit.appearance.logoUserColor
@@ -129,15 +133,18 @@ internal fun OrbitAppearanceTheme(orbit: OrbitProfile, content: @Composable () -
             outline = Color(0xFF86868E), outlineVariant = Color(0xFFE4E5E8), surfaceTint = accent,
         )
     }
-    val pageAppearance = LocalOpaquePageAppearance.current
-    DisposableEffect(pageAppearance) {
-        onDispose { pageAppearance?.value = null }
-    }
-    SideEffect { pageAppearance?.value = OpaquePageAppearance(scheme.background, dark) }
-    // Download prompts and progress live outside this page; they follow its colors while it shows.
-    DisposableEffect(scheme) {
-        OrbitActiveTheme.scheme = scheme
-        onDispose { if (OrbitActiveTheme.scheme === scheme) OrbitActiveTheme.scheme = null }
+    // A separate browser window must not replace the main page's system bars or download theme.
+    if (updateAppAppearance) {
+        val pageAppearance = LocalOpaquePageAppearance.current
+        DisposableEffect(pageAppearance) {
+            onDispose { pageAppearance?.value = null }
+        }
+        SideEffect { pageAppearance?.value = OpaquePageAppearance(scheme.background, dark) }
+        // Download prompts and progress live outside this page; they follow its colors while it shows.
+        DisposableEffect(scheme) {
+            OrbitActiveTheme.scheme = scheme
+            onDispose { if (OrbitActiveTheme.scheme === scheme) OrbitActiveTheme.scheme = null }
+        }
     }
     CompositionLocalProvider(LocalOrbitBubbleColor provides bubble, LocalOrbitAvatarColor provides avatarColor) {
         MaterialTheme(colorScheme = scheme, typography = MaterialTheme.typography, content = content)

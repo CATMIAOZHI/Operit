@@ -16,13 +16,16 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListScope
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -74,10 +77,12 @@ import com.ai.assistance.operit.features.orbit.OrbitBoardRepository
 import com.ai.assistance.operit.features.orbit.OrbitBoardRepository.Board
 import com.ai.assistance.operit.features.orbit.OrbitExecutionGate
 import com.ai.assistance.operit.features.orbit.OrbitFeedGenerator
+import com.ai.assistance.operit.features.orbit.OrbitFiles
 import com.ai.assistance.operit.features.orbit.OrbitRoutines
 import com.ai.assistance.operit.features.orbit.OrbitGoalRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskRepository
 import com.ai.assistance.operit.features.orbit.OrbitTaskScheduler
+import com.ai.assistance.operit.features.orbit.OrbitUploads
 import com.ai.assistance.operit.util.AppLogger
 import java.text.DateFormat
 import java.util.Date
@@ -85,7 +90,11 @@ import java.util.UUID
 import kotlin.math.abs
 import kotlin.math.sign
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 private const val TABS_TAG = "OrbitTabs"
@@ -186,6 +195,32 @@ internal fun draftToOrbit(context: android.content.Context, orbit: OrbitProfile,
     core.setDraftForChat(orbit.chatId, draft)
 }
 
+/** Loaded data stays with the tab host; visiting a tab starts only its own observations. */
+private class OrbitTabData(context: android.content.Context, orbitId: String, private val scope: CoroutineScope) {
+    val feedRepository by lazy { OrbitBoardRepository(context, orbitId, Board.FEED) }
+    val ideasRepository by lazy { OrbitBoardRepository(context, orbitId, Board.IDEAS) }
+    val trackingRepository by lazy { OrbitBoardRepository(context, orbitId, Board.TRACKING) }
+    val notesRepository by lazy { OrbitBoardRepository(context, orbitId, Board.GOAL_NOTES) }
+    val dao by lazy { OrbitTaskRepository(context).dao }
+    private fun <T> Flow<List<T>?>.retained() =
+        // Keeps the last list for a quick return, but stops watching the database while no tab shows it.
+        catch { emit(emptyList()) }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val posts by lazy { feedRepository.observe().retained() }
+    val ideas by lazy { ideasRepository.observe().retained() }
+    val goals by lazy { dao.observeGoals(orbitId).retained() }
+    val tasks by lazy { dao.observeTasks(orbitId).retained() }
+    val tracking by lazy { trackingRepository.observe().retained() }
+    val goalNotes by lazy { notesRepository.observe().retained() }
+    val versions by lazy { dao.observeArtifacts(orbitId).retained() }
+
+    var brief: String? = null
+    var madeFiles: Result<List<OrbitFiles.Entry>>? = null
+    var pins: List<String> = emptyList()
+    var uploads: Result<List<OrbitUploads.Upload>>? = null
+    var artifactText: Pair<String, Result<String>>? = null
+}
+
 /**
  * One of the Feed, Ideas, Goals and Builds pages. It is opaque because the chat stays underneath,
  * so going back to Chat never reloads it.
@@ -211,6 +246,12 @@ internal fun OrbitTabPage(
      */
     contentLayer: Modifier = Modifier,
 ) {
+    val context = LocalContext.current
+    val data = key(orbit.id) {
+        val scope = rememberCoroutineScope()
+        remember { OrbitTabData(context.applicationContext, orbit.id, scope) }
+    }
+    val pageState = rememberSaveableStateHolder()
     var openTaskId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // Keeps the task on screen while its page slides away.
     var shownTaskId by remember(orbit.id) { mutableStateOf(openTaskId) }
@@ -228,12 +269,14 @@ internal fun OrbitTabPage(
                 // A task page over the tab hides the tab from screen readers.
                 Box(Modifier.fillMaxSize().then(if (openTaskId != null) Modifier.clearAndSetSemantics { } else Modifier)) {
                     CompositionLocalProvider(LocalOrbitTabHeaderHeight provides if (header != null) headerHeight else null) {
-                        when (tab) {
-                            OrbitTab.CHAT -> Unit
-                            OrbitTab.FEED -> OrbitFeedPage(orbit, onDraft, onQuote)
-                            OrbitTab.IDEAS -> OrbitIdeasPage(orbit, onDraft)
-                            OrbitTab.GOALS -> OrbitGoalsPage(orbit, onOpenTask = { openTaskId = it }, onDraft = onDraft)
-                            OrbitTab.BUILDS -> OrbitBuildsPage(orbit, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+                        pageState.SaveableStateProvider("${orbit.id}:${tab.name}") {
+                            when (tab) {
+                                OrbitTab.CHAT -> Unit
+                                OrbitTab.FEED -> OrbitFeedPage(orbit, data, onDraft, onQuote)
+                                OrbitTab.IDEAS -> OrbitIdeasPage(orbit, data, onDraft)
+                                OrbitTab.GOALS -> OrbitGoalsPage(orbit, data, onOpenTask = { openTaskId = it }, onDraft = onDraft)
+                                OrbitTab.BUILDS -> OrbitBuildsPage(orbit, data, filesVersion, onOpenTask = { openTaskId = it }, onOpenFile = onOpenFile, onDraft = onDraft)
+                            }
                         }
                     }
                 }
@@ -608,6 +651,7 @@ private fun VoteButton(icon: String, label: String, active: Boolean, onClick: ()
 @Composable
 private fun OrbitFeedPage(
     orbit: OrbitProfile,
+    data: OrbitTabData,
     onDraft: (String) -> Unit,
     onQuote: (com.ai.assistance.operit.data.model.ChatMessage) -> Unit,
 ) {
@@ -615,18 +659,18 @@ private fun OrbitFeedPage(
     val context = LocalContext.current
     val resources = LocalResources.current
     val action = rememberAction()
-    val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.FEED) }
-    val posts by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
+    val repository = data.feedRepository
+    val posts by data.posts.collectAsState()
     var briefVersion by remember { mutableIntStateOf(0) }
     // The brief the feed follows: the user's own, or the default one.
-    val brief by produceState<String?>(null, orbit.id, briefVersion) {
+    val brief by produceState(data.brief, orbit.id, briefVersion) {
         value = try {
             OrbitFeedGenerator.effectiveBrief(context, orbit.id)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
             OrbitFeedGenerator.defaultBrief(context)
-        }
+        }.also { data.brief = it }
     }
     var editingBrief by remember { mutableStateOf(false) }
     var showIntro by rememberSaveable { mutableStateOf(false) }
@@ -987,13 +1031,13 @@ private const val RECENT_IDEAS = 5
  * every morning; the button asks it for some now.
  */
 @Composable
-private fun OrbitIdeasPage(orbit: OrbitProfile, onDraft: (String) -> Unit) {
+private fun OrbitIdeasPage(orbit: OrbitProfile, data: OrbitTabData, onDraft: (String) -> Unit) {
     val who = orbitName(orbit)
     val context = LocalContext.current
     val resources = LocalResources.current
     val action = rememberAction()
-    val repository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.IDEAS) }
-    val ideas by remember(repository) { repository.observe().catch { emit(emptyList()) } }.collectAsState(initial = null)
+    val repository = data.ideasRepository
+    val ideas by data.ideas.collectAsState()
     var dismissing by remember { mutableStateOf<OrbitBoardRepository.Item?>(null) }
     var openedId by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     var category by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
@@ -1419,20 +1463,17 @@ private fun IdeaSheet(
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun OrbitGoalsPage(orbit: OrbitProfile, onOpenTask: (String) -> Unit, onDraft: (String) -> Unit) {
+private fun OrbitGoalsPage(orbit: OrbitProfile, data: OrbitTabData, onOpenTask: (String) -> Unit, onDraft: (String) -> Unit) {
     val who = orbitName(orbit)
     val context = LocalContext.current
     val resources = LocalResources.current
     val action = rememberAction()
-    val dao = remember(context) { OrbitTaskRepository(context).dao }
-    val goals by remember(orbit.id) { dao.observeGoals(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
-    val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
-    val trackingRepository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.TRACKING) }
-    val tracking by remember(trackingRepository) { trackingRepository.observe().catch { emit(emptyList()) } }
-        .collectAsState(initial = null)
-    val notesRepository = remember(orbit.id) { OrbitBoardRepository(context, orbit.id, Board.GOAL_NOTES) }
-    val goalNotes by remember(notesRepository) { notesRepository.observe().catch { emit(emptyList()) } }
-        .collectAsState(initial = null)
+    val goals by data.goals.collectAsState()
+    val tasks by data.tasks.collectAsState()
+    val trackingRepository = data.trackingRepository
+    val tracking by data.tracking.collectAsState()
+    val notesRepository = data.notesRepository
+    val goalNotes by data.goalNotes.collectAsState()
     var deletingNote by remember { mutableStateOf<String?>(null) }
     var goalSheet by remember { mutableStateOf<String?>(null) }
     var trackingSheet by remember { mutableStateOf<String?>(null) }
@@ -1720,6 +1761,7 @@ private sealed interface BuildEntry {
 @Composable
 private fun OrbitBuildsPage(
     orbit: OrbitProfile,
+    data: OrbitTabData,
     filesVersion: Int,
     onOpenTask: (String) -> Unit,
     onOpenFile: (String) -> Unit,
@@ -1728,29 +1770,32 @@ private fun OrbitBuildsPage(
     val who = orbitName(orbit)
     val context = LocalContext.current
     val resources = LocalResources.current
-    val dao = remember(context) { OrbitTaskRepository(context).dao }
-    val versions by remember(orbit.id) { dao.observeArtifacts(orbit.id).catch { emit(emptyList()) } }.collectAsState(initial = null)
+    val versions by data.versions.collectAsState()
     var openArtifact by rememberSaveable(orbit.id) { mutableStateOf<String?>(null) }
     // 0: what Orbit made; 1: the Library of what the user sent.
     var section by rememberSaveable(orbit.id) { mutableIntStateOf(0) }
     // files/ in Orbit's folder: things made for the user (reports, voice messages, shared files).
     val orbitFiles = remember(orbit.id) { com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbit.id) }
     var filesReload by remember { mutableIntStateOf(0) }
-    val madeFiles by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitFiles.Entry>>?>(null, orbit.id, filesReload, filesVersion) {
+    // Chat can change these files while another tab is open. Keep their rows during the refresh.
+    val madeFiles by produceState(data.madeFiles, orbit.id, filesReload, filesVersion) {
         value = try {
             Result.success(orbitFiles.list().filter { it.path.startsWith("files/") })
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+            .also { data.madeFiles = it }
     }
-    val pins by produceState(emptyList<String>(), orbit.id, filesReload, filesVersion) {
+    val pins by produceState(data.pins, orbit.id, filesReload, filesVersion) {
         value = try { orbitFiles.pins() } catch (e: CancellationException) { throw e } catch (e: Exception) { emptyList() }
+            .also { data.pins = it }
     }
     var uploadsReload by remember { mutableIntStateOf(0) }
     // Read when the Library is shown, and again each time it is opened, so new uploads appear.
-    val uploads by produceState<Result<List<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload>>?>(null, orbit.id, uploadsReload, section) {
+    val uploads by produceState(data.uploads, orbit.id, uploadsReload, section) {
         if (section != 1) return@produceState
         value = try {
             Result.success(com.ai.assistance.operit.features.orbit.OrbitUploads.list(context, orbit.id))
         } catch (e: CancellationException) { throw e } catch (e: Exception) { Result.failure(e) }
+            .also { data.uploads = it }
     }
     var deletingUpload by remember { mutableStateOf<com.ai.assistance.operit.features.orbit.OrbitUploads.Upload?>(null) }
     // Pictures, videos, sounds and plain text open in Orbit's own viewer; anything else goes to another app.
@@ -1923,7 +1968,7 @@ private fun OrbitBuildsPage(
         (history?.takeIf { it.isNotEmpty() } ?: shownHistory)?.takeIf { it.isNotEmpty() }?.let { shown ->
             Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
                 key(shown.first().artifactId) {
-                    BuildDetail(orbit, shown, onBack = { openArtifact = null }, onOpenTask = onOpenTask, onDraft = onDraft)
+                    BuildDetail(orbit, data, shown, onBack = { openArtifact = null }, onOpenTask = onOpenTask, onDraft = onDraft)
                 }
             }
         }
@@ -2138,6 +2183,7 @@ private val workTileColors = listOf(
 @Composable
 private fun BuildDetail(
     orbit: OrbitProfile,
+    data: OrbitTabData,
     history: List<OrbitArtifactVersionEntity>,
     onBack: () -> Unit,
     onOpenTask: (String) -> Unit,
@@ -2148,13 +2194,16 @@ private fun BuildDetail(
     var versionId by rememberSaveable(history.first().artifactId) { mutableStateOf(history.first().id) }
     val version = history.firstOrNull { it.id == versionId } ?: history.first()
     var offset by rememberSaveable(version.id) { mutableIntStateOf(0) }
-    val text by produceState<Result<String>?>(null, version.id) {
-        value = try {
-            Result.success(OrbitArtifactRepository(context).read(orbit.id, version.id))
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Result.failure(e)
+    val text by key(version.id) {
+        produceState(data.artifactText?.takeIf { it.first == version.id }?.second, version.id) {
+            if (value?.isSuccess == true) return@produceState
+            value = try {
+                Result.success(OrbitArtifactRepository(context).read(orbit.id, version.id))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Result.failure(e)
+            }.also { data.artifactText = version.id to it }
         }
     }
     LazyColumn(
@@ -2183,8 +2232,8 @@ private fun BuildDetail(
         }
         if (history.size > 1) {
             item {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    history.take(6).forEachIndexed { index, item ->
+                LazyRow(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    itemsIndexed(history, key = { _, item -> item.id }) { index, item ->
                         FilterChip(selected = item.id == version.id, onClick = { versionId = item.id }, label = { Text("v${history.size - index}") })
                     }
                 }
@@ -2245,7 +2294,8 @@ internal fun OrbitNotificationsPage(orbitId: String, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(
-            Modifier.fillMaxSize().statusBarsPadding().padding(horizontal = 20.dp, vertical = 8.dp),
+            Modifier.fillMaxSize().statusBarsPadding().navigationBarsPadding()
+                .verticalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 8.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {

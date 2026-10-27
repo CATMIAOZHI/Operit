@@ -168,14 +168,14 @@ private fun HandoffCard(card: OrbitBrowserWatch.Card, work: OrbitBrowserWatch.Wo
                         },
                         enabled = !work.stopping,
                         shape = RoundedCornerShape(50),
-                        color = if (take) Color(0xFF3478F6) else colors.surface,
+                        color = if (take) colors.primary else colors.surface,
                         modifier = Modifier.fillMaxWidth().height(48.dp),
                     ) {
                         Box(contentAlignment = Alignment.Center) {
                             Text(
                                 stringResource(if (take) R.string.orbit_browser_handoff_take else R.string.orbit_browser_card_open),
                                 style = MaterialTheme.typography.titleSmall,
-                                color = if (take) Color.White else colors.onSurface,
+                                color = if (take) colors.onPrimary else colors.onSurface,
                             )
                         }
                     }

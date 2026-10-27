@@ -85,6 +85,7 @@ internal fun OrbitMemoryLogsPage(
 ) {
     OrbitPageBack(onBack = onBack)
     val context = LocalContext.current
+    val who = rememberOrbitNameForSpace(spaceId) ?: stringResource(R.string.nav_orbit)
     val repo = remember(spaceId) { MemoryExtractionLogRepository(context, spaceId) }
     val mainTitle = stringResource(R.string.orbit_chats_main)
     // Covered by a record, or with the app in the background, the list stops reading.
@@ -129,7 +130,7 @@ internal fun OrbitMemoryLogsPage(
         item(key = "header") {
             OrbitPageHeader(stringResource(R.string.memory_extraction_logs), onBack)
             Text(
-                stringResource(R.string.orbit_memory_logs_help),
+                stringResource(R.string.orbit_memory_logs_help, who),
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(start = 4.dp, top = 4.dp, bottom = 4.dp),

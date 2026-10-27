@@ -10,11 +10,16 @@ import java.util.concurrent.ConcurrentHashMap
  * resumed from its stored transcript simply compacts again.
  */
 object InPlaceCompaction {
-    private val chats = ConcurrentHashMap<String, () -> Unit>()
+    private class Entry(val keepsLatestUserTurn: Boolean, val onCompacted: () -> Unit)
+    private val chats = ConcurrentHashMap<String, Entry>()
 
-    /** [onCompacted] runs after each compaction, for budgets that count what the context holds. */
-    fun register(chatId: String, onCompacted: () -> Unit = {}) {
-        chats[chatId] = onCompacted
+    /**
+     * [onCompacted] runs after each compaction, for budgets that count what the context holds.
+     * A run's task is its first request; in an ongoing chat ([keepsLatestUserTurn]) the turn's own
+     * request is the latest one, and the older ones go into the checkpoint.
+     */
+    fun register(chatId: String, keepsLatestUserTurn: Boolean = false, onCompacted: () -> Unit = {}) {
+        chats[chatId] = Entry(keepsLatestUserTurn, onCompacted)
     }
 
     fun unregister(chatId: String) {
@@ -23,8 +28,10 @@ object InPlaceCompaction {
 
     fun contains(chatId: String?): Boolean = chatId != null && chats.containsKey(chatId)
 
+    internal fun keepsLatestUserTurn(chatId: String): Boolean = chats[chatId]?.keepsLatestUserTurn == true
+
     internal fun compacted(chatId: String) {
-        runCatching { chats[chatId]?.invoke() }
+        runCatching { chats[chatId]?.onCompacted?.invoke() }
     }
 
     internal const val SUMMARY_RULES =

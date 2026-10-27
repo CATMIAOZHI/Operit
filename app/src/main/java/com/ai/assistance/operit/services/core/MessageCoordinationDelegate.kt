@@ -880,6 +880,12 @@ class MessageCoordinationDelegate(
                     val restoresToComposer = shouldReadComposerState && !isContinuation
                     val heldReply = pendingReply?.takeIf { restoresToComposer }
                     val heldAttachments = currentAttachments.takeIf { restoresToComposer }.orEmpty()
+                    // Saved before the input box is emptied, so closing the app mid-summary cannot lose it.
+                    val heldKey = java.util.UUID.randomUUID().toString().takeIf { restoresToComposer }
+                    if (heldKey != null) {
+                        HeldSendStore.save(context, heldKey,
+                            HeldSendStore.Saved(chatId, pendingText, heldAttachments, heldReply))
+                    }
                     if (takesComposer) {
                         messageProcessingDelegate.clearSubmittedDraft(chatId, pendingText)
                         if (attachmentsOverride == null) {
@@ -970,8 +976,11 @@ class MessageCoordinationDelegate(
                                 if (restoresToComposer) {
                                     coroutineScope.launch(Dispatchers.Main.immediate) {
                                         restoreHeldComposer(chatId, pendingText, heldAttachments, heldReply)
+                                        heldKey?.let { HeldSendStore.forget(context, it) }
                                     }
                                 }
+                            } else {
+                                heldKey?.let { forgetHeldWhenSaved(chatId, it, held?.heldAt, pendingText, heldAttachments, heldReply) }
                             }
                         },
                     )
@@ -1962,6 +1971,34 @@ class MessageCoordinationDelegate(
     }
 
     /**
+     * The held message was handed to its turn; its saved copy stays until the message row is in the
+     * chat. If the turn ends without saving it (an error while building or storing it), the message
+     * goes back to the input box.
+     */
+    private fun forgetHeldWhenSaved(
+        chatId: String,
+        key: String,
+        savedAt: Long?,
+        text: String,
+        attachments: List<com.ai.assistance.operit.data.model.AttachmentInfo>,
+        reply: ChatMessage?,
+    ) {
+        coroutineScope.launch(Dispatchers.IO) {
+            val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
+            suspend fun saved() = savedAt == null || dao.hasUserMessageAt(chatId, savedAt)
+            // The message is saved within seconds of the turn starting; a turn stuck before that
+            // (for example a full disk) gives the message back instead of being watched forever.
+            withTimeoutOrNull(120_000L) {
+                while (!saved() && messageProcessingDelegate.isChatLoading(chatId)) delay(200)
+            }
+            if (!saved()) {
+                withContext(Dispatchers.Main.immediate) { restoreHeldComposer(chatId, text, attachments, reply) }
+            }
+            HeldSendStore.forget(context, key)
+        }
+    }
+
+    /**
      * Puts a message that could not be sent back in the input box. Whatever the user wrote there in
      * the meantime stays, after it; their attachments are kept alongside the message's own.
      */
@@ -2278,6 +2315,18 @@ class MessageCoordinationDelegate(
 
     fun setUiBridge(uiBridge: ChatServiceUiBridge) {
         this.uiBridge = uiBridge
+        if (uiBridge !== com.ai.assistance.operit.services.EmptyChatServiceUiBridge) {
+            // Messages that were waiting for a summary when the app last closed go back to the input box.
+            coroutineScope.launch(Dispatchers.Main.immediate) {
+                val saved = withContext(Dispatchers.IO) { HeldSendStore.claimAll(context) }
+                saved.forEach { held ->
+                    val attachments = held.attachments.filter {
+                        it.content.isNotEmpty() || java.io.File(it.filePath).exists()
+                    }
+                    restoreHeldComposer(held.chatId, held.text, attachments, held.reply)
+                }
+            }
+        }
     }
 
     /** 从当前聊天绑定的模型配置中读取总结配置。 */

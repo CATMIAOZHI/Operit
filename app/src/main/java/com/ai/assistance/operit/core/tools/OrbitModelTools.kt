@@ -61,7 +61,7 @@ internal object OrbitModelTools {
   - A new key: prefer a new configuration. Use request_create with a name that tells it apart (e.g. "DeepSeek new key"), then request_use to move to it once it works; the old configuration stays as a fallback.
   - request_key replaces the key of one existing configuration (config = its select from list, e.g. "DeepSeek#2" when several share a name). Use it only when the user wants that configuration's key replaced, e.g. the old key was revoked. If several configurations could be meant, ask the user which one first. The user types the new key on the card; you never see it. The app first tests the new key on each model of that configuration you use (or its first model) and replaces the old key only if all pass; otherwise the new key is not saved and the hidden note says why. End the turn with one short line.
   - open_settings puts a card that opens the model settings page. Only for what the chat cannot do: a configuration that uses several keys, or models that run on the phone. End the turn with one short line.
-  - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
+  - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. multimodal requires picture support enabled for that model in its configuration. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
   - Sign-in accounts (OPENAI_CODEX, GROK_ACCOUNT, CLAUDE_ACCOUNT, GOOGLE_ANTIGRAVITY, COMMAND_CODE) use no key. list's accounts shows which are signed in. Not signed in: put a sign-in card first with orbit_vault request_chatgpt_login (ChatGPT/Codex) or request_account_login (Claude, Grok, Antigravity, Command Code). Signed in: add it yourself with request_create provider=<that id> (leave endpoint and models out); the user picks the models from the account's list on the card. discover with that provider also lists the account's models.
   - Models that run on the phone (MNN, LLAMA_CPP) are set up in the app's model settings; use open_settings for those.
@@ -164,6 +164,14 @@ internal object OrbitModelTools {
                             "\"$model\" is neither in \"${config.name}\" nor in the provider's list. Use discover with config=${config.name} " +
                                 "and pick an exact name" + offered.filter { it.contains(model, ignoreCase = true) }.take(5)
                                     .takeIf { it.isNotEmpty() }?.joinToString(prefix = "; close names: ").orEmpty()
+                        }
+                    }
+                    if (role == OrbitModelSwitch.ROLE_MULTIMODAL) {
+                        val full = checkNotNull(configs.getModelConfig(config.id)) { "Configuration \"${config.name}\" could not be read" }
+                        require(OrbitModelSwitch.supportsPictures(full, model)) {
+                            "\"${config.name} / $model\" is not marked as supporting pictures. No approval card was created; " +
+                                "your picture model is unchanged. Choose a model with picture support enabled. If the provider " +
+                                "confirms this model supports pictures, use action=open_settings so the user can enable it, then request_use again."
                         }
                     }
                     val mine = OrbitModelPreferences(context).current(orbit.id)

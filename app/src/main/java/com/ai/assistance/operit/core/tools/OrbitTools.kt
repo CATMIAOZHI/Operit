@@ -107,7 +107,7 @@ internal object OrbitTools {
         val all: String get() = listOf(handbook, runtime, identity, soul, alignment).filter { it.isNotEmpty() }.joinToString("\n\n")
     }
 
-    suspend fun promptParts(context: Context, chatId: String?, useEnglish: Boolean): PromptParts? {
+    suspend fun promptParts(context: Context, chatId: String?, useEnglish: Boolean, useToolCallApi: Boolean = false): PromptParts? {
         val orbit = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.owner(context, chatId) ?: return null
         val name = orbit.name.replace("<", "").replace(">", "").trim()
         val body =
@@ -130,6 +130,12 @@ internal object OrbitTools {
                     "审核下使用现有命令或文件工具，仅读取用户要求的内容，不要自动导入自己的记忆。"
             }
         val controls = com.ai.assistance.operit.features.orbit.OrbitTaskExecution.additionalPrompts(context, chatId)
+        // Native definitions already include descriptions, details and parameters. Notes are the
+        // only supplement not carried by the providers' tool schemas.
+        val controlPrompt = if (useToolCallApi) {
+            controls.mapNotNull { tool -> tool.notes.takeIf { it.isNotBlank() }?.let { "${tool.name}:\n$it" } }
+                .joinToString("\n")
+        } else controls.joinToString("\n")
         val files = com.ai.assistance.operit.features.orbit.OrbitPromptFiles
         // The handbook tells Orbit to read docs/ in its folder; put the built-in copy there first.
         com.ai.assistance.operit.features.orbit.OrbitDocs.ensure(context, orbit.id, useEnglish)
@@ -160,7 +166,7 @@ internal object OrbitTools {
         val forkReference = side?.forkOrigin?.takeIf { it.chatId in orbit.talkChatIds }?.let {
             com.ai.assistance.operit.features.orbit.OrbitChatFork.prompt(context, it, useEnglish)
         }.orEmpty()
-        val runtime = "<orbit>\n$body$sideNote$firstTalk\n${controls.joinToString("\n")}\n</orbit>$forkReference"
+        val runtime = "<orbit>\n$body$sideNote$firstTalk\n$controlPrompt\n</orbit>$forkReference"
         return PromptParts(handbook, runtime, identity, soul, alignment)
     }
 

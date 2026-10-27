@@ -21,8 +21,10 @@ import android.widget.LinearLayout
 import android.widget.TextView
 import android.widget.Toast
 import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
@@ -38,6 +40,8 @@ import androidx.savedstate.SavedStateRegistryController
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.preferences.OrbitPreferences
+import com.ai.assistance.operit.ui.features.orbit.OrbitAppearanceTheme
 import com.ai.assistance.operit.core.tools.defaultTool.websession.userscript.ui.WebSessionUserscriptUiStateStore
 import com.ai.assistance.operit.ui.features.websession.browser.WebSessionBrowserScreen
 import com.ai.assistance.operit.ui.features.websession.browser.WebSessionFloatingTheme
@@ -45,6 +49,27 @@ import com.ai.assistance.operit.ui.features.websession.browser.WebSessionMinimiz
 import com.ai.assistance.operit.util.AppLogger
 import kotlin.math.roundToInt
 import org.json.JSONTokener
+
+@Composable
+private fun BrowserAppearanceTheme(orbitId: String?, content: @Composable () -> Unit) {
+    if (orbitId == null) {
+        WebSessionFloatingTheme(content)
+        return
+    }
+    val context = androidx.compose.ui.platform.LocalContext.current.applicationContext
+    val settings by remember(context) { OrbitPreferences.getInstance(context).settingsFlow }
+        .collectAsState(initial = null)
+    // Do not show the app's light palette for a frame while the companion's appearance loads.
+    val loaded = settings ?: return
+    val orbit = loaded.orbits.firstOrNull { it.id == orbitId }
+    if (orbit != null) {
+        WebSessionFloatingTheme {
+            OrbitAppearanceTheme(orbit, updateAppAppearance = false, content = content)
+        }
+    } else {
+        WebSessionFloatingTheme(content)
+    }
+}
 
 internal class WebSessionBrowserHost(
     private val appContext: Context,
@@ -181,7 +206,7 @@ internal class WebSessionBrowserHost(
                         }
                     }
 
-                    WebSessionFloatingTheme {
+                    BrowserAppearanceTheme(watchWork?.orbitId) {
                         WebSessionBrowserScreen(
                             hostState = if (watchWork == null) hostState else hostState.copy(browserState =
                                 hostState.browserState.copy(tabs = hostState.browserState.tabs.filter { tab ->

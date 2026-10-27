@@ -598,7 +598,7 @@ class ConversationService(
                 val orbitParts =
                     if (ConversationPromptIsolationPolicy.allowPersonalContext(isSubTask)) {
                         com.ai.assistance.operit.core.tools.OrbitTools.promptParts(
-                            context, chatId, LocaleUtils.usesEnglishPrompt(context))
+                            context, chatId, LocaleUtils.usesEnglishPrompt(context), useToolCallApi)
                     } else {
                         null
                     }

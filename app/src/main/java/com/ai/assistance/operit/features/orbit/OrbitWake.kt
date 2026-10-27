@@ -241,7 +241,8 @@ object OrbitWake {
         // Waiting for a quiet chat holds no lock, so a busy chat never holds up another chat.
         withTimeoutOrNull(minOf(idleWaitMs, totalWaitMs)) { quiet.first { it } } ?: return Told.BUSY
         var before = 0L
-        val turnId = decision?.turnId
+        // Every notice runs as a known turn, so it is only counted as sent once its message is saved.
+        val turnId = decision?.turnId ?: java.util.UUID.randomUUID().toString()
         var terminal: CompletableDeferred<ChatTurnTerminalSignal>? = null
         try {
         val taken = locks.computeIfAbsent(chatId) { Mutex() }.withLock {
@@ -250,12 +251,11 @@ object OrbitWake {
             if (!ready()) return@withLock Told.DROPPED
             val text = noticeNow?.invoke() ?: notice
             before = withContext(Dispatchers.IO) { dao.latestAiTimestamp(chatId) } ?: 0L
-            if (turnId != null) {
-                terminal = core.registerChatTurn(turnId).also { signal ->
-                    // Also closes here when no subsequent turn has started in this chat.
-                    signal.invokeOnCompletion { decision?.accepting = false }
-                }
+            terminal = core.registerChatTurn(turnId).also { signal ->
+                // Also closes here when no subsequent turn has started in this chat.
+                signal.invokeOnCompletion { decision?.accepting = false }
             }
+            val noticeAt = com.ai.assistance.operit.data.model.ChatMessageTimestampAllocator.next()
             // A notice that went out is always recorded: nothing can cancel in between.
             withContext(NonCancellable) {
                 val sent = withContext(Dispatchers.Main.immediate) {
@@ -268,11 +268,11 @@ object OrbitWake {
                             turnOptions = ChatTurnOptions(
                                 hideUserMessage = true, useComposerReply = false, deliveredByTool = true,
                                 notifyReply = false, disableSummary = true, turnId = turnId,
-                                orbitModelRole = modelRole,
+                                orbitModelRole = modelRole, userMessageTimestamp = noticeAt,
                             ),
                         )
-                    }
-                // The notice is in the chat now; a failed bookkeeping step must not make it look unsent.
+                    } && savedInChat(core, dao, chatId, turnId, noticeAt, terminal!!)
+                // The notice is saved in the chat now; a failed bookkeeping step must not make it look unsent.
                 if (sent) try { onSent() } catch (e: Exception) {
                     if (e is kotlinx.coroutines.CancellationException) throw e
                     com.ai.assistance.operit.util.AppLogger.w("OrbitWake", "Notice sent but not recorded: ${e.message}")
@@ -283,7 +283,7 @@ object OrbitWake {
         if (!taken.sent) return taken
         if (!announce) return taken
         val left = totalWaitMs - (android.os.SystemClock.elapsedRealtime() - startedAt)
-        if (terminal != null) {
+        if (decision?.turnId != null) {
             val signal = withTimeoutOrNull(left.coerceAtLeast(0)) { terminal!!.await() }
             if (signal is ChatTurnTerminalSignal.Failed) return Told.FAILED
             // Failed/cancelled/timed-out turns do not borrow a later reply as their result.
@@ -318,9 +318,42 @@ object OrbitWake {
         } finally {
             decision?.accepting = false
             // Unregister the waiter without stopping the user's chat if our bounded wait ended.
-            if (turnId != null && terminal?.isCompleted == false) {
+            if (terminal?.isCompleted == false) {
                 core.failRegisteredChatTurn(turnId, chatId, "Orbit stopped waiting for this scheduled turn")
             }
         }
     }
+
+    /**
+     * Waits until the hidden notice taken at [noticeAt] is saved in [chatId]. A turn that ends before
+     * saving it, or one still not saved after [SAVE_WAIT_MS], is stopped and reported unsent, so the
+     * caller keeps the notice and tries again instead of losing it.
+     */
+    private suspend fun savedInChat(
+        core: com.ai.assistance.operit.services.ChatServiceCore,
+        dao: com.ai.assistance.operit.data.dao.OrbitTaskDao,
+        chatId: String,
+        turnId: String,
+        noticeAt: Long,
+        terminal: CompletableDeferred<ChatTurnTerminalSignal>,
+    ): Boolean {
+        suspend fun saved() = withContext(Dispatchers.IO) { dao.hasUserMessageAt(chatId, noticeAt) }
+        val settled = withTimeoutOrNull(SAVE_WAIT_MS) {
+            while (!saved()) {
+                if (terminal.isCompleted) return@withTimeoutOrNull saved()
+                delay(150)
+            }
+            true
+        }
+        if (settled != null) return settled
+        // A turn that fails before it is set up never signals its end, so this wait is bounded too.
+        core.cancelRegisteredChatTurn(turnId, chatId)
+        withTimeoutOrNull(CANCEL_WAIT_MS) {
+            while (!terminal.isCompleted && core.activeStreamingChatIds.value.contains(chatId)) delay(150)
+        }
+        return saved()
+    }
+
+    private const val SAVE_WAIT_MS = 120_000L
+    private const val CANCEL_WAIT_MS = 10_000L
 }

@@ -38,6 +38,7 @@ internal object OrbitSubagents {
     val LIVE = setOf(SubagentRunStatus.CREATED.name, SubagentRunStatus.QUEUED.name, SubagentRunStatus.RUNNING.name)
     private const val SHOWN_STEPS = 6
     private const val LINE_LENGTH = 80
+    private const val MESSAGE_BATCH_SIZE = 64
     /** Runs started by Orbit's work: v1 task calls and v2 agents, not reviewers or memory helpers. */
     private val OWNERS = setOf(null, com.ai.assistance.operit.core.agent.collaboration.CollaborationCoordinator.OWNER_TYPE)
     private val envelope = Regex("^Message ID: [^\\n]*\\n(?:[A-Za-z ]+: [^\\n]*\\n)*Payload:\\n", RegexOption.MULTILINE)
@@ -47,7 +48,7 @@ internal object OrbitSubagents {
      * agents its own spawn calls started; a background run or a subagent owns every agent its chat
      * started.
      */
-    suspend fun of(context: Context, process: OrbitProcess, messages: List<ChatMessage>): List<OrbitSubagentRecord> =
+    suspend fun of(context: Context, process: OrbitProcess, messages: List<ChatMessage>, cache: Cache): List<OrbitSubagentRecord> =
         withContext(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(context).subagentRunDao()
             val parentChatId = when (process) {
@@ -65,31 +66,76 @@ internal object OrbitSubagents {
                 runs.filter { it.parentToolCallId in calls }
             } else runs
             val manager = ChatHistoryManager.getInstance(context)
-            owned.sortedBy { it.createdAt }.map { run -> record(manager, run) }
+            owned.sortedBy { it.createdAt }.map { run -> cache.record(manager, run) }
         }
 
     /** The latest state of [records], for a record page that is still running. */
-    suspend fun refresh(context: Context, records: List<OrbitSubagentRecord>): List<OrbitSubagentRecord> =
+    suspend fun refresh(context: Context, records: List<OrbitSubagentRecord>, cache: Cache): List<OrbitSubagentRecord> =
         withContext(Dispatchers.IO) {
             val dao = AppDatabase.getDatabase(context).subagentRunDao()
             val manager = ChatHistoryManager.getInstance(context)
             records.map { old ->
-                if (!old.running) old else dao.getById(old.run.id)?.let { record(manager, it) } ?: old
+                dao.getById(old.run.id)?.let { cache.record(manager, it) } ?: old
             }
         }
 
-    private suspend fun record(manager: ChatHistoryManager, run: SubagentRunEntity): OrbitSubagentRecord {
-        val path = pathOf(run)
-        val replies = manager.loadChatMessages(run.childChatId).filter { it.sender == "ai" }
-        val steps = replies.flatMap { reply ->
-            parsePersistedToolExecutions(reply.content).toSortedMap().values.map {
-                OrbitSubagentStep(it.toolName.ifBlank { "tool" }, it.success, line(it.resultText))
+    /** Page-local summaries survive polling and returning from a child's record. */
+    class Cache {
+        private data class Summary(
+            val steps: List<OrbitSubagentStep> = emptyList(),
+            val stepCount: Int = 0,
+            val result: String = "",
+        ) {
+            fun append(reply: ChatMessage): Summary {
+                val executions = parsePersistedToolExecutions(reply.content).toSortedMap()
+                val latest = executions.values.asSequence()
+                    .drop((executions.size - SHOWN_STEPS).coerceAtLeast(0))
+                    .map { OrbitSubagentStep(it.toolName.ifBlank { "tool" }, it.success, line(it.resultText)) }
+                    .toList()
+                val said = OrbitSpeech.words(reply.content, "")
+                return Summary(
+                    (steps + latest).takeLast(SHOWN_STEPS),
+                    stepCount + executions.size,
+                    if (said.isNotBlank()) line(said) else result,
+                )
             }
         }
-        val said = replies.asReversed().firstNotNullOfOrNull { reply ->
-            OrbitSpeech.words(reply.content, "").takeIf { it.isNotBlank() }
-        }.orEmpty()
-        return OrbitSubagentRecord(run, path, steps.takeLast(SHOWN_STEPS), steps.size, line(said))
+
+        private data class Entry(
+            val record: OrbitSubagentRecord,
+            val beforeLastReply: Summary,
+            val lastReplyTimestamp: Long?,
+            val throughTimestamp: Long,
+        )
+
+        private val entries = mutableMapOf<String, Entry>()
+
+        suspend fun record(manager: ChatHistoryManager, run: SubagentRunEntity): OrbitSubagentRecord {
+            val old = entries[run.id]
+            if (old != null && !old.record.running && old.record.run == run) return old.record
+            // Streaming rewrites the last assistant row in place. Rebuild that row from its
+            // preceding summary, so updated tool results neither disappear nor count twice.
+            var summary = old?.beforeLastReply ?: Summary()
+            var beforeLastReply = summary
+            var lastReplyTimestamp = old?.lastReplyTimestamp
+            var after = lastReplyTimestamp?.minus(1L) ?: old?.throughTimestamp ?: Long.MIN_VALUE
+            while (true) {
+                val messages = manager.loadChatMessagesAscAfter(
+                    run.childChatId, after, MESSAGE_BATCH_SIZE, throwOnError = true,
+                )
+                for (reply in messages) {
+                    if (reply.sender != "ai") continue
+                    beforeLastReply = summary
+                    summary = summary.append(reply)
+                    lastReplyTimestamp = reply.timestamp
+                }
+                if (messages.isNotEmpty()) after = messages.last().timestamp
+                if (messages.size < MESSAGE_BATCH_SIZE) break
+            }
+            val record = OrbitSubagentRecord(run, pathOf(run), summary.steps, summary.stepCount, summary.result)
+            entries[run.id] = Entry(record, beforeLastReply, lastReplyTimestamp, after)
+            return record
+        }
     }
 
     private fun isWorker(run: SubagentRunEntity) = run.externalOwnerType in OWNERS &&

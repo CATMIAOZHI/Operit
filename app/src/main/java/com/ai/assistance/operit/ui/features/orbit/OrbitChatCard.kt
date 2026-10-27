@@ -76,7 +76,8 @@ fun OrbitChatCard(source: String) {
     val card = remember(source) { runCatching { JSONObject(source.trim()) }.getOrNull() } ?: return
     when (card.optString("kind")) {
         OrbitChatCards.VAULT_LOGIN, OrbitChatCards.VAULT_KEY, OrbitChatCards.VAULT_OAUTH ->
-            OrbitChatCards.vaultRequest(card)?.let { VaultCard(it) }
+            // Keyed by the card, so a reused slot never keeps showing an earlier card.
+            androidx.compose.runtime.key(source) { VerifiedVaultCard(source, card) }
         OrbitChatCards.IMAGE, OrbitChatCards.FILE -> AttachmentCard(card)
         OrbitChatCards.APPROVAL -> OrbitApprovalCard(card)
         OrbitChatCards.PERMISSION -> OrbitPermissionCard(card)
@@ -86,6 +87,47 @@ fun OrbitChatCard(source: String) {
         OrbitChatCards.WEIXIN_LOGIN -> OrbitWeixinLoginCard(card)
         OrbitChatCards.DATA_EXPORT -> OrbitDataExportCard(card)
         OrbitChatCards.OPEN_PAGE -> OrbitOpenPageCard(card)
+    }
+}
+
+/** Cards already checked, so scrolling back to one shows it at once. */
+private val verifiedVaultCards = android.util.LruCache<String, Result<OrbitVault.Request?>>(64)
+
+/**
+ * The signature check reads the device key, so it runs off the main thread, once per card. Until it
+ * is done a blank card of the same size holds the place, so nothing below it moves.
+ */
+@Composable
+private fun VerifiedVaultCard(source: String, card: JSONObject) {
+    val checked by produceState(verifiedVaultCards.get(source), source) {
+        if (value == null) {
+            value = Result.success(
+                kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) { OrbitChatCards.vaultRequest(card) }
+            ).also { verifiedVaultCards.put(source, it) }
+        }
+    }
+    val result = checked
+    when {
+        result == null -> VaultCardPlaceholder()
+        else -> result.getOrNull()?.let { VaultCard(it) }
+    }
+}
+
+/** The vault card's own layout with nothing to tap, so it takes the same room at any font size. */
+@Composable
+private fun VaultCardPlaceholder() {
+    val colors = MaterialTheme.colorScheme
+    Column(Modifier.widthIn(max = 300.dp).fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(Modifier.size(52.dp).clip(RoundedCornerShape(14.dp)).background(colors.surface))
+            Spacer(Modifier.width(14.dp))
+            Column(Modifier.weight(1f)) {
+                Text(" ", style = MaterialTheme.typography.titleMedium, maxLines = 1)
+                Text(" ", style = MaterialTheme.typography.bodyMedium, maxLines = 1)
+            }
+        }
+        Spacer(Modifier.height(14.dp))
+        Box(Modifier.fillMaxWidth().height(48.dp).clip(RoundedCornerShape(50)).background(colors.surface))
     }
 }
 

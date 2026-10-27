@@ -54,6 +54,35 @@ internal fun OrbitDialog(
     dismissButton: (@Composable () -> Unit)? = null,
     scrollable: Boolean = true,
     dismissEnabled: Boolean = true,
+) = OrbitDialogContent(
+    onDismissRequest, title,
+    { Text(title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold) },
+    text, confirmButton, dismissButton, scrollable, dismissEnabled,
+)
+
+/** Slot-based titles let shared settings keep their content inside Orbit's modal window. */
+@Composable
+internal fun OrbitDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: (@Composable () -> Unit)? = null,
+    confirmButton: (@Composable () -> Unit)? = null,
+    dismissButton: (@Composable () -> Unit)? = null,
+    scrollable: Boolean = true,
+) = OrbitDialogContent(
+    onDismissRequest, null, title, text, confirmButton, dismissButton, scrollable, true,
+)
+
+@Composable
+private fun OrbitDialogContent(
+    onDismissRequest: () -> Unit,
+    titleText: String?,
+    title: @Composable () -> Unit,
+    text: (@Composable () -> Unit)?,
+    confirmButton: (@Composable () -> Unit)?,
+    dismissButton: (@Composable () -> Unit)?,
+    scrollable: Boolean,
+    dismissEnabled: Boolean,
 ) {
     val colors = MaterialTheme.colorScheme
     OrbitModalWindow(
@@ -69,7 +98,7 @@ internal fun OrbitDialog(
             val scrollWholeDialog = scrollable && maxHeight < 360.dp * LocalDensity.current.fontScale
             val contentScroll = rememberScrollState()
             Surface(
-                modifier = Modifier.fillMaxWidth().semantics { paneTitle = title },
+                modifier = Modifier.fillMaxWidth().semantics { titleText?.let { paneTitle = it } },
                 shape = RoundedCornerShape(32.dp),
                 color = colors.surfaceContainerHigh,
                 contentColor = colors.onSurface,
@@ -86,12 +115,9 @@ internal fun OrbitDialog(
                             .then(if (scrollable && !scrollWholeDialog) Modifier.verticalScroll(contentScroll) else Modifier),
                         verticalArrangement = Arrangement.spacedBy(20.dp),
                     ) {
-                        Text(
-                            title,
-                            style = MaterialTheme.typography.titleLarge,
-                            fontWeight = FontWeight.SemiBold,
-                            modifier = Modifier.semantics { heading() },
-                        )
+                        Column(Modifier.semantics { heading() }) {
+                            ProvideTextStyle(MaterialTheme.typography.titleLarge, title)
+                        }
                         if (text != null) {
                             Column(
                                 Modifier.fillMaxWidth().then(

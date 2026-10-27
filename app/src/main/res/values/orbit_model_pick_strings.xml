@@ -23,5 +23,6 @@
     <string name="orbit_model_switch_none">未设置</string>
     <string name="orbit_model_switch_adds">会把 %1$s 加进「%2$s」的模型列表</string>
     <string name="orbit_model_switch_thinking">辅助模型思考强度：%1$s → %2$s</string>
+    <string name="orbit_model_switch_image_unsupported">%1$s / %2$s 未启用图片能力，没有切换，原来的看图模型保持不变。请换一个支持图片的模型；如果已确认这个模型支持图片，请先在应用的模型配置中启用识图，再重新申请切换。</string>
     <string name="orbit_model_pick_full">最多选 %1$d 个</string>
 </resources>

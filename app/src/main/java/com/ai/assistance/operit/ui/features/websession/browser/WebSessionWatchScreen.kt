@@ -58,8 +58,6 @@ import com.ai.assistance.operit.R
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.BrowserWatchUi
 import com.ai.assistance.operit.core.tools.defaultTool.websession.browser.WebSessionWebViewHost
 
-private val WatchBlue = Color(0xFF3478F6)
-
 /**
  * Orbit's browser while it works, like watching over someone's shoulder: the page shows, but
  * touches stop at a layer over it until the user takes control. The AI drives the page directly,
@@ -234,8 +232,8 @@ private fun WatchActions(watch: BrowserWatchUi) {
             watch.waiting -> stringResource(R.string.orbit_browser_watch_waiting, watch.orbitName)
             else -> stringResource(R.string.orbit_browser_watch_take_over)
         },
-        color = WatchBlue,
-        textColor = Color.White,
+        color = colors.primary,
+        textColor = colors.onPrimary,
         busy = watch.waiting,
         onClick = { if (watch.controlling) watch.onHandBack() else if (!watch.waiting) watch.onTakeOver() },
     )

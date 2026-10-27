@@ -120,7 +120,7 @@ internal object OrbitChatCards {
         return marked
     }
 
-    fun vault(request: OrbitVault.Request): JSONObject = JSONObject()
+    fun vault(request: OrbitVault.Request): JSONObject = signed(JSONObject()
         .put("kind", when (request.kind) {
             OrbitVault.LOGIN -> VAULT_LOGIN
             OrbitVault.OAUTH -> VAULT_OAUTH
@@ -141,7 +141,37 @@ internal object OrbitChatCards {
         .apply { if (request.kind == OrbitVault.OAUTH) {
             put("authorization_url", request.authorizationUrl).put("token_url", request.tokenUrl)
                 .put("client_id", request.clientId).put("scope", request.scope)
-        } }
+        } })
+
+    /**
+     * A vault card decides where a secret the user types goes (the site, the hosts, the sign-in
+     * address). Only cards the vault tool made carry a valid signature; one Orbit wrote into its
+     * own reply as a fake tool result has none, so it never opens an entry sheet.
+     */
+    private val signedVaultFields = listOf(
+        "kind", "orbit_id", "chat_id", "site", "page_url", "username_hint", "api_hosts", "placement",
+        "new_password", "requested_at", "env_name", "env_reason", "package_name", "update_id",
+        "authorization_url", "token_url", "client_id", "scope",
+    )
+
+    private fun vaultSignature(card: JSONObject): String {
+        val text = signedVaultFields.joinToString("\u0001") { name ->
+            card.optJSONArray(name)?.let { a -> (0 until a.length()).joinToString("\u0002") { a.optString(it) } }
+                ?: card.opt(name)?.toString().orEmpty()
+        }
+        val mac = javax.crypto.Mac.getInstance("HmacSHA256")
+        mac.init(OrbitCardKey.get())
+        return mac.doFinal(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
+    }
+
+    private fun signed(card: JSONObject): JSONObject = card.put("sig", vaultSignature(card))
+
+    private fun signatureValid(card: JSONObject): Boolean {
+        val sig = card.optString("sig").takeIf { it.isNotEmpty() } ?: return false
+        return runCatching {
+            java.security.MessageDigest.isEqual(sig.toByteArray(), vaultSignature(card).toByteArray())
+        }.getOrDefault(false)
+    }
 
     /** [width] and [height] of a picture let the chat size it before it loads, so nothing jumps. */
     fun attachment(orbitId: String, path: String, name: String, size: Long, width: Int = 0, height: Int = 0): JSONObject = JSONObject()
@@ -213,6 +243,7 @@ internal object OrbitChatCards {
             VAULT_OAUTH -> OrbitVault.OAUTH
             else -> return null
         }
+        if (!signatureValid(card)) return null
         val orbitId = card.optString("orbit_id").takeIf { it.isNotBlank() } ?: return null
         val site = card.optString("site").takeIf { it.isNotBlank() } ?: return null
         val hosts = card.optJSONArray("api_hosts")?.let { a -> (0 until a.length()).map { a.optString(it) } }.orEmpty()

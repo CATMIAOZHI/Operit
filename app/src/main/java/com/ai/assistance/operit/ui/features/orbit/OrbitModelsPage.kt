@@ -381,7 +381,9 @@ internal fun OrbitModelConfigPage(onBack: () -> Unit) {
         OrbitPageHeader(stringResource(R.string.orbit_models_config_entry), onBack,
             Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            com.ai.assistance.operit.ui.features.settings.screens.ModelConfigScreen()
+            com.ai.assistance.operit.ui.features.settings.screens.ModelConfigScreen(
+                dialogStyle = com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+            )
         }
     }
 }

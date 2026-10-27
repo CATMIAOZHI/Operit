@@ -156,15 +156,19 @@ internal fun OrbitAccountLoginCard(card: JSONObject) {
                 Text(stringResource(R.string.orbit_account_card_title, label), style = MaterialTheme.typography.titleLarge,
                     fontWeight = FontWeight.SemiBold)
                 Spacer(Modifier.height(12.dp))
-                com.ai.assistance.operit.ui.features.codex.ProviderAccountSettings(provider) {
-                    // Called after a sign-in or a sign-out; only a sign-in made here tells Orbit.
-                    if (current.account.value != null) {
-                        open = false
-                        relogged = true
-                        orbit?.let { OrbitVaultNotice.sendAccountLogin(context, it, chatId, label, provider.type.name) }
-                    }
-                    scope.launch {
-                        runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) }
+                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs(
+                    com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+                ) {
+                    com.ai.assistance.operit.ui.features.codex.ProviderAccountSettings(provider) {
+                        // Called after a sign-in or a sign-out; only a sign-in made here tells Orbit.
+                        if (current.account.value != null) {
+                            open = false
+                            relogged = true
+                            orbit?.let { OrbitVaultNotice.sendAccountLogin(context, it, chatId, label, provider.type.name) }
+                        }
+                        scope.launch {
+                            runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) }
+                        }
                     }
                 }
             }
@@ -315,7 +319,10 @@ internal fun OrbitSpeechSettingsPage(onBack: () -> Unit) {
         OrbitPageHeader(stringResource(R.string.orbit_speech_card_title), onBack,
             Modifier.padding(horizontal = 20.dp).padding(top = 8.dp))
         Box(Modifier.fillMaxWidth().weight(1f)) {
-            com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSettingsScreen(onBackPressed = onBack)
+            com.ai.assistance.operit.ui.features.settings.screens.SpeechServicesSettingsScreen(
+                onBackPressed = onBack,
+                dialogStyle = com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+            )
         }
     }
 }

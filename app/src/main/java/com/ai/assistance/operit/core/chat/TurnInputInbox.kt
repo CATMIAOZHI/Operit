@@ -8,12 +8,18 @@ class TurnInputInbox {
     val turnId: String = java.util.UUID.randomUUID().toString()
     private val lock = Any()
     private var open = true
+    /** True once the turn ended to compact its context; the follow-up turn should still get the input. */
+    @Volatile
+    var sealedForSummary: Boolean = false
+        private set
     private val revision = MutableStateFlow(0L)
     internal val changes: kotlinx.coroutines.flow.StateFlow<Long> = revision
     data class Input(
         val text: String,
         val consumed: () -> Unit = {},
         val returned: () -> Unit = {},
+        /** Used instead of [returned] when the turn stopped only to compact its context. */
+        val returnedForSummary: (() -> Unit)? = null,
         val agentPath: String? = null,
         val startsAgentTurn: Boolean = false,
     )
@@ -54,6 +60,11 @@ class TurnInputInbox {
 
     fun seal() = synchronized(lock) {
         open = false
+    }
+
+    fun sealForSummary() = synchronized(lock) {
+        open = false
+        sealedForSummary = true
     }
 
     fun finishIfEmpty(): Boolean = synchronized(lock) {

@@ -98,7 +98,7 @@ class OrbitLearningBoundary(
             // A change to any of these rebuilds old snapshots once.
             return "${OrbitSoulRepository(context, orbitId).snapshot().current.id}:$generation:skills-v1:layout-v2:isolation-v1:" +
                 "required-${OrbitPackages.REQUIRED.sorted().joinToString(",")}:" +
-                OrbitPromptFiles.revision(context, orbitId)
+                OrbitPromptFiles.revision(context, orbitId) + ":" + OrbitOnboarding.revision(context, orbit)
         }
 
         suspend fun <T> explicitEdit(context: Context, spaceId: String, action: suspend () -> T): T {

@@ -64,7 +64,8 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 /** An extra item in a file page's "more" menu. */
-internal class OrbitFileAction(val label: String, val icon: String, val run: suspend () -> Unit)
+/** [endsEditing] false for actions that only hand the file elsewhere (share, open), so a draft is kept. */
+internal class OrbitFileAction(val label: String, val icon: String, val endsEditing: Boolean = true, val run: suspend () -> Unit)
 
 /**
  * Muse-style page for one of Orbit's own Markdown files: a short note on what the file is, the
@@ -215,8 +216,10 @@ internal fun OrbitFilePage(
                                             showMenu = false
                                             run(R.string.orbit_trash_failed) {
                                                 action.run()
-                                                leaveEditor()
-                                                reload++
+                                                if (action.endsEditing) {
+                                                    leaveEditor()
+                                                    reload++
+                                                }
                                             }
                                         },
                                     )

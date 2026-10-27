@@ -2,7 +2,9 @@ package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
 import com.ai.assistance.operit.R
+import com.ai.assistance.operit.data.model.ModelConfigData
 import com.ai.assistance.operit.data.model.getModelList
+import com.ai.assistance.operit.data.model.multimodalCapabilitiesForModel
 import com.ai.assistance.operit.data.preferences.ApiPreferences
 import com.ai.assistance.operit.data.preferences.ModelConfigManager
 import com.ai.assistance.operit.data.preferences.OrbitModelPreferences
@@ -59,6 +61,9 @@ internal object OrbitModelSwitch {
 
     fun effort(level: Int): String = ApiPreferences.thinkingQualityEffort(level)
 
+    fun supportsPictures(config: ModelConfigData, model: String): Boolean =
+        config.multimodalCapabilitiesForModel(model).image
+
     /** A thinking strength by its name (low, medium, high, xhigh, max) or its level 1..5. */
     fun parseThinking(text: String): Int? {
         val t = text.trim().lowercase()
@@ -102,6 +107,10 @@ internal object OrbitModelSwitch {
         check(config != null) {
             if (english) "The model configuration \"$name\" no longer exists; nothing was switched. Check orbit_models list."
             else "模型配置「$name」已经不在了，什么都没换。用 orbit_models list 重新看看。"
+        }
+        if (r.role == ROLE_MULTIMODAL &&
+            !supportsPictures(checkNotNull(configs.getModelConfig(config.id)), r.model)) {
+            return context.getString(R.string.orbit_model_switch_image_unsupported, name, r.model)
         }
         var added = false
         var auto = com.ai.assistance.operit.data.model.ModelAutoConfig.Result(emptyList(), emptyList())

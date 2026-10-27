@@ -1130,6 +1130,7 @@ class MessageProcessingDelegate(
             var cancellationToPropagate: kotlinx.coroutines.CancellationException? = null
             var terminalFailureMessage: String? = null
             var assistantMessageTimestampForTurn: Long? = null
+            var turnInPlaceCompactionChatId: String? = null
             val toolBoundaryContentSnapshot =
                 AtomicReference<EnhancedAIService.ToolExecutionBoundarySnapshot?>(null)
             // Final merged content produced by the stream-collection exit. resolveFinalContent()
@@ -1209,17 +1210,16 @@ class MessageProcessingDelegate(
                             Pair(null, null)
                         }
                     } ?: Pair(null, null)
+                val orbitOfChat = com.ai.assistance.operit.data.preferences.OrbitPreferences
+                    .getInstance(context)
+                    .current()
+                    .orbitForChat(activeChatId)
                 val currentRoleName =
                     resolveTranscriptRoleName(
                         // An Orbit signs its replies with the name it chose for itself.
                         override =
                             turnOptions.assistantRoleNameOverride
-                                ?: com.ai.assistance.operit.data.preferences.OrbitPreferences
-                                    .getInstance(context)
-                                    .current()
-                                    .orbitForChat(activeChatId)
-                                    ?.name
-                                    ?.takeIf { it.isNotBlank() },
+                                ?: orbitOfChat?.name?.takeIf { it.isNotBlank() },
                         fallback = characterName ?: "Operit",
                     )
                 logMessageTiming(
@@ -1263,6 +1263,16 @@ class MessageProcessingDelegate(
                 // 关闭总结时仍保留真实 limits，避免下游插件收到 0/Infinity 这类无效 JSON 值。
                 val effectiveMaxTokens = maxTokens
                 val effectiveEnableSummary = enableSummary && effectivePersistTurn
+                // An Orbit turn that cannot run the normal summary (a hidden notice, or a chat that is
+                // not on screen) compacts its context in place and goes on, so a long-running Orbit
+                // chat never outgrows the model's window while the user is away.
+                if (orbitOfChat != null && !effectiveEnableSummary && effectivePersistTurn &&
+                    !turnOptions.isCollaborationAgent && activeChatId != null &&
+                    !com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.contains(activeChatId)
+                ) {
+                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.register(activeChatId, keepsLatestUserTurn = true)
+                    turnInPlaceCompactionChatId = activeChatId
+                }
                 val effectiveTokenUsageThreshold =
                     if (effectiveEnableSummary || turnOptions.isCollaborationAgent ||
                         // Background reading runs compact themselves in place instead of stopping.
@@ -1343,7 +1353,9 @@ class MessageProcessingDelegate(
                     avatarUri = avatarUri,
                     roleCardId = effectiveRoleCardId,
                     currentRoleName = currentRoleName,
-                    splitHistoryByRole = true,
+                    // An Orbit chat has one companion whose name can change; every reply in it is its own,
+                    // so replies signed with an earlier name must not be read back as someone else's.
+                    splitHistoryByRole = orbitOfChat == null,
                     groupOrchestrationMode = isGroupOrchestrationTurn,
                     groupParticipantNamesText = groupParticipantNamesText,
                     proxySenderName = proxySenderNameOverride,
@@ -1918,8 +1930,14 @@ class MessageProcessingDelegate(
             } finally {
                 chatRuntime.canSteer = false
                 chatRuntime.prepareSteeringInput = null
+                turnInPlaceCompactionChatId?.let {
+                    com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.unregister(it)
+                }
+                val returnedForSummary = chatRuntime.inputInbox?.sealedForSummary == true
                 val unconsumedInputs = chatRuntime.inputInbox?.close().orEmpty()
-                unconsumedInputs.forEach { it.returned() }
+                unconsumedInputs.forEach {
+                    if (returnedForSummary) (it.returnedForSummary ?: it.returned)() else it.returned()
+                }
                 val finalizeMessageStartTime = messageTimingNow()
                 val deferTurnCompleteToAsyncJob =
                     if (cancellationToPropagate == null) {
