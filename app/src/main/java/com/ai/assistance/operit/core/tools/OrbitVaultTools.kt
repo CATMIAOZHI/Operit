@@ -378,7 +378,22 @@ internal object OrbitVaultTools {
                 "cannot be reached or says the surrogate is out of date, call terminal again.")
     }
 
+    /**
+     * Any failure after the credential goes into the request (an invalid header value, a network
+     * error) can quote it, so the message is masked before it leaves here.
+     */
     private fun request(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
+        val secrets = listOf(e.secret, e.oauth?.refreshToken.orEmpty())
+        return try {
+            sendRequest(e, url, method, headers, body)
+        } catch (x: kotlinx.coroutines.CancellationException) {
+            throw x
+        } catch (x: Exception) {
+            throw IllegalStateException(OrbitVault.redact(x.message ?: x.javaClass.simpleName, secrets, 300))
+        }
+    }
+
+    private fun sendRequest(e: OrbitVault.Entry, url: String, method: String, headers: String, body: String?): JSONObject {
         check(e.kind == OrbitVault.API_KEY || e.kind == OrbitVault.OAUTH) { "http_request only works with a saved API key or OAuth login" }
         check(e.packageName.isEmpty()) { noHosts(e) }
         check(e.apiHosts.isNotEmpty()) { noHosts(e) }
@@ -396,8 +411,15 @@ internal object OrbitVaultTools {
             }
         }
         when {
-            e.placement == "bearer" -> builder.header("Authorization", "Bearer ${e.secret}")
-            e.placement.startsWith("header:") -> builder.header(e.placement.removePrefix("header:"), e.secret)
+            e.placement == "bearer" || e.placement.startsWith("header:") -> {
+                val header = if (e.placement == "bearer") "Authorization" else e.placement.removePrefix("header:")
+                // OkHttp's message for a bad value quotes the value itself, so it is not passed on.
+                runCatching { builder.header(header, if (e.placement == "bearer") "Bearer ${e.secret}" else e.secret) }
+                    .onFailure {
+                        error("The saved key cannot be put in the $header header: it holds a line break or other characters " +
+                            "a header cannot carry. Ask the user to save it again with request_update.")
+                    }
+            }
             e.placement.startsWith("query:") -> parsed = parsed.newBuilder().setQueryParameter(e.placement.removePrefix("query:"), e.secret).build()
         }
         val requestBody = if (method == "GET" || method == "DELETE" && body.isNullOrEmpty()) null

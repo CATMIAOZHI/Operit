@@ -61,6 +61,15 @@ internal object OrbitOnboarding {
     }
 
     /**
+     * Which step of getting started the main chat is at, for the prompt revision: the system
+     * prompt is kept between turns, so it must be rebuilt when the hint moves on (first talk done,
+     * setup checked, keep-alive offered, a message limit reached).
+     */
+    suspend fun revision(context: Context, orbit: OrbitProfile): String =
+        hint(context, orbit, orbit.chatId, com.ai.assistance.operit.util.LocaleUtils.usesEnglishPrompt(context))
+            ?.let { "start-" + Integer.toHexString(it.hashCode()) } ?: "started"
+
+    /**
      * Once the name is settled, a new Orbit looks at its setup once: whether the terminal environment
      * is installed, whether it may send notifications and whether Operit has device control access,
      * then asks once, in its own words, to keep Operit awake in the background. Each part drops out

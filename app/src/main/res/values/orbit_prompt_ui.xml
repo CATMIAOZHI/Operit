@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="orbit_layer_memory">长期记忆</string>
-    <string name="orbit_layer_memory_desc">Orbit 整理的长期笔记</string>
+    <string name="orbit_layer_memory_desc">%1$s 整理的长期笔记</string>
     <string name="orbit_prompt_view_full">完整提示词</string>
     <string name="orbit_prompt_view_full_desc">主聊天正在使用的系统提示词，共 %1$s</string>
-    <string name="orbit_prompt_not_built">还没有生成。和 Orbit 说一句话后就能看到。</string>
-    <string name="orbit_prompt_section_missing">这一部分还没有单独记下来。点“刷新提示词”，Orbit 下次回复后就能看到。</string>
+    <string name="orbit_prompt_not_built">还没有生成。和 %1$s 说一句话后就能看到。</string>
+    <string name="orbit_prompt_section_missing">这一部分还没有单独记下来。点“刷新提示词”，%1$s 下次回复后就能看到。</string>
     <string name="orbit_prompt_view_note">这是主聊天正在使用的提示词，每次回复都会原样发给模型。</string>
     <string name="orbit_prompt_tools_note">这是写在提示词里的部分。每个工具的详细说明会随每次请求另外发送。</string>
     <string name="orbit_prompt_refresh">刷新提示词</string>
-    <string name="orbit_prompt_refresh_desc">一段对话里，记忆、资料和工具会先固定下来。刷新后 Orbit 下次回复时重新读取。</string>
-    <string name="orbit_prompt_refresh_busy">Orbit 正在回复，等它说完再刷新。</string>
+    <string name="orbit_prompt_refresh_desc">一段对话里，记忆、资料和工具会先固定下来。刷新后 %1$s 下次回复时重新读取。</string>
+    <string name="orbit_prompt_refresh_busy">%1$s 正在回复，等它说完再刷新。</string>
     <string name="orbit_prompt_refresh_confirm_title">刷新提示词？</string>
-    <string name="orbit_prompt_refresh_confirm_message">Orbit 下次回复时会重新读取记忆、资料和工具，并重新生成整份提示词。这一次回复会慢一点，也会多用一些 token。</string>
+    <string name="orbit_prompt_refresh_confirm_message">%1$s 下次回复时会重新读取记忆、资料和工具，并重新生成整份提示词。这一次回复会慢一点，也会多用一些 token。</string>
     <string name="orbit_prompt_refreshed">已刷新，下次回复时生效</string>
     <string name="orbit_prompt_refresh_failed">刷新失败，请稍后再试</string>
     <string name="orbit_prompt_copied">已复制</string>
@@ -36,7 +36,7 @@
     <string name="orbit_packages_missing">主应用里已经没有了</string>
     <string name="orbit_packages_remove">从 Orbit 移除</string>
     <string name="orbit_packages_picked_count">已选 %1$d / %2$d</string>
-    <string name="orbit_memory_logs_help">每次 Orbit 自动整理记忆都会留一条记录。点开可以看当时整个整理过程，只能看，不能改。</string>
+    <string name="orbit_memory_logs_help">每次 %1$s 自动整理记忆都会留一条记录。点开可以看当时整个整理过程，只能看，不能改。</string>
     <string name="orbit_memory_logs_empty">还没有整理记录</string>
     <string name="orbit_packages_search">搜索工具包</string>
     <string name="orbit_packages_count">已开启 %1$d / %2$d</string>
@@ -61,7 +61,7 @@
     <string name="tool_package_off_in_chat">工具包「%1$s」在当前对话没有开启，不能使用。</string>
     <string name="orbit_browser_share_confirm_on_title">改用主应用的登录？</string>
     <string name="orbit_browser_share_confirm_on">%1$s 打开网页时会用你在主应用登录的账号。它自己那套登录会留着，之后关掉就能换回来。</string>
-    <string name="orbit_browser_share_confirm_off_title">换回 Orbit 自己的登录？</string>
+    <string name="orbit_browser_share_confirm_off_title">换回 %1$s 自己的登录？</string>
     <string name="orbit_browser_share_confirm_off">%1$s 会改用它自己那套登录，主应用里登录的网站它就用不了了。</string>
     <string name="orbit_browser_share_confirm_ok">确定切换</string>
     <string name="orbit_process_main">主代理</string>

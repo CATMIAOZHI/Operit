@@ -101,6 +101,7 @@ private fun ProcessRecordPage(
     onOpenSubagent: (OrbitProcess.Subagent) -> Unit,
 ) {
     val context = LocalContext.current
+    val subagentCache = remember(process) { OrbitSubagents.Cache() }
     OrbitPageBack(onBack = onBack)
     // Covered by a page opened from here, it stops reading until it is on top again.
     val active = androidx.compose.runtime.rememberUpdatedState(LocalOrbitPageActive.current)
@@ -140,8 +141,8 @@ private fun ProcessRecordPage(
                 val messages = if (readMessages || value == null) OrbitWork.messages(context, process, raw = developer)
                     else value!!.messages
                 val subagents = value?.subagents?.takeIf { it.isNotEmpty() && !readMessages }
-                    ?.let { OrbitSubagents.refresh(context, it) }
-                    ?: OrbitSubagents.of(context, process, messages)
+                    ?.let { OrbitSubagents.refresh(context, it, subagentCache) }
+                    ?: OrbitSubagents.of(context, process, messages, subagentCache)
                 ProcessRecord(messages, failed = false, running = running || subagents.any { it.running }, subagents)
             } catch (e: CancellationException) {
                 throw e

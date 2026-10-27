@@ -521,6 +521,14 @@
             </intent-filter>
         </receiver>
         
+        <receiver
+            android:name=".features.orbit.OrbitTimeZoneReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Voice Interaction Service for system default assistant -->
         <service
             android:name=".services.assistant.OperitVoiceInteractionService"

@@ -1,15 +1,56 @@
 package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
+import androidx.room.withTransaction
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.data.model.OrbitTaskEntity
 import com.ai.assistance.operit.data.preferences.OrbitPreferences
 import com.ai.assistance.operit.data.preferences.OrbitProfile
 import java.net.URI
 import java.util.UUID
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 class OrbitTaskRepository(private val context: Context) {
     val dao = AppDatabase.getDatabase(context).orbitTaskDao()
+
+    /** Calendar tasks follow local time; elapsed intervals and one-off deadlines keep their instant. */
+    suspend fun refreshCalendarTimeZone(orbitId: String): Boolean = calendarZoneLock.withLock {
+        val prefs = context.getSharedPreferences("orbit_task_timezones", Context.MODE_PRIVATE)
+        val zone = java.util.TimeZone.getDefault().id
+        val previous = prefs.getString(orbitId, null)
+        val pendingKey = "$orbitId:pending"
+        val pending = prefs.getStringSet(pendingKey, emptySet()).orEmpty()
+        val changed = previous != zone
+        if (!changed && pending.isEmpty()) return@withLock false
+        val deferred = mutableSetOf<String>()
+        var refreshed = false
+        if (previous != null) {
+            val now = System.currentTimeMillis()
+            AppDatabase.getDatabase(context).withTransaction {
+                for (task in dao.tasks(orbitId)) {
+                    if (!changed && task.id !in pending) continue
+                    if (task.state != "ACTIVE" || (task.scheduleMode != "DAILY" &&
+                            task.scheduleMode !in OrbitCalendarSchedule.modes && task.kind != "DAILY")) continue
+                    // Claims use the same database transaction boundary: never invalidate a live run.
+                    if (dao.runningCount(task.id) > 0) {
+                        // It may later defer without completing, leaving its old calendar occurrence.
+                        deferred += task.id
+                        continue
+                    }
+                    val eventId = "${task.id}:${task.version}:${task.nextRunAt}"
+                    if (dao.eventRun(eventId) != null) continue
+                    // Only the unstarted calendar occurrence moves; manual requests and saved
+                    // deliveries keep their identity and do not lose the task version they belong to.
+                    dao.deleteEvent(eventId)
+                    dao.updateTask(task.copy(nextRunAt = nextAt(task, now), updatedAt = now))
+                    refreshed = true
+                }
+            }
+        }
+        prefs.edit().putString(orbitId, zone).putStringSet(pendingKey, deferred).commit()
+        refreshed || (changed && previous != null)
+    }
 
     suspend fun executionRecord(taskId: String, excludeRun: String = ""): String {
         val run = dao.previousRun(taskId, excludeRun) ?: return ""
@@ -253,6 +294,8 @@ class OrbitTaskRepository(private val context: Context) {
     }
 
     companion object {
+        private val calendarZoneLock = Mutex()
+
         /** The retired built-in daily check-in, or a manual run of it. */
         fun isRetiredCheckIn(task: OrbitTaskEntity): Boolean =
             (task.kind == "DAILY" && task.id == "daily-${task.orbitId}") ||

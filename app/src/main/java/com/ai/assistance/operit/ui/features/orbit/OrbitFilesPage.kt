@@ -328,11 +328,11 @@ internal fun OrbitMadeFilePage(files: OrbitFiles, path: String, who: String, onB
         actions = listOfNotNull(
             // A web page Orbit exported is read in a browser; the editor only shows its source.
             if (path.substringAfterLast('.').lowercase() in setOf("html", "htm")) {
-                OrbitFileAction(stringResource(R.string.orbit_file_open_in_browser), "globe") {
+                OrbitFileAction(stringResource(R.string.orbit_file_open_in_browser), "globe", endsEditing = false) {
                     openOrbitFile(context) { files.fileFor(path) }
                 }
             } else null,
-            OrbitFileAction(stringResource(R.string.orbit_file_share), "share-2") {
+            OrbitFileAction(stringResource(R.string.orbit_file_share), "share-2", endsEditing = false) {
                 shareOrbitFile(context) { files.fileFor(path) }
             },
             OrbitFileAction(stringResource(R.string.orbit_file_delete), "trash-2") {

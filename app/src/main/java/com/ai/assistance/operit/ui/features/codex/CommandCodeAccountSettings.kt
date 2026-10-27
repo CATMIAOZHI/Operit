@@ -20,6 +20,8 @@ import com.ai.assistance.operit.data.api.CommandCodeCallbackServer
 import com.ai.assistance.operit.data.api.ProviderAccountManager
 import com.ai.assistance.operit.data.api.ProviderQuota
 import com.ai.assistance.operit.ui.features.settings.components.ProviderQuotaPanel
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
 import com.ai.assistance.operit.ui.features.settings.sections.ApiKeyVisualTransformation
 import kotlinx.coroutines.*
 

@@ -77,14 +77,15 @@ internal class PendingMessageQueueStore(
         synchronized(lock) { updateState(chatId) { it.copy(isExpanded = expanded) } }
     }
 
-    fun returnSteer(chatId: String, message: PendingQueueMessageItem) {
+    fun returnSteer(chatId: String, message: PendingQueueMessageItem, sendLater: Boolean = false) {
         onBackInQueue(chatId, message.id)
         synchronized(lock) {
             if (!isCurrentGeneration(chatId, message.chatGeneration)) return
             updateState(chatId) { state ->
                 state.copy(
                     messages = state.messages.map { if (it.id == message.id) message else it },
-                    suppressNextAutoDequeue = true,
+                    suppressNextAutoDequeue = !sendLater,
+                    wasBlocked = state.wasBlocked || sendLater,
                 )
             }
         }

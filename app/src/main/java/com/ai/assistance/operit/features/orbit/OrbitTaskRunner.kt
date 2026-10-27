@@ -101,6 +101,9 @@ object OrbitTaskRunner {
         val orbit = OrbitCompanion.ensureActiveChat(context) ?: return@coroutineScope false
         val repository = OrbitTaskRepository(context)
         val dao = repository.dao
+        // Tasks fixed to a time of day follow a time zone change before any of them is picked.
+        runCatching { repository.refreshCalendarTimeZone(orbit.id) }
+            .onFailure { if (it is CancellationException) throw it }
         val tasks = dao.tasks(orbit.id)
             .filter { it.state == "ACTIVE" && OrbitTaskRepository.isLongRun(it) == longLane }
             .sortedBy { it.nextRunAt }
@@ -119,8 +122,12 @@ object OrbitTaskRunner {
                     return@firstNotNullOfOrNull null
                 }
             }
+            // A review killed mid-turn starts that turn over; it keeps its reading position and notes.
+            val resumable = it.source == OrbitRoutines.ALIGNMENT_SOURCE && it.useSubagent
             dao.claim(event, UUID.randomUUID().toString(), boot, now, SystemClock.elapsedRealtime(), LEASE_MS,
-                context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted))
+                context.getString(com.ai.assistance.operit.R.string.orbit_run_interrupted),
+                resumable = resumable,
+                resumeNextRunAt = if (resumable) OrbitTaskRepository.nextAt(it, now) else 0)
         } ?: run {
             OrbitDelivery.sendPending(context, orbit.id)
             return@coroutineScope false

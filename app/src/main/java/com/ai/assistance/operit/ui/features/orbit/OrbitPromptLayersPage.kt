@@ -146,7 +146,7 @@ internal fun OrbitPromptLayersPage(
                 onView = { view = it }, onReload = { reload++ })
         },
     ) { shown ->
-        InjectedTextPage(shown, info?.getOrNull()?.saved) { view = null }
+        InjectedTextPage(orbitName(orbit), shown, info?.getOrNull()?.saved) { view = null }
     }
 }
 
@@ -165,6 +165,7 @@ private fun LayersList(
     onReload: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
+    val who = orbitName(orbit)
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     // Refreshing while Orbit is replying (here or in the floating window) would swap the prompt under that reply.
@@ -227,7 +228,7 @@ private fun LayersList(
                     onOpenAlignment)
                 LayerDivider()
                 LayerRow(7, stringResource(R.string.orbit_layer_memory), "memory.md",
-                    stringResource(R.string.orbit_layer_memory_desc), size(info.memoryBytes), onOpenMemory)
+                    stringResource(R.string.orbit_layer_memory_desc, who), size(info.memoryBytes), onOpenMemory)
                 LayerDivider()
                 LayerRow(8, stringResource(R.string.orbit_layer_user), "user.md",
                     stringResource(R.string.orbit_layer_user_desc), size(info.userBytes), onOpenUser)
@@ -240,14 +241,14 @@ private fun LayersList(
                     icon = "scroll-text",
                     title = stringResource(R.string.orbit_prompt_view_full),
                     detail = info.saved?.let { stringResource(R.string.orbit_prompt_view_full_desc, chars(it.system).orEmpty()) }
-                        ?: stringResource(R.string.orbit_prompt_not_built),
+                        ?: stringResource(R.string.orbit_prompt_not_built, who),
                     enabled = true,
                 ) { onView(PromptView.FULL) }
                 LayerDivider()
                 ActionRow(
                     icon = "refresh-cw",
                     title = stringResource(R.string.orbit_prompt_refresh),
-                    detail = stringResource(if (busy) R.string.orbit_prompt_refresh_busy else R.string.orbit_prompt_refresh_desc),
+                    detail = stringResource(if (busy) R.string.orbit_prompt_refresh_busy else R.string.orbit_prompt_refresh_desc, who),
                     enabled = !busy && !refreshing,
                 ) {
                     if (busy || refreshing) return@ActionRow
@@ -261,7 +262,7 @@ private fun LayersList(
         TaskConfirmSheet(
             icon = "refresh-cw",
             title = stringResource(R.string.orbit_prompt_refresh_confirm_title),
-            message = stringResource(R.string.orbit_prompt_refresh_confirm_message),
+            message = stringResource(R.string.orbit_prompt_refresh_confirm_message, who),
             confirmText = stringResource(R.string.orbit_prompt_refresh),
             dismissText = stringResource(R.string.cancel),
             destructive = false,
@@ -393,7 +394,7 @@ private fun ActionRow(icon: String, title: String, detail: String, enabled: Bool
 
 /** Read-only view of injected prompt text, split into paragraphs so a long prompt scrolls smoothly. */
 @Composable
-private fun InjectedTextPage(view: PromptView, saved: LearningPromptSnapshotRepository.SavedSystem?, onBack: () -> Unit) {
+private fun InjectedTextPage(who: String, view: PromptView, saved: LearningPromptSnapshotRepository.SavedSystem?, onBack: () -> Unit) {
     OrbitPageBack(onBack = onBack)
     val clipboard = LocalClipboardManager.current
     val context = LocalContext.current
@@ -411,8 +412,8 @@ private fun InjectedTextPage(view: PromptView, saved: LearningPromptSnapshotRepo
     }
     val paragraphs = remember(text) { text?.split(Regex("\n{2,}"))?.filter { it.isNotBlank() }.orEmpty() }
     val note = when {
-        saved == null -> stringResource(R.string.orbit_prompt_not_built)
-        text == null -> stringResource(R.string.orbit_prompt_section_missing)
+        saved == null -> stringResource(R.string.orbit_prompt_not_built, who)
+        text == null -> stringResource(R.string.orbit_prompt_section_missing, who)
         view == PromptView.TOOLS && saved.protocol.startsWith("true:") -> stringResource(R.string.orbit_prompt_tools_note)
         else -> stringResource(R.string.orbit_prompt_view_note)
     }

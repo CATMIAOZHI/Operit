@@ -989,7 +989,11 @@ class EnhancedAIService private constructor(
         maxTokens: Int,
         threshold: Double,
     ): List<PromptTurn> {
-        val task = requireNotNull(history.firstOrNull { it.kind == PromptTurnKind.USER }) {
+        val latest = com.ai.assistance.operit.api.chat.enhance.InPlaceCompaction.keepsLatestUserTurn(chatId)
+        val task = requireNotNull(
+            if (latest) history.lastOrNull { it.kind == PromptTurnKind.USER }
+            else history.firstOrNull { it.kind == PromptTurnKind.USER }
+        ) {
             "Background run has no task to keep"
         }
         val summary = generateSummaryFromPromptTurns(
@@ -2840,7 +2844,7 @@ class EnhancedAIService private constructor(
                         context.conversationHistory.addAll(currentChatHistory)
                     } else {
                     AppLogger.w(TAG, "Token usage ($usageRatio) exceeds threshold ($tokenUsageThreshold) after tool call. Triggering summary.")
-                    context.turnInputInbox?.seal()
+                    context.turnInputInbox?.sealForSummary()
                     onTokenLimitExceeded?.invoke()
                     context.isConversationActive.set(false)
                     if (!isSubTask) {

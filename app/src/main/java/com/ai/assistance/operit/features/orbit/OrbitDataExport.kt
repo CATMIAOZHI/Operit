@@ -72,15 +72,7 @@ internal object OrbitDataExport {
         val tasks = dao.tasks(orbit.id)
         val goals = dao.goals(orbit.id)
         val activity = dao.observeActivity(orbit.id).first()
-        suspend fun load(chatId: String) = try {
-            ChatHistoryManager.getInstance(context).loadChatMessages(chatId)
-        } catch (e: kotlinx.coroutines.CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            emptyList()
-        }
-        val messages = load(orbit.chatId)
-        val sideChats = orbit.sideChats.map { it to load(it.chatId) }
+        val history = ChatHistoryManager.getInstance(context)
         val root = OrbitPreferences.getInstance(context).orbitDir(orbit.id)
         kotlinx.coroutines.currentCoroutineContext().ensureActive()
         ZipOutputStream(zip.outputStream().buffered()).use { out ->
@@ -109,22 +101,40 @@ internal object OrbitDataExport {
                     .put("observation", it.observation).put("error", it.error)
                     .put("startedAt", time(it.startedAt)).put("finishedAt", time(it.finishedAt))
             }).toString(2))
-            fun chatMarkdown(title: String, list: List<com.ai.assistance.operit.data.model.ChatMessage>) = buildString {
-                append("# $title\n\n")
-                list.forEach { m ->
-                    val who = if (m.sender == "user") "User" else orbit.name
-                    append("### $who · ${time(m.timestamp)}\n\n")
-                    append(ChatUtils.removeThinkingContent(m.content).trim()).append("\n\n")
+            // A chat is read a page at a time and written as it goes, so a long history never sits in memory whole.
+            suspend fun chatMarkdown(name: String, title: String, chatId: String) {
+                out.putNextEntry(ZipEntry(name))
+                out.write("# $title\n\n".toByteArray(Charsets.UTF_8))
+                var after = Long.MIN_VALUE
+                while (true) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    val page = try {
+                        history.loadChatMessagesAscAfter(chatId, after, EXPORT_PAGE)
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        emptyList()
+                    }
+                    page.forEach { m ->
+                        val who = if (m.sender == "user") "User" else orbit.name
+                        out.write("### $who · ${time(m.timestamp)}\n\n${ChatUtils.removeThinkingContent(m.content).trim()}\n\n"
+                            .toByteArray(Charsets.UTF_8))
+                    }
+                    if (page.size < EXPORT_PAGE) break
+                    after = page.last().timestamp
                 }
+                out.closeEntry()
             }
-            put("chat.md", chatMarkdown(orbit.name, messages))
-            sideChats.forEachIndexed { index, (side, list) ->
+            chatMarkdown("chat.md", orbit.name, orbit.chatId)
+            orbit.sideChats.forEachIndexed { index, side ->
                 val name = side.title.replace(Regex("[\\\\/:*?\"<>|\\s]+"), "_").trim('_').ifEmpty { "chat" }.take(40)
-                put("side-chats/${index + 1}-$name.md", chatMarkdown("${orbit.name} · ${side.title}", list))
+                chatMarkdown("side-chats/${index + 1}-$name.md", "${orbit.name} · ${side.title}", side.chatId)
             }
         }
         zip
     } }
+
+    private const val EXPORT_PAGE = 200
 
     private fun time(millis: Long) =
         if (millis <= 0) "" else SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.ROOT).format(Date(millis))

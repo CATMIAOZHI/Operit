@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.features.orbit
 
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
 import androidx.work.CoroutineWorker
 import androidx.work.ExistingWorkPolicy
 import androidx.work.OneTimeWorkRequestBuilder
@@ -34,6 +36,7 @@ object OrbitTaskScheduler {
             return
         }
         val repo = OrbitTaskRepository(context)
+        val zoneChanged = repo.refreshCalendarTimeZone(active.id)
         val tasks = repo.dao.tasks(active.id).filter { it.state == "ACTIVE" }
         val now = System.currentTimeMillis()
         var due: Long? = null
@@ -73,7 +76,7 @@ object OrbitTaskScheduler {
             .setInitialDelay((due - now).coerceAtLeast(if (fromWorker) 15_000 else 0), TimeUnit.MILLISECONDS)
             .build()
         manager.enqueueUniqueWork(WAKE,
-            if (restore) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, request)
+            if (restore && !zoneChanged) ExistingWorkPolicy.KEEP else ExistingWorkPolicy.REPLACE, request)
         OrbitGeofence.sync(context)
     }
 
@@ -110,6 +113,22 @@ object OrbitTaskScheduler {
         manager.cancelUniqueWork(LONG_WORK)
         OrbitTaskRepository(context).retireDaily()
         reschedule(context, restore = restore)
+    }
+}
+
+/** A system time-zone change also reschedules tasks when the app has no open screen. */
+class OrbitTimeZoneReceiver : BroadcastReceiver() {
+    override fun onReceive(context: Context, intent: Intent) {
+        if (intent.action != Intent.ACTION_TIMEZONE_CHANGED) return
+        WorkManager.getInstance(context).enqueueUniqueWork("orbit_calendar_timezone", ExistingWorkPolicy.REPLACE,
+            OneTimeWorkRequestBuilder<OrbitTimeZoneWorker>().build())
+    }
+}
+
+class OrbitTimeZoneWorker(context: Context, parameters: WorkerParameters) : CoroutineWorker(context, parameters) {
+    override suspend fun doWork(): Result {
+        OrbitTaskScheduler.reschedule(applicationContext)
+        return Result.success()
     }
 }
 

@@ -597,8 +597,8 @@ internal object OrbitWeixin {
 
     private fun tellUndelivered(context: Context, orbitId: String, item: Outbound) {
         val what = when (item.kind) {
-            "text" -> item.text.replace(Regex("\\s+"), " ").take(120)
-            else -> item.name.take(80)
+            "text" -> item.text.replace(Regex("\\s+"), " ").takeCompleteCharacters(120)
+            else -> item.name.takeCompleteCharacters(80)
         }
         tellOrbit(context, orbitId, null,
             "[orbit-weixin] 有一条微信回复没发出去\n这是 App 发给你的说明，不是用户说的，用户也看不到。微信多次拒收，已放弃发送：「$what」。" +
@@ -637,7 +637,7 @@ internal object OrbitWeixin {
             item.optJSONObject("ref_msg")?.let { ref ->
                 val quoted = ref.optJSONObject("message_item")?.optJSONObject("text_item")?.optString("text")
                     ?.takeIf { it.isNotBlank() } ?: ref.optString("title")
-                if (quoted.isNotBlank()) parts += (if (english) "> Quoting: " else "> 引用：") + quoted.take(300).replace("\n", " ")
+                if (quoted.isNotBlank()) parts += (if (english) "> Quoting: " else "> 引用：") + quoted.takeCompleteCharacters(300).replace("\n", " ")
             }
             val stamp = System.currentTimeMillis()
             when (item.optInt("type")) {
@@ -898,12 +898,20 @@ internal object OrbitWeixin {
         return t.replace(Regex("\n{3,}"), "\n\n").trim()
     }
 
+    /** Keep a UTF-16 limit without leaving half of a supplementary character in either piece. */
+    private fun String.completeCharacterEnd(limit: Int): Int {
+        val end = limit.coerceAtMost(length)
+        return if (end > 0 && end < length && this[end - 1].isHighSurrogate() && this[end].isLowSurrogate()) end - 1 else end
+    }
+
+    private fun String.takeCompleteCharacters(limit: Int): String = substring(0, completeCharacterEnd(limit))
+
     private fun chunks(text: String): List<String> {
         if (text.length <= TEXT_LIMIT) return listOf(text)
         val out = mutableListOf<String>()
         var rest = text
         while (rest.length > TEXT_LIMIT) {
-            val cut = rest.lastIndexOf('\n', TEXT_LIMIT).takeIf { it > TEXT_LIMIT / 2 } ?: TEXT_LIMIT
+            val cut = rest.lastIndexOf('\n', TEXT_LIMIT).takeIf { it > TEXT_LIMIT / 2 } ?: rest.completeCharacterEnd(TEXT_LIMIT)
             out += rest.substring(0, cut).trim()
             rest = rest.substring(cut).trim()
         }

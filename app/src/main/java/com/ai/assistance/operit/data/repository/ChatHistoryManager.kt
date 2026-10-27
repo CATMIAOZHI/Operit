@@ -4489,6 +4489,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
         chatId: String,
         afterTimestampExclusive: Long,
         limit: Int,
+        throwOnError: Boolean = false,
     ): List<ChatMessage> {
         return withContext(Dispatchers.IO) {
             try {
@@ -4500,6 +4501,7 @@ class ChatHistoryManager private constructor(private val context: Context) {
                     )
                 hydrateMessages(chatId, messageEntities)
             } catch (e: Exception) {
+                if (throwOnError) throw e
                 AppLogger.e(TAG, "按起始时间后分页加载聊天消息失败", e)
                 emptyList()
             }

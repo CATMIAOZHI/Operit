@@ -1616,7 +1616,8 @@ private fun OrbitSettingsPage(
                             icon = if (shared) "link" else "link-2-off",
                             title = stringResource(
                                 if (shared) R.string.orbit_browser_share_confirm_on_title
-                                else R.string.orbit_browser_share_confirm_off_title
+                                else R.string.orbit_browser_share_confirm_off_title,
+                                orbitName(orbit),
                             ),
                             message = stringResource(
                                 if (shared) R.string.orbit_browser_share_confirm_on

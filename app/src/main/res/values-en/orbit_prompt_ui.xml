@@ -1,18 +1,18 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="orbit_layer_memory">Long-term memory</string>
-    <string name="orbit_layer_memory_desc">The notes Orbit keeps for the long run</string>
+    <string name="orbit_layer_memory_desc">The notes %1$s keeps for the long run</string>
     <string name="orbit_prompt_view_full">Full prompt</string>
     <string name="orbit_prompt_view_full_desc">The system prompt the main chat is using, %1$s in all</string>
-    <string name="orbit_prompt_not_built">Not built yet. Say something to Orbit and it will show here.</string>
-    <string name="orbit_prompt_section_missing">This part was not kept on its own yet. Tap Refresh prompt and it shows after Orbit\'s next reply.</string>
+    <string name="orbit_prompt_not_built">Not built yet. Say something to %1$s and it will show here.</string>
+    <string name="orbit_prompt_section_missing">This part was not kept on its own yet. Tap Refresh prompt and it shows after %1$s\'s next reply.</string>
     <string name="orbit_prompt_view_note">This is the prompt the main chat is using. Each reply sends it to the model as is.</string>
     <string name="orbit_prompt_tools_note">This is the part written into the prompt. Each tool\'s full description is sent separately with every request.</string>
     <string name="orbit_prompt_refresh">Refresh prompt</string>
-    <string name="orbit_prompt_refresh_desc">Within a conversation, memory, profile and tools are fixed at the start. After a refresh, Orbit reads them again on its next reply.</string>
-    <string name="orbit_prompt_refresh_busy">Orbit is replying. Refresh once it is done.</string>
+    <string name="orbit_prompt_refresh_desc">Within a conversation, memory, profile and tools are fixed at the start. After a refresh, %1$s reads them again on its next reply.</string>
+    <string name="orbit_prompt_refresh_busy">%1$s is replying. Refresh once it is done.</string>
     <string name="orbit_prompt_refresh_confirm_title">Refresh the prompt?</string>
-    <string name="orbit_prompt_refresh_confirm_message">On its next reply, Orbit reads its memory, profile and tools again and builds the whole prompt anew. That reply is a little slower and uses more tokens.</string>
+    <string name="orbit_prompt_refresh_confirm_message">On its next reply, %1$s reads its memory, profile and tools again and builds the whole prompt anew. That reply is a little slower and uses more tokens.</string>
     <string name="orbit_prompt_refreshed">Refreshed. It applies to the next reply</string>
     <string name="orbit_prompt_refresh_failed">Could not refresh. Try again later</string>
     <string name="orbit_prompt_copied">Copied</string>
@@ -36,7 +36,7 @@
     <string name="orbit_packages_missing">No longer in the main app</string>
     <string name="orbit_packages_remove">Remove from Orbit</string>
     <string name="orbit_packages_picked_count">%1$d of %2$d picked</string>
-    <string name="orbit_memory_logs_help">Each time Orbit sorts out its memory it leaves a record here. Open one to see the whole run. It is read only.</string>
+    <string name="orbit_memory_logs_help">Each time %1$s sorts out its memory it leaves a record here. Open one to see the whole run. It is read only.</string>
     <string name="orbit_memory_logs_empty">No records yet</string>
     <string name="orbit_packages_search">Search packages</string>
     <string name="orbit_packages_count">%1$d of %2$d on</string>
@@ -61,7 +61,7 @@
     <string name="tool_package_off_in_chat">Package “%1$s” is switched off for this chat and cannot be used.</string>
     <string name="orbit_browser_share_confirm_on_title">Use the app\'s logins?</string>
     <string name="orbit_browser_share_confirm_on">%1$s will browse as the accounts you signed in to in the app. Its own logins are kept; switch this off to go back.</string>
-    <string name="orbit_browser_share_confirm_off_title">Back to Orbit\'s own logins?</string>
+    <string name="orbit_browser_share_confirm_off_title">Back to %1$s\'s own logins?</string>
     <string name="orbit_browser_share_confirm_off">%1$s will use its own logins and can\'t use the sites you signed in to in the app.</string>
     <string name="orbit_browser_share_confirm_ok">Switch</string>
     <string name="orbit_process_main">MAIN</string>

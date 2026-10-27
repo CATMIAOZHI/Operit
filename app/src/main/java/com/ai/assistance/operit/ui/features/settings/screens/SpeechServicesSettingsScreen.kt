@@ -33,7 +33,7 @@ import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material.icons.automirrored.filled.FormatListBulleted
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.DropdownMenu
@@ -51,7 +51,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
-import androidx.compose.material3.TextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
@@ -69,6 +69,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.ai.assistance.operit.ui.features.settings.components.rememberSettingsCardColor
 import com.ai.assistance.operit.ui.features.settings.components.SettingsCardShape
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
 import com.ai.assistance.operit.R
 import com.ai.assistance.operit.api.speech.SpeechServiceFactory
 import com.ai.assistance.operit.api.voice.HttpTtsResponsePipelineStep
@@ -102,6 +104,20 @@ fun SpeechServicesSettingsScreen(
     // Null hides the test button, where there is no test page to go to (inside Orbit).
     onNavigateToTextToSpeech: (() -> Unit)? = null,
     onNavigateToSpeechToText: (() -> Unit)? = null,
+    dialogStyle: SettingsDialogStyle = SettingsDialogStyle.MATERIAL,
+) {
+    SettingsDialogs(dialogStyle) {
+        SpeechServicesSettingsContent(onBackPressed, onNavigateToTextToSpeech, onNavigateToSpeechToText)
+    }
+}
+
+@SuppressLint("LocalContextGetResourceValueCall")
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SpeechServicesSettingsContent(
+    onBackPressed: () -> Unit,
+    onNavigateToTextToSpeech: (() -> Unit)?,
+    onNavigateToSpeechToText: (() -> Unit)?,
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1471,6 +1487,7 @@ fun SpeechServicesSettingsScreen(
 
                                 if (openAiRealtimeShowVoicesDialog) {
                                     AlertDialog(
+                                        orbitScrollable = false,
                                         onDismissRequest = { openAiRealtimeShowVoicesDialog = false },
                                         title = { Text(stringResource(R.string.speech_services_openai_voice_select)) },
                                         text = {
@@ -1659,6 +1676,7 @@ fun SpeechServicesSettingsScreen(
 
                                 if (openAiShowModelsDialog) {
                                     AlertDialog(
+                                        orbitScrollable = false,
                                         onDismissRequest = { openAiShowModelsDialog = false },
                                         title = { Text(stringResource(R.string.speech_services_openai_model_select)) },
                                         text = {
@@ -1852,6 +1870,7 @@ fun SpeechServicesSettingsScreen(
 
                                 if (openAiShowVoicesDialog) {
                                     AlertDialog(
+                                        orbitScrollable = false,
                                         onDismissRequest = { openAiShowVoicesDialog = false },
                                         title = { Text(stringResource(R.string.speech_services_openai_voice_select)) },
                                         text = {
@@ -2224,6 +2243,7 @@ fun SpeechServicesSettingsScreen(
 
     if (simpleTtsShowVoiceDialog) {
         AlertDialog(
+            orbitScrollable = false,
             onDismissRequest = { simpleTtsShowVoiceDialog = false },
             title = { Text(stringResource(R.string.speech_services_simple_tts_voice_select)) },
             text = {

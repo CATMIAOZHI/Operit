@@ -1968,6 +1968,8 @@ class ChatViewModel(private val context: Context) : ViewModel() {
                 text = preparedText,
                 consumed = { pendingMessageQueueStore.remove(chatId, item.id) },
                 returned = { pendingMessageQueueStore.returnSteer(chatId, item) },
+                // The turn only paused to compact its context: send the message once it goes on.
+                returnedForSummary = { pendingMessageQueueStore.returnSteer(chatId, item, sendLater = true) },
             ),
         )
         if (!accepted) pendingMessageQueueStore.remove(chatId, item.id)

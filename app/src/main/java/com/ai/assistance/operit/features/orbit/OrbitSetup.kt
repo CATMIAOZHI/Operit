@@ -1,6 +1,8 @@
 package com.ai.assistance.operit.features.orbit
 
 import android.content.Context
+import com.ai.assistance.operit.api.chat.ChatRuntimeHolder
+import com.ai.assistance.operit.api.chat.ChatRuntimeSlot
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConfigConnectionTester
 import com.ai.assistance.operit.api.chat.llmprovider.ModelConnectionTestType
 import com.ai.assistance.operit.data.model.ApiProviderType
@@ -23,6 +25,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
@@ -44,7 +48,7 @@ internal object OrbitSetup {
     private const val KEY_WELCOME = "welcome_pending"
     /** When the welcome last went to Orbit; its saved reply after this time settles it. */
     private const val KEY_WELCOME_SENT = "welcome_sent_at"
-    /** How long Orbit's reply to the welcome is waited for before it may be sent again. */
+    /** Bounds the wait for a live welcome request; a saved timestamp alone never delays recovery. */
     private const val REPLY_WAIT_MS = 10 * 60 * 1000L
     /** First line of the welcome note; it names the turn in the work list. */
     const val MARKER = "[orbit-welcome]"
@@ -481,6 +485,10 @@ internal object OrbitSetup {
         scope.launch {
             try {
                 welcomeOnce(context, orbit)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                AppLogger.w("OrbitSetup", "Could not recover the welcome: ${e.message}")
             } finally {
                 welcoming.set(false)
             }
@@ -492,16 +500,27 @@ internal object OrbitSetup {
         fun done() = p.edit().remove(KEY_WELCOME).remove(KEY_WELCOME_SENT).commit()
         if (p.getString(KEY_WELCOME, null) != orbit.id) return
         val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
-        suspend fun typed() = runCatching { dao.userMessageCount(orbit.chatId) }.getOrDefault(0) > 0
+        suspend fun typed() = dao.userMessageCount(orbit.chatId) > 0
         if (typed()) { done(); return }
-        // An earlier welcome went out: Orbit's reply saved after it means the welcome is done; a
-        // reply that may still be on its way is left alone for a while, then the welcome goes again.
         val sentAt = p.getLong(KEY_WELCOME_SENT, 0L)
-        if (sentAt > 0) {
+        suspend fun greeted(): Boolean {
+            if (sentAt <= 0) return false
             // An empty or thinking-only row is saved before the reply streams; only words the user sees count.
-            val said = runCatching { dao.aiSaidAfter(orbit.chatId, sentAt) }.getOrDefault(emptyList()).joinToString("\n\n")
-            if (com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.words(said, context.getString(com.ai.assistance.operit.R.string.orbit_sent_card)).isNotBlank()) { done(); return }
-            if (System.currentTimeMillis() - sentAt < REPLY_WAIT_MS) return
+            val said = dao.aiSaidAfter(orbit.chatId, sentAt).joinToString("\n\n")
+            return com.ai.assistance.operit.ui.features.chat.components.OrbitSpeech.words(said,
+                context.getString(com.ai.assistance.operit.R.string.orbit_sent_card)).isNotBlank()
+        }
+        if (sentAt > 0) {
+            if (greeted()) { done(); return }
+            val holder = ChatRuntimeHolder.getInstance(context)
+            val idle = combine(
+                holder.getCore(ChatRuntimeSlot.MAIN).activeStreamingChatIds,
+                holder.getCore(ChatRuntimeSlot.FLOATING).activeStreamingChatIds,
+            ) { main, floating -> orbit.chatId !in main && orbit.chatId !in floating }
+            // A killed process has no live request: recover immediately, even within ten minutes.
+            withTimeoutOrNull(REPLY_WAIT_MS) { idle.first { it } } ?: return
+            if (typed() || greeted()) { done(); return }
+            p.edit().remove(KEY_WELCOME_SENT).commit()
         }
         val english = LocaleUtils.usesEnglishPrompt(context)
         val note = if (english) {
@@ -524,9 +543,10 @@ internal object OrbitSetup {
                 if (left <= 0) break
                 val turn = OrbitChatDecision.Turn()
                 val told = OrbitWake.tell(context, orbit, orbit.chatId, note, left, left + REPLY_WAIT_MS,
-                    // Checked again right before sending: a user who started talking meanwhile drops it.
+                    // The earlier request may finish while this waits for the chat; never greet twice.
                     ready = {
-                        if (typed()) { done(); false }
+                        if (p.getString(KEY_WELCOME, null) != orbit.id) false
+                        else if (typed() || greeted()) { done(); false }
                         else { p.edit().putLong(KEY_WELCOME_SENT, System.currentTimeMillis() - 1).commit(); true }
                     },
                     decision = turn)
