@@ -481,9 +481,11 @@ internal object OrbitVaultNotice {
         val target = chatId.ifBlank { orbit.chatId }
         if (target.isBlank()) return
         val app = context.applicationContext
+        val grok = providerType == com.ai.assistance.operit.data.model.ApiProviderType.GROK_ACCOUNT.name
         val notice = if (LocaleUtils.usesEnglishPrompt(app)) {
             "$MARKER $label account signed in\n" +
                 "The user signed in to their $label account from your card. This is not a message from the user and they cannot see this note.\n" +
+                (if (grok) "If you asked for it to draw with grok_draw, grok_draw works now and needs no model configuration; carry on drawing.\n" else "") +
                 "Signing in alone does not make it a model you use. A model configuration with provider $providerType is needed: " +
                 "check orbit_models list; if there is none, add it yourself with orbit_models request_create provider=$providerType " +
                 "(leave endpoint and models out; the user picks the models on the card). With one in place, orbit_models request_use switches to it. " +
@@ -492,6 +494,7 @@ internal object OrbitVaultNotice {
         } else {
             "$MARKER 已登录 $label 账号\n" +
                 "用户用你放的卡片登录了 $label 账号。这不是用户发的消息，用户也看不到这段话。\n" +
+                (if (grok) "如果你是为了用 grok_draw 画图才让用户登录，现在 grok_draw 就能用了，不需要模型配置，直接接着画。\n" else "") +
                 "光登录还不能直接当模型用，需要一个服务商为 $providerType 的模型配置：先用 orbit_models 的 list 看有没有；" +
                 "没有的话，你自己用 orbit_models 的 request_create provider=$providerType 申请新建（endpoint 和 models 都不用填，用户在卡片上从账号的模型列表里勾）。" +
                 "有了配置，再用 orbit_models 的 request_use 申请切换。" +

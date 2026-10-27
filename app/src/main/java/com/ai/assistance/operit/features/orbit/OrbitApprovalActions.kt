@@ -109,6 +109,9 @@ internal object OrbitApprovalActions {
     /** Packages that use the app's ChatGPT login instead of a key. */
     private val CHATGPT_PACKAGES = setOf("codex_draw")
 
+    /** Packages that use the app's Grok account login instead of a key. */
+    private val GROK_PACKAGES = setOf("grok_draw")
+
     fun type(action: String): String = runCatching { JSONObject(action).optString("type") }.getOrDefault("")
 
     /** The approval needs the user to type an API key before it can be approved. */
@@ -462,6 +465,8 @@ internal object OrbitApprovalActions {
         }
         val needLogin = (result.added + already).filter { it in CHATGPT_PACKAGES }
         val signedIn = CodexAuthPreferences.getInstance(context).currentState() != null
+        val needGrok = (result.added + already).filter { it in GROK_PACKAGES }
+            .takeUnless { signedIn(context, ApiProviderType.GROK_ACCOUNT) }.orEmpty()
         val parts = mutableListOf<String>()
         if (english) {
             if (result.added.isNotEmpty()) parts += "Imported and switched on: ${result.added.joinToString()}."
@@ -471,6 +476,7 @@ internal object OrbitApprovalActions {
             fileProblems.forEach { (file, why) -> parts += "Could not import $file: $why" }
             if (needKeys.isNotEmpty()) parts += "Still need a key: ${needKeys.joinToString("; ")}."
             if (needLogin.isNotEmpty() && !signedIn) parts += "Need the ChatGPT login: ${needLogin.joinToString()}."
+            if (needGrok.isNotEmpty()) parts += "Need the Grok account login (orbit_vault request_account_login provider=grok): ${needGrok.joinToString()}."
             if (parts.isEmpty()) parts += "Nothing was imported."
         } else {
             if (result.added.isNotEmpty()) parts += "已导入并打开：${result.added.joinToString("、")}。"
@@ -480,6 +486,7 @@ internal object OrbitApprovalActions {
             fileProblems.forEach { (file, why) -> parts += "$file 没导入：$why" }
             if (needKeys.isNotEmpty()) parts += "还缺密钥：${needKeys.joinToString("；")}。"
             if (needLogin.isNotEmpty() && !signedIn) parts += "需要登录 ChatGPT：${needLogin.joinToString("、")}。"
+            if (needGrok.isNotEmpty()) parts += "需要登录 Grok 账号（orbit_vault request_account_login provider=grok）：${needGrok.joinToString("、")}。"
             if (parts.isEmpty()) parts += "什么都没导入。"
         }
         return parts.joinToString("\n")

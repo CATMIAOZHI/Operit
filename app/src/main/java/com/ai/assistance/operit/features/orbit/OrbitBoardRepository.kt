@@ -116,6 +116,66 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val IDEA_PLAIN_LIMIT = 60
         /** Ideas the user liked, disliked or had built: worth more, so kept for much longer. */
         const val IDEA_VALUED_LIMIT = 120
+
+        /** The card names a feed post body refers to with a2ui-ref fences, in order. */
+        fun cardFences(body: String): List<String> = scanCardFences(body).first
+
+        /**
+         * A feed post body without any a2ui-ref fence. A post shows its card under the text, so a
+         * fence in the text itself would only show up as raw characters.
+         */
+        fun withoutCardFences(body: String): String {
+            if (!body.contains("a2ui-ref")) return body
+            val (names, text) = scanCardFences(body)
+            return if (names.isEmpty()) body else text
+        }
+
+        /**
+         * Reads the body line by line: a card reference is exactly the three lines ```a2ui-ref,
+         * its name, and ```. Anything inside an ordinary code block (including a quoted example of
+         * a reference) is left alone. Returns the names and the text without those references.
+         */
+        private fun scanCardFences(body: String): Pair<List<String>, String> {
+            val lines = body.replace("\r\n", "\n").replace('\r', '\n').split('\n')
+            val names = mutableListOf<String>()
+            val kept = ArrayList<String>(lines.size)
+            var openFence: String? = null
+            var index = 0
+            while (index < lines.size) {
+                val line = lines[index]
+                val trimmed = line.trim()
+                if (openFence != null) {
+                    kept += line
+                    if (trimmed.startsWith(openFence) && trimmed.trimStart(openFence[0]).isEmpty()) openFence = null
+                    index++
+                    continue
+                }
+                val mark = trimmed.firstOrNull()?.takeIf { it == '`' || it == '~' }
+                val ticks = if (mark == null) "" else trimmed.takeWhile { it == mark }
+                if (ticks.length >= 3) {
+                    val info = trimmed.substring(ticks.length).trim()
+                    val name = lines.getOrNull(index + 1)?.trim().orEmpty()
+                    val close = lines.getOrNull(index + 2)?.trim()
+                    if (ticks == "```" && info == "a2ui-ref" && close == "```" &&
+                        name.isNotEmpty() && '`' !in name) {
+                        names += name
+                        index += 3
+                        continue
+                    }
+                    openFence = ticks
+                }
+                kept += line
+                index++
+            }
+            // Removing a reference leaves the blank lines around it; keep at most one blank line.
+            val text = buildList<String> {
+                kept.forEach { line ->
+                    if (line.isBlank() && lastOrNull()?.isBlank() == true) return@forEach
+                    add(line)
+                }
+            }.joinToString("\n").trim()
+            return names to text
+        }
         /** The Ideas tab's groups, in the order they are shown. */
         val IDEA_CATEGORIES = listOf("productivity", "money", "relationships", "health", "shopping", "other")
 
