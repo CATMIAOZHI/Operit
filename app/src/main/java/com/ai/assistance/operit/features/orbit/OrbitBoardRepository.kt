@@ -87,6 +87,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val rationale: String = "",
         /** Ideas only: where the reason comes from (a message id, a memory file, a goal, a link Orbit opened). */
         val sources: List<String> = emptyList(),
+        /** Feed only: the post's pictures, file names in its own folder (see [imageFiles]), at most [MAX_IMAGES]. */
+        val images: List<String> = emptyList(),
     ) {
         val liked get() = vote > 0
         val disliked get() = vote < 0
@@ -104,6 +106,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         const val MAX_BRIEF = 2000
         /** A feed post's Dynamic UI card, kept in its own file so the feed list stays small. */
         const val MAX_CARD = 65_536
+        /** A feed post shows at most nine pictures, like a moments post. */
+        const val MAX_IMAGES = 9
         const val MAX_PARTS = 6
         const val MAX_PART_TITLE = 60
         const val MAX_PART_DETAIL = 200
@@ -201,6 +205,15 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
         private const val CARD_FOLDER = "feed_cards"
         private fun cardFile(directory: File, id: String) = File(File(directory, CARD_FOLDER), "${File(id).name}.a2ui")
+        private const val IMAGE_FOLDER = "feed_images"
+        private val IMAGE_NAME = Regex("\\d{1,2}\\.(jpg|png)")
+        private fun imageFolder(directory: File, id: String) = File(File(directory, IMAGE_FOLDER), File(id).name)
+
+        /** A feed post's pictures in order; names that are not ours are left out. */
+        fun imageFiles(context: Context, orbitId: String, item: Item): List<File> {
+            val folder = imageFolder(OrbitPreferences.getInstance(context).orbitDir(orbitId), item.id)
+            return item.images.filter { IMAGE_NAME.matches(it) }.map { File(folder, it) }
+        }
 
         suspend fun readBrief(context: Context, orbitId: String): String = withContext(Dispatchers.IO) {
             briefFile(OrbitPreferences.getInstance(context).orbitDir(orbitId)).takeIf { it.isFile }?.readText().orEmpty()
@@ -213,10 +226,14 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         }
 
         private fun atomic(directory: File, file: File, content: String) {
+            atomicBytes(directory, file, content.toByteArray(Charsets.UTF_8))
+        }
+
+        private fun atomicBytes(directory: File, file: File, content: ByteArray) {
             check(directory.mkdirs() || directory.isDirectory)
             val temp = File.createTempFile(".board-", ".tmp", directory)
             try {
-                temp.outputStream().use { it.write(content.toByteArray(Charsets.UTF_8)); it.fd.sync() }
+                temp.outputStream().use { it.write(content); it.fd.sync() }
                 Files.move(temp.toPath(), file.toPath(), StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
             } finally {
                 temp.delete()
@@ -238,6 +255,12 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
 
     suspend fun get(id: String): Item? = list().firstOrNull { it.id == id }
 
+    /** The item a call with [requestId] already made, so a replayed call can skip its slow work. */
+    suspend fun madeBy(requestId: String): Item? {
+        val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
+        return listAll().firstOrNull { it.id == id }
+    }
+
     /** A feed post's Dynamic UI card, or null when it has none (or the file is gone). */
     suspend fun readCard(id: String): String? = withContext(Dispatchers.IO) {
         cardFile(directory, id).takeIf { it.isFile && it.length() <= MAX_CARD * 4L }?.readText()?.takeIf { it.isNotBlank() }
@@ -258,6 +281,8 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         scores: Scores = Scores(0, 0, 0),
         rationale: String = "",
         sources: List<String> = emptyList(),
+        /** Feed only: encoded pictures (bytes and "jpg" or "png"), already shrunk for the feed. */
+        images: List<Pair<ByteArray, String>> = emptyList(),
     ): Item = change { items ->
         val id = UUID.nameUUIDFromBytes("${board.name}:$requestId".toByteArray()).toString()
         items.firstOrNull { it.id == id }?.let { return@change items to it }
@@ -265,6 +290,9 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val checkedCategory = checkCategory(category)
         require(card.isEmpty() || board == Board.FEED) { "Only feed posts take a card" }
         require(card.length <= MAX_CARD) { "The card is larger than $MAX_CARD characters" }
+        require(images.isEmpty() || board == Board.FEED) { "Only feed posts take pictures" }
+        require(images.size <= MAX_IMAGES) { "A post has at most $MAX_IMAGES pictures" }
+        require(images.all { it.second == "jpg" || it.second == "png" }) { "Pictures are saved as jpg or png" }
         require(board == Board.IDEAS || (rationale.isBlank() && sources.isEmpty() && !scores.rated)) {
             "Only ideas take ratings, a rationale and sources"
         }
@@ -279,12 +307,19 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             require(list.all { it.length <= MAX_SOURCE }) { "A source is at most $MAX_SOURCE characters" }
         }
         val now = System.currentTimeMillis()
+        val imageNames = images.mapIndexed { index, picture -> "${index + 1}.${picture.second}" }
         val item = Item(id, checkTitle(title), checkBody(body), checkExtra(extra), state ?: initialState(), 0, now, now,
             if (board == Board.IDEAS) (expiresAt.takeIf { it > now } ?: (now + IDEA_LIFETIME_MS)) else 0L, emptyList(),
             emojiOf(emoji), checkParts(parts), checkedCategory, card = card.isNotBlank(),
-            scores = scores, rationale = checkedRationale, sources = checkedSources)
+            scores = scores, rationale = checkedRationale, sources = checkedSources, images = imageNames)
         // The card is written before the post is saved, so a saved post never points at a missing card.
         if (item.card) atomic(File(directory, CARD_FOLDER), cardFile(directory, id), card)
+        // Pictures too: written into the post's own folder first, so the post never names a missing one.
+        if (images.isNotEmpty()) {
+            val folder = imageFolder(directory, id)
+            folder.deleteRecursively()
+            images.forEachIndexed { index, picture -> atomicBytes(folder, File(folder, imageNames[index]), picture.first) }
+        }
         val all = listOf(item) + items
         val kept = if (board == Board.IDEAS) keepIdeas(all, now, item.id) else if (all.size <= board.limit) all else {
             // Keep at most `limit` items; finished ones go before open ones, older before newer.
@@ -427,6 +462,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             if (board == Board.FEED) {
                 val left = items.mapTo(HashSet()) { it.id }
                 before.filter { it.card && it.id !in left }.forEach { cardFile(directory, it.id).delete() }
+                before.filter { it.images.isNotEmpty() && it.id !in left }.forEach { imageFolder(directory, it.id).deleteRecursively() }
             }
             publish(visible(items))
             result
@@ -467,6 +503,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
                 .put("fit", item.scores.fit).put("novelty", item.scores.novelty))
             if (item.rationale.isNotEmpty()) put("rationale", item.rationale)
             if (item.sources.isNotEmpty()) put("sources", JSONArray(item.sources))
+            if (item.images.isNotEmpty()) put("images", JSONArray(item.images))
         }
 
     private fun item(value: JSONObject): Item {
@@ -474,6 +511,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
         val parts = value.optJSONArray("parts") ?: JSONArray()
         val scores = value.optJSONObject("scores")
         val sources = value.optJSONArray("sources") ?: JSONArray()
+        val images = value.optJSONArray("images") ?: JSONArray()
         return Item(
             value.getString("id"), value.getString("title"), value.optString("body"), value.optString("extra"),
             value.optString("state", initialState()),
@@ -490,6 +528,7 @@ internal class OrbitBoardRepository(private val directory: File, private val boa
             Scores(scores?.optInt("feasibility") ?: 0, scores?.optInt("fit") ?: 0, scores?.optInt("novelty") ?: 0),
             value.optString("rationale"),
             (0 until sources.length()).map { sources.optString(it) }.filter { it.isNotBlank() },
+            (0 until images.length()).map { images.optString(it) }.filter { IMAGE_NAME.matches(it) },
         )
     }
 }

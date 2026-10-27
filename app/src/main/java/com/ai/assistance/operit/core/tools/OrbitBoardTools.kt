@@ -10,6 +10,7 @@ import com.ai.assistance.operit.features.orbit.OrbitBoardRepository
 import com.ai.assistance.operit.features.orbit.OrbitBoardRepository.Board
 import com.ai.assistance.operit.features.orbit.OrbitFeedGenerator
 import com.ai.assistance.operit.features.orbit.OrbitMemoryScope
+import kotlinx.coroutines.ensureActive
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -36,6 +37,7 @@ internal object OrbitBoardTools {
                 ToolParameterSchema("body", description = "post：正文，几段短文字，最多6000字符；链接写成 [文字](网址)，只引用你真的打开过的", required = false),
                 ToolParameterSchema("why_for_you", description = "post：一句话说明为什么给这位用户看，必填", required = false),
                 ToolParameterSchema("card", description = "post 可选：先用 dynamic_ui 做好的卡片引用名（如 card-1），显示在正文下面", required = false),
+                ToolParameterSchema("images", description = "post 可选：配图，最多9张，每行一个。可以是 files/ 下的图片、App 自己目录或 Download/Operit 里的图片路径，或图片网址 https://…", required = false),
                 ToolParameterSchema("brief", description = "brief_update：新的简介全文，最多2000字符；空字符串表示恢复默认简介", required = false),
                 ToolParameterSchema("direction", description = "move：up 或 down", required = false),
             ),
@@ -47,7 +49,11 @@ internal object OrbitBoardTools {
   - 素材可以来自网上（搜网页、打开页面），也可以来自手机上和用户有关的事（短信、通知、日程、邮件等），比如短信里的快递取件码。
     表格、对比、图表、可点的清单、取件提醒这类内容，可以先用 dynamic_ui 做一张卡片（不要用 live），
     再把它的引用名填进 card；卡片和正文一起显示。不要把 a2ui-ref 写进 body。
-  - list 里的 vote 是用户的反馈：liked 多写这类，disliked 少写这类。
+  - 像发朋友圈一样，可以给动态配图（images，最多9张）：网页上看到合适的图，直接填图片网址，或先存成文件再填路径。
+    App 会把图下载、压小后存进这条动态，之后原图变了也不影响。只放你确认过内容的图：不确定是不是那张，先用 read_file 看一眼。
+    图片网址要填图片本身的地址（打开后就是那张图），不要填网页地址；下载失败或不是图片时整条 post 会失败，换一张再发。
+  - 用户通过 👍 点赞、👎 点踩按钮反馈；list 里的 vote 中，liked 表示点赞，多写这类；disliked 表示点踩，少写这类。
+    动态不支持左右滑动反馈，不要叫用户左右滑；右滑喜欢、左滑不喜欢是点子页的操作。
 """,
         ),
         ToolPrompt(
@@ -123,6 +129,9 @@ internal object OrbitBoardTools {
                     val feed = OrbitBoardRepository(context, orbit.id, Board.FEED)
                     when (action) {
                         "post" -> {
+                            // A replayed call returns the post it already made, without fetching its pictures again.
+                            feed.madeBy(requestId)?.let { return@runBlockingIoPreservingToolRuntimeContext ToolResult(
+                                tool.name, true, StringResultData(json(it, Board.FEED).toString())) }
                             // A card reference written into the body is moved to card: the post
                             // shows its card under the text, never inside it.
                             val rawBody = arg("body")
@@ -143,8 +152,9 @@ internal object OrbitBoardTools {
                                 require(!LIVE_SURFACE.containsMatchIn(document)) { "Live cards cannot go in the feed; make a normal card" }
                                 document
                             }.orEmpty()
+                            val images = feedImages(context, orbit.id, args["images"])
                             json(feed.create(arg("title"), body, arg("why_for_you"), requestId,
-                                emoji = emoji(arg("emoji")), card = card), Board.FEED)
+                                emoji = emoji(arg("emoji")), card = card, images = images), Board.FEED)
                         }
                         "list" -> page(feed.list(), args["offset"]) { json(it, Board.FEED, brief = true) }
                         "read" -> json(item(feed, "post_id"), Board.FEED)
@@ -316,7 +326,7 @@ internal object OrbitBoardTools {
         if (cut) value.put("cut", true)
         when (board) {
             Board.FEED -> value.put("emoji", item.emoji).put("body", body).put("why_for_you", item.extra)
-                .put("vote", voteName(item.vote)).put("has_card", item.card)
+                .put("vote", voteName(item.vote)).put("has_card", item.card).put("images", item.images.size)
             Board.IDEAS -> {
                 value.put("emoji", item.emoji).put("description", body).put("category", item.category)
                     .put("vote", voteName(item.vote)).put("expires_at", time(item.expiresAt))
@@ -338,7 +348,129 @@ internal object OrbitBoardTools {
 
     private const val EXCERPT = 300
     private const val PAGE = 30
+    /** The most one picture may weigh before it is shrunk: a page image, not a whole album. */
+    private const val MAX_IMAGE_DOWNLOAD = 20L * 1024 * 1024
+    /** The longest one picture may take to download, however slowly the server sends it. */
+    private const val MAX_IMAGE_DOWNLOAD_MS = 60_000L
 
+    /**
+     * A post's pictures, one per line: a files/ path, a path inside the app's own folders or
+     * Download/Operit, or an https image link. Each is shrunk the way pictures for the model are
+     * (long edge 2048, at most 4 MB) and handed over as bytes, so the post keeps its own copy.
+     */
+    private suspend fun feedImages(context: Context, orbitId: String, value: String?): List<Pair<ByteArray, String>> {
+        val text = value.orEmpty().trim()
+        // One per line; a JSON list of strings is taken too.
+        val listed = if (text.startsWith("[")) runCatching {
+            JSONArray(text).let { array -> (0 until array.length()).map { array.optString(it) } }
+        }.getOrNull() else null
+        val lines = (listed ?: text.lines()).map { it.trim().removeSurrounding("\"") }.filter { it.isNotEmpty() }
+        require(lines.size <= OrbitBoardRepository.MAX_IMAGES) {
+            "A post has at most ${OrbitBoardRepository.MAX_IMAGES} pictures; got ${lines.size}"
+        }
+        val orbitFiles = com.ai.assistance.operit.features.orbit.OrbitFiles.of(context, orbitId)
+        return lines.mapIndexed { index, source ->
+            // Stopped by the user: do not start on the next picture.
+            kotlinx.coroutines.currentCoroutineContext().ensureActive()
+            val label = "Picture ${index + 1} ($source)"
+            var temporary: java.io.File? = null
+            try {
+                val file = when {
+                    source.startsWith("https://", true) || source.startsWith("http://", true) ->
+                        download(context, source, label).also { temporary = it }
+                    source.removePrefix("/").startsWith("files/") ->
+                        orbitFiles.fileFor(source.removePrefix("/")).also { require(it.isFile) { "$label: no such file" } }
+                    else -> runCatching { OrbitFileTools.importable(context, source) }
+                        .getOrElse { throw IllegalArgumentException("$label: ${it.message}") }
+                }
+                val pool = com.ai.assistance.operit.util.ImagePoolManager
+                val id = pool.addImage(file.absolutePath)
+                require(id != "error") { "$label is not a picture the app can open" }
+                try {
+                    val data = checkNotNull(pool.getImage(id)) { "$label could not be read" }
+                    val bytes = android.util.Base64.decode(data.base64, android.util.Base64.DEFAULT)
+                    bytes to if (data.mimeType.equals("image/png", true)) "png" else "jpg"
+                } finally {
+                    pool.removeImage(id)
+                }
+            } finally {
+                temporary?.delete()
+            }
+        }
+    }
+
+    private suspend fun download(context: Context, url: String, label: String): java.io.File {
+        val request = try {
+            okhttp3.Request.Builder().url(url).header("User-Agent", "Mozilla/5.0 (Linux; Android) Operit").build()
+        } catch (e: IllegalArgumentException) {
+            throw IllegalArgumentException("$label is not a valid link")
+        }
+        // callTimeout bounds the whole request: connecting, waiting for headers and reading the body.
+        // The body is read in the callback too, so cancelling the call stops every part at once.
+        val call = downloadClient.newCall(request)
+        val target = java.io.File.createTempFile("feed-", ".img", context.cacheDir)
+        try {
+            return kotlinx.coroutines.suspendCancellableCoroutine { continuation ->
+                continuation.invokeOnCancellation { call.cancel() }
+                call.enqueue(object : okhttp3.Callback {
+                    override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                        val reason = if (call.isCanceled()) "it took over a minute" else e.message
+                        continuation.resumeWith(Result.failure(IllegalArgumentException("$label could not be downloaded: $reason")))
+                    }
+
+                    override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                        val result = runCatching {
+                            response.use { save(it, target, label) }
+                            target
+                        }.recoverCatching { e ->
+                            if (e is java.io.IOException) {
+                                val reason = if (call.isCanceled()) "it took over a minute" else e.message
+                                throw IllegalArgumentException("$label could not be downloaded: $reason")
+                            }
+                            throw e
+                        }
+                        // A stopped download leaves nothing behind in the cache.
+                        if (result.isFailure || !continuation.isActive) target.delete()
+                        continuation.resumeWith(result)
+                    }
+                })
+            }
+        } catch (e: Throwable) {
+            target.delete()
+            throw e
+        }
+    }
+
+    private fun save(response: okhttp3.Response, target: java.io.File, label: String) {
+        require(response.isSuccessful) { "$label: the link answered HTTP ${response.code}" }
+        val body = checkNotNull(response.body) { "$label: the link sent nothing" }
+        val type = body.contentType()?.toString().orEmpty().lowercase()
+        require(type.isEmpty() || type.startsWith("image/") || type.startsWith("application/octet-stream")) {
+            "$label: the link is not a picture ($type); use the address of the image itself, not the page"
+        }
+        require(body.contentLength() <= MAX_IMAGE_DOWNLOAD) { "$label is larger than 20 MB" }
+        body.byteStream().use { input ->
+            target.outputStream().use { out ->
+                val buffer = ByteArray(64 * 1024)
+                var total = 0L
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    total += count
+                    require(total <= MAX_IMAGE_DOWNLOAD) { "$label is larger than 20 MB" }
+                    out.write(buffer, 0, count)
+                }
+            }
+        }
+    }
+    private val downloadClient by lazy {
+        okhttp3.OkHttpClient.Builder()
+            .connectTimeout(15, java.util.concurrent.TimeUnit.SECONDS)
+            .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+            .callTimeout(MAX_IMAGE_DOWNLOAD_MS, java.util.concurrent.TimeUnit.MILLISECONDS)
+            .followRedirects(true)
+            .build()
+    }
     private fun time(at: Long): Any = if (at <= 0) JSONObject.NULL
         else java.text.SimpleDateFormat("yyyy-MM-dd HH:mm", java.util.Locale.ROOT).format(java.util.Date(at))
 

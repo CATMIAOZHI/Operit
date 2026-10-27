@@ -141,11 +141,14 @@ internal object OrbitFileTools {
                     if (file.extension.lowercase() in com.ai.assistance.operit.features.orbit.OrbitChatCards.imageTypes) {
                         runCatching { android.graphics.BitmapFactory.decodeFile(file.path, bounds) }
                     }
+                    // The chat keeps its own copy, so later edits to the file do not change what was sent.
+                    val copy = files.snapshotForChat(path)
                     JSONObject().put("sent", true).put("path", path)
-                        .put("note", "The file is in the chat now as an attachment. Do not paste its path.")
+                        .put("note", "The file is in the chat now as an attachment. The chat keeps a copy of it as it is now; " +
+                            "later changes to $path do not change it. Do not paste its path.")
                         .put(com.ai.assistance.operit.features.orbit.OrbitChatCards.KEY,
                             com.ai.assistance.operit.features.orbit.OrbitChatCards.attachment(
-                                orbit.id, path, file.name, file.length(), bounds.outWidth, bounds.outHeight))
+                                orbit.id, copy, file.name, file.length(), bounds.outWidth, bounds.outHeight))
                         .toString()
                 }
                 "import" -> {
@@ -199,7 +202,7 @@ internal object OrbitFileTools {
     }
 
     /** Only files inside the app's own folders and its Download/Operit folder can be taken in. */
-    private fun importable(context: Context, path: String): java.io.File {
+    internal fun importable(context: Context, path: String): java.io.File {
         val file = java.io.File(path.removePrefix("file://"))
         require(file.isFile) { "No such file: $path" }
         val real = file.toPath().toRealPath()

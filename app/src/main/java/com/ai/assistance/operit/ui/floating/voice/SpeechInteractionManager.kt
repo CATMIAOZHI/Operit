@@ -202,6 +202,9 @@ class SpeechInteractionManager(
         accumulatedText = ""
         latestPartialText = ""
         wakePhraseSnapshot = SpeechPrerollStore.consumePendingWakePhrase()
+        // A tap on the microphone asks for the model again even right after a "no"; a wake word
+        // starting on its own does not.
+        if (wakePhraseSnapshot == null) OnDemandResources.userAskedForSpeech()
         onStateChange(context.getString(R.string.voice_preparing))
 
         // 启动监听

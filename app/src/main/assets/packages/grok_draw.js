@@ -33,7 +33,7 @@
         {"name": "aspect_ratio", "type": "string", "required": false, "description": {"zh": "画面比例：auto（默认）、1:1、16:9、9:16、4:3、3:4、3:2、2:3、2:1、1:2、19.5:9、9:19.5、20:9、9:20。只有一张参考图时按参考图比例出图", "en": "auto (default), 1:1, 16:9, 9:16, 4:3, 3:4, 3:2, 2:3, 2:1, 1:2, 19.5:9, 9:19.5, 20:9 or 9:20. With exactly one reference image the output follows that image's shape"}},
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "仅作参考的本地 PNG、JPEG 或 WebP 图片路径数组，最多 5 张；不会覆盖原图", "en": "Up to 5 local PNG, JPEG or WebP paths used only as references; originals are kept"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output file name without path or extension"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-imagine-image-quality；也可用 grok-imagine-image", "en": "Optional, default grok-imagine-image-quality; grok-imagine-image also works"}}
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-imagine-image-2.0；也可用 grok-imagine-image-quality、grok-imagine-image", "en": "Optional, default grok-imagine-image-2.0; grok-imagine-image-quality and grok-imagine-image also work"}}
       ]
     },
     {
@@ -45,7 +45,7 @@
         {"name": "referenced_image_paths", "type": "array", "required": false, "description": {"zh": "额外参考图的本地路径数组；加上要修改的图最多 5 张", "en": "Extra local reference image paths; at most 5 images including the edit target"}},
         {"name": "aspect_ratio", "type": "string", "required": false, "description": {"zh": "只在传了多张图时生效，取值同 draw_image；只改一张图时保持原图比例", "en": "Only used with several images, same values as draw_image; a single edited image keeps its shape"}},
         {"name": "file_name", "type": "string", "required": false, "description": {"zh": "保存文件名，不含路径和扩展名", "en": "Output file name without path or extension"}},
-        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-imagine-image-quality", "en": "Optional, default grok-imagine-image-quality"}}
+        {"name": "model", "type": "string", "required": false, "description": {"zh": "可选，默认 grok-imagine-image-2.0", "en": "Optional, default grok-imagine-image-2.0"}}
       ]
     }
   ]

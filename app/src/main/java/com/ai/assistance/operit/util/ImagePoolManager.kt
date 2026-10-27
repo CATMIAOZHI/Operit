@@ -39,6 +39,8 @@ object ImagePoolManager {
     private const val DEFAULT_SCALE_PERCENT = 100
     private const val DEFAULT_JPEG_QUALITY = 85
     private const val DEFAULT_MAX_LONG_EDGE = 2048
+    /** 单张图片编码后的上限。超出时先降 JPEG 质量，再缩小长边，避免一张图把请求撑爆。 */
+    internal const val MAX_IMAGE_BYTES = 4 * 1024 * 1024
 
     private val DEFAULT_REGISTRATION_OPTIONS =
         ImageRegistrationOptions(
@@ -405,15 +407,18 @@ object ImagePoolManager {
                     workingBitmap
                 }
 
-            val finalBytes =
+            val firstBytes =
                 encodeBitmap(
                     bitmap = outputBitmap,
                     outputFormat = finalFormat,
                     jpegQuality = resolvedOptions.jpegQuality
                 )
+            val fitted =
+                fitWithinByteLimit(outputBitmap, finalFormat, resolvedOptions.jpegQuality, firstBytes)
+            val finalBytes = fitted.bytes
 
             val declaredFinalMimeType =
-                when (finalFormat) {
+                when (fitted.format) {
                     ImageOutputFormat.PNG -> "image/png"
                     ImageOutputFormat.JPEG -> "image/jpeg"
                     ImageOutputFormat.AUTO -> error("AUTO must be resolved before encoding")
@@ -433,8 +438,8 @@ object ImagePoolManager {
                 ImageData(
                     base64 = Base64.encodeToString(finalBytes, Base64.NO_WRAP),
                     mimeType = finalMimeType,
-                    width = outputBitmap.width,
-                    height = outputBitmap.height
+                    width = fitted.width,
+                    height = fitted.height
                 )
 
             val id = idOverride ?: UUID.randomUUID().toString()
@@ -649,6 +654,62 @@ object ImagePoolManager {
             ImageOutputFormat.AUTO ->
                 if (bitmap.hasAlpha()) ImageOutputFormat.PNG else ImageOutputFormat.JPEG
         }
+    }
+
+    private class FittedImage(
+        val bytes: ByteArray,
+        val format: ImageOutputFormat,
+        val width: Int,
+        val height: Int
+    )
+
+    /**
+     * 编码结果超过 [MAX_IMAGE_BYTES] 时逐步压小：先降 JPEG 质量，再缩小长边；
+     * 透明 PNG 缩到 1024 仍超限才转成白底 JPEG。都不够时返回最小的那一份。
+     */
+    private fun fitWithinByteLimit(
+        bitmap: Bitmap,
+        format: ImageOutputFormat,
+        quality: Int,
+        bytes: ByteArray
+    ): FittedImage {
+        var best = FittedImage(bytes, format, bitmap.width, bitmap.height)
+        if (bytes.size <= MAX_IMAGE_BYTES) return best
+        fun consider(candidate: FittedImage): Boolean {
+            if (candidate.bytes.size < best.bytes.size) best = candidate
+            return candidate.bytes.size <= MAX_IMAGE_BYTES
+        }
+        if (format == ImageOutputFormat.JPEG) {
+            for (q in listOf(70, 55)) {
+                if (q >= quality) continue
+                val encoded = encodeBitmap(bitmap, ImageOutputFormat.JPEG, q)
+                if (consider(FittedImage(encoded, format, bitmap.width, bitmap.height))) return best
+            }
+        }
+        for (edge in listOf(1536, 1280, 1024)) {
+            if (edge >= maxOf(bitmap.width, bitmap.height)) continue
+            val scaled = limitBitmapLongEdgeIfNeeded(bitmap, edge)
+            try {
+                val encoded =
+                    encodeBitmap(scaled, format, if (format == ImageOutputFormat.JPEG) minOf(quality, 70) else 100)
+                if (consider(FittedImage(encoded, format, scaled.width, scaled.height))) return best
+            } finally {
+                if (scaled !== bitmap) scaled.recycle()
+            }
+        }
+        val small = limitBitmapLongEdgeIfNeeded(bitmap, 1024)
+        val flat = flattenAlphaForJpeg(small)
+        try {
+            for (q in listOf(70, 50)) {
+                val encoded = encodeBitmap(flat, ImageOutputFormat.JPEG, q)
+                if (consider(FittedImage(encoded, ImageOutputFormat.JPEG, flat.width, flat.height))) return best
+            }
+        } finally {
+            if (flat !== small) flat.recycle()
+            if (small !== bitmap) small.recycle()
+        }
+        AppLogger.w(TAG, "图片压到最小仍超过上限: ${best.bytes.size} bytes")
+        return best
     }
 
     private fun flattenAlphaForJpeg(bitmap: Bitmap): Bitmap {

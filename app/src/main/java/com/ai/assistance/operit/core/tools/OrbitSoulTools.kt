@@ -10,7 +10,7 @@ import org.json.JSONObject
 internal object OrbitSoulTools {
     const val NAME = "orbit_soul"
     val prompt = ToolPrompt(name = NAME,
-        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份；也能列出、读取用户的角色卡，用来参考性格，或放一张卡片带用户去导入角色卡；初次见面的三件事问完后用它结束初次见面。更新直接生效，只保留当前内容；不改变工具权限。",
+        description = "读取或更新自己的 SOUL.md 人格或 IDENTITY.md 身份；也能列出、读取用户的角色卡，用来参考性格，或放一张卡片带用户去导入角色卡；docs/first-meeting.md 的步骤都问完后用它结束初次见面。更新直接生效，只保留当前内容；不改变工具权限。",
         parametersStructured = listOf(
             ToolParameterSchema("action", description = "read/update/list_role_cards/read_role_card/open_role_cards/first_talk_done", required = true),
             ToolParameterSchema("file", description = "soul（默认）或 identity", required = false),
@@ -21,7 +21,7 @@ internal object OrbitSoulTools {
         details = "修改 SOUL.md 前必须先 action=read；action=update 必须带完整 body、read 返回的 version 和修改理由 reason。IDENTITY.md 的 update 只需完整 body。\n" +
             "list_role_cards 列出用户的角色卡（id、名字、简介）；read_role_card 读一张卡的人设全文。读角色卡不会改变你自己，要参考它就再 update SOUL.md。\n" +
             "用户想用的角色卡还没导入（列表里没有），或想导入、管理角色卡时，用 open_role_cards 在聊天里放一张卡片，他点一下就到角色卡页面，导入后按返回回到聊天。卡片放出后用一句话结束这一轮；他回来说好了，再 list_role_cards。\n" +
-            "first_talk_done：初次见面的三件事（名字、参考角色卡、导入记忆）都问过了（办完或他说不用），调用一次，结束初次见面；之后你会收到环境检查的指引。")
+            "first_talk_done：docs/first-meeting.md 里的步骤都问过了（办完或他说不用），调用一次，结束初次见面。")
     fun execute(context: Context, tool: AITool): ToolResult = runBlockingIoPreservingToolRuntimeContext {
         val caller = ToolExecutionManager.currentToolRuntimeContext()?.callerChatId
         val orbit = checkNotNull(OrbitMemoryScope.owner(context, caller)) { "orbit_soul works only inside an Orbit chat" }
@@ -45,8 +45,7 @@ internal object OrbitSoulTools {
             check(caller == orbit.chatId) { "first_talk_done works only in your main chat" }
             OrbitOnboarding.markDone(context, orbit.id)
             val result = JSONObject().put("first_talk", "finished")
-                .put("note", "The first-talk guidance is gone. From your next reply on you get the setup-check guidance " +
-                    "(terminal, notifications, device access); follow it at a natural moment.")
+                .put("note", "The first meeting is over; the pointer to docs/first-meeting.md is gone from your runtime info.")
             return@runBlockingIoPreservingToolRuntimeContext ToolResult(tool.name, true, StringResultData(result.toString()))
         }
         if (action == "list_role_cards" || action == "read_role_card") {

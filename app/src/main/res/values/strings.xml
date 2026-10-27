@@ -8945,6 +8945,7 @@
     <string name="resource_download_dismiss">关闭</string>
     <string name="resource_download_retry_hint">请检查网络后重试，已下载的部分会保留。</string>
     <string name="resource_download_declined">已取消下载：%1$s</string>
+    <string name="resource_speech_declined">还没有下载语音识别模型。再点一次麦克风就会重新询问是否下载。</string>
     <string name="resource_download_cancelled_title">已取消：%1$s</string>
     <string name="resource_download_unconfirmed">未确认下载：%1$s</string>
     <string name="resource_download_unconfirmed_title">未确认下载：%1$s</string>
@@ -9949,6 +9950,7 @@
     <string name="orbit_vault_env_too_short">少于 %1$d 个字符的密码或密钥不能在终端里用：它出现在输出里时没法可靠地打码。</string>
     <string name="orbit_vault_package_too_short">工具包的密钥至少要 %1$d 个字符，太短的没法可靠地打码。</string>
     <string name="orbit_chat_image_desc">图片 %1$s，轻点放大查看</string>
+    <string name="orbit_feed_image_desc">%1$s 的配图，第 %2$d 张，共 %3$d 张，轻点放大查看</string>
     <string name="orbit_chat_image_saved">已保存到相册</string>
     <string name="orbit_chat_image_save">保存到相册</string>
     <string name="orbit_chat_image_saving">正在保存…</string>

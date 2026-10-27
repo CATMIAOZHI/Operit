@@ -57,11 +57,7 @@ internal object OrbitPermissionTools {
             require(permission in OrbitPermissionCards.kinds) {
                 "Unknown permission \"$permission\". Supported now: ${OrbitPermissionCards.kinds.joinToString()}"
             }
-            // The device-access check is the last step of the first-talk setup check.
-            if (permission == OrbitPermissionCards.DEVICE_ACCESS) runCatching { OrbitOnboarding.markEnvChecked(context, orbit.id) }
             if (permission != OrbitPermissionCards.KEEP_ALIVE) return@runBlockingIoPreservingToolRuntimeContext phoneCard(context, orbit.id, caller.orEmpty(), permission)
-            // Offered once: the first-talk hint about keep-alive is over either way.
-            runCatching { OrbitOnboarding.markKeepAliveOffered(context, orbit.id) }
             val status = OrbitTaskBlock.status(context)
             val result = JSONObject()
                 .put("permission", permission)
