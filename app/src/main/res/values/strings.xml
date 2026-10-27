@@ -9811,7 +9811,12 @@
     <string name="orbit_approval_model_key_promise">密钥直接存进模型配置，不会出现在聊天里，%1$s 也看不到。</string>
     <string name="orbit_approval_key_title">更换密钥：%1$s</string>
     <string name="orbit_approval_key_config">模型配置：%1$s（%2$s）</string>
-    <string name="orbit_approval_key_note">同意时需要你填新的 API 密钥，它会替换旧密钥</string>
+    <string name="orbit_approval_key_note">同意时需要你填新的 API 密钥。会先用新密钥试聊，通过了才替换旧密钥；没通过就保留旧密钥</string>
+    <string name="orbit_approval_key_models">模型：%1$s</string>
+    <string name="orbit_approval_key_in_use">正在用作：%1$s</string>
+    <string name="orbit_approval_key_role_main">主聊天模型</string>
+    <string name="orbit_approval_key_role_assistant">辅助模型</string>
+    <string name="orbit_approval_key_role_multimodal">看图模型</string>
     <string name="orbit_approval_voice_title_create">新建语音配置：%1$s</string>
     <string name="orbit_approval_voice_title_switch">换用语音配置：%1$s</string>
     <string name="orbit_approval_voice_title_key">更换语音密钥：%1$s</string>

@@ -58,7 +58,8 @@ internal object OrbitModelTools {
   - list shows each configuration (no keys, only whether one is set), your main, assistant and picture models, the assistant's thinking strength, the provider ids you may use, and which sign-in accounts are signed in. Pass a configuration's select as config; it is the name, or name#1, name#2 … when several share a name.
   - discover asks the provider which models it offers, using the key already saved in a configuration (config=...), or for a server without a key (provider + endpoint). You only see model names, never the key. Use the exact names it returns; do not guess model names.
   - request_create for an API-key provider: look up the provider's endpoint in its official docs first. Leave models out unless you are sure of the names: on the card the user types the API key, the app fetches the provider's model list, and the user ticks the models. For a sign-in account see below. It returns at once; end the turn with one short line. You get a hidden note with what was added.
-  - request_key puts an approval card in the chat where the user types a new API key for an existing configuration (config=...), e.g. when its key stopped working (wrong key, 401, out of balance) or the user wants to change it. The key goes straight into the configuration and never reaches you. After approval the app tries the configuration's first model and the hidden note says whether the key works. End the turn with one short line.
+  - A new key: prefer a new configuration. Use request_create with a name that tells it apart (e.g. "DeepSeek new key"), then request_use to move to it once it works; the old configuration stays as a fallback.
+  - request_key replaces the key of one existing configuration (config = its select from list, e.g. "DeepSeek#2" when several share a name). Use it only when the user wants that configuration's key replaced, e.g. the old key was revoked. If several configurations could be meant, ask the user which one first. The user types the new key on the card; you never see it. The app first tests the new key on each model of that configuration you use (or its first model) and replaces the old key only if all pass; otherwise the new key is not saved and the hidden note says why. End the turn with one short line.
   - open_settings puts a card that opens the model settings page. Only for what the chat cannot do: a configuration that uses several keys, or models that run on the phone. End the turn with one short line.
   - request_use switches the model you use for main (your replies), assistant (titles, memory, background work) or multimodal (reading pictures), and can set the assistant's thinking strength. A model that is not in the configuration yet but is in discover's list is added to it. It puts an approval card in the chat; end the turn with one short line.
   - Never ask for the key in chat. If the user sends one anyway, do not repeat it or store it anywhere.
@@ -236,14 +237,25 @@ internal object OrbitModelTools {
                     require(!full.useMultipleApiKeys) {
                         "\"${config.name}\" uses several keys; put a card with action=open_settings so the user changes them there"
                     }
-                    val title = context.getString(com.ai.assistance.operit.R.string.orbit_approval_key_title, config.name)
+                    require(getModelList(full.modelName).isNotEmpty()) {
+                        "\"${config.name}\" has no models, so a new key cannot be tested on it; make a new configuration with action=request_create instead"
+                    }
+                    val select = selectors(configs.getAllConfigSummaries())[config.id] ?: config.name
+                    val title = context.getString(com.ai.assistance.operit.R.string.orbit_approval_key_title, select)
                         .take(OrbitApprovals.MAX_TITLE)
-                    val detail = OrbitApprovalActions.keyDetail(context, config.name, provider.name, full.apiEndpoint, arg("reason").take(300))
+                    val mine = OrbitModelPreferences(context).current(orbit.id)
+                    val roles = listOfNotNull(
+                        com.ai.assistance.operit.R.string.orbit_approval_key_role_main.takeIf { mine.main?.configId == config.id },
+                        com.ai.assistance.operit.R.string.orbit_approval_key_role_assistant.takeIf { mine.assistant?.configId == config.id },
+                        com.ai.assistance.operit.R.string.orbit_approval_key_role_multimodal.takeIf { mine.multimodal?.configId == config.id },
+                    ).map { context.getString(it) }
+                    val detail = OrbitApprovalActions.keyDetail(context, select, provider.name, full.apiEndpoint,
+                        getModelList(full.modelName), roles, arg("reason").take(300))
                     val approval = OrbitApprovals.request(context, orbit.id, caller.orEmpty(), title, detail,
-                        OrbitApprovalActions.keyAction(config.id, config.name))
+                        OrbitApprovalActions.keyAction(config.id, select))
                     JSONObject().put("approval_id", approval.id).put("state", approval.state)
                         .put("note", "An approval card is now in the chat; the user types the new API key on it. End this turn now " +
-                            "with one short line. You get a hidden note saying whether the new key passed a short test.")
+                            "with one short line. You get a hidden note saying whether the new key passed a short test and replaced the old one.")
                         .put(OrbitChatCards.KEY, OrbitChatCards.approval(orbit.id, approval))
                 }
                 "open_settings" -> {
@@ -364,6 +376,6 @@ internal object OrbitModelTools {
         } catch (e: Exception) {
             val why = (e.message ?: e.javaClass.simpleName).let { if (key.length >= 6) it.replace(key, "***") else it }.take(200)
             error("The provider did not return its model list ($why). Check the endpoint; if it is a key problem (401, invalid key), " +
-                "ask the user for a new key with action=request_key.")
+                "make a new configuration with the new key using action=request_create, or replace this one's key with action=request_key.")
         }
 }

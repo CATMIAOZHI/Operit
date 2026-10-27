@@ -9834,7 +9834,12 @@
     <string name="orbit_approval_model_key_promise">The key goes straight into the model settings. It never appears in the chat, and %1$s cannot see it.</string>
     <string name="orbit_approval_key_title">Change the key: %1$s</string>
     <string name="orbit_approval_key_config">Model configuration: %1$s (%2$s)</string>
-    <string name="orbit_approval_key_note">To approve, type the new API key; it replaces the old one</string>
+    <string name="orbit_approval_key_note">To approve, type the new API key. It is tested first and replaces the old key only if the test passes; otherwise the old key stays</string>
+    <string name="orbit_approval_key_models">Models: %1$s</string>
+    <string name="orbit_approval_key_in_use">In use as: %1$s</string>
+    <string name="orbit_approval_key_role_main">main chat model</string>
+    <string name="orbit_approval_key_role_assistant">assistant model</string>
+    <string name="orbit_approval_key_role_multimodal">picture model</string>
     <string name="orbit_approval_voice_title_create">New voice profile: %1$s</string>
     <string name="orbit_approval_voice_title_switch">Switch voice profile: %1$s</string>
     <string name="orbit_approval_voice_title_key">Change the voice key: %1$s</string>
