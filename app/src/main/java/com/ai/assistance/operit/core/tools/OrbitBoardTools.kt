@@ -123,7 +123,19 @@ internal object OrbitBoardTools {
                     val feed = OrbitBoardRepository(context, orbit.id, Board.FEED)
                     when (action) {
                         "post" -> {
-                            val card = args["card"]?.takeIf { it.isNotBlank() }?.let { reference ->
+                            // A card reference written into the body is moved to card: the post
+                            // shows its card under the text, never inside it.
+                            val rawBody = arg("body")
+                            val fenced = OrbitBoardRepository.cardFences(rawBody).distinct()
+                            val named = args["card"]?.trim()?.takeIf { it.isNotEmpty() }
+                            require(fenced.size <= 1 && (named == null || fenced.all { it == named })) {
+                                "A post shows one card, under its text. Put that card's name in card and leave " +
+                                    "a2ui-ref out of body (body names: ${fenced.joinToString()}" +
+                                    (named?.let { "; card: $it" } ?: "") + ")"
+                            }
+                            val body = OrbitBoardRepository.withoutCardFences(rawBody)
+                            require(body.isNotBlank()) { "post needs body text besides the card" }
+                            val card = (named ?: fenced.firstOrNull())?.let { reference ->
                                 val run = runtime?.dynamicUiRunId ?: error("Cards can only be made inside a running turn")
                                 val document = com.ai.assistance.operit.ui.common.dynamicui.CardDelivery.resolve(run, reference)
                                     ?: error("Unknown card $reference. Make it with dynamic_ui in this turn first")
@@ -131,7 +143,7 @@ internal object OrbitBoardTools {
                                 require(!LIVE_SURFACE.containsMatchIn(document)) { "Live cards cannot go in the feed; make a normal card" }
                                 document
                             }.orEmpty()
-                            json(feed.create(arg("title"), arg("body"), arg("why_for_you"), requestId,
+                            json(feed.create(arg("title"), body, arg("why_for_you"), requestId,
                                 emoji = emoji(arg("emoji")), card = card), Board.FEED)
                         }
                         "list" -> page(feed.list(), args["offset"]) { json(it, Board.FEED, brief = true) }

@@ -716,7 +716,9 @@ private fun OrbitFeedPage(
                             // The post is quoted above the input box, like a reply; the user writes the rest.
                             onQuote(
                                 com.ai.assistance.operit.data.model.ChatMessage(
-                                    sender = "ai", content = post.title + "\n\n" + post.body,
+                                    sender = "ai",
+                                    content = post.title + "\n\n" +
+                                        com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body),
                                     timestamp = post.createdAt, roleName = quoteSender,
                                 ),
                             )
@@ -846,7 +848,10 @@ private fun FeedPostRow(
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
     // Whether the folded text is cut off; the card only shows once the post is opened.
     var cutOff by remember(post.id) { mutableStateOf(false) }
-    val body = remember(post.body, colors.primary) { linkify(post.body, colors.primary) }
+    // Posts written before card references were moved out of the text still carry the raw fence.
+    val body = remember(post.body, colors.primary) {
+        linkify(com.ai.assistance.operit.features.orbit.OrbitBoardRepository.withoutCardFences(post.body), colors.primary)
+    }
     Column(Modifier.bleed(20.dp)) {
         Box {
             Row(

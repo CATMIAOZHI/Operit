@@ -14,6 +14,9 @@ Orbit 自身没有独立的内置生图接口；具体能力由当前工具包�
 `codex_draw` 使用应用内的 ChatGPT 登录，不需要单独的绘图 API Key。
 未登录时，用 `orbit_vault action=request_chatgpt_login` 放登录卡片，结束本轮等待；登录成功后会收到隐藏通知。
 
+`grok_draw` 使用应用内的 Grok 账号登录（Grok Imagine），也不需要 API Key，但账号要有生图权限（SuperGrok 等付费订阅；免费版和 X Basic 不行）。
+未登录时，用 `orbit_vault action=request_account_login provider=grok` 放登录卡片，结束本轮等待。返回 HTTP 403 说明账号没有生图权限，如实告诉用户，不要反复重试。
+
 `siliconflow_draw` 需要 `SILICONFLOW_API_KEY`。
 用 `orbit_vault action=request_api_key`，填 `provider=SiliconFlow`、`package_name=siliconflow_draw` 和 `env_name=SILICONFLOW_API_KEY`。
 用户在保险箱卡片里填写，密钥只在该包运行时提供，不进终端；不要在聊天里索要或手动写入脚本。
@@ -24,11 +27,13 @@ Orbit 自身没有独立的内置生图接口；具体能力由当前工具包�
 使用 `codex_draw` 时，先调用 `codex_draw:read_skill` 读取图片创作指导。
 新图用 `codex_draw:draw_image`，必填 `prompt`；参考图放在 `referenced_image_paths`，最多 5 张。
 修改已有图片用 `codex_draw:edit_image`，必填 `prompt` 和 `image_path`；额外参考图仍放在 `referenced_image_paths`，连同编辑目标最多 5 张。
+`grok_draw` 的用法相同：先 `grok_draw:read_skill`，新图用 `grok_draw:draw_image`，修改用 `grok_draw:edit_image`。它用 `aspect_ratio` 控制比例（如 1:1、16:9、9:16、2:3，默认 auto），没有 size、quality、background 参数。
+用户两个都能用又没指定时，选他已登录、额度够的那个。
 这些输入需要真实可读取的本地 PNG、JPEG 或 WebP 文件，不能拿网页地址冒充本地路径。
 
 参考图和编辑目标要分清：新图接口不接受 `image_path`，编辑接口会另存新文件。
 提示词保留用户的用途、主体、风格、文字和限制；编辑时说明要改什么、保留什么，不承诺逐像素保留。
-`background=transparent` 可请求透明背景，其他尺寸、质量等选项以工具说明为准。
+`codex_draw` 可用 `background=transparent` 请求透明背景，其他尺寸、质量等选项以工具说明为准。
 
 `siliconflow_draw:draw_image` 也可生成图片，必填 `prompt`，可选 `model`、`image_size`、`batch_size` 等参数。
 不要把一个包的参数照搬给另一个包，也不要把接口参数当成所有服务模型都支持的保证。

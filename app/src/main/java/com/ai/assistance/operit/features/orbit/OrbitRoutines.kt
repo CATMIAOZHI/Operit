@@ -588,6 +588,7 @@ internal object OrbitRoutines {
            就写一条提醒他去取件。只引用你真的打开过的链接，不要编造。
         3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、几段短正文，why_for_you 用一句话说明为什么给这位用户看。
            表格、对比、图表、可点的清单、取件码这类提醒，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
+           卡片会显示在正文下面；body 里只写文字，不要写 a2ui-ref 代码块。
         动态会自己出现在动态页，不要给用户发消息：userMessage 留空，decision 写一句这次写了什么。
     """.trimIndent()
 
@@ -603,7 +604,8 @@ internal object OrbitRoutines {
         3. Publish with orbit_feed action=post: a short title, one fitting emoji, a body of a few short paragraphs, and
            why_for_you saying in one sentence why this post is for this user.
            For a table, comparison, chart, tappable list or a reminder such as a pickup code, make a card with
-           dynamic_ui first (not live) and put its name (such as card-1) in card.
+           dynamic_ui first (not live) and put its name (such as card-1) in card. The card shows under the text;
+           body holds only text, never an a2ui-ref block.
         The post shows up in the Feed on its own. Do not message the user: leave userMessage empty and say in decision
         what you wrote.
     """.trimIndent()

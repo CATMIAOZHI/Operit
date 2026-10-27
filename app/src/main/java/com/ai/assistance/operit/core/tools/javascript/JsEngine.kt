@@ -24,6 +24,7 @@ import com.ai.assistance.operit.core.tools.packTool.ToolPkgApiVersion
 import com.ai.assistance.operit.core.tools.packTool.TOOLPKG_EVENT_MESSAGE_PROCESSING
 import com.ai.assistance.operit.data.db.AppDatabase
 import com.ai.assistance.operit.features.draw.CodexDrawBridge
+import com.ai.assistance.operit.features.draw.GrokDrawBridge
 import com.ai.assistance.operit.data.preferences.CharacterCardManager
 import com.ai.assistance.operit.data.repository.SubagentRunRepository
 import com.ai.assistance.operit.features.reading.ReadingCompanionAudit
@@ -111,7 +112,7 @@ class JsEngine(private val context: Context) {
     private val engineScope = CoroutineScope(SupervisorJob() + quickJsDispatcher)
     private val nativeBridgeScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val readingCompanionBridgeJobs = ConcurrentHashMap<String, Job>()
-    private val codexDrawBridgeJobs = ConcurrentHashMap<String, Job>()
+    private val drawBridgeJobs = ConcurrentHashMap<String, Job>()
     private val quickJsInitLock = Any()
     private val destroyed = AtomicBoolean(false)
 
@@ -431,7 +432,7 @@ class JsEngine(private val context: Context) {
     private fun removeExecutionSession(callId: String): ExecutionSession? {
         val normalizedCallId = callId.trim()
         readingCompanionBridgeJobs.remove(normalizedCallId)?.cancel()
-        codexDrawBridgeJobs.remove(normalizedCallId)?.cancel()
+        drawBridgeJobs.remove(normalizedCallId)?.cancel()
         return activeExecutionSessions.remove(normalizedCallId)?.also { ended ->
             // A script can still log after it finished; its keys stay masked for those late lines.
             val values = ended.envOverrides.values.filter { it.length >= 4 }
@@ -536,7 +537,7 @@ class JsEngine(private val context: Context) {
         activeExecutionSessions.clear()
         sessions.forEach { session ->
             readingCompanionBridgeJobs.remove(session.callId)?.cancel()
-            codexDrawBridgeJobs.remove(session.callId)?.cancel()
+            drawBridgeJobs.remove(session.callId)?.cancel()
             if (!session.future.isDone) {
                 session.future.complete(buildJsExecutionErrorPayload(reason))
             }
@@ -1799,10 +1800,40 @@ class JsEngine(private val context: Context) {
                         )
                     }
                 } finally {
-                    codexDrawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
                 }
             }
-            codexDrawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
+            job.start()
+        }
+
+        @JavascriptInterface
+        fun executeGrokDrawAsync(callId: String, callbackId: String, parametersJson: String) {
+            val normalizedCallId = callId.trim()
+            val session = resolveExecutionSession(normalizedCallId)?.takeIf {
+                it.packageName == "grok_draw" && boundToolPkgContainerName == null
+            }
+            if (session == null) {
+                sendToolPkgIpcResult(callbackId, "Grok 绘图仅供 Grok 绘图包使用", true)
+                return
+            }
+            val job = nativeBridgeScope.launch(start = CoroutineStart.LAZY) {
+                try {
+                    val result = GrokDrawBridge.execute(context, parametersJson)
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, result, false)
+                    }
+                } catch (cancelled: CancellationException) {
+                    throw cancelled
+                } catch (error: Exception) {
+                    if (resolveExecutionSession(normalizedCallId) === session) {
+                        sendToolPkgIpcResult(callbackId, error.message ?: "Grok 绘图失败", true)
+                    }
+                } finally {
+                    drawBridgeJobs.remove(normalizedCallId, coroutineContext[Job])
+                }
+            }
+            drawBridgeJobs.put(normalizedCallId, job)?.cancel()
             job.start()
         }
 

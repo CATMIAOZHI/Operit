@@ -14,6 +14,9 @@ See [connectors.md](connectors.md) for batch imports and switching rules.
 `codex_draw` uses the app's ChatGPT login and needs no separate image API key.
 If signed out, put a login card in chat with `orbit_vault action=request_chatgpt_login`, then end the turn and wait. A successful login sends you a hidden notice.
 
+`grok_draw` uses the app's Grok account login (Grok Imagine) and also needs no API key, but the account must include image generation (a paid plan such as SuperGrok; not Free or X Basic).
+If signed out, put a login card in chat with `orbit_vault action=request_account_login provider=grok`, then end the turn and wait. HTTP 403 means the account has no image access; tell the user plainly and do not keep retrying.
+
 `siliconflow_draw` requires `SILICONFLOW_API_KEY`.
 Use `orbit_vault action=request_api_key` with `provider=SiliconFlow`, `package_name=siliconflow_draw` and `env_name=SILICONFLOW_API_KEY`.
 The user enters it on the vault card. The key is supplied only while that package runs and is not available to the terminal; never ask for it in chat or write it into a script.
@@ -24,11 +27,13 @@ Saving confirms configuration was saved; an actual generation result establishes
 With `codex_draw`, first call `codex_draw:read_skill` for image creation guidance.
 For a new image, use `codex_draw:draw_image` with required `prompt`; put up to 5 reference images in `referenced_image_paths`.
 To edit an existing image, use `codex_draw:edit_image` with required `prompt` and `image_path`; extra references also go in `referenced_image_paths`, with at most 5 images including the edit target.
+`grok_draw` works the same way: first `grok_draw:read_skill`, then `grok_draw:draw_image` for new images and `grok_draw:edit_image` for edits. It sets the shape with `aspect_ratio` (such as 1:1, 16:9, 9:16, 2:3; default auto) and has no size, quality or background parameters.
+When both are available and the user has no preference, pick the one that is signed in and has quota.
 These inputs must be real, readable local PNG, JPEG or WebP files. A website URL is not a local path.
 
 Distinguish references from edit targets: the new-image tool rejects `image_path`, while editing saves a new file.
 Preserve the user's purpose, subject, style, text and constraints in the prompt. For edits, specify what to change and preserve without promising pixel-perfect preservation.
-`background=transparent` requests transparency; use the tool documentation for size, quality and other options.
+With `codex_draw`, `background=transparent` requests transparency; use the tool documentation for size, quality and other options.
 
 `siliconflow_draw:draw_image` also generates images, with required `prompt` and optional parameters such as `model`, `image_size` and `batch_size`.
 Do not copy parameters between packages or treat an interface parameter as a guarantee that every service model supports it.
