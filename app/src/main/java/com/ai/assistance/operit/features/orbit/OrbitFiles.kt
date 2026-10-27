@@ -45,8 +45,10 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
     /**
      * Refuses a file that a link would take outside Orbit's folder: checks the file if it exists,
      * otherwise the nearest folder above it that does, so a linked folder is caught too.
+     * Sent chat copies (sent/) are only reachable with [sent], and only through a real sent/ folder,
+     * so no link can let the file tools change what was already sent.
      */
-    private fun inside(f: File): File {
+    private fun inside(f: File, sent: Boolean = false): File {
         root.mkdirs()
         var probe: File? = f
         // A dangling link counts as existing, so toRealPath below fails on it instead of skipping it.
@@ -55,6 +57,12 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val base = root.toPath().toRealPath()
         val real = probe?.let { runCatching { it.toPath().toRealPath() }.getOrNull() }
         require(real != null && real.startsWith(base)) { "Not one of Orbit's files" }
+        val sentBase = base.resolve(SENT)
+        if (sent) {
+            require(!Files.isSymbolicLink(File(root, SENT).toPath()) && real.startsWith(sentBase)) { "Not a sent copy" }
+        } else {
+            require(!real.startsWith(sentBase)) { "Not one of Orbit's files" }
+        }
         return f
     }
 
@@ -324,6 +332,66 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         else runCatching { payload.readText() }.getOrNull()
     }
 
+    /**
+     * Copies a file under files/ into sent/<stamp>/ so what was sent in the chat never changes,
+     * the way a sent message stays as it was. Returns the copy's path, kept out of the Library.
+     * The copy is made beside the folder and moved in whole; all copies together stay under
+     * [SENT_LIMIT_BYTES], the oldest going first (their chat cards then show the file as gone).
+     */
+    suspend fun snapshotForChat(path: String): String = io {
+        val p = normalize(path)
+        require(p.startsWith("files/") && FILES.matches(p)) { "Only files under files/ can be sent" }
+        val source = inside(File(root, p))
+        require(source.isFile) { "No such file: $p" }
+        require(source.length() <= MAX_SEND_BYTES) {
+            "$p is ${source.length() / 1024 / 1024} MB; a file sent in the chat can be at most ${MAX_SEND_BYTES / 1024 / 1024} MB"
+        }
+        val stamp = SimpleDateFormat("yyyyMMdd-HHmmss", Locale.US).format(Date()) + "-" +
+            UUID.randomUUID().toString().take(8)
+        val copy = "$SENT/$stamp/${source.name}"
+        require(SENT_PATH.matches(copy)) { "File name is too long: $p" }
+        val sentRoot = File(root, SENT)
+        if (!Files.exists(sentRoot.toPath(), java.nio.file.LinkOption.NOFOLLOW_LINKS)) sentRoot.mkdirs()
+        val target = inside(File(root, copy), sent = true)
+        val folder = checkNotNull(target.parentFile)
+        // Leftovers from a copy the app was closed in the middle of.
+        sentRoot.listFiles()?.filter { it.name.startsWith(".copy-") }?.forEach { deleteTree(it) }
+        val incoming = File(sentRoot, ".copy-$stamp")
+        try {
+            check(incoming.mkdirs()) { "Could not make the copy" }
+            Files.copy(source.toPath(), File(incoming, source.name).toPath(), StandardCopyOption.REPLACE_EXISTING)
+            Files.move(incoming.toPath(), folder.toPath(), StandardCopyOption.ATOMIC_MOVE)
+        } finally {
+            deleteTree(incoming)
+        }
+        trimSent(sentRoot, keep = folder.name)
+        copy
+    }
+
+    /** Keeps the sent copies under [SENT_LIMIT_BYTES], oldest first; [keep] (the newest) always stays. */
+    private fun trimSent(sentRoot: File, keep: String) {
+        val folders = sentRoot.listFiles()
+            ?.filter { SENT_FOLDER.matches(it.name) && !Files.isSymbolicLink(it.toPath()) }
+            ?.sortedBy { it.name }.orEmpty()
+        var total = folders.sumOf { folder -> folder.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L }
+        for (folder in folders) {
+            if (total <= SENT_LIMIT_BYTES) break
+            if (folder.name == keep) continue
+            total -= folder.listFiles()?.filter { it.isFile }?.sumOf { it.length() } ?: 0L
+            deleteTree(folder)
+        }
+    }
+
+    /** A file a chat card points at: one in files/ (older cards) or a sent copy in sent/. */
+    fun chatFile(path: String): File? = runCatching {
+        val p = normalize(path)
+        when {
+            SENT_PATH.matches(p) -> inside(File(root, p), sent = true)
+            p.startsWith("files/") -> fileFor(p)
+            else -> null
+        }?.takeIf { it.isFile }
+    }.getOrNull()
+
     /** Saves a binary file under files/, keeping an existing one by adding a number to the name. */
     suspend fun saveBytes(path: String, input: InputStream, maxBytes: Long = MAX_FILE_BYTES): Entry = io {
         var p = normalize(path)
@@ -462,6 +530,14 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         val SINGLE = listOf(LESSONS, PROACTIVE, TIMEZONES, ALIGNMENT, DEVICES)
         private const val INDEX = "INDEX.md"
         private const val TRASH = ".trash"
+        /** Copies of files sent in the chat; see [snapshotForChat]. */
+        private const val SENT = "sent"
+        private val SENT_FOLDER = Regex("\\d{8}-\\d{6}-[0-9a-f]{8}")
+        private val SENT_PATH = Regex("$SENT/\\d{8}-\\d{6}-[0-9a-f]{8}/[^/]{1,120}")
+        /** All sent copies of one Orbit together: 2 GB. */
+        const val SENT_LIMIT_BYTES = 2L * 1024 * 1024 * 1024
+        /** One file sent in the chat: 1 GB, so a single copy never fills the sent copies' room alone. */
+        const val MAX_SEND_BYTES = 1L * 1024 * 1024 * 1024
         private const val PAYLOAD = "payload"
         private const val META = "meta.json"
         private val PEOPLE = Regex("memory/(people|groups)/[^/]{1,80}\\.md")

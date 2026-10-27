@@ -36,7 +36,7 @@ import org.json.JSONObject
  */
 object GrokDrawBridge {
     private val ENDPOINTS = listOf("https://api.x.ai/v1", "https://cli-chat-proxy.grok.com/v1")
-    private const val DEFAULT_MODEL = "grok-imagine-image-quality"
+    private const val DEFAULT_MODEL = "grok-imagine-image-2.0"
     private val MODEL_PATTERN = Regex("""grok-imagine-[a-z0-9.\-]+""")
     internal val ASPECT_RATIOS = setOf(
         "auto", "1:1", "16:9", "9:16", "4:3", "3:4", "3:2", "2:3", "2:1", "1:2",

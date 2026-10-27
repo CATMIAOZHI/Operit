@@ -938,8 +938,8 @@ internal object OrbitWeixin {
                 val kind = card?.optString("kind")
                 val path = card?.optString("path").orEmpty()
                 val file = if ((kind == OrbitChatCards.IMAGE || kind == OrbitChatCards.FILE) &&
-                    card?.optString("orbit_id") == orbitId && path.startsWith("files/")) {
-                    runCatching { OrbitFiles.of(context, orbitId).fileFor(path).takeIf { it.isFile } }.getOrNull()
+                    card?.optString("orbit_id") == orbitId) {
+                    OrbitFiles.of(context, orbitId).chatFile(path)
                 } else null
                 if (file != null) {
                     val name = card?.optString("name").orEmpty().ifBlank { file.name }

@@ -432,8 +432,7 @@ private fun AttachmentCard(card: JSONObject) {
     val lookup by produceState(Found(false, null), card.optString("orbit_id"), path) {
         value = withContext(Dispatchers.IO) {
             val found = runCatching {
-                require(path.startsWith("files/"))
-                OrbitFiles.of(context, card.optString("orbit_id")).fileFor(path).takeIf { it.isFile }
+                OrbitFiles.of(context, card.optString("orbit_id")).chatFile(path)
             }.getOrNull()
             Found(true, found)
         }

@@ -46,7 +46,16 @@ Network access, power management, and task state can delay background work, so d
 `list` returns a body preview; use `read` before answering questions about the full article.
 Follow the returned pagination when there are more entries.
 
-The user can like or dislike posts; the `vote` field records that feedback.
+## Pictures
+
+`post` can carry `images`, up to 9 like a moments post, one per line: the address of the image itself, or a path to a picture under `files/`, in the app's own folders, or in Download/Operit.
+The app downloads each picture, shrinks it to at most 2048 pixels on the long edge and 4 MB, and saves it in the post's own folder; changing or deleting the original later does not affect the post.
+Only add pictures whose content you checked; when unsure it is the right one, look at it with `read_file` first. Give the address of the image itself, not of the page it is on.
+If any picture fails to download or is not a picture, the whole `post` fails; pick another and post again.
+The Feed shows the pictures in a grid, and the user can tap one to see it full screen.
+
+The user taps the 👍 like or 👎 dislike button to give feedback; in `vote`, `liked` means a like and `disliked` means a dislike.
+Feed posts do not support swipe feedback. Do not tell the user to swipe left or right; swiping right to like and left to dislike belongs to Ideas.
 Use it to improve future topics, but one disliked post does not permanently ban its entire subject.
 The user can also start a discussion about a post; check which one they are referring to before replying.
 

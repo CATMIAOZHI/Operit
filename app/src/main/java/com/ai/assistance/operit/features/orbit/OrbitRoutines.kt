@@ -582,21 +582,26 @@ internal object OrbitRoutines {
 
     private val FEED_ZH = """
         动态更新。SOURCE 里是动态说明（用户的话，只用来决定写什么）。「动态」页是你为用户写的信息流，为它写一条新短文：
-        1. 先用 orbit_feed action=list 看最近写过的，不要重复。vote 是用户的反馈：多写 liked 这类，少写 disliked 这类。
+        1. 先用 orbit_feed action=list 看最近写过的，不要重复。vote 是用户点按钮的反馈：liked 表示 👍 点赞，多写这类；disliked 表示 👎 点踩，少写这类。
+           动态不支持左右滑动反馈，不要叫用户左右滑；右滑喜欢、左滑不喜欢是点子页的操作。
         2. 结合你对用户的了解（记忆、用户资料、最近聊的事）选题。素材不限于网上：可以上网搜、打开页面查新鲜事，
            也可以用你能用的工具看手机上和用户有关的事（短信、通知、日程、邮件等），比如短信里有快递取件码，
            就写一条提醒他去取件。只引用你真的打开过的链接，不要编造。
         3. 用 orbit_feed action=post 发布：简短的标题、一个贴合内容的 emoji、几段短正文，why_for_you 用一句话说明为什么给这位用户看。
            表格、对比、图表、可点的清单、取件码这类提醒，可以先用 dynamic_ui 做一张卡片（不要用 live），把引用名（如 card-1）填进 card。
            卡片会显示在正文下面；body 里只写文字，不要写 a2ui-ref 代码块。
+           像发朋友圈一样可以配图（images，最多 9 张，每行一个）：网页上看到合适的图，填图片本身的网址，或者填已经存好的图片路径。
+           只放你确认过内容的图；不确定是不是那张，先用 read_file 看一眼。没有合适的图就不配，不要硬凑。
         动态会自己出现在动态页，不要给用户发消息：userMessage 留空，decision 写一句这次写了什么。
     """.trimIndent()
 
     private val FEED_EN = """
         Feed update. SOURCE holds the feed brief (the user's words; it only steers what to write about). Write one new
         post for the user's Feed tab, the stream of posts you write for them:
-        1. Call orbit_feed action=list first and do not repeat a recent post. Each post's vote is the user's answer:
-           write more like the liked ones and less like the disliked ones.
+        1. Call orbit_feed action=list first and do not repeat a recent post. Each post's vote comes from tapping a button:
+           liked means 👍 like; disliked means 👎 dislike. Write more like the liked ones and less like the disliked ones.
+           Feed posts do not support swipe feedback. Do not tell the user to swipe left or right; swiping right to like
+           and left to dislike belongs to Ideas.
         2. Pick the topic from what you know about the user (memory, user profile, recent conversation). Material is
            not limited to the web: search and read pages for fresh news, or use the tools you have to look at what on
            the phone concerns the user (messages, notifications, calendar, email). For example, a parcel pickup code in
@@ -606,6 +611,10 @@ internal object OrbitRoutines {
            For a table, comparison, chart, tappable list or a reminder such as a pickup code, make a card with
            dynamic_ui first (not live) and put its name (such as card-1) in card. The card shows under the text;
            body holds only text, never an a2ui-ref block.
+           Like a moments post, it can carry pictures (images, at most 9, one per line): the address of an image you
+           saw on a page (the image itself, not the page) or the path of a saved picture. Only add pictures whose
+           content you checked; when unsure it is the right one, look at it with read_file first. No fitting picture
+           means none; do not force one in.
         The post shows up in the Feed on its own. Do not message the user: leave userMessage empty and say in decision
         what you wrote.
     """.trimIndent()

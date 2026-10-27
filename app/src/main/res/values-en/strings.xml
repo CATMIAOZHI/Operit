@@ -8971,6 +8971,7 @@
     <string name="resource_download_dismiss">Close</string>
     <string name="resource_download_retry_hint">Check your connection and retry. Downloaded parts are kept.</string>
     <string name="resource_download_declined">Download of %1$s was cancelled</string>
+    <string name="resource_speech_declined">The speech recognition model is not downloaded yet. Tap the microphone again to be asked again.</string>
     <string name="resource_download_cancelled_title">Cancelled: %1$s</string>
     <string name="resource_download_unconfirmed">Download not confirmed: %1$s</string>
     <string name="resource_download_unconfirmed_title">Download not confirmed: %1$s</string>
@@ -9972,6 +9973,7 @@
     <string name="orbit_vault_env_too_short">A password or key shorter than %1$d characters cannot be used in the terminal: it could not be reliably masked in output.</string>
     <string name="orbit_vault_package_too_short">A tool package key needs at least %1$d characters; a shorter one cannot be reliably masked.</string>
     <string name="orbit_chat_image_desc">Picture %1$s, tap to view</string>
+    <string name="orbit_feed_image_desc">Picture %2$d of %3$d for %1$s, tap to view</string>
     <string name="orbit_chat_image_saved">Saved to the gallery</string>
     <string name="orbit_chat_image_save">Save to gallery</string>
     <string name="orbit_chat_image_saving">Saving…</string>

@@ -724,6 +724,9 @@ private fun OrbitFeedPage(
                             )
                         },
                         cardOf = { repository.readCard(post.id) },
+                        images = remember(post.id, post.images) {
+                            OrbitBoardRepository.imageFiles(context, orbit.id, post)
+                        },
                         onCardSubmit = { text ->
                             sendToOrbit(context, orbit, resources.getString(R.string.orbit_feed_card_message, post.title, text)).also { sent ->
                                 // The card stays open to try again when Orbit is still answering.
@@ -842,6 +845,8 @@ private fun FeedPostRow(
     onCardSubmit: (String) -> Boolean,
     /** Groups the card's saved state (what the user ticked or typed) under this Orbit's feed. */
     cardOwner: String,
+    /** The post's pictures, shown under the text like a moments post. */
+    images: List<java.io.File> = emptyList(),
 ) {
     val colors = MaterialTheme.colorScheme
     var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
@@ -875,6 +880,7 @@ private fun FeedPostRow(
                             )
                         }
                     }
+                    FeedImages(images, post.title)
                     if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
                     if (expanded || cutOff || post.card) {
                         TextButton(
@@ -941,6 +947,42 @@ private fun FeedPostRow(
 }
 
 // ---------------------------------------------------------------- Ideas
+
+/**
+ * A post's pictures, at most nine, laid out like a moments post: one large, two or four in a
+ * 2-column grid, otherwise three to a row. Tapping one opens it full screen.
+ */
+@Composable
+private fun FeedImages(files: List<java.io.File>, title: String) {
+    if (files.isEmpty()) return
+    var viewing by remember(files) { mutableStateOf<java.io.File?>(null) }
+    val columns = when (files.size) { 1 -> 1; 2, 4 -> 2; else -> 3 }
+    val shape = RoundedCornerShape(10.dp)
+    val placeholder = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.06f)
+    val resources = LocalContext.current.resources
+    fun label(file: java.io.File) =
+        resources.getString(R.string.orbit_feed_image_desc, title, files.indexOf(file) + 1, files.size)
+    Column(
+        Modifier.padding(top = 10.dp).fillMaxWidth(if (columns == 3) 1f else 0.7f),
+        verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        files.chunked(columns).forEach { row ->
+            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                row.forEach { file ->
+                    coil.compose.AsyncImage(
+                        model = file,
+                        contentDescription = label(file),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                        modifier = Modifier.weight(1f).aspectRatio(1f).clip(shape).background(placeholder)
+                            .clickable { viewing = file },
+                    )
+                }
+                repeat(columns - row.size) { Spacer(Modifier.weight(1f)) }
+            }
+        }
+    }
+    viewing?.let { file -> OrbitImageViewer(file, label(file)) { viewing = null } }
+}
 
 /**
  * A feed post's Dynamic UI card, under its text. It is read from its own file when the post
