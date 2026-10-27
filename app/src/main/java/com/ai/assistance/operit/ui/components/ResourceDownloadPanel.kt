@@ -45,6 +45,15 @@ fun ResourceDownloadPanel(modifier: Modifier = Modifier) {
     if (inlineDownloadHosts > 0) return
     val downloads by OnDemandResources.downloads.collectAsState()
     val context = LocalContext.current
+    // On the Orbit page progress shows as Orbit cards in its own colors.
+    val orbitScheme = com.ai.assistance.operit.ui.features.orbit.OrbitActiveTheme.scheme
+    if (orbitScheme != null) {
+        if (downloads.isEmpty()) return
+        MaterialTheme(colorScheme = orbitScheme, typography = MaterialTheme.typography) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitDownloadPanel(downloads.values, modifier)
+        }
+        return
+    }
     Column(modifier.heightIn(max = 320.dp).verticalScroll(rememberScrollState())) {
         downloads.values.forEach { state ->
             if (state.collapsed) {

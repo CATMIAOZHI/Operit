@@ -31,8 +31,8 @@ internal object OrbitComponentTools {
         details = """
   - list shows each part with its id, what it is for, its download size and state (installed / not_installed / downloading).
   - request_install puts an approval card in the chat showing the parts and their size, and returns at once; end the turn with one short line. When the user approves, the app downloads them in the background, the user sees the progress, and you get a hidden note when they are done or failed.
-  - Ask for the terminal environment when a task needs the terminal tool and list says it is not installed. Ask only for what the task needs; these are large downloads.
-  - 终端环境这类组件很大，只在任务需要时申请；用户同意后 App 在后台下载，完成后你会收到通知。
+  - Ask for the terminal environment when a task needs the terminal tool, or when your first-talk guidance asks for it, and list says it is not installed. Otherwise ask only for what the task needs; these are large downloads.
+  - 终端环境这类组件很大，只在任务需要或初次见面指引要求时申请；用户同意后 App 在后台下载，完成后你会收到通知。
 """,
     )
 

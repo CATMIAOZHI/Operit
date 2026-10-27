@@ -857,6 +857,30 @@ private fun ChartSlot(shown: Boolean, note: String?, chart: @Composable () -> Un
         }
     }
 }
+/**
+ * The main app's chart colors are a fixed pink. Orbit's charts use its own theme color instead:
+ * output and lines in full, input as a lighter shade of the same color.
+ */
+@Composable
+private fun OrbitTokenStatsColors(content: @Composable () -> Unit) {
+    TokenStatsColorsProvider {
+        val base = LocalTokenStatsColors.current
+        val scheme = MaterialTheme.colorScheme
+        val colors = remember(base, scheme.primary, scheme.surface) {
+            val primary = scheme.primary
+            base.copy(
+                output = primary,
+                reasoning = androidx.compose.ui.graphics.lerp(primary, scheme.surface, 0.3f),
+                uncachedInput = androidx.compose.ui.graphics.lerp(primary, scheme.surface, 0.55f),
+                cacheWrite = androidx.compose.ui.graphics.lerp(primary, scheme.surface, 0.65f),
+                cachedInput = androidx.compose.ui.graphics.lerp(primary, scheme.surface, 0.75f),
+                chartAccent = primary,
+            )
+        }
+        androidx.compose.runtime.CompositionLocalProvider(LocalTokenStatsColors provides colors, content = content)
+    }
+}
+
 /** A chart in the page's own card, titled like the main app's: the name, and the range's total on the right. */
 @Composable
 private fun UsageChartCard(
@@ -993,7 +1017,7 @@ internal fun OrbitUsageTrendsPage(orbit: OrbitProfile, onBack: () -> Unit) {
                         label = { Text(stringResource(option.label)) })
                 }
             }
-            TokenStatsColorsProvider {
+            OrbitTokenStatsColors {
                 val colors = LocalTokenStatsColors.current
                 val inputLabel = stringResource(R.string.orbit_usage_input)
                 val outputLabel = stringResource(R.string.token_stats_token_output)

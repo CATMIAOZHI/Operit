@@ -7,6 +7,7 @@
     <string name="orbit_model_pick_hint">先从服务商那里拉取模型列表，再勾选要用的。</string>
     <string name="orbit_model_pick_need_key">先填上面的 API 密钥，才能拉取模型列表。</string>
     <string name="orbit_model_pick_failed">没拉到模型列表。检查一下密钥和地址，再试一次。</string>
+    <string name="orbit_model_pick_failed_account">没拉到这个账号的模型列表，可能是登录过期了。可以先重试；还不行就拒绝这张卡，跟 %1$s 说一声，它会放一张重新登录的卡片。</string>
     <string name="orbit_model_pick_fetch">获取模型列表</string>
     <string name="orbit_model_pick_retry">再试一次</string>
     <string name="orbit_model_pick_loading">正在获取模型列表…</string>

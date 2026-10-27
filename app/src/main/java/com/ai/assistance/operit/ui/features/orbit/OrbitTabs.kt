@@ -631,50 +631,77 @@ private fun OrbitFeedPage(
     var editingBrief by remember { mutableStateOf(false) }
     var showIntro by rememberSaveable { mutableStateOf(false) }
     val quoteSender = stringResource(R.string.orbit_feed_quote_sender)
-
-    TabList(
-        title = stringResource(R.string.orbit_tab_feed),
-        info = { showIntro = true },
-        action = {
-            // Asks Orbit in the chat; the request waits in the input box for the user to send.
-            OrbitCircleButton(orbitIcon("refresh-cw"), stringResource(R.string.orbit_feed_write_now), {
-                onDraft(resources.getString(R.string.orbit_feed_refresh_message))
-            })
-        },
-    ) {
-        val currentBrief = brief
-        if (currentBrief != null) {
-            item(key = "brief") { BriefPill(currentBrief) { editingBrief = true } }
+    // Links in posts and their cards ask before leaving for the browser.
+    var pendingLink by remember { mutableStateOf<String?>(null) }
+    val systemUriHandler = androidx.compose.ui.platform.LocalUriHandler.current
+    val askingUriHandler = remember {
+        object : androidx.compose.ui.platform.UriHandler {
+            override fun openUri(uri: String) { pendingLink = uri }
         }
-        val list = posts
-        when {
-            list == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_feed_posts_empty, who)) }
-            else -> items(list, key = { it.id }) { post ->
-                FeedPostRow(
-                    post = post,
-                    // Tapping the chosen answer again takes it back.
-                    onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
-                    onDiscuss = {
-                        // The post is quoted above the input box, like a reply; the user writes the rest.
-                        onQuote(
-                            com.ai.assistance.operit.data.model.ChatMessage(
-                                sender = "ai", content = post.title + "\n\n" + post.body,
-                                timestamp = post.createdAt, roleName = quoteSender,
-                            ),
-                        )
-                    },
-                    cardOf = { repository.readCard(post.id) },
-                    onCardSubmit = { text ->
-                        sendToOrbit(context, orbit, resources.getString(R.string.orbit_feed_card_message, post.title, text)).also { sent ->
-                            // The card stays open to try again when Orbit is still answering.
-                            if (!sent) showToast(context, resources.getString(R.string.orbit_feed_card_busy, who))
-                        }
-                    },
-                    cardOwner = "orbit-feed:" + orbit.id,
-                )
+    }
+    val askingOpenUrl = remember { { url: String -> pendingLink = url } }
+
+    CompositionLocalProvider(
+        androidx.compose.ui.platform.LocalUriHandler provides askingUriHandler,
+        com.ai.assistance.operit.ui.common.dynamicui.LocalDynamicUiOpenUrl provides askingOpenUrl,
+    ) {
+        TabList(
+            title = stringResource(R.string.orbit_tab_feed),
+            info = { showIntro = true },
+            action = {
+                // Asks Orbit in the chat; the request waits in the input box for the user to send.
+                OrbitCircleButton(orbitIcon("refresh-cw"), stringResource(R.string.orbit_feed_write_now), {
+                    onDraft(resources.getString(R.string.orbit_feed_refresh_message))
+                })
+            },
+        ) {
+            val currentBrief = brief
+            if (currentBrief != null) {
+                item(key = "brief") { BriefPill(currentBrief) { editingBrief = true } }
+            }
+            val list = posts
+            when {
+                list == null -> item(key = "loading") { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+                list.isEmpty() -> item(key = "empty") { Hint(stringResource(R.string.orbit_feed_posts_empty, who)) }
+                else -> items(list, key = { it.id }) { post ->
+                    FeedPostRow(
+                        post = post,
+                        // Tapping the chosen answer again takes it back.
+                        onVote = { vote -> action { repository.update(post.id, vote = if (post.vote == vote) 0 else vote) } },
+                        onDiscuss = {
+                            // The post is quoted above the input box, like a reply; the user writes the rest.
+                            onQuote(
+                                com.ai.assistance.operit.data.model.ChatMessage(
+                                    sender = "ai", content = post.title + "\n\n" + post.body,
+                                    timestamp = post.createdAt, roleName = quoteSender,
+                                ),
+                            )
+                        },
+                        cardOf = { repository.readCard(post.id) },
+                        onCardSubmit = { text ->
+                            sendToOrbit(context, orbit, resources.getString(R.string.orbit_feed_card_message, post.title, text)).also { sent ->
+                                // The card stays open to try again when Orbit is still answering.
+                                if (!sent) showToast(context, resources.getString(R.string.orbit_feed_card_busy, who))
+                            }
+                        },
+                        cardOwner = "orbit-feed:" + orbit.id,
+                    )
+                }
             }
         }
+    }
+
+    pendingLink?.let { link ->
+        OrbitConfirmDialog(
+            title = stringResource(R.string.orbit_link_confirm_title),
+            message = stringResource(R.string.orbit_link_confirm_message, link),
+            confirmLabel = stringResource(R.string.orbit_link_confirm_open),
+            onConfirm = {
+                pendingLink = null
+                runCatching { systemUriHandler.openUri(link) }
+            },
+            onDismiss = { pendingLink = null },
+        )
     }
 
     if (showIntro) {
@@ -773,6 +800,8 @@ private fun FeedPostRow(
     val colors = MaterialTheme.colorScheme
     var expanded by rememberSaveable(post.id) { mutableStateOf(false) }
     var showWhy by rememberSaveable(post.id) { mutableStateOf(false) }
+    // Whether the folded text is cut off; the card only shows once the post is opened.
+    var cutOff by remember(post.id) { mutableStateOf(false) }
     val body = remember(post.body, colors.primary) { linkify(post.body, colors.primary) }
     Column(Modifier.bleed(20.dp)) {
         Box {
@@ -793,10 +822,29 @@ private fun FeedPostRow(
                             Text(
                                 body, style = MaterialTheme.typography.bodyLarge,
                                 maxLines = if (expanded) Int.MAX_VALUE else 6, overflow = TextOverflow.Ellipsis,
+                                onTextLayout = { if (!expanded) cutOff = it.hasVisualOverflow },
                             )
                         }
                     }
-                    if (post.card) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                    if (post.card && expanded) FeedPostCard(post, cardOf, onCardSubmit, cardOwner)
+                    if (expanded || cutOff || post.card) {
+                        TextButton(
+                            onClick = { expanded = !expanded },
+                            contentPadding = PaddingValues(horizontal = 12.dp),
+                            modifier = Modifier.offset(x = (-12).dp),
+                        ) {
+                            Text(
+                                stringResource(
+                                    when {
+                                        expanded -> R.string.orbit_feed_collapse
+                                        post.card -> R.string.orbit_feed_expand_card
+                                        else -> R.string.orbit_feed_expand
+                                    },
+                                ),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
                     if (showWhy && post.extra.isNotBlank()) {
                         Spacer(Modifier.height(10.dp))
                         Surface(shape = RoundedCornerShape(16.dp), color = colors.onSurface.copy(alpha = 0.05f)) {

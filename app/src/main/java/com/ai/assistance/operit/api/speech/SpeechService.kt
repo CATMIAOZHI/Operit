@@ -34,11 +34,13 @@ interface SpeechService {
      * @param text 识别的文本
      * @param isFinal 是否是最终结果
      * @param confidence 置信度 0.0-1.0
+     * @param segment 连续听写时第几段话；让两段说了同样的字也算两次结果
      */
     data class RecognitionResult(
             val text: String,
             val isFinal: Boolean = false,
-            val confidence: Float = 0f
+            val confidence: Float = 0f,
+            val segment: Int = 0
     )
 
     /** 识别错误类型 */

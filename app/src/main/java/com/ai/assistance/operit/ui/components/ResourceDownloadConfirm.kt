@@ -160,6 +160,18 @@ fun ResourceDownloadConfirmHost() {
     // Only requests routed here; out-of-app ones belong to the dedicated dialog Activity, and
     // showing them twice would put two dialogs on screen at once.
     val request = pending.firstOrNull { it.hostInApp } ?: return
+    // On the Orbit page the question comes as an Orbit sheet in its own colors.
+    val orbitScheme = com.ai.assistance.operit.ui.features.orbit.OrbitActiveTheme.scheme
+    if (orbitScheme != null) {
+        MaterialTheme(colorScheme = orbitScheme, typography = MaterialTheme.typography) {
+            com.ai.assistance.operit.ui.features.orbit.OrbitDownloadConfirmSheet(
+                request = request,
+                onApprove = { OnDemandResources.approve(request.id) },
+                onDecline = { OnDemandResources.decline(request.id) },
+            )
+        }
+        return
+    }
     ResourceDownloadConfirmDialog(
         request = request,
         onApprove = { OnDemandResources.approve(request.id) },

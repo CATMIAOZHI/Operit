@@ -7,6 +7,7 @@
     <string name="orbit_model_pick_hint">Get the provider\'s model list, then tick the ones to use.</string>
     <string name="orbit_model_pick_need_key">Type the API key above first to get the model list.</string>
     <string name="orbit_model_pick_failed">Couldn\'t get the model list. Check the key and endpoint, then try again.</string>
+    <string name="orbit_model_pick_failed_account">Couldn\'t get this account\'s model list. The sign-in may have expired. Try again; if it still fails, decline this card and tell %1$s, who will put a sign-in-again card.</string>
     <string name="orbit_model_pick_fetch">Get model list</string>
     <string name="orbit_model_pick_retry">Try again</string>
     <string name="orbit_model_pick_loading">Getting the model list…</string>

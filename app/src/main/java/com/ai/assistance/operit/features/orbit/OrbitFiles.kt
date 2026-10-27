@@ -38,7 +38,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     fun fileFor(path: String): File {
         val p = normalize(path)
-        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        require(allowed(p)) { notOrbitFile(path, p) }
         return inside(File(root, p))
     }
 
@@ -118,7 +118,12 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     suspend fun read(path: String): String = io {
         val p = normalize(path)
-        require(allowed(p) || DOCS.matches(p)) { "Not one of Orbit's files: $path" }
+        // user.md and memory.md are kept by the memory tools; reading them here is harmless and saves a dead end.
+        CORE_READABLE[p.lowercase()]?.let { real ->
+            val f = inside(File(root, real))
+            return@io if (f.isFile) f.readText() else ""
+        }
+        require(allowed(p) || DOCS.matches(p)) { notOrbitFile(path, p) }
         val f = inside(File(root, p))
         if (!f.isFile) return@io template(p) ?: error("No such file: $p")
         require(isText(p)) { "Not a text file: $p" }
@@ -354,7 +359,7 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
 
     private fun writable(path: String): String {
         val p = normalize(path)
-        require(allowed(p)) { "Not one of Orbit's files: $path" }
+        require(allowed(p)) { notOrbitFile(path, p) }
         require(!isIndex(p)) { "INDEX.md is kept by the app; write the person or group file instead" }
         require(isText(p)) { "Only text files can be written: $p" }
         return p
@@ -467,6 +472,23 @@ class OrbitFiles(private val root: File, englishProvider: () -> Boolean = { fals
         /** The built-in product docs: readable, never written through these tools (see OrbitDocs). */
         private val DOCS = Regex("docs/[^/]{1,80}\\.md")
         private val TRASH_ID = Regex("\\d{1,15}-[0-9a-f]{8}")
+        /** Read-only through orbit_file; written only by the memory tools. Keys are lower case. */
+        private val CORE_READABLE = mapOf(
+            "user.md" to "user.md",
+            "memory.md" to "memory/memory.md",
+            "memory/memory.md" to "memory/memory.md",
+        )
+
+        /** Why a path is refused, pointing at the tool that owns it when it is one of the core files. */
+        private fun notOrbitFile(path: String, p: String): String = when (p.lowercase()) {
+            "soul.md", "identity.md" ->
+                "$path is not handled by orbit_file; it is already in your context in full. Use orbit_soul to read or change it."
+            "user.md" ->
+                "orbit_file can only read user.md. Change it with memory_review manage action=memory_change, target=user."
+            "memory.md", "memory/memory.md" ->
+                "orbit_file can only read memory.md. Change it with memory_review notes."
+            else -> "Not one of Orbit's files: $path"
+        }
         private val TEXT_EXTENSIONS = setOf("md", "txt", "yaml", "yml", "json", "csv", "html", "htm", "xml", "sh")
         private val locks = ConcurrentHashMap<String, Mutex>()
 

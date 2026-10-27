@@ -122,4 +122,17 @@
     <string name="orbit_profile_browser_empty_desc">When %1$s uses the browser, its pages show here; tap one to watch or take over.</string>
     <string name="orbit_options_send_failed">Not sent. Tap again to retry</string>
     <string name="orbit_options_chosen">Chosen</string>
+    <string name="orbit_copy_block_copy">Copy</string>
+    <string name="orbit_copy_block_copied">Copied</string>
+    <string name="orbit_thinking_off_title">Turn off thinking?</string>
+    <string name="orbit_thinking_off_message">Most models today are thinking models. With thinking off, they get things wrong and make things up much more often.\n\nIf you just want shorter thinking and faster replies, set the level to Low instead of turning it off.</string>
+    <string name="orbit_thinking_off_lower">Set to Low</string>
+    <string name="orbit_thinking_off_confirm">Turn off anyway</string>
+    <string name="orbit_thinking_off_wait">Turn off anyway (%1$d)</string>
+    <string name="orbit_feed_expand">Show more</string>
+    <string name="orbit_feed_expand_card">Show more and the card</string>
+    <string name="orbit_feed_collapse">Show less</string>
+    <string name="orbit_link_confirm_title">Open this link?</string>
+    <string name="orbit_link_confirm_message">This leaves Orbit and opens in your browser:\n%1$s</string>
+    <string name="orbit_link_confirm_open">Open</string>
 </resources>

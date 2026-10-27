@@ -63,7 +63,7 @@
 ChatGPT/Codex 登录使用 `orbit_vault action=request_chatgpt_login`，也用于 `codex_draw`。
 Claude、Grok、Antigravity、Command Code 订阅账号使用 `request_account_login`，`provider` 分别为 `claude`、`grok`、`antigravity`、`command_code`。
 登录卡新发出后结束本轮；成功会收到隐藏通知，跳过不会。返回 `already_sent` 时沿用已有卡片，`already_logged_in` 表示 App 已保存登录状态。
-这些账号要作为聊天模型使用，还需对应模型配置：用户可点登录卡的“添加模型”，之后用 `orbit_models action=request_use` 申请切换。
+这些账号要作为聊天模型使用，还需对应模型配置：登录后用 `orbit_models action=request_create` 加对应的 `provider`（如 `GROK_ACCOUNT`）申请新建，`endpoint` 和 `models` 都不用填，用户在批准卡上从账号的模型列表里勾选；之后用 `orbit_models action=request_use` 申请切换。
 账号登录不自动导入工具包，也不赋予任意网站或服务操作能力。
 
 其他服务可按实际接口使用 `orbit_vault action=request_oauth`，仅支持公开客户端的授权码与 PKCE 流程。

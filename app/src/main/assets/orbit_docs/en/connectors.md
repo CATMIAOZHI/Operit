@@ -63,7 +63,7 @@ To update a saved key, use `request_update` with `credential_id`; see [privacy-a
 For ChatGPT/Codex, use `orbit_vault action=request_chatgpt_login`; this login also serves `codex_draw`.
 For Claude, Grok, Antigravity and Command Code subscription accounts, use `request_account_login` with `provider` set to `claude`, `grok`, `antigravity` or `command_code`, respectively.
 End the turn after sending a new login card. Success sends a hidden notice; skipping does not. Reuse the existing card on `already_sent`; `already_logged_in` means the app holds a saved login.
-Using these accounts as chat models also requires a matching model configuration. The user can choose “Add model” on the login card, after which you can request a switch with `orbit_models action=request_use`.
+Using these accounts as chat models also requires a matching model configuration. Once signed in, request one with `orbit_models action=request_create` and the matching `provider` (such as `GROK_ACCOUNT`), leaving `endpoint` and `models` out; the user picks models from the account's list on the approval card. Then request a switch with `orbit_models action=request_use`.
 Account login does not import tool packages or grant arbitrary website or service actions.
 
 For other services, `orbit_vault action=request_oauth` supports public-client authorization code with PKCE when the actual interface permits it.

@@ -122,4 +122,17 @@
     <string name="orbit_profile_browser_empty_desc">%1$s 用浏览器时，网页会出现在这里，点开就能看，也能接手。</string>
     <string name="orbit_options_send_failed">没发出去，再点一次试试</string>
     <string name="orbit_options_chosen">已选择</string>
+    <string name="orbit_copy_block_copy">复制</string>
+    <string name="orbit_copy_block_copied">已复制</string>
+    <string name="orbit_thinking_off_title">确定关闭思考吗？</string>
+    <string name="orbit_thinking_off_message">现在大部分模型都是思考模型。关掉思考，答错和瞎编的情况会明显变多。\n\n如果只是想让它想得少一点、回得快一点，把思考程度调成「低」就好，不用关掉。</string>
+    <string name="orbit_thinking_off_lower">调成低</string>
+    <string name="orbit_thinking_off_confirm">仍然关闭</string>
+    <string name="orbit_thinking_off_wait">仍然关闭（%1$d）</string>
+    <string name="orbit_feed_expand">展开</string>
+    <string name="orbit_feed_expand_card">展开，查看卡片</string>
+    <string name="orbit_feed_collapse">收起</string>
+    <string name="orbit_link_confirm_title">打开这个链接？</string>
+    <string name="orbit_link_confirm_message">会离开 Orbit，用浏览器打开：\n%1$s</string>
+    <string name="orbit_link_confirm_open">打开</string>
 </resources>
