@@ -128,7 +128,7 @@ object OrbitMemoryScope {
         UserPreferencesManager.getInstance(context).getMemorySpaceFlow(spaceId).first().ownerOrbitId
 
     /** Filtering is applied by SQL before pagination, including direct message reads. */
-    suspend fun recallScope(context: Context, chatId: String?): Pair<Boolean, List<String>> {
+    suspend fun recallScope(context: Context, chatId: String?, sqlEligibleOnly: Boolean = false): Pair<Boolean, List<String>> {
         val caller = owner(context, chatId)
         val settings = OrbitPreferences.getInstance(context).current()
         val ids = (settings.orbits.filter { caller == null || it.id == caller.id }
@@ -138,6 +138,12 @@ object OrbitMemoryScope {
         // SQL pagination; never classify an unvisited branch as global merely because it is new.
         val chats = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context)
             .chatDao().getAllChatsDirectly()
-        return (caller != null) to orbitDescendants(ids, chats.map { it.id to it.parentChatId }).toList()
+        val descendants = orbitDescendants(ids, chats.map { it.id to it.parentChatId })
+        // Only SQL recall excludes these rows. Other callers still need all descendants to
+        // keep visible Orbit branches out of the main app's chat listings.
+        val eligible = if (sqlEligibleOnly) chats.asSequence()
+            .filter { !it.isHidden && it.chatKind == "NORMAL" && it.parentChatId == null && it.id in descendants }
+            .map { it.id }.toList() else descendants.toList()
+        return (caller != null) to eligible
     }
 }

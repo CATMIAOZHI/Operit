@@ -68,8 +68,8 @@ class ChatContentDaoTest {
             ids[chat] = database.messageDao().insertMessage(MessageEntity(chatId=chat,sender="ai",
                 content="needle $chat",timestamp=10,orderIndex=0))
         }
-        val a = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 1 to listOf("orbit-a") }
-        val global = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 2 to listOf("orbit-a","orbit-b") }
+        val a = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 1 to com.ai.assistance.operit.data.repository.encodeRecallScope(listOf("orbit-a")) }
+        val global = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { 2 to com.ai.assistance.operit.data.repository.encodeRecallScope(listOf("orbit-a","orbit-b")) }
         for ((repo, expected) in listOf(a to "orbit-a", global to "global")) {
             assertEquals(listOf(expected), repo.browse().map { it.chatId })
             assertEquals(listOf(expected), repo.search("needle").map { it.chatId })
@@ -81,13 +81,45 @@ class ChatContentDaoTest {
                 assertEquals(chat==expected, repo.message(id)!=null)
                 assertEquals(chat==expected, dao.readRecallMessageBytes(id,0,
                     if(expected=="global") 2 else 1,
-                    if(expected=="global") listOf("orbit-a","orbit-b") else listOf("orbit-a"))!=null)
+                    com.ai.assistance.operit.data.repository.encodeRecallScope(if(expected=="global") listOf("orbit-a","orbit-b") else listOf("orbit-a")))!=null)
             }
         }
         assertEquals(emptyList<ChatRecallHit>(), com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) {
-            1 to emptyList()
+            1 to ""
         }.search("needle"))
     }
+    @Test fun `large recall scopes keep exact membership and filter before paging`() = runBlocking {
+        val dao = database.chatContentDao()
+        val unusual = "用户,😀\u0000scope"
+        val scoped = (0 until 1200).map { "scope-$it" } + unusual
+        val encoded = com.ai.assistance.operit.data.repository.encodeRecallScope(scoped)
+        val messageIds = listOf("scope-1199", unusual, "outside", "scope-11990", "").associateWith { chat ->
+            database.chatDao().insertChat(ChatEntity(id = chat, title = chat, updatedAt = 10))
+            database.messageDao().insertMessage(MessageEntity(chatId = chat, sender = "user",
+                content = "needle", timestamp = 10, orderIndex = 0))
+        }
+        for ((mode, expected) in listOf(1 to setOf("scope-1199", unusual), 2 to setOf("outside", "scope-11990", ""))) {
+            val repo = com.ai.assistance.operit.data.repository.ChatRecallRepository(dao) { mode to encoded }
+            assertEquals(expected, repo.search("needle").map { it.chatId }.toSet())
+            assertEquals(expected, repo.search("needle", literal = true).map { it.chatId }.toSet())
+            assertEquals(expected, repo.browse().map { it.chatId }.toSet())
+            assertEquals(expected, expected.indices.flatMap {
+                dao.browseRecallSessions("", 0, Long.MAX_VALUE, 1, it, mode, encoded)
+            }.map { it.chatId }.toSet())
+            assertEquals(expected, dao.searchRecallMessages("needle", 20, 0, mode, encoded).map { it.chatId }.toSet())
+            for ((chat, id) in messageIds) {
+                assertEquals(chat in expected, repo.session(chat).isNotEmpty())
+                assertEquals(chat in expected, repo.context(id).isNotEmpty())
+                assertEquals(chat in expected, repo.message(id) != null)
+                assertEquals(chat in expected, dao.readRecallMessageBytes(id, 0, mode, encoded) != null)
+            }
+        }
+        assertEquals(listOf(""), dao.browseRecallSessions("", 0, Long.MAX_VALUE, 20, 0,
+            1, com.ai.assistance.operit.data.repository.encodeRecallScope(listOf(""))).map { it.chatId })
+        assertEquals(emptyList<String>(), dao.browseRecallSessions("", 0, Long.MAX_VALUE, 20, 0,
+            1, com.ai.assistance.operit.data.repository.encodeRecallScope(emptyList())).map { it.chatId })
+    }
+
     private lateinit var tempDir: File
     private lateinit var database: AppDatabase
 

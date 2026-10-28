@@ -40,6 +40,7 @@ private class SavedLog(val name: String, val uri: Uri, val warning: String? = nu
 @Composable
 internal fun OrbitLogExportSection(cardColor: Color) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     var running by remember { mutableStateOf<LogExport?>(null) }
     var saved by remember { mutableStateOf<SavedLog?>(null) }
@@ -60,7 +61,7 @@ internal fun OrbitLogExportSection(cardColor: Color) {
                     }
                     LogExport.TOOL_ERRORS -> {
                         if (ToolErrorRepository.getInstance(context).load(null, 0L, 0).total == 0L) {
-                            logToast(context, context.getString(R.string.orbit_log_export_no_tool_errors))
+                            logToast(context, resources.getString(R.string.orbit_log_export_no_tool_errors))
                             null
                         } else {
                             val result = ToolErrorExportHelper.export(context, null, 0L)
@@ -71,7 +72,7 @@ internal fun OrbitLogExportSection(cardColor: Color) {
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                logToast(context, context.getString(R.string.orbit_log_export_failed, e.message ?: e.javaClass.simpleName))
+                logToast(context, resources.getString(R.string.orbit_log_export_failed, e.message ?: e.javaClass.simpleName))
             } finally {
                 running = null
             }

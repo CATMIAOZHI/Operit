@@ -68,6 +68,7 @@ private const val DEEPSEEK_KEYS_URL = "https://platform.deepseek.com/api_keys"
 @Composable
 internal fun OrbitSetupPage(onSkip: () -> Unit) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     val colors = MaterialTheme.colorScheme
     val providers = remember { OrbitSetup.providers() }
@@ -141,7 +142,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             result.onSuccess { list ->
                 if (list.isEmpty()) {
                     manual = true
-                    showError(context.getString(R.string.orbit_setup_no_models))
+                    showError(resources.getString(R.string.orbit_setup_no_models))
                 } else {
                     manual = false
                     models = list
@@ -154,9 +155,9 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 // the chat test then shows whether the key works.
                 manual = true
                 when (OrbitSetup.problemOf(raw)) {
-                    OrbitSetup.Problem.KEY -> showError(context.getString(R.string.orbit_setup_problem_key), raw)
-                    OrbitSetup.Problem.NETWORK -> showError(context.getString(R.string.orbit_setup_problem_network), raw)
-                    else -> showError(context.getString(R.string.orbit_setup_fetch_failed), raw)
+                    OrbitSetup.Problem.KEY -> showError(resources.getString(R.string.orbit_setup_problem_key), raw)
+                    OrbitSetup.Problem.NETWORK -> showError(resources.getString(R.string.orbit_setup_problem_network), raw)
+                    else -> showError(resources.getString(R.string.orbit_setup_fetch_failed), raw)
                 }
             }
         }
@@ -179,7 +180,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                 val failure = e as? OrbitSetup.SetupException
                 val reason = problemText(failure?.problem ?: OrbitSetup.Problem.OTHER)
                 showError(
-                    failure?.model?.let { context.getString(R.string.orbit_setup_helper_failed, it, reason) } ?: reason,
+                    failure?.model?.let { resources.getString(R.string.orbit_setup_helper_failed, it, reason) } ?: reason,
                     failure?.detail ?: e.message,
                 )
             }
@@ -194,7 +195,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             if (result.exceptionOrNull() is kotlinx.coroutines.CancellationException) return@launch
             busy = false
             result.onFailure { e ->
-                showError(context.getString(R.string.orbit_setup_problem_other), (e as? OrbitSetup.SetupException)?.detail ?: e.message)
+                showError(resources.getString(R.string.orbit_setup_problem_other), (e as? OrbitSetup.SetupException)?.detail ?: e.message)
             }
         }
     }
