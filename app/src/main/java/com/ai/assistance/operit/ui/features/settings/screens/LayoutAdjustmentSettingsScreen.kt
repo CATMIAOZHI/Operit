@@ -68,7 +68,11 @@ import kotlinx.coroutines.launch
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun LayoutAdjustmentSettingsScreen(
-    onNavigateBack: () -> Unit
+    onNavigateBack: () -> Unit,
+    /** Orbit keeps its own chat margins, so it shows only the text settings. */
+    textOnly: Boolean = false,
+    /** Shown above the text settings, inside the same scroll (Orbit puts its font settings here). */
+    leadingContent: @Composable ColumnScope.() -> Unit = {},
 ) {
     val context = LocalContext.current
     val userPreferences = remember { UserPreferencesManager.getInstance(context) }
@@ -94,10 +98,13 @@ fun LayoutAdjustmentSettingsScreen(
                 .verticalScroll(rememberScrollState()),
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
+            leadingContent()
+            if (!textOnly) {
             SettingsInfoBanner(
                 text = stringResource(R.string.layout_adjustment_description),
                 backgroundColor = sectionContainerColor
             )
+            }
 
             SettingsSectionTitle(
                 text = stringResource(R.string.layout_adjustment_settings_title),
@@ -105,6 +112,7 @@ fun LayoutAdjustmentSettingsScreen(
             )
 
             SettingsSectionCard(containerColor = sectionContainerColor) {
+                if (!textOnly) {
                 CompactEditableFloatSettingItem(
                     title = stringResource(R.string.chat_settings_button_end_padding),
                     description = stringResource(R.string.chat_settings_button_end_padding_desc),
@@ -135,6 +143,7 @@ fun LayoutAdjustmentSettingsScreen(
                 )
 
                 SettingsRowDivider(inset = false)
+                }
 
                 CompactEditableFloatSettingItem(
                     title = stringResource(R.string.global_text_line_height_multiplier),

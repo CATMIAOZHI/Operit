@@ -36,7 +36,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Restore
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Storage
-import androidx.compose.material3.AlertDialog
+import com.ai.assistance.operit.ui.features.settings.components.SettingsAlertDialog as AlertDialog
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -49,7 +49,9 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogTextButton as TextButton
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle
+import com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -207,9 +209,15 @@ private suspend fun cleanupQuarantineExportDirectory(
     return QuarantineExportCleanup.deleteRecursively(destination, nonCancellable)
 }
 
+/** Orbit opens the same page with its own dialogs; the main app keeps Material ones. */
+@Composable
+fun ChatBackupSettingsScreen(dialogStyle: SettingsDialogStyle = SettingsDialogStyle.MATERIAL) {
+    SettingsDialogs(dialogStyle) { ChatBackupSettingsContent() }
+}
+
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun ChatBackupSettingsScreen() {
+private fun ChatBackupSettingsContent() {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
 

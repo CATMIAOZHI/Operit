@@ -945,6 +945,10 @@ private fun OrbitChatPage(
                     onOpenNotificationSettings = { push(OrbitSubPage.NOTIFICATION_SETTINGS) },
                     onOpenSpeech = { push(OrbitSubPage.SPEECH_SETTINGS) },
                     onOpenChannels = { push(OrbitSubPage.CHANNELS) },
+                    onOpenText = { push(OrbitSubPage.TEXT_SETTINGS) },
+                    onOpenAutomation = { push(OrbitSubPage.AUTOMATION_SETTINGS) },
+                    onOpenTerminalSources = { push(OrbitSubPage.TERMINAL_SOURCES) },
+                    onOpenBackup = { push(OrbitSubPage.BACKUP) },
                     onPause = back,
                 )
                 OrbitSubPage.CHANNELS -> OrbitChannelsPage(orbit, onBack = back,
@@ -961,6 +965,10 @@ private fun OrbitChatPage(
                 OrbitSubPage.CONTEXT -> OrbitContextPage(orbit, onBack = back)
                 OrbitSubPage.MODEL_CONFIG -> OrbitModelConfigPage(onBack = back)
                 OrbitSubPage.SPEECH_SETTINGS -> OrbitSpeechSettingsPage(orbit.id, onBack = back)
+                OrbitSubPage.TEXT_SETTINGS -> OrbitTextSettingsPage(onBack = back)
+                OrbitSubPage.AUTOMATION_SETTINGS -> OrbitAutomationSettingsPage(onBack = back)
+                OrbitSubPage.TERMINAL_SOURCES -> OrbitTerminalSourcesPage(onBack = back)
+                OrbitSubPage.BACKUP -> OrbitBackupSettingsPage(onBack = back)
                 OrbitSubPage.PHONE_PERMISSIONS -> OrbitPhonePermissionsPage(onBack = back,
                     onOpenDeviceAccess = { push(OrbitSubPage.DEVICE_ACCESS) })
                 OrbitSubPage.DEVICE_ACCESS -> OrbitDeviceAccessPage(orbitName(orbit), onBack = back, onDraft = ::draftToChat)
@@ -1086,7 +1094,7 @@ private fun OrbitChatPage(
     vaultRequest?.takeIf { it.orbitId == orbit.id }?.let { OrbitVaultEntrySheet(orbit = orbit, request = it) }
 }
 
-private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN }
+private enum class OrbitSubPage { SETTINGS, TASK, PROCESS, SOUL, MEMORY, MEMORY_LIBRARY, NOTIFICATIONS, IDENTITY, USER, PROMPTS, PROMPT, ALIGNMENT, FILES, PACKAGES, TOOL_PERMISSIONS, TOOL_ACCESS, VAULT, VAULT_ENTRY, USAGE, USAGE_TRENDS, APPEARANCE, MODELS, CONTEXT, MODEL_CONFIG, PHONE_PERMISSIONS, DEVICE_ACCESS, NOTIFICATION_SETTINGS, SPEECH_SETTINGS, CHANNELS, WEIXIN, TEXT_SETTINGS, AUTOMATION_SETTINGS, TERMINAL_SOURCES, BACKUP }
 
 /** iOS-like timing: a quick start that settles softly (UIKit's default presentation curve). */
 internal object OrbitMotion {
@@ -1488,6 +1496,10 @@ private fun OrbitSettingsPage(
     onOpenNotificationSettings: () -> Unit,
     onOpenSpeech: () -> Unit,
     onOpenChannels: () -> Unit,
+    onOpenText: () -> Unit,
+    onOpenAutomation: () -> Unit,
+    onOpenTerminalSources: () -> Unit,
+    onOpenBackup: () -> Unit,
     onPause: () -> Unit,
 ) {
     OrbitPageBack(onBack = onBack)
@@ -1552,6 +1564,14 @@ private fun OrbitSettingsPage(
                 )
                 SettingsRowDivider(inset = false)
                 SettingsNavRow(
+                    title = stringResource(R.string.orbit_text_settings_title),
+                    subtitle = stringResource(R.string.orbit_text_settings_row),
+                    icon = lucide("type"),
+                    searchable = false,
+                    onClick = onOpenText,
+                )
+                SettingsRowDivider(inset = false)
+                SettingsNavRow(
                     title = stringResource(R.string.orbit_speech_card_title),
                     subtitle = stringResource(R.string.orbit_speech_row),
                     icon = lucide("audio-lines"),
@@ -1574,6 +1594,38 @@ private fun OrbitSettingsPage(
                     searchable = false,
                     onClick = onOpenChannels,
                 )
+            }
+
+            Column {
+                SettingsSectionTitle(
+                    text = stringResource(R.string.orbit_section_device),
+                    icon = lucide("smartphone"),
+                )
+                SettingsCard(backgroundColor = cardColor) {
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_automation_settings_title),
+                        subtitle = stringResource(R.string.orbit_automation_settings_row),
+                        icon = lucide("scan-line"),
+                        searchable = false,
+                        onClick = onOpenAutomation,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_terminal_sources_title),
+                        subtitle = stringResource(R.string.orbit_terminal_sources_row),
+                        icon = lucide("square-terminal"),
+                        searchable = false,
+                        onClick = onOpenTerminalSources,
+                    )
+                    SettingsRowDivider(inset = false)
+                    SettingsNavRow(
+                        title = stringResource(R.string.orbit_backup_title),
+                        subtitle = stringResource(R.string.orbit_backup_row),
+                        icon = lucide("database-backup"),
+                        searchable = false,
+                        onClick = onOpenBackup,
+                    )
+                }
             }
 
             Column {

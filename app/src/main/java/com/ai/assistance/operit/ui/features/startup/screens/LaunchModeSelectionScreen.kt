@@ -42,6 +42,7 @@ fun LaunchModeSelectionScreen(
     onModeSelected: (AppLaunchMode) -> Unit,
 ) {
     var selection by rememberSaveable { mutableStateOf(AppLaunchMode.ORBIT.name) }
+    var languageSwitching by androidx.compose.runtime.remember { mutableStateOf(false) }
     Column(
         Modifier.fillMaxSize()
             .background(MaterialTheme.colorScheme.background)
@@ -54,6 +55,11 @@ fun LaunchModeSelectionScreen(
             verticalArrangement = Arrangement.spacedBy(16.dp),
         ) {
             Spacer(Modifier.height(8.dp))
+            // The language comes first, so everything after it reads in the user's own language.
+            com.ai.assistance.operit.ui.features.startup.components.FirstLaunchLanguagePicker(
+                enabled = !isSaving,
+                onSwitchingChange = { languageSwitching = it },
+            )
             Text(
                 stringResource(R.string.launch_mode_choose_title),
                 style = MaterialTheme.typography.headlineMedium,
@@ -116,7 +122,7 @@ fun LaunchModeSelectionScreen(
         Spacer(Modifier.height(20.dp))
         Button(
             onClick = { onModeSelected(AppLaunchMode.valueOf(selection)) },
-            enabled = !isSaving,
+            enabled = !isSaving && !languageSwitching,
             modifier = Modifier.fillMaxWidth(),
         ) {
             Text(stringResource(R.string.launch_mode_continue))

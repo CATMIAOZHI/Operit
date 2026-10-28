@@ -25,6 +25,12 @@
     <string name="orbit_tasks_group_finished">Finished</string>
     <string name="orbit_tasks_show_all">View all</string>
     <string name="orbit_tasks_group_empty">No tasks in this group right now.</string>
+    <string name="orbit_tasks_group_system">System tasks</string>
+    <string name="orbit_tasks_system_separator">,\u0020</string>
+    <plurals name="orbit_tasks_system_waiting">
+        <item quantity="one">%d needs you</item>
+        <item quantity="other">%d need you</item>
+    </plurals>
     <string name="skill_detail_files">Files</string>
     <string name="skill_detail_location">Location</string>
     <string name="skill_detail_entry_file">Entry file: %1$s</string>
