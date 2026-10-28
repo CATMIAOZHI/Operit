@@ -100,6 +100,15 @@ class MimoVoiceProvider(
 
     override suspend fun stop(): Boolean = delegate.stop()
 
+    override suspend fun synthesizeToFile(text: String, out: java.io.File): Boolean {
+        if (config.apiKey.isBlank()) {
+            throw TtsException(context.getString(R.string.mimo_tts_error_api_key_not_set))
+        }
+        delegate.setConfiguration(buildHttpConfig())
+        val model = config.modelName.takeIf { it.isNotBlank() } ?: DEFAULT_MODEL_NAME
+        return delegate.synthesizeAudio(text, out, mapOf("model" to model, "voice_id" to selectedVoiceId))
+    }
+
     override suspend fun pause(): Boolean = delegate.pause()
 
     override suspend fun resume(): Boolean = delegate.resume()

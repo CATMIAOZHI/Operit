@@ -162,10 +162,23 @@ fun ChatScreenContent(
     var isMultiSelectMode by remember { mutableStateOf(false) }
     val transcriptSelection = remember(currentChatId) { TranscriptSelection() }
     var selectedMessageIndices by transcriptSelection.forMessages(chatHistory)
-    val selectableMessageIndices = remember(chatHistory) {
+    // An Orbit chat selects only the messages it shows; its bar copies, shares and keeps them.
+    val orbitMessageHost = if (LocalOrbitChatLook.current) {
+        com.ai.assistance.operit.ui.features.orbit.LocalOrbitMessageHost.current
+    } else null
+    val selectableMessageIndices = remember(chatHistory, orbitMessageHost != null) {
         chatHistory.mapIndexedNotNull { index, message ->
-            if (message.sender == "user" || message.sender == "ai") index else null
+            if ((message.sender == "user" || message.sender == "ai") &&
+                (orbitMessageHost == null || !OrbitSpeech.hidden(message))) index else null
         }.toSet()
+    }
+    // Another Orbit chat on screen starts with nothing selected.
+    LaunchedEffect(currentChatId) {
+        if (orbitMessageHost != null) isMultiSelectMode = false
+    }
+    androidx.activity.compose.BackHandler(enabled = orbitMessageHost != null && isMultiSelectMode) {
+        isMultiSelectMode = false
+        selectedMessageIndices = emptySet()
     }
     var isGeneratingImage by remember { mutableStateOf(false) }
     var showSharePreviewDialog by remember { mutableStateOf(false) }
@@ -533,7 +546,49 @@ fun ChatScreenContent(
                 .align(Alignment.BottomCenter)
                 .padding(start = 16.dp, top = 16.dp, end = 16.dp, bottom = bottomInset + 16.dp)
         ) {
-            Surface(
+            if (orbitMessageHost != null) {
+                fun picked() = selectedMessageIndices.sorted().mapNotNull { chatHistory.getOrNull(it) }
+                fun done() {
+                    isMultiSelectMode = false
+                    selectedMessageIndices = emptySet()
+                }
+                com.ai.assistance.operit.ui.features.orbit.OrbitSelectionBar(
+                    count = selectedMessageIndices.size,
+                    onClose = ::done,
+                    onCopy = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.copy(
+                                context,
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
+                            )
+                        }
+                        done()
+                    },
+                    onShare = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.share(
+                                context,
+                                com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.transcript(context, orbitMessageHost, messages),
+                            )
+                        }
+                        done()
+                    },
+                    onKeep = {
+                        val messages = picked()
+                        orbitMessageHost.scope.launch {
+                            val items = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                                messages.map {
+                                    com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.favoriteOf(context, orbitMessageHost, it)
+                                }
+                            }
+                            com.ai.assistance.operit.ui.features.orbit.OrbitMessageActions.keep(context, orbitMessageHost, items)
+                        }
+                        done()
+                    },
+                )
+            } else Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(12.dp),
                 tonalElevation = 2.dp,

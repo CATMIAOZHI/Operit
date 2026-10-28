@@ -1,12 +1,13 @@
 # Generate spoken audio
 
-Read this for voice messages, narration, verbatim readings and dialogue. Use `orbit_voice` with the phone's speech engine; no separate speech account is required. Voices and languages depend on the device. Generated audio is not a live call or a published podcast.
+Read this for voice messages, narration, verbatim readings and dialogue. `speak` uses the read-aloud service the user chose in settings by default, the same voice that reads messages aloud; `podcast` and `speak` with `voice` use the phone's system voice. Generated audio is not a live call or a published podcast.
 
 ## Choose language and voice
 
-- Call `action=voices`. Copy the returned `name` exactly; `locale` identifies language and `needs_network` identifies a network requirement. Do not invent voice IDs, use another product's catalog or promise voice cloning.
-- Match a requested voice against current results. Ask about ambiguous names. If unavailable, explain and offer actual alternatives; never silently substitute.
-- Omit voice selection when the user has no preference. Chinese text favors a Chinese voice. Check support for other languages and mixed-language text and select a suitable listed voice when needed.
+- When the user names no voice, omit `voice` for `speak` so it keeps the user's read-aloud voice. Passing `voice` switches to the phone's system voice.
+- When the user wants a different read-aloud voice or service, do not list system voices; place a settings card with `action=request_settings` or point them to Orbit Settings > Voice settings.
+- Call `action=voices` only when the user asks for a specific phone system voice or you assign voices for `podcast`. Copy the returned `name` exactly; `locale` identifies language and `needs_network` identifies a network requirement. Do not invent voice IDs, use another product's catalog or promise voice cloning.
+- Match a requested system voice against current results. Ask about ambiguous names. If unavailable, explain and offer actual alternatives; never silently substitute. Chinese text favors a Chinese voice; check support for other languages and mixed-language text.
 - Consider connectivity for network voices. Missing voice data or a disabled engine needs the remedy indicated by the error; not every language works offline.
 - To change app speech settings, call `action=request_settings` and end the turn. The user changes settings; sending the card neither applies changes nor returns their new values.
 
@@ -21,7 +22,7 @@ Read this for voice messages, narration, verbatim readings and dialogue. Use `or
 
 ## Check and deliver
 
-- Check success and returned `path`, `chars`, `lines`, `bytes`, `voices` and `markdown`. Report a mismatch with the requested voice.
+- Check success and returned `path`, `engine`, `bytes` and `markdown`; read `service` for the read-aloud service or `voices` for the system voice, and follow any `note`. Report a mismatch with the requested voice.
 - A missing, empty or partial render is unfinished. Tool success does not establish natural pronunciation. Inspect audio when possible, and never claim to have listened without doing so.
 - Include the returned `markdown` unchanged. Do not invent player links. Files are saved in `files/voice/`; a path alone is insufficient delivery.
 - Deliver all parts in order with brief labels. Avoid repeating a long script when only audio was requested.

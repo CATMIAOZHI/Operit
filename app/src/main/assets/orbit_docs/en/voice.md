@@ -22,21 +22,24 @@ Use `orbit_voice action=profiles` to see them and which is in use (no keys, only
 To switch, add, change a key or delete, use `request_switch`, `request_create`, `request_key` or `request_delete`. Each places an approval card; when a key is needed the user types it on the card and you never see it. End the turn with one short line; after approval you get a hidden note with the result.
 For details such as speed, pitch or headers, or when the user wants to adjust things themselves, use `orbit_voice action=request_settings` to place a voice settings card they open and edit.
 
-Audio file generation uses the phone's system TTS engine described below. Do not promise it uses the service or voice selected for message read-aloud.
+For voice messages, `speak` uses the read-aloud service currently in use by default, the same voice that reads messages aloud.
+It falls back to the phone's system voice when: the user turned off "Voice messages use the read-aloud voice" in Orbit Settings > Voice settings; the read-aloud service is itself the phone's system voice; the service cannot write files (such as on-device models); or synthesis fails. The result's `engine` (`read_aloud` or `phone`) and `note` say which. If the user expected the read-aloud voice and got the system voice, tell them in one line.
+`speak` with `voice` (a named system voice) and `podcast` always use the phone's system voice.
+To change the read-aloud voice, speed, or use a non-system service, point the user to Orbit Settings > Voice settings, or place a settings card with `request_settings`.
 
 ## Make a voice message
 
 Use `orbit_voice action=speak` when the user wants a voice message, briefing, story, or other replayable audio.
 Put the spoken words in `text`. Optional `title` supplies the filename without an extension.
 
-To select a voice, first use `action=voices` to list real available voices.
+To pick a phone system voice, first use `action=voices` to list real available voices (system voices only, not the read-aloud service's voices).
 In its results, `name` is the value accepted by `voice`, `locale` identifies the language, and `needs_network` says whether that voice requires a network connection.
 Do not invent voice names; an unknown name causes an error. When omitted, text containing Han characters uses a Chinese voice and other text uses the phone's default language; for another language, list `voices` first and pass one explicitly.
-Voices come from the phone's TTS engine. Do not promise a particular voice is installed or offer voice cloning.
+System voices come from the phone's TTS engine. Do not promise a particular voice is installed or offer voice cloning.
 
 Each file allows at most 6000 characters, counting all lines together for multi-speaker audio.
 Split longer content into several files. If the audio is too large or the engine fails, follow the returned error to shorten it, split it, or choose another voice. Do not report failed generation as success.
-The phone needs a working system TTS engine and installed voice resources. If these are missing, ask the user to check system settings such as “Text-to-speech output.”
+When using the system voice, the phone needs a working system TTS engine and installed voice resources. If these are missing, ask the user to check system settings such as “Text-to-speech output.”
 
 ## Multi-speaker audio
 
@@ -50,8 +53,8 @@ Write short, natural exchanges. Do not describe this as real people participatin
 
 ## Deliver the audio
 
-On success, the tool returns `path`, the actual `voices` used, and `markdown`.
+On success, the tool returns `path`, `engine` and `markdown`, plus `service` (profile name) for the read-aloud service or the actual `voices` used for the system voice.
 Include the returned `markdown` unchanged in your reply so the user gets a player in chat.
-The WAV file is saved under the current Orbit's `files/voice/` and is also available among the files on the Builds page.
+The file is saved under the current Orbit's `files/voice/` (WAV for the system voice; MP3 or WAV for a read-aloud service) and is also available among the files on the Builds page.
 To resend existing audio, use `orbit_file action=send`.
 A device path alone is not a delivered file. Report completion only from the actual tool result.

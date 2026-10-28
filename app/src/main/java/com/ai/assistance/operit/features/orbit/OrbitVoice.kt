@@ -29,6 +29,273 @@ object OrbitVoice {
     /** About 20 minutes of speech, which stays under Orbit's 50 MB file limit for common voices. */
     const val MAX_CHARS = 6_000
     private const val CHUNK_CHARS = 1_000
+    /** One request to a read-aloud service; most online services take about this much at once. */
+    private const val SERVICE_CHUNK_CHARS = 600
+    private const val PREFS = "orbit_voice"
+
+    /**
+     * Whether Orbit's voice messages use the app's read-aloud service (the user's chosen TTS, the
+     * default) instead of the phone's own voice. Kept per Orbit; the read-aloud settings themselves
+     * are shared with the rest of the app.
+     */
+    fun usesReadAloud(context: Context, orbitId: String): Boolean =
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).getBoolean("read_aloud_$orbitId", true)
+
+    fun setUsesReadAloud(context: Context, orbitId: String, value: Boolean) {
+        context.getSharedPreferences(PREFS, Context.MODE_PRIVATE).edit().putBoolean("read_aloud_$orbitId", value).apply()
+    }
+
+    /** What happened when a voice message was made with the read-aloud service. */
+    sealed interface ServiceResult {
+        /** Made; [extension] is the audio's file type (mp3, wav, …). [profile] is the service's name. */
+        class Made(val extension: String, val profile: String) : ServiceResult
+        /** The read-aloud service is the phone's own voice, so the phone's voice path is used as it is. */
+        object PhoneVoice : ServiceResult
+        /** The service cannot make files or failed; [reason] says why in a sentence for Orbit. */
+        class Failed(val profile: String, val reason: String) : ServiceResult
+    }
+
+    /**
+     * Speaks [text] into [out] with the app's current read-aloud service, in pieces the service
+     * accepts, joined into one file. Only MP3 and WAV pieces can be joined; a longer text in another
+     * format fails and the caller falls back to the phone's voice.
+     */
+    suspend fun synthesizeWithReadAloud(context: Context, text: String, out: File): ServiceResult {
+        require(text.isNotBlank()) { "Nothing to say" }
+        require(text.length <= MAX_CHARS) { "The text has ${text.length} characters; one file allows at most $MAX_CHARS. Split it into several parts" }
+        val profile = com.ai.assistance.operit.data.preferences.SpeechServiceProfilesPreferences(context.applicationContext)
+            .getCurrentTtsProfile()
+        if (profile.serviceType == com.ai.assistance.operit.api.voice.VoiceServiceFactory.VoiceServiceType.SIMPLE_TTS) {
+            return ServiceResult.PhoneVoice
+        }
+        val name = profile.name.ifBlank { profile.serviceType.name }
+        // A separate instance: making a file must not stop or replace what is being read aloud.
+        val service = com.ai.assistance.operit.api.voice.VoiceServiceFactory.createVoiceService(context.applicationContext, profile)
+        val temp = File(context.cacheDir, "orbit-voice-${UUID.randomUUID()}").apply { mkdirs() }
+        return try {
+            val parts = mutableListOf<File>()
+            var kind: String? = null
+            for (chunk in chunks(text, SERVICE_CHUNK_CHARS)) {
+                val part = File(temp, "${parts.size}.bin")
+                if (!service.synthesizeToFile(chunk, part)) {
+                    return ServiceResult.Failed(name, "the read-aloud service \"$name\" cannot make audio files")
+                }
+                val ext = audioType(part)
+                    ?: return ServiceResult.Failed(name, "the read-aloud service \"$name\" sent something that is not audio")
+                if (kind != null && kind != ext) return ServiceResult.Failed(name, "the read-aloud service \"$name\" sent pieces in different formats")
+                kind = ext
+                parts += part
+            }
+            val ext = checkNotNull(kind)
+            val joined = withContext(Dispatchers.IO) {
+                when {
+                    parts.size == 1 -> { parts[0].copyTo(out, overwrite = true); true }
+                    ext == "wav" -> { joinWavs(parts, out, PAUSE_MS, OrbitFiles.MAX_FILE_BYTES); true }
+                    ext == "mp3" -> {
+                        if (parts.sumOf { it.length() } > OrbitFiles.MAX_FILE_BYTES) throw AudioTooLarge(
+                            "The audio would be larger than ${OrbitFiles.MAX_FILE_BYTES / 1024 / 1024} MB; make it shorter or split it into several parts"
+                        )
+                        joinMp3s(parts, out)
+                        true
+                    }
+                    else -> false
+                }
+            }
+            if (!joined) {
+                return ServiceResult.Failed(name, "the text is too long for one $ext file from \"$name\"; keep it under $SERVICE_CHUNK_CHARS characters")
+            }
+            ServiceResult.Made(ext, name)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: AudioTooLarge) {
+            // Orbit has to shorten or split the text; the phone's voice would be just as large.
+            throw e
+        } catch (e: Exception) {
+            ServiceResult.Failed(name, "the read-aloud service \"$name\" failed: ${e.message ?: e.javaClass.simpleName}".take(300))
+        } finally {
+            service.shutdown()
+            temp.deleteRecursively()
+        }
+    }
+
+    /** The audio would be too big for one file; the text has to be shorter or split. */
+    class AudioTooLarge(message: String) : IllegalArgumentException(message)
+
+    /**
+     * Joins MP3 pieces into one stream of frames. Each piece's tags and its first-frame length
+     * header (Xing/Info/VBRI) are left out: kept, the header of the first piece would tell a player
+     * the whole file is as long as that piece. A new header with the joined frame and byte counts
+     * goes first, so a player shows the right length even when the bitrate varies.
+     */
+    private fun joinMp3s(parts: List<File>, out: File) {
+        val ranges = parts.map(::mp3Frames)
+        var frames = 0L
+        var counted = true
+        var firstHeader: ByteArray? = null
+        // Where each frame starts in the joined audio, for the seek table.
+        val offsets = java.util.ArrayList<Long>()
+        var before = 0L
+        parts.forEachIndexed { i, part ->
+            val (start, end) = ranges[i]
+            java.io.RandomAccessFile(part, "r").use { raf ->
+                val header = ByteArray(4)
+                var at = start
+                while (counted && at + 4 <= end) {
+                    raf.seek(at)
+                    raf.readFully(header)
+                    val length = mp3FrameLength(header)
+                    if (length == null || length < 4) {
+                        counted = false
+                    } else {
+                        if (firstHeader == null) firstHeader = header.copyOf()
+                        offsets += before + (at - start)
+                        frames++
+                        at += length
+                    }
+                }
+            }
+            before += end - start
+        }
+        val audioBytes = ranges.sumOf { it.second - it.first }
+        val lead = firstHeader?.takeIf { counted && frames > 0 && frames <= Int.MAX_VALUE }
+            ?.let { xingFrame(it, offsets, audioBytes) }
+        out.parentFile?.mkdirs()
+        out.outputStream().buffered().use { stream ->
+            if (lead != null) stream.write(lead)
+            val chunk = ByteArray(64 * 1024)
+            parts.forEachIndexed { i, part ->
+                val (start, end) = ranges[i]
+                java.io.RandomAccessFile(part, "r").use { raf ->
+                    raf.seek(start)
+                    var left = end - start
+                    while (left > 0) {
+                        val n = raf.read(chunk, 0, minOf(chunk.size.toLong(), left).toInt())
+                        if (n < 0) break
+                        stream.write(chunk, 0, n)
+                        left -= n
+                    }
+                }
+            }
+        }
+    }
+
+    /**
+     * A silent frame shaped like [audioHeader]'s that only carries a Xing header: the number of
+     * audio frames, the file's total bytes ([audioBytes] plus this frame) and a 100-step seek table
+     * built from the frames' [offsets] in the audio, so a player can show the length and seek.
+     * Null if it cannot be built.
+     */
+    private fun xingFrame(audioHeader: ByteArray, offsets: List<Long>, audioBytes: Long): ByteArray? {
+        val header = audioHeader.copyOf()
+        header[2] = (header[2].toInt() and 0xFD).toByte() // no padding
+        header[1] = (header[1].toInt() or 0x01).toByte() // no CRC, so the side info starts right after the header
+        val mpeg1 = ((header[1].toInt() shr 3) and 0x3) == 3
+        val mono = ((header[3].toInt() and 0xFF) shr 6) == 3
+        val at = 4 + if (mpeg1) (if (mono) 17 else 32) else (if (mono) 9 else 17)
+        // "Xing", flags, frame count, byte count, then the 100-byte table.
+        val need = at + 16 + 100
+        // A low bitrate makes too small a frame for the table; this silent frame may use a higher one.
+        var length = mp3FrameLength(header) ?: return null
+        while (length < need) {
+            val index = (header[2].toInt() and 0xFF) shr 4
+            if (index >= 14) return null
+            header[2] = (((index + 1) shl 4) or (header[2].toInt() and 0x0F)).toByte()
+            length = mp3FrameLength(header) ?: return null
+        }
+        val total = audioBytes + length
+        if (total > Int.MAX_VALUE || offsets.isEmpty()) return null
+        val frames = offsets.size
+        val frame = ByteArray(length)
+        System.arraycopy(header, 0, frame, 0, 4)
+        val toc = ByteArray(100) { i ->
+            // Share of the whole file, in 256ths, at which i percent of the frames have played.
+            val position = length + offsets[(i.toLong() * frames / 100).toInt()]
+            (position * 256 / total).coerceIn(0, 255).toByte()
+        }
+        java.nio.ByteBuffer.wrap(frame, at, 16 + 100).put("Xing".toByteArray(Charsets.ISO_8859_1))
+            .putInt(0x7).putInt(frames).putInt(total.toInt()).put(toc)
+        return frame
+    }
+
+    /** Where the audio frames of an MP3 file start and end, without tags or a length header frame. */
+    private fun mp3Frames(file: File): Pair<Long, Long> = java.io.RandomAccessFile(file, "r").use { raf ->
+        val size = raf.length()
+        var start = 0L
+        var end = size
+        val head = ByteArray(10)
+        // ID3v2 tags at the start (there can be more than one).
+        while (start + 10 <= size) {
+            raf.seek(start)
+            raf.readFully(head)
+            if (String(head, 0, 3, Charsets.ISO_8859_1) != "ID3") break
+            val body = ((head[6].toLong() and 0x7F) shl 21) or ((head[7].toLong() and 0x7F) shl 14) or
+                ((head[8].toLong() and 0x7F) shl 7) or (head[9].toLong() and 0x7F)
+            val footer = if (head[5].toInt() and 0x10 != 0) 10 else 0
+            start += 10 + body + footer
+        }
+        // ID3v1 tag at the end.
+        if (end - start >= 128) {
+            val tag = ByteArray(3)
+            raf.seek(end - 128)
+            raf.readFully(tag)
+            if (String(tag, Charsets.ISO_8859_1) == "TAG") end -= 128
+        }
+        // A first frame that only carries the length and seek table.
+        if (end - start >= 48) {
+            val frame = ByteArray(48)
+            raf.seek(start)
+            raf.readFully(frame)
+            val length = mp3FrameLength(frame)
+            if (length != null && start + length <= end) {
+                val text = String(frame, Charsets.ISO_8859_1)
+                if (listOf("Xing", "Info", "VBRI").any { text.indexOf(it, 4) in 4..40 }) start += length
+            }
+        }
+        start.coerceAtMost(end) to end
+    }
+
+    /** The byte length of the MPEG audio layer III frame whose header starts [frame], or null. */
+    private fun mp3FrameLength(frame: ByteArray): Int? {
+        fun at(i: Int) = frame[i].toInt() and 0xFF
+        if (at(0) != 0xFF || (at(1) and 0xE0) != 0xE0) return null
+        val version = (at(1) shr 3) and 0x3 // 3 = MPEG 1, 2 = MPEG 2, 0 = MPEG 2.5
+        val layer = (at(1) shr 1) and 0x3 // 1 = layer III
+        if (version == 1 || layer != 1) return null
+        val bitrateIndex = (at(2) shr 4) and 0xF
+        val rateIndex = (at(2) shr 2) and 0x3
+        if (bitrateIndex == 0 || bitrateIndex == 15 || rateIndex == 3) return null
+        val padding = (at(2) shr 1) and 0x1
+        val mpeg1 = version == 3
+        val bitrate = (if (mpeg1) MP3_V1_KBPS else MP3_V2_KBPS)[bitrateIndex] * 1000
+        val rate = when (version) {
+            3 -> intArrayOf(44100, 48000, 32000)
+            2 -> intArrayOf(22050, 24000, 16000)
+            else -> intArrayOf(11025, 12000, 8000)
+        }[rateIndex]
+        return (if (mpeg1) 144 else 72) * bitrate / rate + padding
+    }
+
+    private val MP3_V1_KBPS = intArrayOf(0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320)
+    private val MP3_V2_KBPS = intArrayOf(0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160)
+
+    /** The audio type of [file] from its first bytes, or null when it is not audio a player opens. */
+    private fun audioType(file: File): String? {
+        if (file.length() < 4) return null
+        val head = ByteArray(12)
+        val n = file.inputStream().use { it.read(head) }
+        fun at(i: Int) = head[i].toInt() and 0xFF
+        fun text(from: Int, len: Int) = if (n >= from + len) String(head, from, len, Charsets.ISO_8859_1) else ""
+        return when {
+            text(0, 4) == "RIFF" && text(8, 4) == "WAVE" -> "wav"
+            text(0, 3) == "ID3" -> "mp3"
+            text(0, 4) == "OggS" -> "ogg"
+            text(0, 4) == "fLaC" -> "flac"
+            text(4, 4) == "ftyp" -> "m4a"
+            at(0) == 0xFF && (at(1) and 0xF6) == 0xF0 -> "aac"
+            at(0) == 0xFF && (at(1) and 0xE0) == 0xE0 -> "mp3"
+            else -> null
+        }
+    }
 
     private suspend fun <T> withEngine(context: Context, block: suspend (TextToSpeech) -> T): T = lock.withLock {
         var engine: TextToSpeech? = null
@@ -214,9 +481,9 @@ object OrbitVoice {
                 (if (frames == 0L) 0L else (frames * target.rate / from.rate).coerceAtLeast(1)) * target.channels * 2
             }
         val dataSize = infos.sumOf(::lengthOf) + pause.size.toLong() * (infos.size - 1)
-        require(44 + format.size + dataSize <= maxBytes && dataSize <= 0xFFFFFFFFL - 44 - format.size) {
+        if (44 + format.size + dataSize > maxBytes || dataSize > 0xFFFFFFFFL - 44 - format.size) throw AudioTooLarge(
             "The audio would be larger than ${maxBytes / 1024 / 1024} MB; make it shorter or split it into several parts"
-        }
+        )
         val header = ByteBuffer.allocate(20 + format.size + 8).order(ByteOrder.LITTLE_ENDIAN)
         header.put("RIFF".toByteArray()).putInt((4 + 8 + format.size + 8 + dataSize).toInt()).put("WAVE".toByteArray())
         header.put("fmt ".toByteArray()).putInt(format.size).put(format)
