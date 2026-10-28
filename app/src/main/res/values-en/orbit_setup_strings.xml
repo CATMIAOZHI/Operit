@@ -6,7 +6,7 @@
     <string name="orbit_component_detail_total">About %1$s in total. Wi-Fi is recommended.</string>
 
     <string name="orbit_setup_title">Connect a model to Orbit</string>
-    <string name="orbit_setup_subtitle">One API key is enough. After that, just tell Orbit what else you need.</string>
+    <string name="orbit_setup_subtitle">One API key or one account sign-in is enough. After that, just tell Orbit what else you need.</string>
     <string name="orbit_setup_provider">Provider</string>
     <string name="orbit_setup_recommended">Recommended</string>
     <string name="orbit_setup_endpoint">Endpoint</string>
@@ -41,8 +41,12 @@
     <string name="orbit_setup_existing_main">Chat: %1$s</string>
     <string name="orbit_setup_existing_assistant">Background work: %1$s</string>
     <string name="orbit_setup_existing_use">Start with these models</string>
-    <string name="orbit_setup_existing_or">Or enter a new key</string>
-    <string name="orbit_setup_entry">Quick start with an API key</string>
-    <string name="orbit_setup_entry_note">One key sets up Orbit and its models</string>
+    <string name="orbit_setup_existing_or">Or enter a new key or sign in</string>
+    <string name="orbit_setup_entry">Quick start with an API key or account</string>
+    <string name="orbit_setup_entry_note">One key or sign-in sets up Orbit and its models</string>
     <string name="orbit_setup_no_match">No matching model</string>
+    <string name="orbit_setup_account">Account</string>
+    <string name="orbit_setup_account_none">This service uses an account sign-in, no key. Sign in first, then get the models.</string>
+    <string name="orbit_setup_account_done">Signed in, you can get the models now</string>
+    <string name="orbit_setup_account_manage">Manage account</string>
 </resources>

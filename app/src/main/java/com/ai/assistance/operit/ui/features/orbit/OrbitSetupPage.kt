@@ -97,9 +97,31 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
     var pickProvider by remember { mutableStateOf(false) }
     val needsKey = OrbitSetup.requiresKey(provider, endpoint)
     val endpointOk = endpoint.trim().matches(Regex("https?://\\S{3,300}"))
+    // Account services (ChatGPT, Claude, Grok…) sign in here instead of taking a key.
+    val signIn = OrbitSetup.signsIn(provider)
+    var signedIn by remember(providerId) { mutableStateOf(false) }
+    var accountTick by remember { mutableStateOf(0) }
+    LaunchedEffect(providerId, accountTick) {
+        signedIn = signIn && kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            OrbitSetup.signedIn(context.applicationContext, provider)
+        }
+    }
+    // 1: ChatGPT browser login, 2: ChatGPT device code, 3: other account sign-in sheet.
+    var login by remember { mutableStateOf(0) }
     SecureWindow()
 
     fun resetModels() { models = null; main = null; assistant = null; manual = false }
+
+    /** After a sign-in or sign-out: read the account again; the model list belongs to the old account. */
+    fun accountChanged(close: Boolean) {
+        if (close) login = 0
+        accountTick++
+        resetModels()
+        error = null
+        scope.launch {
+            runCatching { com.ai.assistance.operit.api.chat.EnhancedAIService.refreshAllServices(context.applicationContext) }
+        }
+    }
 
     fun showError(message: String, detail: String? = null) {
         error = message
@@ -256,6 +278,32 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
                     Text(stringResource(R.string.orbit_setup_change_endpoint), style = MaterialTheme.typography.labelLarge)
                 }
             }
+            if (signIn) {
+                Spacer(Modifier.height(if (showEndpoint) 14.dp else 0.dp))
+                SetupLabel(stringResource(R.string.orbit_setup_account))
+                SetupField(onClick = {
+                    if (!busy) login = if (provider == ApiProviderType.OPENAI_CODEX) 1 else 3
+                }) {
+                    Icon(orbitIcon(if (signedIn) "circle-check" else "log-in"), null, Modifier.size(18.dp),
+                        tint = if (signedIn) colors.primary else colors.onSurfaceVariant)
+                    Spacer(Modifier.width(10.dp))
+                    Text(stringResource(if (signedIn) R.string.orbit_setup_account_done else R.string.orbit_setup_account_none),
+                        style = MaterialTheme.typography.bodyMedium, modifier = Modifier.weight(1f))
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(when {
+                        !signedIn -> R.string.orbit_chatgpt_card_login
+                        // ChatGPT has no account page here; tapping signs in again.
+                        provider == ApiProviderType.OPENAI_CODEX -> R.string.orbit_login_card_relogin
+                        else -> R.string.orbit_setup_account_manage
+                    }),
+                        style = MaterialTheme.typography.labelLarge, color = colors.primary)
+                }
+                if (provider == ApiProviderType.OPENAI_CODEX && !signedIn) {
+                    TextButton(onClick = { login = 2 }, enabled = !busy, modifier = Modifier.align(Alignment.End)) {
+                        Text(stringResource(R.string.orbit_chatgpt_card_device), style = MaterialTheme.typography.labelLarge)
+                    }
+                }
+            }
             if (needsKey) {
                 Spacer(Modifier.height(if (showEndpoint) 14.dp else 0.dp))
                 SetupLabel(stringResource(R.string.orbit_vault_api_key))
@@ -333,7 +381,7 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             Spacer(Modifier.height(24.dp))
             Button(
                 onClick = { if (listing) fetch() else start() },
-                enabled = !busy && endpointOk && (!needsKey || key.isNotBlank()) &&
+                enabled = !busy && endpointOk && (!needsKey || key.isNotBlank()) && (!signIn || signedIn) &&
                     (listing || (if (manual && list == null) manualMain.isNotBlank() else main != null)),
                 shape = RoundedCornerShape(50),
                 // While working the button stays in its normal colors so the spinner is easy to see.
@@ -358,6 +406,62 @@ internal fun OrbitSetupPage(onSkip: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             TextButton(onClick = onSkip, enabled = !busy) {
                 Text(stringResource(R.string.orbit_setup_skip), color = colors.onSurfaceVariant)
+            }
+        }
+        when (login) {
+            1 -> com.ai.assistance.operit.ui.features.codex.CodexLoginDialog(onDismissRequest = { login = 0 },
+                onLoginSuccess = { accountChanged(close = true) }, presenter = { OrbitChatGptLoginSheet(it) })
+            2 -> com.ai.assistance.operit.ui.features.codex.CodexDeviceLoginDialog(onDismissRequest = { login = 0 },
+                onLoginSuccess = { accountChanged(close = true) }, presenter = { OrbitChatGptLoginSheet(it) })
+            3 -> com.ai.assistance.operit.data.api.AccountProvider.from(provider)?.let { account ->
+                SetupAccountSheet(account, onDismiss = { login = 0 }, onChanged = ::accountChanged)
+            }
+        }
+    }
+}
+
+/** Signs in to an account service right on the setup page; [onChanged] gets whether to close (signed in now). */
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@Composable
+private fun SetupAccountSheet(
+    account: com.ai.assistance.operit.data.api.AccountProvider,
+    onDismiss: () -> Unit,
+    onChanged: (Boolean) -> Unit,
+) {
+    val context = LocalContext.current
+    // The account store is encrypted; opening it is kept off the main thread.
+    val manager by androidx.compose.runtime.produceState<com.ai.assistance.operit.data.api.ProviderAccountManager?>(null, account) {
+        value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.ai.assistance.operit.data.api.ProviderAccountManager.get(context.applicationContext, account)
+        }
+    }
+    OrbitModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = androidx.compose.material3.rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+    ) {
+        Column(
+            Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
+                .navigationBarsPadding().padding(horizontal = 24.dp).padding(bottom = 16.dp),
+        ) {
+            Text(stringResource(R.string.orbit_account_card_title,
+                com.ai.assistance.operit.features.orbit.OrbitChatCards.accountLabel(account)),
+                style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
+            Spacer(Modifier.height(12.dp))
+            val current = manager
+            if (current == null) {
+                // Shown only after the store is open, so the sheet never opens it on the main thread.
+                Box(Modifier.fillMaxWidth().padding(vertical = 24.dp), contentAlignment = Alignment.Center) {
+                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
+                }
+            } else {
+                com.ai.assistance.operit.ui.features.settings.components.SettingsDialogs(
+                    com.ai.assistance.operit.ui.features.settings.components.SettingsDialogStyle.ORBIT,
+                ) {
+                    com.ai.assistance.operit.ui.features.codex.ProviderAccountSettings(account) {
+                        onChanged(current.account.value != null)
+                    }
+                }
             }
         }
     }

@@ -73,6 +73,12 @@ internal object OrbitSetup {
         listOf(ApiProviderType.DEEPSEEK) + OrbitApprovalActions.providers()
             .mapNotNull { ApiProviderType.fromProviderTypeId(it) }.filter { it != ApiProviderType.DEEPSEEK }
 
+    /** Whether [provider] is used with a signed-in account instead of an API key. */
+    fun signsIn(provider: ApiProviderType): Boolean = provider in OrbitApprovalActions.SIGN_IN_PROVIDERS
+
+    /** Whether the user is signed in to [provider]'s account; it opens an encrypted store, so call it off the main thread. */
+    fun signedIn(context: Context, provider: ApiProviderType): Boolean = OrbitApprovalActions.signedIn(context, provider)
+
     fun defaultEndpoint(provider: ApiProviderType): String = OrbitApprovalActions.defaultEndpoint(provider)
 
     fun requiresKey(provider: ApiProviderType, endpoint: String): Boolean = OrbitApprovalActions.requiresKey(provider, endpoint)
@@ -477,8 +483,9 @@ internal object OrbitSetup {
     private val welcoming = java.util.concurrent.atomic.AtomicBoolean(false)
 
     /**
-     * Has Orbit greet the user once. Until the greeting is delivered it stays due, so a closed
-     * app or a chat that stayed busy tries again on the next open; a user who already spoke drops it.
+     * Has Orbit greet the user once and start the first meeting (docs/first-meeting.md). Until it
+     * is delivered it stays due, so a closed app or a chat that stayed busy tries again on the next
+     * open. A user who spoke first still gets it: the note then asks Orbit to answer them first.
      */
     private fun welcome(context: Context, orbit: OrbitProfile) {
         if (!welcoming.compareAndSet(false, true)) return
@@ -500,8 +507,6 @@ internal object OrbitSetup {
         fun done() = p.edit().remove(KEY_WELCOME).remove(KEY_WELCOME_SENT).commit()
         if (p.getString(KEY_WELCOME, null) != orbit.id) return
         val dao = com.ai.assistance.operit.data.db.AppDatabase.getDatabase(context).orbitTaskDao()
-        suspend fun typed() = dao.userMessageCount(orbit.chatId) > 0
-        if (typed()) { done(); return }
         val sentAt = p.getLong(KEY_WELCOME_SENT, 0L)
         suspend fun greeted(): Boolean {
             if (sentAt <= 0) return false
@@ -519,7 +524,7 @@ internal object OrbitSetup {
             ) { main, floating -> orbit.chatId !in main && orbit.chatId !in floating }
             // A killed process has no live request: recover immediately, even within ten minutes.
             withTimeoutOrNull(REPLY_WAIT_MS) { idle.first { it } } ?: return
-            if (typed() || greeted()) { done(); return }
+            if (greeted()) { done(); return }
             p.edit().remove(KEY_WELCOME_SENT).commit()
         }
         val english = LocaleUtils.usesEnglishPrompt(context)
@@ -527,14 +532,17 @@ internal object OrbitSetup {
             "$MARKER Welcome\n" +
                 "The user just set you up and opened your chat for the first time. " +
                 "This is not a message from the user; they cannot see this note.\n" +
-                "Say hello first, in two or three short sentences: who you are, and that they can just tell you what they want, " +
-                "including setting up the app (models, tool packages, components like the terminal, permissions). " +
-                "Then follow your first-talk guidance. Do not mention hidden notes."
+                "This is your first meeting. Read docs/first-meeting.md with orbit_file first, then follow it.\n" +
+                "If the user has not spoken yet, say hello first, in two or three short sentences: who you are, and that they can just " +
+                "tell you what they want, including setting up the app (models, tool packages, components like the terminal, permissions). " +
+                "If they already said something, answer that first and come back to the first meeting when it fits. " +
+                "Do not mention hidden notes."
         } else {
             "$MARKER 欢迎\n" +
                 "用户刚把你设置好，第一次打开和你的聊天。这不是用户发的消息，用户也看不到这段话。\n" +
-                "先主动打个招呼，两三句短话就好：你是谁；有什么事直接跟你说就行，包括把 App 配置好（模型、工具包、终端这类组件、权限）。" +
-                "然后按你的初次见面指引来。不要提“隐藏消息”这些内部说法。"
+                "这是你们的初次见面。先用 orbit_file 读 docs/first-meeting.md，然后照着它来。\n" +
+                "用户还没开口的话，先主动打个招呼，两三句短话就好：你是谁；有什么事直接跟你说就行，包括把 App 配置好（模型、工具包、终端这类组件、权限）。" +
+                "他已经先说了话，就先回应他，再找合适的时机回到初次见面。不要提“隐藏消息”这些内部说法。"
         }
         val deadline = android.os.SystemClock.elapsedRealtime() + IDLE_WAIT_MS
         try {
@@ -546,7 +554,7 @@ internal object OrbitSetup {
                     // The earlier request may finish while this waits for the chat; never greet twice.
                     ready = {
                         if (p.getString(KEY_WELCOME, null) != orbit.id) false
-                        else if (typed() || greeted()) { done(); false }
+                        else if (greeted()) { done(); false }
                         else { p.edit().putLong(KEY_WELCOME_SENT, System.currentTimeMillis() - 1).commit(); true }
                     },
                     decision = turn)

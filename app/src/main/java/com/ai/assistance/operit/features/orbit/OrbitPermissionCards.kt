@@ -85,8 +85,9 @@ internal object OrbitPermissionCards {
 
     /**
      * Operit's access level as the app is set to use it: [level] is the one picked in the app's
-     * permission page (null before any was picked), [working] whether it is an elevated one (ADB
-     * debugging, device admin or Root) that answers right now.
+     * permission page (null before any was picked), [working] whether it is one that lets Orbit
+     * control the phone (ADB debugging or Root) and answers right now. Device admin only runs a few
+     * admin actions (no taps, installs or settings), so it does not count.
      */
     data class DeviceAccess(val level: com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel?, val working: Boolean)
 
@@ -100,7 +101,6 @@ internal object OrbitPermissionCards {
 
     private val elevatedLevels = setOf(
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.DEBUGGER,
-        com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ADMIN,
         com.ai.assistance.operit.core.tools.system.AndroidPermissionLevel.ROOT,
     )
 
