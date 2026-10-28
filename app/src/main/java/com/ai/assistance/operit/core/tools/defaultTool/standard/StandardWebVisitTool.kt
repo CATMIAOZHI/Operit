@@ -1216,11 +1216,11 @@ class StandardWebVisitTool(private val context: Context) : ToolExecutor {
                                                     ) {
                                                         AppLogger.w(
                                                                 TAG,
-                                                                "visit_web SSL error, proceeding anyway. " +
-                                                                        "url=${error.url}, primaryError=${error.primaryError}"
+                                                                "visit_web certificate validation failed: ${error.primaryError}"
                                                         )
                                                         hasSslError.value = true
-                                                        handler.proceed()
+                                                        handler.cancel()
+                                                        visit.fail(context.getString(R.string.webvisit_certificate_error))
                                                     }
 
                                                     // The page's process died: end now instead of waiting on a dead page.

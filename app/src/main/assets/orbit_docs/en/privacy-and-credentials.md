@@ -56,7 +56,7 @@ Login passwords stay out of the terminal by default; when a script really must s
 
 ## OAuth
 
-`request_oauth` uses the public-client authorization-code flow with PKCE, with the user authorizing in the system browser.
+`request_oauth` uses the public-client authorization-code flow with PKCE, with the user authorizing in the system browser. The authorization and token endpoints must have the same HTTPS origin (host and port); the confirmation sheet displays both origins. Cross-origin generic OAuth configurations are unsupported. Existing dedicated account logins are unaffected.
 Use official configuration: authorization and token endpoints, minimal scope, allowed hosts, and the actual callback supplied by the tool.
 Do not invent a client secret or promise support for any website's private OAuth setup.
 

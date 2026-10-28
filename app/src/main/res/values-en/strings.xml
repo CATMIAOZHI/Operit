@@ -6867,6 +6867,7 @@
     <string name="webvisit_title">Web Browsing</string>
     <string name="webvisit_url_label">Visiting URL:</string>
     <string name="webvisit_status_loading_page">Loading page...</string>
+    <string name="webvisit_certificate_error">The HTTPS certificate could not be verified, so the connection was cancelled. Use a trusted source or ask the site owner to fix the certificate.</string>
     <string name="webvisit_status_extracting">Read, waiting for more to load, continuing in %1$d seconds...</string>
     <string name="webvisit_status_waiting_extraction">Reading the page...</string>
     <string name="webvisit_page_title">Page title: %1$s</string>
@@ -9705,8 +9706,9 @@
     <string name="orbit_oauth_title">Connect %1$s</string>
     <string name="orbit_oauth_desc">Sign in and authorize in your system browser. Credentials go straight into the vault; %1$s cannot see their values. Cancelling sends no message.</string>
     <string name="orbit_oauth_authorize_at">Authorization website: %1$s</string>
+    <string name="orbit_oauth_token_at">Authorization code recipient: %1$s</string>
     <string name="orbit_oauth_scope">Requested access: %1$s</string>
-    <string name="orbit_oauth_limit">Only PKCE authorization without a client secret is supported. If the service does not support it, use an API key card.</string>
+    <string name="orbit_oauth_limit">Only PKCE authorization without a client secret is supported. Authorization and token endpoints must share the same host and port. Otherwise, use a dedicated account login or an API key card.</string>
     <string name="orbit_oauth_continue">Continue to authorization</string>
     <string name="orbit_oauth_opening">Opening browser…</string>
     <string name="orbit_oauth_open_failed">Could not open authorization. Install a browser that supports Custom Tabs, then try the card again.</string>

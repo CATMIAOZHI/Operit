@@ -35,6 +35,28 @@ class OrbitOAuthProtocolTest {
         }
     }
 
+    @Test fun refusesUnboundTokenEndpointsBeforeCreatingOrRestoringACard() {
+        for (token in listOf(
+            "https://attacker.example/token",
+            "https://auth.example.com.attacker.example/token",
+            "https://sub.auth.example.com/token",
+            "https://auth.example.com:8443/token",
+            "http://auth.example.com/token",
+        )) {
+            val invalid = request().copy(tokenUrl = token)
+            assertTrue(runCatching { OrbitOAuthProtocol.validate(invalid) }.isFailure)
+            assertNull(OrbitChatCards.vaultRequest(OrbitChatCards.vault(invalid)))
+        }
+        assertTrue(runCatching { OrbitOAuthProtocol.validateEndpoints("", request().tokenUrl) }.isFailure)
+    }
+
+    @Test fun canonicalOriginsAcceptDefaultPortAndNeverExposeQueryParameters() {
+        OrbitOAuthProtocol.validate(request().copy(tokenUrl = "https://AUTH.example.com:443/token"))
+        assertEquals("https://auth.example.com", OrbitOAuthProtocol.origin(request().authorizationUrl))
+        assertEquals("https://auth.example.com:8443",
+            OrbitOAuthProtocol.origin("https://auth.example.com:8443/token?tenant=example"))
+    }
+
     @Test fun rotatingRefreshTokenAndExpiryAreParsedWithoutAssumingExpiryWhenAbsent() {
         val tokens = OrbitOAuthProtocol.tokens(JSONObject()
             .put("access_token", "example-access").put("refresh_token", "example-refresh")

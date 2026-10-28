@@ -97,6 +97,7 @@ internal object OrbitOAuth {
 
     /** Called on IO under the credential's refresh lock, so token rotation cannot race another request. */
     fun refresh(auth: OrbitVault.OAuth): OrbitOAuthProtocol.Tokens = try {
+        OrbitOAuthProtocol.validateEndpoints(auth.authorizationUrl, auth.tokenUrl)
         exchange(auth.tokenUrl, FormBody.Builder().add("grant_type", "refresh_token")
             .add("client_id", auth.clientId).add("refresh_token", auth.refreshToken).build())
     } catch (e: Exception) {
