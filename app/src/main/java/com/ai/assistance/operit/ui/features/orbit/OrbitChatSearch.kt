@@ -822,7 +822,7 @@ private fun DayPicker(chatId: String, onOpen: (Long) -> Unit) {
             times.associateBy { cal.timeInMillis = it; cal.get(Calendar.DAY_OF_MONTH) }
         }.toSortedMap(compareByDescending { it })
     }
-    val locale = Locale.getDefault()
+    val locale = androidx.compose.ui.platform.LocalResources.current.configuration.locales[0]
     val monthFormat = remember(locale) {
         SimpleDateFormat(android.text.format.DateFormat.getBestDateTimePattern(locale, "yMMMM"), locale)
     }

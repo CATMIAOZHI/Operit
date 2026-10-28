@@ -2798,7 +2798,7 @@ class EnhancedAIService private constructor(
 
             // 获取对应功能类型的AIService实例
             val serviceForFunction = modelSnapshot.service
-            
+
             // 获取工具列表（如果启用Tool Call）- 提前获取，以便在token计算中使用
             val availableTools = getAvailableToolsForFunction(
                 functionType = functionType,
@@ -2814,7 +2814,7 @@ class EnhancedAIService private constructor(
             context.composerPredictionParameters = modelParameters
             context.composerPredictionEnableThinking = enableThinking
             perf.lap("工具列表")
-     
+
             val currentTokens = estimatePreparedRequestWindow(
                 serviceForFunction = serviceForFunction,
                 preparedHistory = currentChatHistory,
@@ -2862,7 +2862,7 @@ class EnhancedAIService private constructor(
             currentRequestInputTokenCount = 0
             currentRequestOutputTokenCount = 0
             currentRequestCachedInputTokenCount = 0
-            
+
             // 使用新的Stream API处理工具执行结果
             withContext(Dispatchers.IO) {
                 try {

@@ -9,11 +9,25 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** One SQLite parameter, even with thousands of chats. Hex keeps delimiters and Unicode unambiguous. */
+internal fun encodeRecallScope(ids: Collection<String>): String = buildString {
+    val hex = "0123456789ABCDEF"
+    if (ids.isNotEmpty()) append(',')
+    for (id in ids) {
+        for (byte in id.toByteArray(Charsets.UTF_8)) {
+            val value = byte.toInt() and 0xff
+            append(hex[value ushr 4])
+            append(hex[value and 15])
+        }
+        append(',')
+    }
+}
+
 class ChatRecallRepository internal constructor(
     private val dao: com.ai.assistance.operit.data.dao.ChatContentDao,
     private val minimumMessageId: Long = 0,
     private val minimumTimestamp: Long = 0,
-    private val scope: suspend () -> Pair<Int, List<String>> = { 0 to emptyList() }
+    private val scope: suspend () -> Pair<Int, String> = { 0 to "" }
 ) {
     constructor(context: Context, callerChatId: String? = null, minimumMessageId: Long = 0,
         minimumTimestamp: Long = 0) : this(
@@ -21,8 +35,9 @@ class ChatRecallRepository internal constructor(
         minimumMessageId,
         minimumTimestamp,
         {
-            val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(context, callerChatId)
-            (if (own) 1 else 2) to ids
+            val (own, ids) = com.ai.assistance.operit.features.orbit.OrbitMemoryScope.recallScope(
+                context, callerChatId, sqlEligibleOnly = true)
+            (if (own) 1 else 2) to encodeRecallScope(ids)
         }
     )
     suspend fun search(query: String, offset: Int = 0, role: String = "", profile: String = "",

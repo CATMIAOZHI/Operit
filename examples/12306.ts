@@ -1012,4 +1012,4 @@ exports.get_station_by_telecode = ticket12306.get_station_by_telecode;
 exports.get_tickets = ticket12306.get_tickets;
 exports.get_interline_tickets = ticket12306.get_interline_tickets;
 exports.get_train_route_stations = ticket12306.get_train_route_stations;
-exports.main = ticket12306.main; 
+exports.main = ticket12306.main;

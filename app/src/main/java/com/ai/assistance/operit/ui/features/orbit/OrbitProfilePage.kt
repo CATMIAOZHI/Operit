@@ -1,5 +1,7 @@
 package com.ai.assistance.operit.ui.features.orbit
 
+import androidx.lifecycle.repeatOnLifecycle
+
 import android.net.Uri
 import android.text.format.DateUtils
 import androidx.activity.compose.BackHandler
@@ -148,13 +150,17 @@ internal fun OrbitProfilePage(
     val tasks by remember(orbit.id) { dao.observeTasks(orbit.id).catch { emit(emptyList()) } }
         .collectAsState(initial = null)
     // Work done while chatting. Read when the profile comes into view, then now and then while open.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val showingActivity = visible && tab == OrbitProfileTab.ACTIVITY
-    val chatTurns by produceState<OrbitChatTurns?>(null, orbit.talkChatIds, showingActivity) {
+    val chatTurns by produceState<OrbitChatTurns?>(null, orbit.talkChatIds, showingActivity, lifecycle) {
+        if (!showingActivity) return@produceState
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
         while (showingActivity) {
             value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
                 OrbitWork.chatTurns(context, orbit.talkChatIds)
             }
             kotlinx.coroutines.delay(15_000)
+        }
         }
     }
     // Back is the screen's: it lowers this page with the swipe.

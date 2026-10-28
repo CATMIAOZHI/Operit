@@ -259,6 +259,7 @@ private fun PhoneBody(permission: String, cardId: String, name: String, tick: In
     // a refusal with no dialog (refused for good earlier) from the user denying in the dialog now.
     var rationaleBefore by rememberSaveable(cardId) { mutableStateOf(false) }
     val title = stringResource(look.title)
+    val settingsMessage = stringResource(R.string.orbit_permission_in_settings, title)
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { grants ->
         asking = false
         val nowOn = runCatching { OrbitPermissionCards.isOn(context, permission) }.getOrDefault(false)
@@ -268,7 +269,7 @@ private fun PhoneBody(permission: String, cardId: String, name: String, tick: In
         if (!nowOn && grants.isNotEmpty() && !grants.values.all { it } && activity != null && !rationaleAfter) {
             settingsOnly = true
             if (!rationaleBefore) {
-                Toast.makeText(context, context.getString(R.string.orbit_permission_in_settings, title),
+                Toast.makeText(context, settingsMessage,
                     Toast.LENGTH_LONG).show()
             }
         }

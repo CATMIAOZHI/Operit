@@ -15,7 +15,7 @@ class MemoryRecallThinkingTest {
                 val dao = mock<ChatContentDao>()
                 val raw = "visible<meta provider=\"$provider\">" + "secret".repeat(30_000)
                 stubRecallBytes(dao, raw)
-                whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(emptyList()))).thenReturn(
+                whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(""))).thenReturn(
                     ChatRecallPart(1, "chat", "ai", 0, "", raw.length + 10, nul))
                 val result = ChatRecallRepository(dao).execute(
                     mapOf("mode" to "message", "message_id" to "1"), true)
@@ -31,7 +31,7 @@ class MemoryRecallThinkingTest {
         val dao = mock<ChatContentDao>()
         val raw = "<think>" + "secret".repeat(2000) + "</think>" + "answer".repeat(2000)
         stubRecallBytes(dao, raw)
-        whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(emptyList()))).thenAnswer {
+        whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(""))).thenAnswer {
             val start = it.getArgument<Int>(1)
             val limit = it.getArgument<Int>(2)
             ChatRecallPart(1, "chat", "ai", 0, raw.drop(start).take(limit), raw.length)
@@ -53,7 +53,7 @@ class MemoryRecallThinkingTest {
         val dao = mock<ChatContentDao>()
         val raw = "<think>secret</think>visible"
         stubRecallBytes(dao, raw)
-        whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(emptyList()))).thenReturn(
+        whenever(dao.readRecallMessagePart(eq(1L), any(), any(), eq(0), eq(""))).thenReturn(
             ChatRecallPart(1, "chat", "ai", 0, "", raw.length))
         whenever(dao.readRecallContext(1, 11)).thenReturn(
             listOf(ChatRecallHit(1, "chat", "title", "ai", 0, "secret without opening tag")))
@@ -68,7 +68,7 @@ class MemoryRecallThinkingTest {
      */
     private suspend fun stubRecallBytes(dao: ChatContentDao, text: String) {
         val bytes = text.toByteArray()
-        whenever(dao.readRecallMessageBytes(eq(1L), any(), eq(0), eq(emptyList()))).thenAnswer {
+        whenever(dao.readRecallMessageBytes(eq(1L), any(), eq(0), eq(""))).thenAnswer {
             val from = it.getArgument<Long>(1).toInt()
             if (from >= bytes.size) ByteArray(0)
             else bytes.copyOfRange(from, minOf(from + 32_768, bytes.size))

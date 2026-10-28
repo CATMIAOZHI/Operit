@@ -32,6 +32,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -103,14 +104,16 @@ private fun ProcessRecordPage(
     val context = LocalContext.current
     val subagentCache = remember(process) { OrbitSubagents.Cache() }
     OrbitPageBack(onBack = onBack)
-    // Covered by a page opened from here, it stops reading until it is on top again.
+    // Stop polling when covered, locked or in the background; keep the loaded record on screen.
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     val active = androidx.compose.runtime.rememberUpdatedState(LocalOrbitPageActive.current)
     // Back from a page opened from here: read again, and ask whether the work runs again (a
     // finished subagent can be given more work meanwhile).
     var returned by remember(process) { androidx.compose.runtime.mutableIntStateOf(0) }
     OrbitOnPageReturn { returned++ }
     // Work still going on (a background run, a subagent) is read again every few seconds until it ends.
-    val record by produceState<ProcessRecord?>(null, process, developer, returned) {
+    val record by produceState<ProcessRecord?>(null, process, developer, returned, lifecycle) {
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
         suspend fun selfRunning(): Boolean = try {
             when (process) {
                 is OrbitProcess.TaskRun -> OrbitTaskRepository(context).dao.run(process.runId)?.state == "RUNNING"
@@ -129,7 +132,7 @@ private fun ProcessRecordPage(
         } catch (e: Exception) {
             false
         }
-        var running = if (returned > 0) selfRunning() else when (process) {
+        var running = if (returned > 0 || value != null) selfRunning() else when (process) {
             is OrbitProcess.TaskRun -> process.running
             is OrbitProcess.Learning -> process.running
             is OrbitProcess.Subagent -> process.running
@@ -137,6 +140,7 @@ private fun ProcessRecordPage(
         }
         var readMessages = true
         while (true) {
+            androidx.compose.runtime.snapshotFlow { active.value }.first { it }
             value = try {
                 val messages = if (readMessages || value == null) OrbitWork.messages(context, process, raw = developer)
                     else value!!.messages
@@ -156,6 +160,7 @@ private fun ProcessRecordPage(
             // The work's own record grows only while it runs; after that only its subagents change.
             readMessages = running
             running = running && selfRunning()
+        }
         }
     }
     val time = remember(process.time) {

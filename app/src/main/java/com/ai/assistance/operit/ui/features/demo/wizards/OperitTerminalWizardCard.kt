@@ -226,4 +226,4 @@ fun OperitTerminalWizardCard(
             }
         }
     }
-} 
+}

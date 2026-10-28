@@ -61,6 +61,7 @@ private fun OrbitEmbeddedSettingsPage(title: String, onBack: () -> Unit, content
 @Composable
 internal fun OrbitTextSettingsPage(onBack: () -> Unit) {
     val context = LocalContext.current
+    val resources = androidx.compose.ui.platform.LocalResources.current
     val scope = rememberCoroutineScope()
     val preferences = remember { UserPreferencesManager.getInstance(context) }
     val activePrompts = remember { ActivePromptManager.getInstance(context) }
@@ -100,18 +101,18 @@ internal fun OrbitTextSettingsPage(onBack: () -> Unit) {
         scope.launch {
             val extension = FileUtils.getFileExtension(context, uri)?.lowercase()
             if (extension != "ttf" && extension != "otf" && extension != "ttc") {
-                Toast.makeText(context, context.getString(R.string.unsupported_font_format), Toast.LENGTH_LONG).show()
+                Toast.makeText(context, resources.getString(R.string.unsupported_font_format), Toast.LENGTH_LONG).show()
                 return@launch
             }
             val saved = FileUtils.copyFileToInternalStorage(context, uri, "custom_font")
             if (saved == null) {
-                Toast.makeText(context, context.getString(R.string.font_file_save_failed), Toast.LENGTH_LONG).show()
+                Toast.makeText(context, resources.getString(R.string.font_file_save_failed), Toast.LENGTH_LONG).show()
                 return@launch
             }
             save {
                 preferences.saveThemeSettings(customFontPath = saved.toString(), fontType = UserPreferencesManager.FONT_TYPE_FILE)
             }
-            Toast.makeText(context, context.getString(R.string.font_file_saved, extension), Toast.LENGTH_SHORT).show()
+            Toast.makeText(context, resources.getString(R.string.font_file_saved, extension), Toast.LENGTH_SHORT).show()
         }
     }
 
