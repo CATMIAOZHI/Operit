@@ -230,8 +230,8 @@ const CrossrefSearch = (function () {
 
         // 摘要（如果有）
         if (item.abstract) {
-            // Strip normal markup and escape any opener left by malformed/nested tags.
-            const abstractText = item.abstract.replace(/<[^>]*>/g, '').replace(/</g, '&lt;');
+            // Plain-text abstracts: also strip incomplete tag openers in the same pass.
+            const abstractText = item.abstract.replace(/<[^>]*>|</g, '');
             lines.push(`Abstract: ${abstractText.substring(0, 500)}${abstractText.length > 500 ? '...' : ''}`);
         }
 
